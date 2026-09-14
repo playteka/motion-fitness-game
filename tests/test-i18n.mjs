@@ -189,6 +189,20 @@ console.log('\n[7] 四份 README 结构一致');
       ['zh', 'en', 'es', 'fr'].map((l) => `${l}:${stats[l].toc}`).join(' '));
     ok('四份 README 都有四个语言互链', Object.values(stats).every((s) => s.links === 4),
       Object.values(stats).map((s) => `${s.name}:${s.links}`).join(' '));
+
+    // 目录锚点必须能在本文件里找到对应标题。
+    // GitHub 的 slug 规则：转小写 → 去掉标点（空格保留，所以连续空格会变成连续连字符）
+    // → 空格换成连字符。注意不能把连续空格合并成一个，否则「a / b」这类标题会误判。
+    const slug = (h) => h.toLowerCase()
+      .replace(/[^\p{L}\p{N} -]/gu, '')
+      .replace(/ /g, '-');
+    for (const [lang, name] of Object.entries(files)) {
+      const txt = fs.readFileSync(path.join(ROOT, name), 'utf8');
+      const headings = new Set([...txt.matchAll(/^#{1,4} (.+)$/gm)].map((m) => slug(m[1])));
+      const links = [...txt.matchAll(/^[-\s]*\[[^\]]+\]\(#([^)]+)\)/gm)].map((m) => m[1]);
+      const bad = links.filter((a) => !headings.has(a));
+      ok(`${name} 的 ${links.length} 个目录锚点都指向真实标题`, bad.length === 0, bad.join(', '));
+    }
     ok('三份译本没有残留中文',
       ['en', 'es', 'fr'].every((l) => stats[l].cjk === 0),
       ['en', 'es', 'fr'].filter((l) => stats[l].cjk).map((l) => `${stats[l].name}:${stats[l].cjk} 处`).join(' '));

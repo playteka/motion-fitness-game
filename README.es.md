@@ -478,7 +478,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (281 pruebas)
+npm test                       # las cuatro suites juntas (285 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -488,7 +488,7 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 
 | Archivo de prueba | N.º de pruebas | Cobertura |
 |---|---|---|
-| `tests/test-i18n.mjs` | 28 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, y sin texto chino escrito a fuego en el código fuente |
+| `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, y sin texto chino escrito a fuego en el código fuente |
 | `tests/test-detectors.mjs` | 91 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores |
 | `tests/test-page.mjs` | 89 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
 | `tests/test-app.mjs` | 73 | Arranque del `app.js` real, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
