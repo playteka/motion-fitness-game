@@ -70,7 +70,7 @@ class El {
   get textContent() { return this._text; }
   set textContent(v) { this._text = String(v); }
   get innerHTML() { return this._html; }
-  set innerHTML(v) { this._html = String(v); }
+  set innerHTML(v) { this._html = String(v); if (v === '') this.children = []; }
   appendChild(c) { this.children.push(c); return c; }
   removeChild(c) { this.children = this.children.filter((x) => x !== c); return c; }
   addEventListener(t, fn) { (this.listeners[t] || (this.listeners[t] = [])).push(fn); }
@@ -103,9 +103,25 @@ const resetCtxCounts = () => { for (const k of Object.keys(ctxCounts)) ctxCounts
 elements.get('overlay').getContext = () => ctxStub;
 
 const created = [];
+
+/** 简易选择器匹配：支持 .class 与 [attr] */
+function matches(el, sel) {
+  const s = sel.trim();
+  if (s.startsWith('.')) return (el.className || '').split(/\s+/).includes(s.slice(1));
+  if (s.startsWith('[') && s.endsWith(']')) {
+    const attr = s.slice(1, -1).split('=')[0];
+    return el.attributes?.[attr] !== undefined;
+  }
+  return true;
+}
+
+function walkTree(root, out = []) {
+  for (const c of root.children || []) { out.push(c); walkTree(c, out); }
+  return out;
+}
+
 const documentStub = {
   documentElement: new El('html'),
-  body: new El('body'),
   hidden: false,
   fullscreenElement: null,
   getElementById: (id) => {
@@ -114,16 +130,30 @@ const documentStub = {
   },
   createElement: (tag) => { const el = new El(tag); created.push(el); return el; },
   querySelectorAll: (sel) => {
-    const cls = sel.replace(/^\./, '');
-    return created.filter((el) => (el.className || '').split(/\s+/).includes(cls));
+    const all = [...walkTree(documentStub.documentElement), ...walkTree(documentStub.body)];
+    return all.filter((el) => matches(el, sel));
   },
-  querySelector: () => null,
+  querySelector: (sel) => documentStub.querySelectorAll(sel)[0] || null,
   addEventListener() {},
 };
+documentStub.body = new El('body');
+
+// 把 index.html 里每个带 id 的元素的属性同步到桩元素上，
+// 这样 applyI18n 的 [data-i18n] 选择器才能真正生效
+for (const m of html.matchAll(/<([a-zA-Z0-9]+)([^>]*)>/g)) {
+  const attrs = m[2];
+  const idm = attrs.match(/\bid="([^"]+)"/);
+  if (!idm) continue;
+  const el = elements.get(idm[1]) || documentStub.getElementById(idm[1]);
+  for (const a of attrs.matchAll(/([a-zA-Z0-9-]+)="([^"]*)"/g)) el.setAttribute(a[1], a[2]);
+  documentStub.body.appendChild(el);
+}
 
 const rafQueue = [];
 const store = new Map();
 const navigatorStub = {
+  language: 'zh-CN',
+  languages: ['zh-CN'],
   mediaDevices: {
     getUserMedia: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
     enumerateDevices: async () => [],
@@ -467,6 +497,61 @@ console.log('\n[6] 火柴人开关');
   api.renderer.draw({ landmarks: null, frame: null, exerciseId: 'squat', status: 'idle' });
   ok('没有关键点时不报错', true);
   api.renderer.showSkeleton = true;
+}
+
+/* ------------------------------------------------------------------ *
+ * 多语言切换
+ * ------------------------------------------------------------------ */
+
+console.log('\n[7] 多语言切换');
+{
+  const api = windowStub.__mfg;
+  api.selectExercise('squat');
+
+  const zhName = elements.get('hudName').textContent;
+  const zhHowto = elements.get('howtoList').innerHTML;
+  const zhMirror = elements.get('btnMirror').textContent;
+  ok('默认按浏览器语言选中中文', api.state && documentStub.documentElement.lang === 'zh-CN',
+    documentStub.documentElement.lang);
+  ok('applyI18n 能定位到静态文案元素', documentStub.querySelectorAll('[data-i18n]').length >= 15,
+    `实际 ${documentStub.querySelectorAll('[data-i18n]').length} 个`);
+  ok('启动时静态文案已按语言填充', /镜像/.test(zhMirror), JSON.stringify(zhMirror));
+
+  api.changeLang('en');
+  const enName = elements.get('hudName').textContent;
+  const enHowto = elements.get('howtoList').innerHTML;
+  ok('切到英文后动作名变化', enName !== zhName && /squat/i.test(enName), `${zhName} → ${enName}`);
+  ok('切到英文后动作要领变化', enHowto !== zhHowto && !/[\u4e00-\u9fff]/.test(enHowto));
+  ok('切到英文后静态按钮文案变化', elements.get('btnMirror').textContent !== zhMirror,
+    elements.get('btnMirror').textContent);
+  ok('切到英文后 html lang 更新', documentStub.documentElement.lang === 'en', documentStub.documentElement.lang);
+  ok('切到英文后动作按钮重新渲染', documentStub.querySelectorAll('.exercise-btn').length === 6);
+  ok('切到英文后要领清单也是英文',
+    !/[\u4e00-\u9fff]/.test(elements.get('stepList').innerHTML), elements.get('stepList').innerHTML.slice(0, 80));
+  ok('切到英文后“下一步”提示是英文', !/[\u4e00-\u9fff]/.test(elements.get('stepHint').textContent),
+    elements.get('stepHint').textContent);
+  ok('切到英文后界面统计标签是英文', !/[\u4e00-\u9fff]/.test(elements.get('statScore').textContent));
+
+  for (const lang of ['es', 'fr']) {
+    api.changeLang(lang);
+    const name = elements.get('hudName').textContent;
+    const howto = elements.get('howtoList').innerHTML;
+    const cjk = /[\u4e00-\u9fff]/.test(elements.get('stepList').innerHTML + name + elements.get('stepHint').textContent);
+    ok(`切到 ${lang} 后界面没有中文残留`, !cjk, `${name} | ${elements.get('stepHint').textContent.slice(0, 60)}`);
+    ok(`切到 ${lang} 后动作文案与中文不同`, !!name && name !== zhName && howto !== zhHowto, name);
+  }
+
+  // 切换语言不应该丢掉已经拿到的分
+  api.changeLang('zh');
+  api.state.detector.score = 42;
+  api.state.detector.validReps = 3;
+  api.updateHud();
+  api.changeLang('en');
+  ok('切换语言不会清空得分与次数',
+    api.state.detector.score === 42 && api.state.detector.validReps === 3,
+    `score=${api.state.detector.score} reps=${api.state.detector.validReps}`);
+  api.changeLang('zh');
+  ok('切回中文后动作名恢复', elements.get('hudName').textContent === zhName);
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

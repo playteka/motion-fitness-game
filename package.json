@@ -3,10 +3,11 @@
   "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "体感健身游戏：按动作要领逐步计分的深蹲/箭步蹲/俯卧撑/臀桥计数与平板支撑/静态臀桥计时（MediaPipe Pose，纯前端，离线可用）",
+  "description": "体感健身游戏 / Motion fitness game：按动作要领逐步计分的深蹲、箭步蹲、俯卧撑、臀桥计数与平板支撑、静态臀桥计时（MediaPipe Pose，纯前端，离线可用，支持中/英/西/法四语言）",
   "scripts": {
     "start": "node preview-server.js",
-    "test": "node tests/test-detectors.mjs && node tests/test-page.mjs && node tests/test-app.mjs",
+    "test": "node tests/test-i18n.mjs && node tests/test-detectors.mjs && node tests/test-page.mjs && node tests/test-app.mjs",
+    "test:i18n": "node tests/test-i18n.mjs",
     "test:detectors": "node tests/test-detectors.mjs",
     "test:dump": "node tests/test-detectors.mjs --dump",
     "test:page": "node tests/test-page.mjs",

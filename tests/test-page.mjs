@@ -14,8 +14,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { EXERCISES, createDetector } from '../src/exercises.js';
+import { EXERCISES, createDetector, localizedExercise } from '../src/exercises.js';
 import { getStepPlan } from '../src/steps.js';
+import { setLang, t, LOCALES, LANG_ORDER } from '../src/i18n.js';
+
+setLang('zh', { persist: false });
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -140,20 +143,32 @@ console.log('\n[3] 静态资源与模型文件');
 console.log('\n[4] 六个动作与界面一致性');
 {
   ok('恰好 6 个动作', EXERCISES.length === 6, `实际 ${EXERCISES.length}`);
-  for (const ex of EXERCISES) {
+  ok('四种语言都已注册', LANG_ORDER.length === 4 && LANG_ORDER.every((l) => !!LOCALES[l]),
+    LANG_ORDER.join(','));
+  for (const meta of EXERCISES) {
+    const ex = localizedExercise(meta.id);
     let det = null;
     try { det = createDetector(ex.id, { strict: true }); } catch (e) { det = null; }
     ok(`createDetector('${ex.id}') 可用`, !!det && det.meta.id === ex.id);
     if (det) {
       const snap = det.snapshot();
       ok(`${ex.name} 具备计数/计时字段`, typeof snap.validReps === 'number' && typeof snap.holdMs === 'number');
-      ok(`${ex.name} 有动作要领文案`, ex.howto.length >= 3 && ex.tips.length >= 1);
+      ok(`${ex.name} 有动作要领文案（4 条要领 + 3 条提示）`, ex.howto.length === 4 && ex.tips.length === 3,
+        `${ex.howto.length}/${ex.tips.length}`);
+      ok(`${ex.name} 有名称、机位提示与单位`, !!ex.name && !!ex.cameraHint && !!ex.unit);
     }
     // 界面按钮由 EXERCISES 生成，编号提示应与数组顺序一致
-    const idx = EXERCISES.indexOf(ex) + 1;
+    const idx = EXERCISES.indexOf(meta) + 1;
     ok(`${ex.name} 快捷键 ${idx} 在范围内`, idx >= 1 && idx <= 6);
   }
   ok('每个动作都有对应识别器分支（无默认抛错）', true);
+  ok('动作文案随语言切换而改变', (() => {
+    const zhName = localizedExercise('squat').name;
+    setLang('en', { persist: false });
+    const enName = localizedExercise('squat').name;
+    setLang('zh', { persist: false });
+    return zhName !== enName && !!enName;
+  })());
 }
 
 /* ------------------------------------------------------------------ *
@@ -162,12 +177,19 @@ console.log('\n[4] 六个动作与界面一致性');
 
 console.log('\n[5] 要领计分方案');
 {
-  for (const ex of EXERCISES) {
+  for (const meta of EXERCISES) {
+    const ex = localizedExercise(meta.id);
     const plan = getStepPlan(ex.id);
     ok(`${ex.name} 有要领计分步骤（≥4 步）`, plan.steps.length >= 4, `实际 ${plan.steps.length} 步`);
-    ok(`${ex.name} 每一步都有文案、分值与判定函数`,
-      plan.steps.every((s) => typeof s.label === 'string' && s.label.length > 2
+    ok(`${ex.name} 每一步都有文案键、分值与判定函数`,
+      plan.steps.every((s) => typeof s.labelKey === 'string' && s.labelKey.length > 2
         && Number.isFinite(s.points) && s.points > 0 && typeof s.check === 'function'));
+    ok(`${ex.name} 每一步的文案键都能取到四种语言的文案`,
+      plan.steps.every((s) => LANG_ORDER.every((l) => {
+        setLang(l, { persist: false });
+        return t(s.labelKey) !== s.labelKey;
+      })));
+    setLang('zh', { persist: false });
     ok(`${ex.name} 有明确的“关键一步”（单步 ≥10 分）`,
       Math.max(...plan.steps.map((s) => s.points)) >= 10);
     ok(`${ex.name} 总分构成合理（整轮 ≥20 分）`,

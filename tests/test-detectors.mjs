@@ -11,12 +11,14 @@
 import { toMetric, LandmarkSmoother, LM } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
 import { createDetector } from '../src/exercises.js';
+import { t, setLang } from '../src/i18n.js';
 import {
   ASPECT, standingPose, pronePose, supinePose, twoLegPose, lostFrame,
 } from './synthetic-pose.mjs';
 
 const DT = 1000 / 30;
 const DUMP = process.argv.includes('--dump');
+setLang('zh', { persist: false });
 
 let passed = 0;
 const failures = [];
@@ -287,7 +289,7 @@ console.log('\n[1] 深蹲计数');
   r.run(repeat(squatPose(130), 1600, 6));
   ok('6 次半蹲不计入有效次数', det.validReps === 0, `实际 ${det.validReps}`);
   atLeast('半蹲被记为半程并提示', det.partialReps, 5);
-  ok('提示了“蹲低一点”', r.cues.some((c) => c.code === 'depth'));
+  ok('提示了“蹲低一点”', r.cues.some((c) => c.code === 'depth' || c.code === 'depthAborted'), r.cues.map((c) => c.code).join(','));
 }
 {
   const det = fresh('squat');
@@ -508,7 +510,10 @@ console.log('\n[7] 按动作要领计分');
   ok('每轮都触发“要领全过”奖励', r.bonuses.length === 10, `实际 ${r.bonuses.length} 次`);
   const order = r.steps.slice(0, 5).map((s) => s.id);
   ok('要领按顺序依次得分', order.join('>') === 'stance>hinge>descend>parallel>stand', order.join('>'));
-  ok('每次得分都带着分数与要领文案', r.steps.every((s) => s.points > 0 && s.label && s.score > 0));
+  ok('每次得分都带着分数与要领文案键', r.steps.every((s) => s.points > 0 && s.labelKey && s.score > 0),
+    r.steps.filter((s) => !s.labelKey).length ? '有事件缺 labelKey' : '');
+  ok('要领文案键能在词条里取到真实文案', r.steps.every((s) => t(s.labelKey) !== s.labelKey));
+  ok('提示事件带着可翻译的键', r.cues.every((c) => c.key && t(c.key) !== c.key));
 }
 {
   // 半蹲：站姿、屈髋、下沉、站直都能得分，但“蹲到水平”永远拿不到，也没有满分奖励

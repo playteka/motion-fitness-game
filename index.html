@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>体感健身 · 动作计数与计时</title>
+  <title>Motion Fitness</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -12,26 +12,30 @@
       <div class="brand">
         <span class="logo">🏃</span>
         <div class="brand-text">
-          <h1>体感健身 <span class="ver">v1.2</span></h1>
-          <p>摄像头识别 · 深蹲 / 箭步蹲 / 俯卧撑 / 臀桥 计数 · 平板支撑 / 静态臀桥 计时 · 按动作要领逐步计分</p>
+          <h1><span data-i18n="app.brand"></span> <span class="ver">v1.3</span></h1>
+          <p data-i18n="app.subtitle"></p>
         </div>
       </div>
       <div class="topbar-actions">
         <label class="field">
-          <span>模型</span>
+          <span data-i18n="ui.language"></span>
+          <select id="langSel" aria-label="Language"></select>
+        </label>
+        <label class="field">
+          <span data-i18n="ui.model"></span>
           <select id="modelSel">
-            <option value="lite">轻量（流畅）</option>
-            <option value="full">完整（更准）</option>
+            <option value="lite" data-i18n="ui.modelLite"></option>
+            <option value="full" data-i18n="ui.modelFull"></option>
           </select>
         </label>
-        <button class="toggle" id="btnMirror" type="button" aria-pressed="true">🪞 镜像</button>
-        <button class="toggle" id="btnVoice" type="button" aria-pressed="true">🔊 语音报数</button>
-        <button class="toggle" id="btnSfx" type="button" aria-pressed="true">🎵 音效</button>
-        <button class="toggle" id="btnStrict" type="button" aria-pressed="true">✅ 严格模式</button>
-        <button class="toggle" id="btnSkeleton" type="button" aria-pressed="true">🦴 火柴人</button>
-        <button class="toggle" id="btnAngles" type="button" aria-pressed="true">📐 角度</button>
-        <button class="toggle" id="btnDebug" type="button" aria-pressed="false">🐞 识别指标</button>
-        <button class="toggle" id="btnFullscreen" type="button">⛶ 全屏</button>
+        <button class="toggle" id="btnMirror" type="button" aria-pressed="true" data-i18n="ui.mirror"></button>
+        <button class="toggle" id="btnVoice" type="button" aria-pressed="true" data-i18n="ui.voice"></button>
+        <button class="toggle" id="btnSfx" type="button" aria-pressed="true" data-i18n="ui.sfx"></button>
+        <button class="toggle" id="btnStrict" type="button" aria-pressed="true" data-i18n="ui.strict"></button>
+        <button class="toggle" id="btnSkeleton" type="button" aria-pressed="true" data-i18n="ui.skeleton"></button>
+        <button class="toggle" id="btnAngles" type="button" aria-pressed="true" data-i18n="ui.angles"></button>
+        <button class="toggle" id="btnDebug" type="button" aria-pressed="false" data-i18n="ui.debug"></button>
+        <button class="toggle" id="btnFullscreen" type="button" data-i18n="ui.fullscreen"></button>
       </div>
     </header>
 
@@ -44,21 +48,21 @@
           <div class="stage-mask" id="stageMask">
             <div class="mask-inner">
               <div class="mask-icon" id="maskIcon">📷</div>
-              <h2 id="maskTitle">开启摄像头开始训练</h2>
-              <p id="maskText">所有识别都在本机浏览器里完成，画面不会上传到任何服务器。</p>
-              <button class="primary-btn" id="btnStartCam" type="button">开启摄像头</button>
-              <p class="mask-hint">建议：手机横放或用电脑摄像头，人与摄像头相距 2~3 米，侧对镜头。</p>
+              <h2 id="maskTitle" data-i18n="ui.maskTitle"></h2>
+              <p id="maskText" data-i18n="ui.maskText"></p>
+              <button class="primary-btn" id="btnStartCam" type="button" data-i18n="ui.startCam"></button>
+              <p class="mask-hint" data-i18n="ui.maskHint"></p>
             </div>
           </div>
 
           <div class="hud" id="hud" hidden>
             <div class="hud-left">
-              <div class="hud-badge"><span id="hudIcon">🏋️</span><span id="hudName">深蹲</span></div>
+              <div class="hud-badge"><span id="hudIcon">🏋️</span><span id="hudName"></span></div>
               <div class="hud-value-row">
                 <span class="hud-value" id="hudValue">0</span>
-                <span class="hud-unit" id="hudUnit">次</span>
+                <span class="hud-unit" id="hudUnit"></span>
               </div>
-              <div class="hud-sub" id="hudSub">目标 15 次</div>
+              <div class="hud-sub" id="hudSub"></div>
               <div class="hud-extra" id="hudExtra"></div>
             </div>
             <div class="hud-ring">
@@ -67,40 +71,39 @@
                 <circle class="ring-fg" id="ringFg" cx="60" cy="60" r="52"></circle>
               </svg>
               <div class="ring-text" id="ringText">0%</div>
-              <div class="hud-score" id="hudScore">0 分</div>
+              <div class="hud-score" id="hudScore">0</div>
             </div>
           </div>
 
           <div class="score-pop" id="scorePop"></div>
-
           <div class="pose-hint" id="poseHint" hidden></div>
           <div class="countdown" id="countdown" hidden><span id="countdownNum">3</span></div>
-          <div class="celebrate" id="celebrate" hidden><div class="celebrate-inner"><span id="celebrateText">目标完成！</span></div></div>
+          <div class="celebrate" id="celebrate" hidden><div class="celebrate-inner"><span id="celebrateText"></span></div></div>
         </div>
 
         <div class="stage-toolbar">
           <div class="cam-status">
             <span class="dot" id="camDot"></span>
-            <span id="camStatus">摄像头未开启</span>
+            <span id="camStatus"></span>
           </div>
           <label class="field">
-            <span>镜头</span>
+            <span data-i18n="ui.lens"></span>
             <select id="camSel"></select>
           </label>
           <div class="spacer"></div>
-          <button class="ghost-btn" id="btnResetReps" type="button">重置计数</button>
+          <button class="ghost-btn" id="btnResetReps" type="button" data-i18n="ui.resetReps"></button>
         </div>
         <div class="debug-line" id="debugLine" hidden></div>
       </section>
 
       <aside class="panel">
         <section class="card">
-          <h2 class="card-title">① 选择动作</h2>
+          <h2 class="card-title" data-i18n="ui.step1"></h2>
           <div class="exercise-grid" id="exerciseGrid"></div>
         </section>
 
         <section class="card">
-          <h2 class="card-title" id="howtoTitle">动作要领</h2>
+          <h2 class="card-title" id="howtoTitle"></h2>
           <p class="camera-hint" id="cameraHint"></p>
           <ul class="howto-list" id="howtoList"></ul>
           <ul class="tip-list" id="tipList"></ul>
@@ -108,80 +111,80 @@
 
         <section class="card steps-card">
           <div class="card-title-row">
-            <h2 class="card-title">要领得分</h2>
-            <span class="score-badge" id="scoreBadge">0 分</span>
+            <h2 class="card-title" data-i18n="ui.scoreCard"></h2>
+            <span class="score-badge" id="scoreBadge">0</span>
           </div>
           <ul class="step-list" id="stepList"></ul>
-          <p class="step-hint" id="stepHint">下一步…</p>
-          <p class="step-note">照着要领一步步做：每达成一步就立刻加分、响铃、打勾。选好动作后站着就能开始拿“站姿”的分，不用等点开始。</p>
+          <p class="step-hint" id="stepHint"></p>
+          <p class="step-note" data-i18n="ui.stepsNote"></p>
         </section>
 
         <section class="card">
-          <h2 class="card-title">② 设定目标</h2>
+          <h2 class="card-title" data-i18n="ui.step2"></h2>
           <div class="target-row">
             <button class="step-btn" id="tMinus" type="button">−</button>
             <input id="targetInput" type="number" min="1" max="999" step="1" value="15" />
             <button class="step-btn" id="tPlus" type="button">＋</button>
-            <span class="target-unit" id="targetUnit">次</span>
+            <span class="target-unit" id="targetUnit"></span>
           </div>
           <div class="chips" id="targetChips"></div>
         </section>
 
         <section class="card">
-          <h2 class="card-title">③ 开始训练</h2>
+          <h2 class="card-title" data-i18n="ui.step3"></h2>
           <div class="btn-row">
-            <button class="primary-btn" id="btnStart" type="button">开始训练</button>
-            <button class="ghost-btn" id="btnPause" type="button" disabled>暂停</button>
-            <button class="ghost-btn" id="btnStop" type="button" disabled>结束本组</button>
+            <button class="primary-btn" id="btnStart" type="button" data-i18n="ui.start"></button>
+            <button class="ghost-btn" id="btnPause" type="button" disabled data-i18n="ui.pause"></button>
+            <button class="ghost-btn" id="btnStop" type="button" disabled data-i18n="ui.stop"></button>
           </div>
           <div class="live-stats">
             <div class="stat">
-              <span class="stat-label">总分</span>
-              <span class="stat-value" id="statScore">0 分</span>
+              <span class="stat-label" data-i18n="ui.totalScore"></span>
+              <span class="stat-value" id="statScore">0</span>
             </div>
             <div class="stat">
-              <span class="stat-label">有效次数</span>
+              <span class="stat-label" data-i18n="ui.validReps"></span>
               <span class="stat-value" id="statValid">0</span>
             </div>
             <div class="stat">
-              <span class="stat-label">半程 / 未计</span>
+              <span class="stat-label" data-i18n="ui.partial"></span>
               <span class="stat-value warn" id="statPartial">0</span>
             </div>
             <div class="stat">
-              <span class="stat-label" id="statTimerLabel">本组用时</span>
+              <span class="stat-label" id="statTimerLabel" data-i18n="ui.setTime"></span>
               <span class="stat-value" id="statTimer">00:00</span>
             </div>
             <div class="stat">
-              <span class="stat-label">动作幅度</span>
+              <span class="stat-label" data-i18n="ui.depth"></span>
               <span class="stat-value" id="statDepth">0%</span>
             </div>
           </div>
           <div class="depth-bar"><div class="depth-fill" id="depthFill"></div></div>
-          <p class="cue-line" id="cueLine">选好动作后点“开始训练”，会有 3 秒倒计时。</p>
+          <p class="cue-line" id="cueLine"></p>
         </section>
 
         <section class="card summary" id="summaryCard" hidden>
-          <h2 class="card-title">本组小结</h2>
+          <h2 class="card-title" data-i18n="ui.summaryTitle"></h2>
           <div class="summary-grid" id="summaryGrid"></div>
           <p class="summary-note" id="summaryNote"></p>
         </section>
 
         <section class="card">
-          <h2 class="card-title">最佳成绩</h2>
+          <h2 class="card-title" data-i18n="ui.best"></h2>
           <ul class="record-list" id="recordList"></ul>
         </section>
 
         <section class="card">
           <div class="card-title-row">
-            <h2 class="card-title">训练记录</h2>
-            <button class="mini-btn" id="btnClearHistory" type="button">清空</button>
+            <h2 class="card-title" data-i18n="ui.history"></h2>
+            <button class="mini-btn" id="btnClearHistory" type="button" data-i18n="ui.clear"></button>
           </div>
           <ul class="history-list" id="historyList"></ul>
         </section>
 
         <section class="card muted">
-          <h2 class="card-title">快捷键</h2>
-          <p class="keys"><kbd>1</kbd>~<kbd>6</kbd> 切换动作 · <kbd>空格</kbd> 开始/暂停 · <kbd>R</kbd> 重置计数 · <kbd>Esc</kbd> 结束本组 · <kbd>M</kbd> 镜像 · <kbd>S</kbd> 火柴人 · <kbd>F</kbd> 全屏</p>
+          <h2 class="card-title" data-i18n="ui.shortcuts"></h2>
+          <p class="keys" data-i18n-html="ui.shortcutsText"></p>
         </section>
       </aside>
     </main>

@@ -3,6 +3,7 @@
  */
 
 import { LM, SKELETON_EDGES } from './geometry.js';
+import { t } from './i18n.js';
 
 const COLORS = {
   ok: '#34e5c4',
@@ -130,16 +131,16 @@ export class PoseRenderer {
     const A = { L: LM.L_ANKLE, R: LM.R_ANKLE };
 
     if (focus.includes('knee') && Number.isFinite(frame.kneeAngle)) {
-      items.push({ at: P(K[side]), text: `膝 ${Math.round(frame.kneeAngle)}°` });
+      items.push({ at: P(K[side]), text: `${t('debug.knee')} ${Math.round(frame.kneeAngle)}°` });
     }
     if (focus.includes('elbow') && Number.isFinite(frame.elbowAngle)) {
-      items.push({ at: P(E[side]), text: `肘 ${Math.round(frame.elbowAngle)}°` });
+      items.push({ at: P(E[side]), text: `${t('debug.elbow')} ${Math.round(frame.elbowAngle)}°` });
     }
     if (focus.includes('hip') && Number.isFinite(frame.hipAngle)) {
-      items.push({ at: P(Hp[side]), text: `髋 ${Math.round(frame.hipAngle)}°` });
+      items.push({ at: P(Hp[side]), text: `${t('debug.hip')} ${Math.round(frame.hipAngle)}°` });
     }
     if (focus.includes('shoulder') && Number.isFinite(frame.bodyStraight)) {
-      items.push({ at: P(S[side]), text: `身 ${Math.round(frame.bodyStraight)}°` });
+      items.push({ at: P(S[side]), text: `${t('debug.bodyStraight')} ${Math.round(frame.bodyStraight)}°` });
     }
 
     ctx.save();

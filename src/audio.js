@@ -1,27 +1,12 @@
 /**
- * 音效 + 中文语音报数。
+ * 音效 + 语音播报（多语言）。
  * 全部使用浏览器内置能力（WebAudio / SpeechSynthesis），不依赖任何外部资源。
+ *
+ * 语音内容一律走 i18n 词条；数字直接交给 TTS 用对应语言朗读
+ * （zh-CN / en-US / es-ES / fr-FR 都能正确读出阿拉伯数字）。
  */
 
-const CN_DIGITS = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
-
-/** 0~99 的中文读法，交给语音引擎念出来更自然 */
-export function cnNumber(n) {
-  n = Math.round(n);
-  if (n < 0) return String(n);
-  if (n < 10) return CN_DIGITS[n];
-  if (n < 20) return '十' + (n % 10 ? CN_DIGITS[n % 10] : '');
-  if (n < 100) return CN_DIGITS[Math.floor(n / 10)] + '十' + (n % 10 ? CN_DIGITS[n % 10] : '');
-  return String(n);
-}
-
-export function cnSeconds(ms) {
-  const s = ms / 1000;
-  if (s < 60) return `${cnNumber(Math.round(s))}秒`;
-  const m = Math.floor(s / 60);
-  const r = Math.round(s % 60);
-  return `${cnNumber(m)}分${r ? cnNumber(r) + '秒' : ''}`;
-}
+import { t, getMeta } from './i18n.js';
 
 export class AudioKit {
   constructor() {
@@ -57,10 +42,14 @@ export class AudioKit {
     return this.ctx;
   }
 
+  /** 挑选与当前语言匹配的系统语音，语言切换后需要重新调用 */
   pickVoice() {
+    if (typeof speechSynthesis === 'undefined') return;
+    const want = String(getMeta().speechLang || 'en-US').toLowerCase();
+    const base = want.split('-')[0];
     const voices = speechSynthesis.getVoices?.() || [];
-    this._voice = voices.find((v) => /zh[-_]CN/i.test(v.lang))
-      || voices.find((v) => /^zh/i.test(v.lang))
+    this._voice = voices.find((v) => String(v.lang || '').toLowerCase() === want)
+      || voices.find((v) => String(v.lang || '').toLowerCase().startsWith(base))
       || null;
   }
 
@@ -138,11 +127,14 @@ export class AudioKit {
     if (!force && now - this._lastVoiceAt < minGapMs) return;
     if (!force && this._speaking) return; // 不排队，只报最新的
     this._lastVoiceAt = now;
+    const meta = getMeta();
     try {
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(String(text));
-      if (this._voice) u.voice = this._voice;
-      u.lang = 'zh-CN';
+      if (this._voice && this._voice.lang && String(this._voice.lang).toLowerCase().startsWith(meta.speechLang.split('-')[0])) {
+        u.voice = this._voice;
+      }
+      u.lang = meta.speechLang || 'en-US';
       u.rate = rate;
       u.pitch = pitch;
       u.volume = this.volume;
@@ -153,14 +145,30 @@ export class AudioKit {
     } catch { /* 忽略语音异常 */ }
   }
 
-  /** 报数：按次数说中文数字 */
-  sayRep(n) { this.say(cnNumber(n) + '个', { rate: 1.35, minGapMs: 200 }); }
+  /** 报数：数字交给 TTS，单位后缀随语言变化 */
+  sayRep(n) {
+    const suffix = t('speech.repSuffix');
+    this.say(`${n} ${suffix}`.trim(), { rate: 1.35, minGapMs: 200 });
+  }
+
   /** 报要领：只在每个要领第一次完成时念出来，避免刷屏 */
   sayStep(label) { this.say(label, { rate: 1.2, minGapMs: 2200 }); }
-  sayScore(n) { this.say(cnNumber(n) + '分', { rate: 1.3, minGapMs: 1500, pitch: 1.15 }); }
-  sayCountdown(n) { this.say(cnNumber(n), { rate: 1.1, force: true }); }
-  sayStart() { this.say('开始', { rate: 1.3, force: true }); }
+
+  /** 报分数 */
+  sayScore(n) {
+    const suffix = t('speech.scoreSuffix');
+    this.say(`${n} ${suffix}`.trim(), { rate: 1.3, minGapMs: 1500, pitch: 1.15 });
+  }
+
+  /** 报计时时长 */
+  sayTime(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    const suffix = t('speech.secondSuffix');
+    this.say(`${s} ${suffix}`.trim(), { rate: 1.15, force: true });
+  }
+
+  sayCountdown(n) { this.say(String(n), { rate: 1.1, force: true }); }
+  sayStart() { this.say(t('speech.start'), { rate: 1.3, force: true }); }
   sayCue(text) { this.say(text, { rate: 1.15, minGapMs: 6000 }); }
-  sayTime(ms) { this.say(cnSeconds(ms), { rate: 1.15, force: true }); }
   stopSpeech() { try { speechSynthesis.cancel(); } catch { /* ignore */ } }
 }

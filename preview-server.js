@@ -75,5 +75,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`体感健身游戏预览地址： http://127.0.0.1:${PORT}`);
+  console.log(`Motion Fitness is running at: http://127.0.0.1:${PORT}`);
   console.log('（用 Chrome / Edge 打开，首次点“开启摄像头”并允许权限）');
+  console.log('(Open it in Chrome / Edge, click "Start camera" and allow the permission)');
 });

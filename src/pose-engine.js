@@ -5,9 +5,10 @@
 
 import { FilesetResolver, PoseLandmarker } from '../vendor/tasks-vision/vision_bundle.mjs';
 
+// 模型文件路径（界面上的模型名称走 i18n：ui.modelLite / ui.modelFull）
 export const MODELS = {
-  lite: { label: '轻量（流畅，推荐）', url: './vendor/models/pose_landmarker_lite.task' },
-  full: { label: '完整（更准，吃性能）', url: './vendor/models/pose_landmarker_full.task' },
+  lite: { url: './vendor/models/pose_landmarker_lite.task' },
+  full: { url: './vendor/models/pose_landmarker_full.task' },
 };
 
 export const WASM_DIR = './vendor/tasks-vision/wasm';
@@ -32,7 +33,7 @@ export class PoseEngine {
     if (this.landmarker && this.modelKey === modelKey) return this;
     this.close();
 
-    onStatus('正在加载姿态模型…');
+    onStatus('Loading pose model…');
     this._vision = this._vision || await FilesetResolver.forVisionTasks(WASM_DIR);
     const modelUrl = (MODELS[modelKey] || MODELS.lite).url;
 
@@ -51,14 +52,14 @@ export class PoseEngine {
       lm = await create('GPU');
       this.delegate = 'GPU';
     } catch (err) {
-      console.warn('[pose] GPU 不可用，回退 CPU：', err?.message || err);
-      onStatus('GPU 不可用，改用 CPU 推理…');
+      console.warn('[pose] GPU delegate unavailable, falling back to CPU:', err?.message || err);
+      onStatus('GPU unavailable, using CPU inference…');
       lm = await create('CPU');
       this.delegate = 'CPU';
     }
     this.landmarker = lm;
     this.modelKey = modelKey;
-    onStatus(`模型就绪（${this.delegate}）`);
+    onStatus(`Model ready (${this.delegate})`);
     return this;
   }
 
@@ -71,7 +72,7 @@ export class PoseEngine {
     try {
       res = this.landmarker.detectForVideo(video, tsMs);
     } catch (err) {
-      console.warn('[pose] 推理失败：', err?.message || err);
+      console.warn('[pose] inference failed:', err?.message || err);
       return null;
     }
     if (!res || !res.landmarks || !res.landmarks.length) return null;

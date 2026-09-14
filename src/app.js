@@ -1,13 +1,19 @@
 /**
  * 应用主逻辑：摄像头 → 姿态识别 → 指标 → 动作判定 → 界面/语音反馈。
+ * 界面文案全部走 i18n（src/locales/*.js），支持中文 / 英文 / 西班牙文 / 法文。
  */
 
-import { EXERCISES, EXERCISE_MAP, createDetector } from './exercises.js';
+import {
+  EXERCISES, createDetector, localizedExercise, localizedExercises, exerciseUnit,
+} from './exercises.js';
 import { LandmarkSmoother, toMetric, clamp } from './geometry.js';
 import { computeFrame } from './metrics.js';
-import { PoseEngine, Camera, MODELS } from './pose-engine.js';
+import { PoseEngine, Camera } from './pose-engine.js';
 import { PoseRenderer } from './render.js';
 import { AudioKit } from './audio.js';
+import {
+  t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
+} from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -29,16 +35,6 @@ const DEFAULT_SETTINGS = {
   exerciseId: 'squat',
   targets: {},
   camDeviceId: null,
-};
-
-const PHASE_TEXT = {
-  idle: '准备',
-  up: '还原',
-  down: '下落',
-  descending: '向下',
-  bottom: '底部',
-  holding: '保持中',
-  paused: '已暂停',
 };
 
 const REP_TARGETS = [8, 12, 15, 20, 30];
@@ -111,33 +107,52 @@ function saveList(key, list) {
   try { localStorage.setItem(key, JSON.stringify(list)); } catch { /* ignore */ }
 }
 
+/** 分数 + 单位（分 / points / puntos / points） */
+const scoreText = (n) => `${n} ${t('speech.scoreSuffix')}`.trim();
+
 /* ------------------------------------------------------------------ *
  * 界面构建
  * ------------------------------------------------------------------ */
 
+function buildLanguageSelect() {
+  const sel = $('langSel');
+  if (!sel) return;
+  sel.innerHTML = '';
+  for (const code of LANG_ORDER) {
+    const meta = LOCALES[code]?.meta;
+    if (!meta) continue;
+    const o = document.createElement('option');
+    o.value = code;
+    o.textContent = `${meta.flag || ''} ${meta.label || code}`.trim();
+    sel.appendChild(o);
+  }
+  sel.value = getLang();
+}
+
 function buildExerciseGrid() {
   const grid = $('exerciseGrid');
   grid.innerHTML = '';
-  EXERCISES.forEach((ex, i) => {
+  localizedExercises().forEach((ex, i) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'exercise-btn';
     btn.dataset.id = ex.id;
+    const kind = t(ex.kind === 'rep' ? 'ui.kindRep' : 'ui.kindHold');
     btn.innerHTML = `<span class="ex-icon">${ex.icon}</span><span>${ex.name}</span>`
-      + `<span class="ex-kind">${ex.kind === 'rep' ? '计数' : '计时'} · ${i + 1}</span>`;
+      + `<span class="ex-kind">${kind} · ${i + 1}</span>`;
     btn.addEventListener('click', () => selectExercise(ex.id));
     grid.appendChild(btn);
   });
 }
 
 function selectExercise(id) {
-  if (!EXERCISE_MAP[id]) return;
+  if (!EXERCISES.some((e) => e.id === id)) return;
   if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
     stopSession('switch');
   }
   state.exerciseId = id;
   state.settings.exerciseId = id;
-  const ex = EXERCISE_MAP[id];
+  const ex = localizedExercise(id);
   state.target = state.settings.targets[id] || ex.defaultTarget;
   state.detector = createDetector(id, { strict: state.settings.strict });
   saveSettings();
@@ -150,11 +165,11 @@ function selectExercise(id) {
   $('hudName').textContent = ex.name;
   $('hudUnit').textContent = ex.unit;
   $('targetUnit').textContent = ex.unit;
-  $('statTimerLabel').textContent = ex.kind === 'hold' ? '已计时' : '本组用时';
-  $('cameraHint').textContent = '📹 ' + ex.cameraHint;
-  $('howtoTitle').textContent = `${ex.icon} ${ex.name} · 动作要领`;
-  $('howtoList').innerHTML = ex.howto.map((t) => `<li>${t}</li>`).join('');
-  $('tipList').innerHTML = ex.tips.map((t) => `<li>${t}</li>`).join('');
+  $('statTimerLabel').textContent = ex.kind === 'hold' ? t('ui.holdTime') : t('ui.setTime');
+  $('cameraHint').textContent = `📹 ${ex.cameraHint}`;
+  $('howtoTitle').textContent = `${ex.icon} ${ex.name} · ${t('ui.actionGuide')}`;
+  $('howtoList').innerHTML = ex.howto.map((x) => `<li>${x}</li>`).join('');
+  $('tipList').innerHTML = ex.tips.map((x) => `<li>${x}</li>`).join('');
   $('targetInput').value = String(state.target);
   buildTargetChips();
   $('summaryCard').hidden = true;
@@ -166,7 +181,7 @@ function selectExercise(id) {
 }
 
 function buildTargetChips() {
-  const ex = EXERCISE_MAP[state.exerciseId];
+  const ex = localizedExercise(state.exerciseId);
   const presets = ex.kind === 'hold' ? HOLD_TARGETS : REP_TARGETS;
   const chips = $('targetChips');
   chips.innerHTML = '';
@@ -180,7 +195,7 @@ function buildTargetChips() {
 }
 
 function setTarget(v) {
-  const ex = EXERCISE_MAP[state.exerciseId];
+  const ex = localizedExercise(state.exerciseId);
   const n = clamp(Math.round(Number(v) || ex.defaultTarget), 1, 999);
   state.target = n;
   state.settings.targets[state.exerciseId] = n;
@@ -199,7 +214,7 @@ function fmtClock(ms) {
 }
 
 function updateHud() {
-  const ex = EXERCISE_MAP[state.exerciseId];
+  const ex = localizedExercise(state.exerciseId);
   const det = state.detector;
   const isHold = ex.kind === 'hold';
 
@@ -210,12 +225,12 @@ function updateHud() {
 
   if (isHold) {
     $('hudValue').textContent = String(Math.floor(holdMs / 1000));
-    $('hudSub').textContent = `目标 ${state.target} 秒`;
+    $('hudSub').textContent = `${t('ui.targetPrefix')} ${state.target} ${ex.unit}`;
   } else {
     $('hudValue').textContent = String(valid);
-    $('hudSub').textContent = `目标 ${state.target} 次`;
+    $('hudSub').textContent = `${t('ui.targetPrefix')} ${state.target} ${ex.unit}`;
   }
-  $('hudScore').textContent = `${score} 分`;
+  $('hudScore').textContent = scoreText(score);
 
   const progress = isHold
     ? clamp(holdMs / (state.target * 1000), 0, 1)
@@ -226,12 +241,12 @@ function updateHud() {
   $('ringText').textContent = `${Math.round(progress * 100)}%`;
 
   $('hudExtra').textContent = partial > 0
-    ? `半程/未计 ${partial}`
-    : (det && det.phase && det.phase !== 'idle' ? PHASE_TEXT[det.phase] || '' : '');
+    ? `${t('ui.partial')} ${partial}`
+    : (det && det.phase && det.phase !== 'idle' ? t(`phase.${det.phase}`) : '');
 
-  $('statValid').textContent = isHold ? `${(holdMs / 1000).toFixed(1)} 秒` : String(valid);
+  $('statValid').textContent = isHold ? `${(holdMs / 1000).toFixed(1)} ${ex.unit}` : String(valid);
   $('statPartial').textContent = isHold ? '—' : String(partial);
-  $('statScore').textContent = `${score} 分`;
+  $('statScore').textContent = scoreText(score);
   $('statTimer').textContent = fmtClock(state.elapsedMs);
   const depth = det ? Math.round(det.depthPct || 0) : 0;
   $('statDepth').textContent = `${depth}%`;
@@ -246,23 +261,24 @@ function renderDebug(f) {
   if (!state.settings.debug) { if (!el.hidden) el.hidden = true; return; }
   el.hidden = false;
   if (!f || !f.ok) {
-    el.textContent = '指标：未检测到人体';
+    el.textContent = t('debug.noPerson');
     return;
   }
   const n = (v, d = 0) => (Number.isFinite(v) ? v.toFixed(d) : '—');
+  const mark = (v) => (v ? t('debug.yes') : t('debug.no'));
   el.textContent = [
-    `视角 ${f.view === 'side' ? '侧面✓' : '正面✗(需侧对)'}(${n(f.viewRatio, 2)})`,
-    `全身 ${f.bodyVisible ? '✓' : '✗'}`,
-    `双腿可见 ${f.legsVisible ? '✓' : '✗'}`,
-    `躯干倾角 ${n(f.trunkLean)}°`,
-    `膝 ${n(f.kneeAngle)}°`,
-    `肘 ${n(f.elbowAngle)}°`,
-    `髋 ${n(f.hipAngle)}°`,
-    `身体直线 ${n(f.bodyStraight)}°`,
-    `髋抬起 ${n(f.hipRise, 2)}`,
-    `大腿离水平 ${n(f.thighFromHoriz)}°`,
-    `可见度 ${n(f.coreVis, 2)}`,
-    `状态 ${state.session}`,
+    `${t('debug.view')} ${f.view === 'side' ? t('debug.viewSide') : t('debug.viewFront')}(${n(f.viewRatio, 2)})`,
+    `${t('debug.bodyVisible')} ${mark(f.bodyVisible)}`,
+    `${t('debug.legsVisible')} ${mark(f.legsVisible)}`,
+    `${t('debug.trunkLean')} ${n(f.trunkLean)}°`,
+    `${t('debug.knee')} ${n(f.kneeAngle)}°`,
+    `${t('debug.elbow')} ${n(f.elbowAngle)}°`,
+    `${t('debug.hip')} ${n(f.hipAngle)}°`,
+    `${t('debug.bodyStraight')} ${n(f.bodyStraight)}°`,
+    `${t('debug.hipRise')} ${n(f.hipRise, 2)}`,
+    `${t('debug.thighFromHoriz')} ${n(f.thighFromHoriz)}°`,
+    `${t('debug.visibility')} ${n(f.coreVis, 2)}`,
+    `${t('debug.state')} ${state.session}`,
   ].join(' · ');
 }
 
@@ -272,7 +288,7 @@ function renderSteps() {
   const ul = $('stepList');
   if (!det) { ul.innerHTML = ''; return; }
   const steps = det.stepStatus();
-  const sig = `${det.cycle}|${det.score}|${steps.map((s) => (s.done ? 1 : 0)).join('')}`;
+  const sig = `${getLang()}|${det.cycle}|${det.score}|${steps.map((s) => (s.done ? 1 : 0)).join('')}`;
   if (sig === state.stepSig) return;
   state.stepSig = sig;
 
@@ -282,21 +298,22 @@ function renderSteps() {
     const mark = s.done ? '✓' : (i === firstPending ? '▸' : '○');
     return `<li class="step-item ${cls}">`
       + `<span class="step-check">${mark}</span>`
-      + `<span class="step-label">${s.label}</span>`
+      + `<span class="step-label">${t(s.labelKey)}</span>`
       + `<span class="step-pts">+${s.points}</span></li>`;
   }).join('');
-  $('scoreBadge').textContent = `${det.score} 分`;
+  $('scoreBadge').textContent = scoreText(det.score);
 
   // 下一步的“卡点说明”单独放在列表下方，逐帧刷新也不会打断打勾动画
   const pending = det.pendingHint();
   const hintEl = $('stepHint');
   if (pending) {
+    const label = t(pending.labelKey);
     hintEl.textContent = pending.hint
-      ? `下一步「${pending.label}」：${pending.hint}`
-      : `下一步「${pending.label}」`;
+      ? t('ui.nextStepWithHint', { label, hint: t(pending.hint.key, pending.hint.params) })
+      : t('ui.nextStepNoHint', { label });
     hintEl.className = 'step-hint warn';
   } else {
-    hintEl.textContent = '本轮要领已全部完成 ✓';
+    hintEl.textContent = t('ui.stepsAllDone');
     hintEl.className = 'step-hint good';
   }
 }
@@ -338,6 +355,25 @@ function pulseValue() {
   setTimeout(() => el.classList.remove('pop'), 160);
 }
 
+function updatePipelineStatus() {
+  const parts = [];
+  if (camera.active) {
+    parts.push(t('status.cameraReady', { w: camera.video.videoWidth, h: camera.video.videoHeight }));
+    $('camDot').classList.add('on');
+  } else {
+    parts.push(t('status.cameraOff'));
+    $('camDot').classList.remove('on');
+  }
+  if (state.engineReady) {
+    const model = t(state.settings.modelKey === 'full' ? 'ui.modelFull' : 'ui.modelLite');
+    parts.push(t('status.modelReadyShort', { model, delegate: engine.delegate || 'CPU' }));
+    parts.push(state.poseHits > 0 ? t('status.personFound') : t('status.searching'));
+  } else if (camera.active) {
+    parts.push(t('status.modelLoading'));
+  }
+  $('camStatus').textContent = parts.join(' · ');
+}
+
 /* ------------------------------------------------------------------ *
  * 训练流程
  * ------------------------------------------------------------------ */
@@ -351,7 +387,7 @@ function ensureDetector() {
 
 function startSession() {
   if (!camera.active) {
-    setHint('请先开启摄像头', 'warn', 2600);
+    setHint(t('status.needCamera'), 'warn', 2600);
     return;
   }
   if (state.session === 'running') return;
@@ -370,7 +406,7 @@ function startSession() {
   state.lastTick = performance.now();
   $('summaryCard').hidden = true;
   $('celebrate').hidden = true;
-  setCueLine('准备姿势：' + EXERCISE_MAP[state.exerciseId].cameraHint);
+  setCueLine(`📹 ${localizedExercise(state.exerciseId).cameraHint}`);
   requestWakeLock();
 
   state.session = 'countdown';
@@ -399,7 +435,7 @@ function startSession() {
       det.resetClock?.();
       audio.go();
       audio.sayStart();
-      setCueLine('开始！跟着提示做动作，半程动作不会计入次数。', 'good');
+      setCueLine(t('status.countdownGo'), 'good');
       updateButtons();
     }
   }, 850);
@@ -410,8 +446,8 @@ function pauseSession() {
   if (state.session !== 'running') return;
   state.session = 'paused';
   audio.pause();
-  setCueLine('已暂停，点“继续”接着练。');
-  setHint('已暂停', 'warn', 2000);
+  setCueLine(t('status.paused'));
+  setHint(t('status.paused'), 'warn', 2000);
   updateButtons();
 }
 
@@ -420,7 +456,7 @@ function resumeSession() {
   state.session = 'running';
   state.lastTick = performance.now();
   state.detector?.resetClock?.();
-  setCueLine('继续！');
+  setCueLine(t('status.resume'));
   updateButtons();
 }
 
@@ -434,7 +470,7 @@ function stopSession(reason = 'user') {
   if (!wasActive) { updateButtons(); return; }
 
   const det = state.detector;
-  const ex = EXERCISE_MAP[state.exerciseId];
+  const ex = localizedExercise(state.exerciseId);
   if (!det) { updateButtons(); return; }
 
   const isHold = ex.kind === 'hold';
@@ -445,30 +481,30 @@ function stopSession(reason = 'user') {
   const hasWork = value > 0 || det.partialReps > 0 || score > 0;
   if (hasWork) saveSession({ ex, value, partial: det.partialReps, reason, score });
 
-  // 小结
   const items = [
-    ['动作', `${ex.icon} ${ex.name}`],
-    ['得分', `${score} 分`],
-    [isHold ? '有效计时' : '有效次数', isHold ? `${value} 秒` : `${value} 次`],
-    ['完成度', `${Math.round(clamp(isHold ? det.holdMs / (state.target * 1000) : value / state.target, 0, 1.5) * 100)}%`],
-    ['要领完成', `${doneCount}/${steps.length} 步`],
-    ['用时', fmtClock(state.elapsedMs)],
+    [t('ui.colAction'), `${ex.icon} ${ex.name}`],
+    [t('ui.colScore'), scoreText(score)],
+    [isHold ? t('ui.colHold') : t('ui.colValidReps'), `${value} ${ex.unit}`],
+    [t('ui.colCompletion'), `${Math.round(clamp(isHold ? det.holdMs / (state.target * 1000) : value / state.target, 0, 1.5) * 100)}%`],
+    [t('ui.colSteps'), t('ui.stepsDoneRatio', { done: doneCount, total: steps.length })],
+    [t('ui.colElapsed'), fmtClock(state.elapsedMs)],
   ];
   $('summaryGrid').innerHTML = items
     .map(([k, v]) => `<div class="summary-item"><div class="k">${k}</div><div class="v">${v}</div></div>`)
     .join('');
-  const missed = steps.filter((s) => !s.done).map((s) => s.label);
+  const missed = steps.filter((s) => !s.done).map((s) => t(s.labelKey));
   $('summaryNote').textContent = reason === 'goal'
-    ? `🎉 目标达成，记录已保存！本组得分 ${score} 分。`
+    ? t('summary.goalReached', { score })
     : (hasWork
-      ? (missed.length ? `本组得分 ${score} 分。下次注意：${missed.join('、')}` : `本组得分 ${score} 分，要领全部完成！`)
-      : '这一组没有产生有效数据，再试一次吧。');
-  $('summaryCard').hidden = false;
+      ? (missed.length
+        ? t('summary.savedWithMiss', { score, list: missed.join('、') })
+        : t('summary.savedAll', { score }))
+      : t('summary.noData'));
 
   audio.finish();
   det.reset();
   state.elapsedMs = 0;
-  setCueLine('本组结束。休息一下，或者开始新的一组。');
+  setCueLine(t('status.setDone'));
   updateHud();
   updateButtons();
   renderHistory();
@@ -489,9 +525,9 @@ function updateButtons() {
   const running = state.session === 'running';
   const paused = state.session === 'paused';
   const busy = running || paused || state.session === 'countdown';
-  $('btnStart').textContent = running ? '训练中…' : (paused ? '继续' : '开始训练');
+  $('btnStart').textContent = running ? t('ui.training') : (paused ? t('ui.resume') : t('ui.start'));
   $('btnStart').disabled = running || state.session === 'countdown';
-  $('btnPause').textContent = paused ? '继续' : '暂停';
+  $('btnPause').textContent = paused ? t('ui.resume') : t('ui.pause');
   $('btnPause').disabled = !(running || paused);
   $('btnStop').disabled = !busy;
   $('btnResetReps').disabled = !state.detector;
@@ -506,10 +542,8 @@ function saveSession({ ex, value, partial, reason, score = 0 }) {
   history.unshift({
     at: Date.now(),
     exerciseId: ex.id,
-    name: ex.name,
-    icon: ex.icon,
     kind: ex.kind,
-    unit: ex.unit,
+    unitKey: ex.unitKey,
     value,
     score,
     partial,
@@ -542,17 +576,18 @@ function renderRecords() {
   const ul = $('recordList');
   ul.innerHTML = '';
   let any = false;
-  for (const ex of EXERCISES) {
-    const r = records[ex.id];
+  for (const meta of EXERCISES) {
+    const r = records[meta.id];
     if (!r) continue;
     any = true;
+    const ex = localizedExercise(meta.id);
     const li = document.createElement('li');
     li.innerHTML = `<span class="r-name">${ex.icon} ${ex.name}</span>`
       + `<span class="r-val">${r.value} ${ex.unit}</span>`
-      + `<span class="r-score">${r.score || 0} 分</span>`;
+      + `<span class="r-score">${scoreText(r.score || 0)}</span>`;
     ul.appendChild(li);
   }
-  if (!any) ul.innerHTML = '<li class="empty">还没有记录，先练一组吧。</li>';
+  if (!any) ul.innerHTML = `<li class="empty">${t('ui.noRecords')}</li>`;
 }
 
 function renderHistory() {
@@ -560,47 +595,37 @@ function renderHistory() {
   const ul = $('historyList');
   ul.innerHTML = '';
   if (!history.length) {
-    ul.innerHTML = '<li class="empty">暂无训练记录。</li>';
+    ul.innerHTML = `<li class="empty">${t('ui.noHistory')}</li>`;
     return;
   }
+  const localeTag = getMeta().htmlLang || getLang();
   for (const h of history.slice(0, 12)) {
     const d = new Date(h.at);
     const when = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} `
       + `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const ex = localizedExercise(h.exerciseId);
     const li = document.createElement('li');
+    li.dataset.locale = localeTag;
     li.innerHTML = `<span class="h-when">${when}</span>`
-      + `<span class="h-what">${h.icon} ${h.name}${h.reached ? ' 🎉' : ''}</span>`
-      + `<span class="h-val">${h.value} ${h.unit}</span>`
-      + `<span class="h-score">${h.score || 0} 分</span>`;
-    if (h.partial > 0) li.querySelector('.h-what').title = `半程/未计 ${h.partial} 次`;
+      + `<span class="h-what">${ex ? `${ex.icon} ${ex.name}` : h.exerciseId}${h.reached ? ' 🎉' : ''}</span>`
+      + `<span class="h-val">${h.value} ${ex ? ex.unit : ''}</span>`
+      + `<span class="h-score">${scoreText(h.score || 0)}</span>`;
+    if (h.partial > 0) li.querySelector('.h-what').title = `${t('ui.partial')} ${h.partial}`;
     ul.appendChild(li);
   }
-}
-
-function updatePipelineStatus() {
-  const parts = [];
-  if (camera.active) {
-    parts.push(`摄像头 ${camera.video.videoWidth}×${camera.video.videoHeight}`);
-  } else {
-    parts.push('摄像头未开启');
-  }
-  if (!camera.active) {
-    $('camDot').classList.remove('on');
-  } else {
-    $('camDot').classList.add('on');
-  }
-  if (state.engineReady) {
-    parts.push(`模型就绪 ${engine.modelKey === 'full' ? '完整' : '轻量'}/${engine.delegate || 'CPU'}`);
-    parts.push(state.poseHits > 0 ? '已识别到人体 ✓' : '正在找人…（请站到画面里）');
-  } else if (camera.active) {
-    parts.push('模型加载中…');
-  }
-  $('camStatus').textContent = parts.join(' · ');
 }
 
 /* ------------------------------------------------------------------ *
  * 事件处理
  * ------------------------------------------------------------------ */
+
+function feedDetector(f, now) {
+  const det = state.detector;
+  if (!det) return [];
+  // 一直实时识别：只要达成要领就立刻加分、打勾、响铃，
+  // 不需要先点“开始训练”（否则用户站好了却毫无反馈）。
+  return det.update(f, now);
+}
 
 function handleEvents(events) {
   const det = state.detector;
@@ -614,12 +639,12 @@ function handleEvents(events) {
       showScorePop(`+${ev.points}`);
       if (!state.saidSteps.has(ev.id)) {
         state.saidSteps.add(ev.id);
-        audio.sayStep(ev.label);
+        audio.sayStep(t(ev.labelKey));
       }
       checkScoreMilestone(ev.score);
     } else if (ev.type === 'bonus') {
       audio.bonus();
-      showScorePop(`要领全过 +${ev.points}`, 'bonus');
+      showScorePop(`${t('ui.stepsAllDone')} +${ev.points}`, 'bonus');
     } else if (ev.type === 'points') {
       audio.scoreTick();
       checkScoreMilestone(ev.score);
@@ -631,8 +656,8 @@ function handleEvents(events) {
         const half = Math.ceil(state.target / 2);
         if (det.validReps === half && half > 0) {
           audio.milestone();
-          setHint('已经完成一半，继续保持！', 'good', 2200);
-          audio.sayCue('完成一半，继续保持');
+          setHint(t('status.half'), 'good', 2200);
+          audio.sayCue(t('status.halfVoice'));
         }
         if (running && det.validReps >= state.target && !state.goalHit) {
           state.goalHit = true;
@@ -644,7 +669,7 @@ function handleEvents(events) {
     } else if (ev.type === 'cue') {
       state.lastCueAt = performance.now();
       state.lastCueLevel = ev.level === 'info' ? 'warn' : ev.level;
-      audio.sayCue(ev.text);
+      audio.sayCue(t(ev.key, ev.params));
     } else if (ev.type === 'hold') {
       if (ev.action === 'start') {
         audio.go();
@@ -663,31 +688,26 @@ function checkScoreMilestone(score) {
     state.lastScoreMilestone = m;
     audio.milestone();
     audio.sayScore(m);
-    setHint(`已经拿到 ${m} 分！`, 'good', 2000);
+    setHint(t('status.milestone', { score: m }), 'good', 2000);
   }
 }
 
 function onGoalReached() {
-  const ex = EXERCISE_MAP[state.exerciseId];
+  const ex = localizedExercise(state.exerciseId);
   const isHold = ex.kind === 'hold';
-  $('celebrateText').textContent = `🎉 目标达成：${isHold ? state.target + ' 秒' : state.target + ' 次'}`;
+  const value = isHold
+    ? t('summary.celebrateHold', { n: state.target })
+    : t('summary.celebrateReps', { n: state.target });
+  $('celebrateText').textContent = t('summary.celebrate', { value });
   $('celebrate').hidden = false;
   state.celebrateUntil = performance.now() + 2600;
   audio.finish();
-  audio.say('目标完成，太棒了', { rate: 1.15, force: true });
+  audio.say(t('status.goalVoice'), { rate: 1.15, force: true });
 }
 
 /* ------------------------------------------------------------------ *
  * 主循环
  * ------------------------------------------------------------------ */
-
-function feedDetector(f, now) {
-  const det = state.detector;
-  if (!det) return [];
-  // 一直实时识别：只要达成要领就立刻加分、打勾、响铃，
-  // 不需要先点“开始训练”（否则用户站好了却毫无反馈）。
-  return det.update(f, now);
-}
 
 function loop() {
   requestAnimationFrame(loop);
@@ -735,7 +755,7 @@ function loop() {
 
   // 目标达成（计时类）
   const det = state.detector;
-  const ex = EXERCISE_MAP[state.exerciseId];
+  const ex = localizedExercise(state.exerciseId);
   if (counting && det && ex.kind === 'hold' && det.holdMs >= state.target * 1000 && !state.goalHit) {
     state.goalHit = true;
     onGoalReached();
@@ -744,18 +764,21 @@ function loop() {
   // 提示条：任何时刻都要有反馈，明确告诉用户“现在是什么状态、卡在哪”
   if (now > state.hintUntil) {
     if (!frame.ok) {
-      setHint('没检测到人体：请站到画面中间，让头顶到脚都在画面里（退后 1~2 步）', 'bad', 700);
+      setHint(t('status.noPerson'), 'bad', 700);
     } else {
       const pending = det ? det.pendingHint() : null;
       const recentCue = det && det.feedback && now - det.feedback.at < 3200 ? det.feedback : null;
       if (pending && pending.hint) {
-        setHint(`下一步「${pending.label}」：${pending.hint}`, 'warn', 700);
+        setHint(t('ui.nextStepWithHint', {
+          label: t(pending.labelKey),
+          hint: t(pending.hint.key, pending.hint.params),
+        }), 'warn', 700);
       } else if (recentCue) {
-        setHint(recentCue.text, recentCue.level, 700);
+        setHint(t(recentCue.key, recentCue.params), recentCue.level, 700);
       } else if (det && !det.active && det.standby) {
-        setHint(det.standby, 'warn', 700);
+        setHint(t(det.standby), 'warn', 700);
       } else {
-        setHint('已识别到你 ✓ 保持这个位置做动作', 'good', 700);
+        setHint(t('status.ready'), 'good', 700);
       }
     }
   }
@@ -796,18 +819,17 @@ function withTimeout(promise, ms, message) {
 async function startCamera(deviceId = null) {
   const mask = $('stageMask');
   $('maskIcon').textContent = '⏳';
-  $('maskTitle').textContent = '正在打开摄像头…';
-  $('maskText').textContent = '请在浏览器弹窗里选择“允许”。如果一直没反应，点下面按钮重试。';
+  $('maskTitle').textContent = t('ui.maskOpening');
+  $('maskText').textContent = t('ui.maskOpeningText');
   try {
-    await withTimeout(camera.start(deviceId), 25000, '等待摄像头授权超时（25 秒），请检查浏览器权限弹窗或是否有其它程序占用摄像头');
+    await withTimeout(camera.start(deviceId), 25000, t('ui.maskCamFailTitle'));
   } catch (err) {
     state.camError = `${err?.name || 'Error'}: ${err?.message || err}`;
     console.error('[camera]', state.camError);
     $('maskIcon').textContent = '⚠️';
-    $('maskTitle').textContent = '摄像头打开失败';
-    $('maskText').textContent = (err?.message || '未知错误')
-      + '。请检查浏览器权限设置，或确认没有其它程序占用摄像头。';
-    $('btnStartCam').textContent = '重试';
+    $('maskTitle').textContent = t('ui.maskCamFailTitle');
+    $('maskText').textContent = `${err?.message || t('ui.unknownError')}${t('ui.maskCamFailSuffix')}`;
+    $('btnStartCam').textContent = t('ui.retry');
     updatePipelineStatus();
     return;
   }
@@ -823,19 +845,19 @@ async function startCamera(deviceId = null) {
   await refreshCameraList();
 
   if (!state.engineReady) {
-    $('maskTitle').textContent = '正在加载姿态模型…';
+    $('maskTitle').textContent = t('ui.maskModelLoading');
     mask.classList.remove('hidden');
-    $('maskText').textContent = '首次加载约需几秒（本地模型文件，不需要联网）。';
+    $('maskText').textContent = t('ui.maskModelText');
     try {
-      await withTimeout(engine.init({ modelKey: state.settings.modelKey }), 45000, '姿态模型加载超时');
+      await withTimeout(engine.init({ modelKey: state.settings.modelKey }), 45000, t('ui.maskModelFail'));
       state.engineReady = true;
       mask.classList.add('hidden');
       updatePipelineStatus();
-      setCueLine('模型就绪。选好动作后直接侧对镜头站好，站姿要领就会自动给分。', 'good');
+      setCueLine(t('status.modelReady'), 'good');
     } catch (err) {
       $('maskIcon').textContent = '⚠️';
-      $('maskTitle').textContent = '姿态模型加载失败';
-      $('maskText').textContent = err?.message || '未知错误';
+      $('maskTitle').textContent = t('ui.maskModelFail');
+      $('maskText').textContent = err?.message || t('ui.unknownError');
       return;
     }
   }
@@ -850,7 +872,7 @@ async function refreshCameraList() {
     list.forEach((d, i) => {
       const o = document.createElement('option');
       o.value = d.deviceId;
-      o.textContent = d.label || `摄像头 ${i + 1}`;
+      o.textContent = d.label || `${t('ui.camera')} ${i + 1}`;
       sel.appendChild(o);
     });
     if (camera.deviceId) sel.value = camera.deviceId;
@@ -863,10 +885,59 @@ async function reloadModel() {
   try {
     await engine.init({ modelKey: state.settings.modelKey });
     state.engineReady = true;
-    setCueLine(`已切换到「${MODELS[state.settings.modelKey].label}」模型。`, 'good');
+    const model = t(state.settings.modelKey === 'full' ? 'ui.modelFull' : 'ui.modelLite');
+    setCueLine(t('status.modelSwitched', { model }), 'good');
   } catch (err) {
-    setCueLine('模型切换失败：' + (err?.message || err), 'warn');
+    setCueLine(t('status.modelSwitchFail', { msg: err?.message || err }), 'warn');
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * 语言切换
+ * ------------------------------------------------------------------ */
+
+/** 切换语言后，把静态 DOM 与所有动态文案整体刷新一遍 */
+function refreshForLang() {
+  applyI18n(document);
+  buildLanguageSelect();
+  buildExerciseGrid();
+  const prevId = state.exerciseId;
+  // 重新渲染当前动作的文案；切换语言不该丢掉已经拿到的分和要领进度
+  const det = state.detector;
+  const keep = det ? {
+    reps: det.validReps,
+    partial: det.partialReps,
+    hold: det.holdMs,
+    score: det.score,
+    cycle: det.cycle,
+    stepDone: new Map(det.stepDone),
+    cycleHadValidRep: det.cycleHadValidRep,
+    answered: state.saidSteps,
+  } : null;
+  selectExercise(prevId);
+  if (keep) {
+    // 注意：selectExercise 会新建识别器，所以必须恢复到“当前”这个实例上
+    const d = state.detector;
+    d.validReps = keep.reps; d.reps = keep.reps;
+    d.partialReps = keep.partial; d.holdMs = keep.hold; d.score = keep.score;
+    d.cycle = keep.cycle; d.stepDone = keep.stepDone;
+    d.cycleHadValidRep = keep.cycleHadValidRep;
+    state.saidSteps = keep.answered;
+  }
+  state.stepSig = '';
+  audio.pickVoice();
+  updateHud();
+  updatePipelineStatus();
+  renderRecords();
+  renderHistory();
+  updateButtons();
+  setCueLine('');
+}
+
+function changeLang(code) {
+  if (!LOCALES[code]) return;
+  setLang(code);
+  refreshForLang();
 }
 
 /* ------------------------------------------------------------------ *
@@ -885,9 +956,11 @@ function bindUI() {
     state.saidSteps = new Set();
     state.lastScoreMilestone = 0;
     state.stepSig = '';
-    setCueLine('计数与得分已重置。');
+    setCueLine(t('status.reset'));
     updateHud();
   });
+
+  $('langSel').addEventListener('change', (e) => changeLang(e.target.value));
 
   $('modelSel').value = state.settings.modelKey;
   $('modelSel').addEventListener('change', async (e) => {
@@ -896,24 +969,23 @@ function bindUI() {
     if (camera.active) await reloadModel();
   });
 
+  // [按钮 id, 设置键, 应用函数, 点击后要不要提示一句话]
   const toggles = [
-    ['btnMirror', 'mirror', (v) => $('stage').classList.toggle('mirror', v)],
-    ['btnVoice', 'voice', (v) => { audio.voiceOn = v; if (!v) audio.stopSpeech(); }],
-    ['btnSfx', 'sfx', (v) => { audio.sfxOn = v; }],
+    ['btnMirror', 'mirror', (v) => $('stage').classList.toggle('mirror', v), null],
+    ['btnVoice', 'voice', (v) => { audio.voiceOn = v; if (!v) audio.stopSpeech(); }, null],
+    ['btnSfx', 'sfx', (v) => { audio.sfxOn = v; }, null],
     ['btnStrict', 'strict', (v) => {
       if (state.detector) state.detector.strict = v;
-      setCueLine(v ? '严格模式：半程动作不计入有效次数。' : '宽松模式：半程动作也计入次数。');
-    }],
-    ['btnAngles', 'showAngles', (v) => { renderer.showAngles = v; }],
+    }, (v) => setCueLine(t(v ? 'status.strictOn' : 'status.strictOff'))],
+    ['btnAngles', 'showAngles', (v) => { renderer.showAngles = v; }, null],
     ['btnSkeleton', 'showSkeleton', (v) => {
       renderer.showSkeleton = v;
       // 关掉后立刻清一次画布，避免残影留到下一帧
       if (!v) renderer.clear();
-      setCueLine(v ? '已显示火柴人骨架。' : '已隐藏火柴人骨架，只保留摄像头画面。');
-    }],
-    ['btnDebug', 'debug', (v) => { if (!v) $('debugLine').hidden = true; }],
+    }, (v) => setCueLine(t(v ? 'status.skeletonOn' : 'status.skeletonOff'))],
+    ['btnDebug', 'debug', (v) => { if (!v) $('debugLine').hidden = true; }, null],
   ];
-  for (const [id, key, apply] of toggles) {
+  for (const [id, key, apply, announce] of toggles) {
     const btn = $(id);
     btn.setAttribute('aria-pressed', String(!!state.settings[key]));
     apply(state.settings[key]);
@@ -923,6 +995,7 @@ function bindUI() {
       state.settings[key] = v;
       saveSettings();
       apply(v);
+      if (announce) announce(v);
     });
   }
   audio.voiceOn = state.settings.voice;
@@ -940,12 +1013,18 @@ function bindUI() {
     await startCamera(e.target.value);
   });
 
-  $('tMinus').addEventListener('click', () => setTarget(state.target - (EXERCISE_MAP[state.exerciseId].kind === 'hold' ? 5 : 1)));
-  $('tPlus').addEventListener('click', () => setTarget(state.target + (EXERCISE_MAP[state.exerciseId].kind === 'hold' ? 5 : 1)));
+  $('tMinus').addEventListener('click', () => {
+    const step = localizedExercise(state.exerciseId).kind === 'hold' ? 5 : 1;
+    setTarget(state.target - step);
+  });
+  $('tPlus').addEventListener('click', () => {
+    const step = localizedExercise(state.exerciseId).kind === 'hold' ? 5 : 1;
+    setTarget(state.target + step);
+  });
   $('targetInput').addEventListener('change', (e) => setTarget(e.target.value));
 
   $('btnClearHistory').addEventListener('click', () => {
-    if (!confirm('确定清空所有训练记录与最佳成绩吗？')) return;
+    if (!confirm(t('ui.clearConfirm'))) return;
     saveList(STORE.history, []);
     saveList(STORE.records, {});
     renderHistory();
@@ -985,44 +1064,13 @@ function installErrorBanner() {
         + 'padding:10px 14px;font:13px/1.5 system-ui,sans-serif;white-space:pre-wrap;max-height:30vh;overflow:auto';
       document.body.appendChild(el);
     }
-    el.textContent = '运行出错：' + msg;
+    el.textContent = 'Runtime error: ' + msg;
     document.documentElement.dataset.error = msg;
   };
   window.addEventListener('error', (e) => show(e.message || String(e.error || e)));
   window.addEventListener('unhandledrejection', (e) => show(String(e.reason?.message || e.reason)));
 }
 
-function boot() {
-  installErrorBanner();
-  captureConsole();
-  const params = new URLSearchParams(location.search);
-  if (!Camera.supported()) {
-    $('maskIcon').textContent = '🚫';
-    $('maskTitle').textContent = '当前浏览器不支持摄像头';
-    $('maskText').textContent = '请使用最新版 Chrome / Edge / Safari，并通过 http(s) 打开本页面。';
-    $('btnStartCam').disabled = true;
-  }
-  buildExerciseGrid();
-  bindUI();
-  selectExercise(params.get('exercise') || state.settings.exerciseId || 'squat');
-  renderHistory();
-  renderRecords();
-  updateButtons();
-  updateHud();
-  requestAnimationFrame(loop);
-  if (state.settings.mirror) $('stage').classList.add('mirror');
-
-  if (location.protocol === 'file:') {
-    setCueLine('检测到用 file:// 打开：浏览器会拦截模型与摄像头，请用 node preview-server.js 通过 http://127.0.0.1 打开。', 'warn');
-  }
-
-  if (params.has('autostart') && Camera.supported()) {
-    setTimeout(() => startCamera(), 60);
-  }
-  if (params.has('probe')) installProbe();
-}
-
-/** ?probe=1：把运行时自检信息写进 DOM，便于无头浏览器抓取 */
 function installProbe() {
   setTimeout(() => {
     const res = performance.getEntriesByType('resource')
@@ -1030,6 +1078,7 @@ function installProbe() {
       .map((r) => ({ file: r.name.split('/').pop(), status: r.responseStatus || 0, kb: Math.round((r.transferSize || r.decodedBodySize || 0) / 1024) }));
     const info = {
       error: document.documentElement.dataset.error || null,
+      lang: getLang(),
       engineReady: state.engineReady,
       delegate: engine.delegate,
       modelKey: engine.modelKey,
@@ -1049,6 +1098,7 @@ function installProbe() {
       maskTitle: $('maskTitle').textContent,
       maskText: $('maskText').textContent,
       cueLine: $('cueLine').textContent,
+      stepHint: $('stepHint').textContent,
       maskVisible: !$('stageMask').classList.contains('hidden'),
       exerciseButtons: document.querySelectorAll('.exercise-btn').length,
       resources: res,
@@ -1059,11 +1109,44 @@ function installProbe() {
     pre.textContent = 'PROBE_JSON:' + JSON.stringify(info);
     document.body.appendChild(pre);
     document.title = 'PROBE_READY';
-    // 同时回报给本地服务（无头浏览器场景下便于抓取）
     try {
       fetch('/__probe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(info) });
     } catch { /* ignore */ }
   }, 15000);
+}
+
+function boot() {
+  installErrorBanner();
+  captureConsole();
+  const params = new URLSearchParams(location.search);
+  if (!Camera.supported()) {
+    $('maskIcon').textContent = '🚫';
+    $('maskTitle').textContent = t('ui.maskUnsupportedTitle');
+    $('maskText').textContent = t('ui.maskUnsupportedText');
+    $('btnStartCam').disabled = true;
+  }
+  setLang(detectLang(), { persist: false });
+  applyI18n(document);
+  buildLanguageSelect();
+  buildExerciseGrid();
+  bindUI();
+  selectExercise(params.get('exercise') || state.settings.exerciseId || 'squat');
+  renderHistory();
+  renderRecords();
+  updateButtons();
+  updateHud();
+  updatePipelineStatus();
+  requestAnimationFrame(loop);
+  if (state.settings.mirror) $('stage').classList.add('mirror');
+
+  if (location.protocol === 'file:') {
+    setCueLine(t('status.fileProtocol'), 'warn');
+  }
+
+  if (params.has('autostart') && Camera.supported()) {
+    setTimeout(() => startCamera(), 60);
+  }
+  if (params.has('probe')) installProbe();
 }
 
 boot();
@@ -1073,5 +1156,5 @@ window.__mfg = {
   state, engine, camera, audio, renderer,
   selectExercise, startSession, pauseSession, resumeSession, stopSession,
   feedDetector, handleEvents, updateHud, renderSteps, renderDebug, updatePipelineStatus,
-  setTarget, buildExerciseGrid,
+  setTarget, buildExerciseGrid, changeLang, refreshForLang,
 };
