@@ -145,9 +145,9 @@ export default {
   phase: {
     idle: 'Listo',
     up: 'Arriba',
-    down: 'Bajada',
+    down: 'Abajo',
     descending: 'Bajando',
-    bottom: 'Abajo',
+    bottom: 'Punto bajo',
     holding: 'Aguantando',
     paused: 'En pausa',
   },
@@ -156,7 +156,7 @@ export default {
   summary: {
     goalReached: '🎉 ¡Objetivo cumplido y serie guardada! Has hecho {score} puntos.',
     savedWithMiss: 'Has hecho {score} puntos. Para la próxima: {list}',
-    savedAll: 'Has hecho {score} puntos. ¡Técnica completada al 100 %!',
+    savedAll: 'Has hecho {score} puntos. ¡Todos los pasos completados!',
     noData: 'Esta serie no ha registrado datos válidos. ¡Inténtalo otra vez!',
     celebrate: '🎉 Objetivo cumplido: {value}',
     celebrateReps: '{n} repeticiones',
