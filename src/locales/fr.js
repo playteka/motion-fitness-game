@@ -140,11 +140,14 @@ export default {
     lostTracking: 'On ne voit pas tout ton corps : recule un peu pour entrer entièrement dans l’image',
   },
 
-  /* ---------------- Noms des phases ---------------- */
+  /* ---------------- Noms des phases ----------------
+   * up / down décrivent une POSITION (partagée par le squat et le pont fessier :
+   * up = debout pour le squat, hanches surélevées pour le pont),
+   * d’où « Position haute / basse » plutôt qu’un verbe de mouvement. */
   phase: {
     idle: 'Prêt',
-    up: 'Retour',
-    down: 'Descente',
+    up: 'Position haute',
+    down: 'Position basse',
     descending: 'En descente',
     bottom: 'Point bas',
     holding: 'Maintien',
