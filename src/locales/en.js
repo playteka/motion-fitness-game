@@ -159,7 +159,7 @@ export default {
     noData: 'This set didn’t produce any valid data. Give it another go.',
     celebrate: '🎉 Goal reached: {value}',
     celebrateReps: '{n} reps',
-    celebrateHold: '{n} sec',
+    celebrateHold: '{n} seconds',
   },
 
   /* ---------------- Diagnostics panel ---------------- */

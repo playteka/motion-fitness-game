@@ -161,8 +161,8 @@ export default {
     savedAll: 'Score de la série : {score} points, toutes les étapes validées !',
     noData: 'Cette série n’a produit aucune donnée valide. Retente le coup !',
     celebrate: '🎉 Objectif atteint : {value}',
-    celebrateReps: '{n} rép.',
-    celebrateHold: '{n} s',
+    celebrateReps: '{n} répétitions',
+    celebrateHold: '{n} secondes',
   },
 
   /* ---------------- Panneau de diagnostic ---------------- */
