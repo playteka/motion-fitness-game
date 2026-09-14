@@ -446,7 +446,7 @@ Hanche 172° · Alignement du corps 175° · Élévation des hanches -0.98 · An
 
 | Symptôme | Cause | À faire |
 |---|---|---|
-| `Vue Face ✗(0.9)` | Tu te tiens en réalité de face ou de trois-quarts | Tourne-toi pour te mettre de profil face à la caméra |
+| `Vue Face ✗(0.90)` | Tu te tiens en réalité de face ou de trois-quarts | Tourne-toi pour te mettre de profil face à la caméra |
 | `Corps entier ✗` | Une partie de ton corps sort du cadre | Recule d'1 à 2 pas pour que tout, de la tête aux pieds, entre dans l'image |
 | `Aucun corps détecté` | Trop loin / trop près, contre-jour, arrière-plan de la même couleur que tes vêtements | Rapproche-toi, mets-toi face à la source de lumière, change de vêtements, essaie une caméra de meilleure résolution |
 | `Inclinaison du torse` durablement > 32° | La caméra est penchée, ou tu te tiens de travers | Remets la caméra droite (cale-la avec un livre) |

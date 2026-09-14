@@ -442,7 +442,7 @@ Read them like this:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `View Front ✗ (0.9)` | You're actually facing the camera or turned toward it | Turn sideways to the camera |
+| `View Front ✗(0.90)` | You're actually facing the camera or turned toward it | Turn sideways to the camera |
 | `Full body ✗` | Some body parts are out of frame | Back up 1–2 steps so you're in frame from head to feet |
 | `No person detected` | Too far / too close, backlighting, or a background the same color as your clothes | Move closer, face the light source, change clothes, or use a higher-resolution camera |
 | `Trunk lean` stuck above 32° | The camera is tilted or you're standing crooked | Straighten the camera (or level it with a book) |

@@ -442,7 +442,7 @@ Compáralo con esta tabla:
 
 | Síntoma | Causa | Solución |
 |---|---|---|
-| `Vista Frontal ✗ (0.9)` | En realidad estás de frente o en diagonal a la cámara | Gírate y ponte de perfil a la cámara |
+| `Vista Frontal ✗(0.90)` | En realidad estás de frente o en diagonal a la cámara | Gírate y ponte de perfil a la cámara |
 | `Cuerpo entero ✗` | Alguna parte del cuerpo se sale del encuadre | Retrocede 1-2 pasos para que entren la cabeza y los pies |
 | `No se detecta cuerpo` | Estás demasiado lejos o demasiado cerca, hay contraluz, o el fondo y la ropa son del mismo color | Acércate un poco, ponte de cara a la luz, cámbiate de ropa o usa una cámara con más resolución |
 | `Inclinación del torso` siempre > 32° | La cámara está torcida o no estás recto | Nivela la cámara (o ponle unos libros debajo para calzarla) |
