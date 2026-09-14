@@ -160,9 +160,14 @@ console.log('\n[7] 四份 README 结构一致');
       missing = true;
       continue;
     }
-    // 去掉顶部的语言切换链接与语言自称「中文」（这两个必须保留中文），再统计
+    // 去掉「必须保留中文」的三类内容后，再统计残留汉字：
+    //   1) 顶部的语言切换链接 [中文](README.md)
+    //   2) 语言自称「中文」（语言列表、词条表里必须原样保留）
+    //   3) 服务器启动输出行 —— preview-server.js 真的会打印这一行中文，
+    //      四份文档都如实引用，属于「引用真实输出」而不是漏翻
     const txt = fs.readFileSync(full, 'utf8')
       .replace(/\[中文\]\(README\.md\)/g, '[ZH](README.md)')
+      .replace(/体感健身游戏预览地址：[^\n]*/g, '[SERVER_OUTPUT]')
       .replace(/中文/g, 'ZH');
     stats[lang] = {
       name,

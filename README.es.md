@@ -239,9 +239,10 @@ cd motion-fitness-game
 node preview-server.js
 ```
 
-Si ves esta línea, es que ya ha arrancado:
+Deberías ver estas dos líneas (el script imprime una en chino y otra en inglés):
 
 ```
+体感健身游戏预览地址： http://127.0.0.1:4174
 Motion Fitness is running at: http://127.0.0.1:4174
 ```
 
