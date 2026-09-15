@@ -154,6 +154,24 @@ console.log('\n[3] 静态资源与模型文件');
     }
   }
   ok('四语言的提示条文案都不超过 130 字（折 2 行以内）', overlong.length === 0, overlong.join(', '));
+
+  // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面
+  const stageAt = html.indexOf('id="stage"');
+  const toolbarAt = html.indexOf('class="stage-toolbar"');
+  const headerEnd = html.indexOf('</header>');
+  const btnAt = html.indexOf('id="btnFullscreen"');
+  ok('全屏按钮在视频框内部（已从顶部设置区移走，不是两处都有）',
+    btnAt > headerEnd && btnAt > stageAt && btnAt < toolbarAt,
+    `headerEnd=${headerEnd} stage=${stageAt} btn=${btnAt} toolbar=${toolbarAt}`);
+  ok('全屏按钮用 .stage-btn 样式（贴在右下角）',
+    /<button[^>]*id="btnFullscreen"[^>]*class="stage-btn"|<button[^>]*class="stage-btn"[^>]*id="btnFullscreen"/.test(html));
+  const app = read('src/app.js');
+  ok('点击后请求的是视频框全屏（$(\'stage\').requestFullscreen）',
+    /\$\('stage'\)\.requestFullscreen/.test(app));
+  ok('不再对 document.documentElement 请求全屏（那会整页放大）',
+    !/documentElement\.requestFullscreen/.test(app));
+  ok('样式里有视频框全屏规则 .stage:fullscreen', /\.stage:fullscreen\s*\{/.test(css));
+  ok('样式里有右下角全屏按钮规则 .stage-btn', /\.stage-btn\s*\{/.test(css));
 }
 
 /* ---------- 4. 动作与界面按钮一一对应 ---------- */

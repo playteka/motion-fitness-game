@@ -34,7 +34,7 @@ export default {
     skeleton: '🦴 火柴人',
     angles: '📐 角度',
     debug: '🐞 识别指标',
-    fullscreen: '⛶ 全屏',
+    fullscreen: '全屏显示视频框',
 
     startCam: '开启摄像头',
     retry: '重试',

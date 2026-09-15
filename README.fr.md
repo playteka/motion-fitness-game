@@ -346,7 +346,7 @@ Clique dessus (ou appuie sur Espace) → décompte 3-2-1 → le comptage démarr
 **À noter : l'analyse démarre dès l'instant où tu choisis un exercice ; inutile de cliquer d'abord sur « Démarrer la séance ».**
 Le comptage, lui, ne démarre qu'une fois que tu es bien placé dans la silhouette et que le calibrage est validé.
 
-**Raccourcis clavier** : `1`~`6` changer d'exercice · `Espace` démarrer/pause · `R` réinitialiser le compteur · `Esc` terminer la série · `M` miroir · `S` squelette · `F` plein écran
+**Raccourcis clavier** : `1`~`6` changer d'exercice · `Espace` démarrer/pause · `R` réinitialiser le compteur · `Esc` terminer la série · `M` miroir · `S` squelette · `F` plein écran sur la vidéo
 
 ---
 
@@ -522,7 +522,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les quatre suites d'un coup (367 tests)
+npm test                       # les quatre suites d'un coup (380 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources
 npm run test:detectors         # détection et logique de score (squelettes synthétiques)
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
@@ -534,8 +534,8 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
 | `tests/test-detectors.mjs` | 137 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
-| `tests/test-page.mjs` | 91 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
-| `tests/test-app.mjs` | 107 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
+| `tests/test-page.mjs` | 97 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
+| `tests/test-app.mjs` | 114 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
 
 ---
 

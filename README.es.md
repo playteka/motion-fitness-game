@@ -342,7 +342,7 @@ Púlsalo (o la barra espaciadora) → cuenta atrás 3-2-1 → empieza el conteo.
 **Ojo: el reconocimiento empieza en cuanto eliges el ejercicio, no hace falta pulsar «Empezar» antes.**
 El conteo arranca solo después de que te coloques dentro del contorno punteado y pases la calibración.
 
-**Atajos de teclado**: `1`–`6` cambiar de ejercicio · `Espacio` iniciar/pausar · `R` reiniciar el conteo · `Esc` terminar la serie · `M` espejo · `S` esqueleto · `F` pantalla completa
+**Atajos de teclado**: `1`–`6` cambiar de ejercicio · `Espacio` iniciar/pausar · `R` reiniciar el conteo · `Esc` terminar la serie · `M` espejo · `S` esqueleto · `F` pantalla completa del vídeo
 
 ---
 
@@ -517,7 +517,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (367 pruebas)
+npm test                       # las cuatro suites juntas (380 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -529,8 +529,8 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
 | `tests/test-detectors.mjs` | 137 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
-| `tests/test-page.mjs` | 91 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
-| `tests/test-app.mjs` | 107 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
+| `tests/test-page.mjs` | 97 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
+| `tests/test-app.mjs` | 114 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
 
 ---
 

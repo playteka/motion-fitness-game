@@ -341,7 +341,7 @@ Click it (or press Space) → 3-2-1 countdown → counting starts.
 **Note: detection starts the moment you pick an exercise, but standing there no longer earns you any points.**
 Counting begins only after you step into the dashed outline, pass calibration, and click “Start set”.
 
-**Shortcuts**: `1`–`6` switch exercise · `Space` start/pause · `R` reset reps · `Esc` end set · `M` mirror · `S` skeleton · `F` fullscreen
+**Shortcuts**: `1`–`6` switch exercise · `Space` start/pause · `R` reset reps · `Esc` end set · `M` mirror · `S` skeleton · `F` fullscreen the video frame
 
 ---
 
@@ -516,7 +516,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (367 cases)
+npm test                       # run all four suites (380 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
 npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
@@ -528,8 +528,8 @@ npm run test:app               # integration test that loads the real app.js wit
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
 | `tests/test-detectors.mjs` | 137 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
-| `tests/test-page.mjs` | 91 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
-| `tests/test-app.mjs` | 107 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
+| `tests/test-page.mjs` | 97 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
+| `tests/test-app.mjs` | 114 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
 
 ---
 

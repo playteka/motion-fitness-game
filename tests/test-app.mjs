@@ -66,6 +66,9 @@ class El {
     this.videoHeight = 720;
     this.srcObject = null;
     this.play = async () => {};
+    // 全屏：记录「对哪个元素请求了全屏」，用来验证放大的是视频框而不是整个页面
+    this.requestFullscreenCalls = 0;
+    this.requestFullscreen = () => { this.requestFullscreenCalls += 1; return Promise.resolve(); };
   }
   get textContent() { return this._text; }
   set textContent(v) { this._text = String(v); }
@@ -137,6 +140,8 @@ const documentStub = {
   documentElement: new El('html'),
   hidden: false,
   fullscreenElement: null,
+  exitFullscreenCalls: 0,
+  exitFullscreen() { documentStub.exitFullscreenCalls += 1; documentStub.fullscreenElement = null; return Promise.resolve(); },
   getElementById: (id) => {
     if (!elements.has(id)) elements.set(id, new El('div', id));
     return elements.get(id);
@@ -499,6 +504,38 @@ console.log('\n[6] 火柴人开关');
   api.renderer.draw({ landmarks: null, frame: null, exerciseId: 'squat', status: 'idle' });
   ok('没有关键点时不报错', true);
   api.renderer.showSkeleton = true;
+
+  // 全屏按钮：放大的是「视频框」#stage，而不是整个 HTML 页面
+  const stageEl = elements.get('stage');
+  const fsBtn = elements.get('btnFullscreen');
+  stageEl.requestFullscreenCalls = 0;
+  documentStub.documentElement.requestFullscreenCalls = 0;
+  documentStub.fullscreenElement = null;
+  fsBtn.dispatch('click');
+  ok('点全屏按钮请求的是视频框全屏', stageEl.requestFullscreenCalls === 1,
+    `stage=${stageEl.requestFullscreenCalls}`);
+  ok('不再请求整个 HTML 页面全屏', documentStub.documentElement.requestFullscreenCalls === 0,
+    `html=${documentStub.documentElement.requestFullscreenCalls}`);
+  documentStub.fullscreenElement = stageEl;
+  documentStub.exitFullscreenCalls = 0;
+  fsBtn.dispatch('click');
+  ok('已全屏时点同一个按钮会退出全屏', documentStub.exitFullscreenCalls === 1,
+    `exit=${documentStub.exitFullscreenCalls}`);
+  ok('全屏按钮是视频框的右下角按钮（stage-btn 类）',
+    fsBtn.className.includes('stage-btn'), fsBtn.className);
+  ok('全屏按钮有无障碍名称（走 data-i18n-aria，随语言切换）',
+    (fsBtn.attributes['data-i18n-aria'] || '') === 'ui.fullscreen'
+    && (fsBtn.attributes['data-i18n-title'] || '') === 'ui.fullscreen',
+    JSON.stringify({ aria: fsBtn.attributes['data-i18n-aria'], title: fsBtn.attributes['data-i18n-title'] }));
+
+  // 不支持元素全屏的环境（例如 iPhone 的 Safari）要藏起来，而不是点了没反应
+  const savedRequestFullscreen = stageEl.requestFullscreen;
+  delete stageEl.requestFullscreen;
+  api.syncFullscreenSupport();
+  ok('环境不支持元素全屏时藏起全屏按钮', fsBtn.hidden === true);
+  stageEl.requestFullscreen = savedRequestFullscreen;
+  api.syncFullscreenSupport();
+  ok('支持元素全屏时按钮恢复显示', fsBtn.hidden === false);
 }
 
 /* ------------------------------------------------------------------ *

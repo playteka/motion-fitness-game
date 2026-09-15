@@ -35,7 +35,6 @@
         <button class="toggle" id="btnSkeleton" type="button" aria-pressed="true" data-i18n="ui.skeleton"></button>
         <button class="toggle" id="btnAngles" type="button" aria-pressed="true" data-i18n="ui.angles"></button>
         <button class="toggle" id="btnDebug" type="button" aria-pressed="false" data-i18n="ui.debug"></button>
-        <button class="toggle" id="btnFullscreen" type="button" data-i18n="ui.fullscreen"></button>
       </div>
     </header>
 
@@ -81,6 +80,12 @@
             <div class="calib-prompt-main" id="calibPromptMain"></div>
             <div class="calib-prompt-sub" id="calibPromptSub"></div>
           </div>
+
+          <!-- 全屏按钮贴在视频框右下角：点它放大的是「视频框」本身，而不是整个 HTML 页面 -->
+          <button class="stage-btn" id="btnFullscreen" type="button" aria-pressed="false"
+                  data-i18n-title="ui.fullscreen" data-i18n-aria="ui.fullscreen">
+            <span class="stage-btn-icon" aria-hidden="true">⛶</span>
+          </button>
           <div class="countdown" id="countdown" hidden><span id="countdownNum">3</span></div>
           <div class="celebrate" id="celebrate" hidden><div class="celebrate-inner"><span id="celebrateText"></span></div></div>
         </div>

@@ -1098,6 +1098,16 @@ function changeLang(code) {
  * 绑定
  * ------------------------------------------------------------------ */
 
+/**
+ * 环境不支持元素全屏时（例如 iPhone 的 Safari），把右下角的全屏按钮藏起来，
+ * 免得用户点了没反应。
+ */
+function syncFullscreenSupport() {
+  const btn = $('btnFullscreen');
+  if (!btn) return;
+  btn.hidden = typeof $('stage').requestFullscreen !== 'function';
+}
+
 function bindUI() {
   $('btnStartCam').addEventListener('click', () => startCamera());
   $('btnStart').addEventListener('click', () => startSession());
@@ -1160,11 +1170,16 @@ function bindUI() {
   audio.voiceOn = state.settings.voice;
   audio.sfxOn = state.settings.sfx;
 
+  // 全屏只放大「视频框」(#stage)，不是整个 HTML 页面：
+  // 整页全屏会把侧栏、要领清单、成绩卡一起放大，反而看不清动作。
   $('btnFullscreen').addEventListener('click', () => {
-    const el = document.documentElement;
-    if (document.fullscreenElement) document.exitFullscreen();
-    else el.requestFullscreen?.().catch(() => {});
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else $('stage').requestFullscreen?.().catch(() => {});
   });
+  document.addEventListener('fullscreenchange', () => {
+    $('btnFullscreen').setAttribute('aria-pressed', String(!!document.fullscreenElement));
+  });
+  syncFullscreenSupport();
 
   $('camSel').addEventListener('change', async (e) => {
     state.settings.camDeviceId = e.target.value;
@@ -1320,6 +1335,6 @@ window.__mfg = {
   state, engine, camera, audio, renderer,
   selectExercise, startSession, pauseSession, resumeSession, stopSession, toCalibration,
   feedDetector, handleEvents, updateHud, renderSteps, renderDebug, updatePipelineStatus,
-  calibrationStep, renderCalibration,
+  calibrationStep, renderCalibration, syncFullscreenSupport,
   setTarget, buildExerciseGrid, changeLang, refreshForLang,
 };

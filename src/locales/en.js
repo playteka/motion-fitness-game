@@ -34,7 +34,7 @@ export default {
     skeleton: '🦴 Skeleton',
     angles: '📐 Angles',
     debug: '🐞 Metrics',
-    fullscreen: '⛶ Fullscreen',
+    fullscreen: 'Fullscreen video frame',
 
     startCam: 'Start camera',
     retry: 'Retry',
