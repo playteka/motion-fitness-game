@@ -32,6 +32,10 @@ export const OUTLINE = {
   steadyWindowMs: 700,  // 「保持不动」的观察窗口
   steadyTol: 0.06,      // 窗口内的最大位移（归一化）
   flickerGraceMs: 300,  // 单帧不达标不立刻清零保持进度（模型抖动、一瞬间低头很常见）
+  // 剪影整体放大系数（以剪影最下沿为基准向上放大，身材比例不变）。
+  // 用户反馈「轮廓画大一点更好对」；上限受画面高度限制：脚底 0.938，头顶至少留 0.02，
+  // 所以 1.15 差不多是极限（放大后头顶落在 0.038）。
+  scale: 1.15,
 };
 
 /**
@@ -301,23 +305,39 @@ const SILHOUETTES = {
 };
 
 /**
+ * 剪影的原始点列（未放大）：dx 相对画面中线，y 是高度比例。
+ * front 由「半侧 + 镜像」生成，其余视图直接取整条剪影。
+ */
+function rawOutline(kind) {
+  if (kind === 'front') {
+    const pts = SILHOUETTE_HALF.map(([dx, y]) => [dx, y]);
+    // 首尾两点在中线上，镜像时跳过，避免在中线上出现重复点
+    for (let i = SILHOUETTE_HALF.length - 2; i >= 1; i--) {
+      pts.push([-SILHOUETTE_HALF[i][0], SILHOUETTE_HALF[i][1]]);
+    }
+    return pts;
+  }
+  return (SILHOUETTES[kind] || SILHOUETTE_SIDE).map(([dx, y]) => [dx, y]);
+}
+
+/**
  * 剪影的点列（归一化坐标），首尾相连成一条闭合曲线。
  * kind：'front' 站姿正面（深蹲）、'side' 站姿侧面（箭步蹲）、
  *       'pushup' 俯卧撑、'plank' 平板支撑、'bridge' 臀桥/静态臀桥。
  * flip=true 时左右翻转，用来让轮廓跟上用户实际朝向（侧拍时人可能朝左或朝右）。
+ *
+ * 点列会按 OUTLINE.scale 整体放大：以剪影**最下沿**（脚底 / 撑地的手）为基准，
+ * 向外等比放大，身材比例不变，只是画得更大、更好对。
  */
 export function outlinePath(kind, { flip = false } = {}) {
   const cx = OUTLINE.centerX;
-  const put = ([dx, y]) => [cx + (flip ? -dx : dx), y];
-  if (kind === 'front') {
-    const pts = SILHOUETTE_HALF.map(put);
-    // 首尾两点在中线上，镜像时跳过，避免在中线上出现重复点
-    for (let i = SILHOUETTE_HALF.length - 2; i >= 1; i--) {
-      pts.push([cx + (flip ? SILHOUETTE_HALF[i][0] : -SILHOUETTE_HALF[i][0]), SILHOUETTE_HALF[i][1]]);
-    }
-    return pts;
-  }
-  return (SILHOUETTES[kind] || SILHOUETTE_SIDE).map(put);
+  const s = OUTLINE.scale || 1;
+  const raw = rawOutline(kind);
+  const anchor = raw.reduce((m, [, y]) => Math.max(m, y), 0);   // 最下沿当缩放基准
+  return raw.map(([dx, y]) => [
+    cx + (flip ? -dx : dx) * s,
+    anchor - (anchor - y) * s,
+  ]);
 }
 
 /** 剪影的外接框（归一化），用于自检、调试与「高度合适」的判定 */

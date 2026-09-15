@@ -885,9 +885,10 @@ function calibOnce(cal, lm, now) {
       pts.length >= 24 && pts.length <= 90, `pts=${pts.length}`);
     ok(`${view} 剪影全部落在画面内`,
       pts.every(([x, y]) => x > 0 && x < 1 && y > 0 && y < 1));
-    ok(`${view} 剪影头顶对齐 OUTLINE.bodyTopY、脚底落到 OUTLINE 地面线`,
-      Math.abs(b.top - OUTLINE.bodyTopY) < 1e-9 && Math.abs(b.bottom - 0.938) < 1e-9,
-      `top=${b.top} bottom=${b.bottom}`);
+    ok(`${view} 剪影脚底固定在 0.938 线上、放大后头顶仍留在画面内`,
+      Math.abs(b.bottom - 0.938) < 1e-9 && b.top > 0.02
+      && Math.abs(b.height - 0.783 * (OUTLINE.scale || 1)) < 1e-6,
+      `top=${b.top.toFixed(3)} bottom=${b.bottom} 高=${b.height.toFixed(3)}`);
     ok(`${view} 剪影高度落在「距离合适」区间内（站进去就能过距离判定）`,
       b.height >= OUTLINE.spanMin && b.height <= OUTLINE.spanMax, `height=${b.height}`);
     // 真人身材是「瘦长」的：肩宽/身高 ≈ 0.24。老版本那种又宽又矮的雪人身材会在这里挂掉。
@@ -914,7 +915,8 @@ function calibOnce(cal, lm, now) {
     // 俯卧撑 vs 平板支撑：手臂形状必须不同（一个是直臂撑起，一个是小臂贴地横放）
     const flatRuns = (kind) => outlinePath(kind).filter((p, i, arr) => {
       const q = arr[(i + 1) % arr.length];
-      return Math.abs(p[1] - q[1]) < 0.015 && Math.abs(p[0] - q[0]) > 0.03;
+      const s = OUTLINE.scale || 1;
+      return Math.abs(p[1] - q[1]) < 0.015 * s && Math.abs(p[0] - q[0]) > 0.03 * s;
     }).length;
     ok('平板支撑的剪影里小臂贴地横放（至少 3 段水平线）', flatRuns('plank') >= 3, `水平段=${flatRuns('plank')}`);
     ok('俯卧撑的剪影没有横放的小臂（只有躯干那一小段，是直臂撑起）',
@@ -988,12 +990,14 @@ function calibOnce(cal, lm, now) {
       return out;
     };
 
-    const headSpans = spansAt(pts, 0.190);
-    const shoulderSpans = spansAt(pts, 0.300);
-    const chestSpans = spansAt(pts, 0.375);
-    const waistSpans = spansAt(pts, 0.452);
-    const hipSpans = spansAt(pts, 0.530);
-    const kneeSpans = spansAt(pts, 0.715);
+    // 剪影整体放大过，取样高度要按同一基准（最下沿 0.938）换算回放大前的位置
+    const scaleY = (y) => 0.938 - (0.938 - y) * (OUTLINE.scale || 1);
+    const headSpans = spansAt(pts, scaleY(0.190));
+    const shoulderSpans = spansAt(pts, scaleY(0.300));
+    const chestSpans = spansAt(pts, scaleY(0.375));
+    const waistSpans = spansAt(pts, scaleY(0.452));
+    const hipSpans = spansAt(pts, scaleY(0.530));
+    const kneeSpans = spansAt(pts, scaleY(0.715));
 
     ok('剪影头宽占身高 9%~13%（真人约 1/9）',
       headSpans.length === 1 && toHeight(headSpans[0][1] - headSpans[0][0]) > 0.09
