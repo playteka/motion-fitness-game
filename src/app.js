@@ -11,6 +11,7 @@ import { computeFrame } from './metrics.js';
 import { PoseEngine, Camera } from './pose-engine.js';
 import { PoseRenderer } from './render.js';
 import { AudioKit } from './audio.js';
+import { Calibrator, requiredView } from './calibration.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
 } from './i18n.js';
@@ -54,8 +55,10 @@ const state = {
   settings: loadSettings(),
   exerciseId: 'squat',
   target: 15,
-  session: 'idle',     // idle | countdown | running | paused
+  session: 'calibrating',   // calibrating | ready | countdown | running | paused
   detector: null,
+  calibrator: null,
+  calib: null,
   elapsedMs: 0,
   lastTick: 0,
   countdownTimer: null,
@@ -75,6 +78,7 @@ const state = {
   consoleErrors: [],
   saidSteps: new Set(),
   stepSig: '',
+  calibSig: '',
   lastScoreMilestone: 0,
 };
 
@@ -155,6 +159,8 @@ function selectExercise(id) {
   const ex = localizedExercise(id);
   state.target = state.settings.targets[id] || ex.defaultTarget;
   state.detector = createDetector(id, { strict: state.settings.strict });
+  state.calibrator = state.calibrator || new Calibrator(id);
+  state.calibrator.setExercise(id);
   saveSettings();
 
   document.querySelectorAll('.exercise-btn').forEach((b) => {
@@ -176,8 +182,30 @@ function selectExercise(id) {
   state.stepSig = '';
   state.saidSteps = new Set();
   state.lastScoreMilestone = 0;
+  toCalibration({ silent: true });
   updateHud();
   renderRecords();
+}
+
+/** 进入「运动前校准」阶段：显示虚线人体轮廓，不计数 */
+function toCalibration({ silent = false } = {}) {
+  clearInterval(state.countdownTimer);
+  state.countdownTimer = null;
+  $('countdown').hidden = true;
+  $('celebrate').hidden = true;
+  releaseWakeLock();
+  state.session = 'calibrating';
+  state.calibrator?.reset();
+  state.calib = null;
+  state.elapsedMs = 0;
+  state.goalHit = false;
+  state.stepSig = '';
+  state.lastTick = performance.now();
+  if (!silent) {
+    setCueLine(t('calib.lead'));
+    setHint(t('calib.lead'), 'warn', 2000);
+  }
+  updateButtons();
 }
 
 function buildTargetChips() {
@@ -266,8 +294,11 @@ function renderDebug(f) {
   }
   const n = (v, d = 0) => (Number.isFinite(v) ? v.toFixed(d) : '—');
   const mark = (v) => (v ? t('debug.yes') : t('debug.no'));
+  // 机位是否“正确”取决于当前动作：深蹲要正面，其余要侧面
+  const wantView = requiredView(state.exerciseId);
+  const viewName = f.view === 'front' ? t('debug.viewFront') : t('debug.viewSide');
   el.textContent = [
-    `${t('debug.view')} ${f.view === 'side' ? t('debug.viewSide') : t('debug.viewFront')}(${n(f.viewRatio, 2)})`,
+    `${t('debug.view')} ${viewName}${mark(f.view === wantView)}(${n(f.viewRatio, 2)})`,
     `${t('debug.bodyVisible')} ${mark(f.bodyVisible)}`,
     `${t('debug.legsVisible')} ${mark(f.legsVisible)}`,
     `${t('debug.trunkLean')} ${n(f.trunkLean)}°`,
@@ -390,6 +421,10 @@ function startSession() {
     setHint(t('status.needCamera'), 'warn', 2600);
     return;
   }
+  if (state.session === 'calibrating') {
+    setHint(t('calib.needCalib'), 'warn', 2600);
+    return;
+  }
   if (state.session === 'running') return;
   if (state.session === 'paused') { resumeSession(); return; }
   if (state.session === 'countdown') return;
@@ -465,7 +500,7 @@ function stopSession(reason = 'user') {
   state.countdownTimer = null;
   $('countdown').hidden = true;
   const wasActive = state.session === 'running' || state.session === 'paused' || state.session === 'countdown';
-  state.session = 'idle';
+  state.session = 'calibrating';
   releaseWakeLock();
   if (!wasActive) { updateButtons(); return; }
 
@@ -506,10 +541,11 @@ function stopSession(reason = 'user') {
   state.elapsedMs = 0;
   setCueLine(t('status.setDone'));
   updateHud();
-  updateButtons();
   renderHistory();
   renderRecords();
   setHint('', 'warn', 0);
+  // 一组结束后回到校准阶段：下一组开始前重新确认站位与机位
+  toCalibration({ silent: false });
 }
 
 function requestWakeLock() {
@@ -524,13 +560,19 @@ function releaseWakeLock() {
 function updateButtons() {
   const running = state.session === 'running';
   const paused = state.session === 'paused';
+  const calibrating = state.session === 'calibrating';
   const busy = running || paused || state.session === 'countdown';
-  $('btnStart').textContent = running ? t('ui.training') : (paused ? t('ui.resume') : t('ui.start'));
-  $('btnStart').disabled = running || state.session === 'countdown';
+  const label = calibrating ? t('calib.waiting') : (running ? t('ui.training') : (paused ? t('ui.resume') : t('ui.start')));
+  $('btnStart').textContent = label;
+  $('btnStart').disabled = running || calibrating || state.session === 'countdown';
   $('btnPause').textContent = paused ? t('ui.resume') : t('ui.pause');
   $('btnPause').disabled = !(running || paused);
   $('btnStop').disabled = !busy;
   $('btnResetReps').disabled = !state.detector;
+  const rc = $('btnRecalibrate');
+  if (rc) rc.disabled = calibrating;
+  const card = $('calibCard');
+  if (card) card.hidden = !calibrating;
 }
 
 /* ------------------------------------------------------------------ *
@@ -615,6 +657,59 @@ function renderHistory() {
   }
 }
 
+/** 校准面板：逐项打勾 + 进度 + 当前该做的一件事 */
+function renderCalibration(calib) {
+  const card = $('calibCard');
+  if (!card) return;
+  if (!calib) {
+    if (!card.hidden) card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  const sig = `${getLang()}|${calib.checks.map((c) => (c.ok ? 1 : 0)).join('')}`;
+  if (sig !== state.calibSig) {
+    state.calibSig = sig;
+    $('calibList').innerHTML = calib.checks.map((c) => {
+      const mark = c.ok ? '✓' : '○';
+      return `<li class="calib-item${c.ok ? ' done' : ''}">`
+        + `<span class="calib-check">${mark}</span>`
+        + `<span>${t(`calib.check.${c.id}`)}</span></li>`;
+    }).join('');
+  }
+  const okCount = calib.checks.filter((c) => c.ok).length;
+  $('calibBadge').textContent = `${okCount}/${calib.checks.length}`;
+  $('calibFill').style.width = `${Math.round(calib.progress * 100)}%`;
+  const hintEl = $('calibHint');
+  hintEl.textContent = t(calib.hintKey, calib.hintParams);
+  hintEl.className = `calib-hint ${calib.ready ? 'good' : 'warn'}`;
+}
+
+/**
+ * 校准阶段的一帧处理：跑就位判定、必要时切到「可以开始」、刷新面板与提示。
+ * 返回这一帧要画的虚线轮廓参数。
+ */
+function calibrationStep(frame, now) {
+  const calib = state.calibrator.update(frame, now);
+  state.calib = calib;
+  if (calib.done && state.session === 'calibrating') {
+    state.session = 'ready';
+    state.lastTick = now;
+    audio.milestone();
+    audio.say(t('calib.doneVoice'), { rate: 1.15, force: true });
+    setCueLine(t('calib.startNow'), 'good');
+    updateButtons();
+  }
+  renderCalibration(calib);
+  if (now > state.hintUntil) {
+    const level = calib.ready ? 'good' : (frame.ok ? 'warn' : 'bad');
+    setHint(t(calib.hintKey, calib.hintParams), level, 700);
+  }
+  return {
+    view: state.calibrator.view,
+    status: !frame.ok ? 'search' : (calib.ready ? 'ready' : 'adjust'),
+  };
+}
+
 /* ------------------------------------------------------------------ *
  * 事件处理
  * ------------------------------------------------------------------ */
@@ -622,8 +717,9 @@ function renderHistory() {
 function feedDetector(f, now) {
   const det = state.detector;
   if (!det) return [];
-  // 一直实时识别：只要达成要领就立刻加分、打勾、响铃，
-  // 不需要先点“开始训练”（否则用户站好了却毫无反馈）。
+  // 只有真正开始训练后才计数：校准阶段、倒计时、暂停阶段都不累计。
+  // 这道门控放在这里而不是调用处，避免以后新增调用点忘了加判断。
+  if (state.session !== 'running') return [];
   return det.update(f, now);
 }
 
@@ -742,9 +838,44 @@ function loop() {
   // 尺寸对齐
   renderer.resize(video.videoWidth || 1280, video.videoHeight || 720);
 
+  const calibrating = state.session === 'calibrating' || state.session === 'ready';
   const counting = state.session === 'running';
-  const events = feedDetector(frame, now);
-  handleEvents(events);
+  let outline = null;
+
+  if (calibrating) {
+    // ---- 运动前校准：只做就位判定与引导，不计数、不计分 ----
+    outline = calibrationStep(frame, now);
+  } else {
+    // ---- 训练中：正常识别与计数 ----
+    if (counting) {
+      const events = feedDetector(frame, now);
+      handleEvents(events);
+    }
+    renderCalibration(null);
+
+    // 提示条：任何时刻都要有反馈，明确告诉用户“现在是什么状态、卡在哪”
+    if (now > state.hintUntil) {
+      const det0 = state.detector;
+      if (!frame.ok) {
+        setHint(t('status.noPerson'), 'bad', 700);
+      } else {
+        const pending = det0 ? det0.pendingHint() : null;
+        const recentCue = det0 && det0.feedback && now - det0.feedback.at < 3200 ? det0.feedback : null;
+        if (pending && pending.hint) {
+          setHint(t('ui.nextStepWithHint', {
+            label: t(pending.labelKey),
+            hint: t(pending.hint.key, pending.hint.params),
+          }), 'warn', 700);
+        } else if (recentCue) {
+          setHint(t(recentCue.key, recentCue.params), recentCue.level, 700);
+        } else if (det0 && !det0.active && det0.standby) {
+          setHint(t(det0.standby), 'warn', 700);
+        } else {
+          setHint(t('status.ready'), 'good', 700);
+        }
+      }
+    }
+  }
 
   // 计时
   if (counting) {
@@ -761,34 +892,15 @@ function loop() {
     onGoalReached();
   }
 
-  // 提示条：任何时刻都要有反馈，明确告诉用户“现在是什么状态、卡在哪”
-  if (now > state.hintUntil) {
-    if (!frame.ok) {
-      setHint(t('status.noPerson'), 'bad', 700);
-    } else {
-      const pending = det ? det.pendingHint() : null;
-      const recentCue = det && det.feedback && now - det.feedback.at < 3200 ? det.feedback : null;
-      if (pending && pending.hint) {
-        setHint(t('ui.nextStepWithHint', {
-          label: t(pending.labelKey),
-          hint: t(pending.hint.key, pending.hint.params),
-        }), 'warn', 700);
-      } else if (recentCue) {
-        setHint(t(recentCue.key, recentCue.params), recentCue.level, 700);
-      } else if (det && !det.active && det.standby) {
-        setHint(t(det.standby), 'warn', 700);
-      } else {
-        setHint(t('status.ready'), 'good', 700);
-      }
-    }
-  }
-
   // 实时指标（调试用）
   renderDebug(frame);
 
   // 绘制
-  const status = !frame.ok ? 'idle' : (!det || det.active ? (now - state.lastCueAt < 2000 ? 'warn' : 'ok') : 'warn');
-  renderer.draw({ landmarks, frame, exerciseId: state.exerciseId, status });
+  const status = !frame.ok ? 'idle'
+    : (!det || det.active ? (now - state.lastCueAt < 2000 ? 'warn' : 'ok') : 'warn');
+  renderer.draw({
+    landmarks, frame, exerciseId: state.exerciseId, status, outline,
+  });
 
   updateHud();
 
@@ -931,6 +1043,7 @@ function refreshForLang() {
   renderRecords();
   renderHistory();
   updateButtons();
+  if (state.calib) renderCalibration(state.calib);
   setCueLine('');
 }
 
@@ -959,6 +1072,8 @@ function bindUI() {
     setCueLine(t('status.reset'));
     updateHud();
   });
+
+  $('btnRecalibrate')?.addEventListener('click', () => toCalibration());
 
   $('langSel').addEventListener('change', (e) => changeLang(e.target.value));
 
@@ -1091,6 +1206,11 @@ function installProbe() {
       overlay: `${renderer.canvas.width}x${renderer.canvas.height}`,
       exercise: state.exerciseId,
       target: state.target,
+      session: state.session,
+      calibHint: $('calibHint').textContent,
+      calibBadge: $('calibBadge').textContent,
+      calibVisible: $('calibCard').hidden === false,
+      startDisabled: $('btnStart').disabled,
       hudValue: $('hudValue').textContent,
       hudName: $('hudName').textContent,
       camStatus: $('camStatus').textContent,
@@ -1154,7 +1274,8 @@ boot();
 // 调试/自动化测试用的内部句柄（页面本身不依赖它）
 window.__mfg = {
   state, engine, camera, audio, renderer,
-  selectExercise, startSession, pauseSession, resumeSession, stopSession,
+  selectExercise, startSession, pauseSession, resumeSession, stopSession, toCalibration,
   feedDetector, handleEvents, updateHud, renderSteps, renderDebug, updatePipelineStatus,
+  calibrationStep, renderCalibration,
   setTarget, buildExerciseGrid, changeLang, refreshForLang,
 };

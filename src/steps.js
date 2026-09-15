@@ -59,19 +59,48 @@ const prone = (f) => f.torsoIncl > 35 && f.shoulderClear > 0.15 && f.wristClear 
 /** 提示构造小工具 */
 const H = (key, params) => ({ key, params: params || null });
 
-/** 站姿类要领没达成时，逐条说明卡在哪一项 */
-function stanceWhy(f, exId) {
-  if (f.view !== 'side') return H(`steps.${exId}.stance.side`);
+/**
+ * 深蹲（正面模式）共用的判定阈值 —— 识别状态机与计分步骤必须用同一套数字。
+ * 单位是「髋比膝高多少 / 小腿长」：站直 ≈ 1.0，蹲到大腿水平 ≈ 0，蹲过水平 < 0。
+ *
+ * 换算：hipAboveKnee ≈ sin(大腿与地面的夹角) × (大腿长 / 小腿长)，
+ * 腿长比例接近 1 时可以近似当成 sin：
+ *   站直 90° → 1.0 ｜ 大腿 60° → 0.87 ｜ 45° → 0.71 ｜ 30° → 0.50 ｜ 15° → 0.26 ｜ 水平 0° → 0
+ */
+export const SQUAT_FRONT = {
+  standRatio: 0.86,      // ≥ 此值算站直（大腿离水平 59° 以上）
+  enterRatio: 0.72,      // ≤ 此值算开始下蹲（≈ 大腿离水平 46° 以内）
+  bottomRatio: 0.25,     // ≤ 此值算蹲到（或蹲过）大腿接近水平（≈ 15° 以内）
+  looseRatio: 0.45,      // 非严格模式的深度门槛（≈ 大腿 27° 以内）
+  partialRatioMax: 0.62, // 低于此高度才算“一次尝试”，否则算抖动（≈ 大腿 38° 以内）
+  minRepMs: 620,         // 一次有效深蹲的最短用时，太快算抖动作弊
+};
+
+/** 下蹲进度：0% = 站直，100% = 蹲到大腿水平 */
+export function squatDepthPct(hipAboveKnee) {
+  const r = Number.isFinite(hipAboveKnee) ? hipAboveKnee : SQUAT_FRONT.standRatio;
+  return Math.max(0, Math.min(100, Math.round(((SQUAT_FRONT.standRatio - r) / SQUAT_FRONT.standRatio) * 100)));
+}
+
+/**
+ * 站姿类要领没达成时，逐条说明卡在哪一项。
+ * wantView：该动作要求的机位（深蹲要正面，其余要侧面）
+ */
+function stanceWhy(f, exId, wantView) {
+  if (f.view !== wantView) return H(`steps.${exId}.stance.view`);
   if (!f.bodyVisible) return H(`steps.${exId}.stance.body`);
-  if (f.trunkLean >= 32) return H(`steps.${exId}.stance.lean`);
-  if (f.kneeExtended <= 150) return H(`steps.${exId}.stance.knee`);
+  if (f.trunkLean >= (wantView === 'front' ? 20 : 32)) return H(`steps.${exId}.stance.lean`);
+  if (wantView === 'front') {
+    if (f.hipAboveKnee <= SQUAT_FRONT.standRatio) return H(`steps.${exId}.stance.knee`);
+  } else if (f.kneeExtended <= 150) {    return H(`steps.${exId}.stance.knee`);
+  }
   return H(`steps.${exId}.stance.tune`);
 }
 
 /* ---------------- 各动作的计分步骤 ---------------- */
 
 export const STEP_PLANS = {
-  /* ---------------- 深蹲 ---------------- */
+  /* ---------------- 深蹲（正面模式） ---------------- */
   squat: {
     perCycle: true,
     repBonus: 6,
@@ -80,38 +109,39 @@ export const STEP_PLANS = {
         id: 'stance',
         labelKey: 'steps.squat.stance.label',
         points: 4,
-        // 用“更直的那条腿”判断站直，避免远侧腿被遮挡时估歪导致拿不到分
-        check: (f) => f.view === 'side' && f.bodyVisible && f.trunkLean < 32 && f.kneeExtended > 150,
-        hint: (f) => stanceWhy(f, 'squat'),
+        // 深蹲要求正对镜头：正面才能看清蹲的深度与膝盖内扣
+        check: (f) => f.view === 'front' && f.bodyVisible && f.trunkLean < 20
+          && f.hipAboveKnee > SQUAT_FRONT.standRatio,
+        hint: (f) => stanceWhy(f, 'squat', 'front'),
       },
       {
         id: 'hinge',
         labelKey: 'steps.squat.hinge.label',
         points: 6,
-        check: (f) => f.kneeAngle <= 152 && f.hipAngle < 165,
-        hint: (f) => (f.kneeAngle > 152 ? H('steps.squat.hinge.hint') : null),
+        check: (f) => f.hipAboveKnee <= SQUAT_FRONT.enterRatio,
+        hint: (f) => (f.hipAboveKnee > SQUAT_FRONT.enterRatio ? H('steps.squat.hinge.hint') : null),
       },
       {
         id: 'descend',
         labelKey: 'steps.squat.descend.label',
         points: 7,
-        check: (f) => f.kneeAngle <= 135,
-        hint: (f) => (f.kneeAngle > 135 ? H('steps.squat.descend.hint') : null),
+        check: (f) => f.hipAboveKnee <= 0.50,
+        hint: (f) => (f.hipAboveKnee > 0.50 ? H('steps.squat.descend.hint') : null),
       },
       {
         id: 'parallel',
         labelKey: 'steps.squat.parallel.label',
         points: 14,
-        check: (f) => f.thighFromHoriz <= 25 || f.hipBelowKnee,
-        hint: (f) => H('steps.squat.parallel.hint', { deg: Math.max(1, Math.round(f.thighFromHoriz - 25)) }),
+        check: (f) => f.hipAboveKnee <= SQUAT_FRONT.bottomRatio,
+        hint: (f) => H('steps.squat.parallel.hint', { pct: squatDepthPct(f.hipAboveKnee) }),
       },
       {
         id: 'stand',
         labelKey: 'steps.squat.stand.label',
         points: 8,
-        // 髋角在“快站直”那一瞬间还在恢复中，所以用较宽的髋角下限，避免漏判这一步
-        check: (f, d) => d.cycleDescended && f.kneeAngle >= 150 && f.hipAngle >= 130,
-        hint: (f) => (f.kneeAngle < 150 ? H('steps.squat.stand.hint') : null),
+        // 比状态机的“回到站姿”（standRatio）略松，保证这一步能在本次循环结算前拿到分
+        check: (f, d) => d.cycleDescended && f.hipAboveKnee >= 0.80,
+        hint: (f) => (f.hipAboveKnee < 0.80 ? H('steps.squat.stand.hint') : null),
       },
     ],
   },
@@ -126,7 +156,7 @@ export const STEP_PLANS = {
         labelKey: 'steps.lunge.stance.label',
         points: 4,
         check: (f) => f.view === 'side' && f.bodyVisible && f.trunkLean < 32 && f.kneeExtended > 145,
-        hint: (f) => stanceWhy(f, 'lunge'),
+        hint: (f) => stanceWhy(f, 'lunge', 'side'),
       },
       {
         id: 'split',

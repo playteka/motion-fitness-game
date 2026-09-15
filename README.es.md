@@ -24,10 +24,11 @@ Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la car
   - [Sin Node.js: también puedes usar Python](#sin-nodejs-también-puedes-usar-python)
 - [Iniciar y acceder](#iniciar-y-acceder)
 - [Permisos de cámara](#permisos-de-cámara)
+- [Calibración previa](#calibración-previa)
 - [Cómo usarlo: la posición de la cámara es clave](#cómo-usarlo-la-posición-de-la-cámara-es-clave)
 - [Reglas de puntuación](#reglas-de-puntuación)
 - [Idiomas](#idiomas)
-- [Si ya estás colocado y no reacciona: tres pasos de diagnóstico](#si-ya-estás-colocado-y-no-reacciona-tres-pasos-de-diagnóstico)
+- [Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico](#si-no-entras-en-el-contorno-o-no-pasa-nada-cuatro-pasos-de-diagnóstico)
 - [Preguntas frecuentes](#preguntas-frecuentes)
 - [Pruebas](#pruebas)
 - [Estructura del proyecto](#estructura-del-proyecto)
@@ -38,6 +39,8 @@ Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la car
 
 ## Puntos destacados
 
+- **Calibración previa**: antes de empezar, en la imagen aparece un **contorno punteado con forma de cuerpo** que te guía para colocarte dentro; cuerpo detectado, cuerpo entero visible, distancia,
+  centrado, altura, ángulo y quietud: **las siete** comprobaciones tienen que estar correctas para poder empezar, así no pierdes el tiempo entrenando mal colocado.
 - **Puntuación progresiva según la técnica**: cada ejercicio se divide en 4-6 pasos que se pueden evaluar; cada paso correcto suma puntos al instante, suena un aviso y se marca una casilla;
   si completas todos los pasos de la ronda, te llevas una bonificación de puntuación perfecta; en los ejercicios de cronómetro, **cada segundo aguantado suma +1 punto**.
 - **Conteo con criterio**: las repeticiones a medias, demasiado rápidas, con la lumbar hundida o el trasero alto no cuentan como válidas: se cuentan aparte y te dan un aviso para corregir.
@@ -252,7 +255,8 @@ Y después abre en el navegador:
 
 ### 👉 <http://127.0.0.1:4174>
 
-La primera vez, pulsa «Activar la cámara» → elige «Permitir» en la ventana del navegador → elige un ejercicio → **colócate de perfil a la cámara y empezarás a sumar puntos al momento**.
+La primera vez, pulsa «Activar la cámara» → elige «Permitir» en la ventana del navegador → elige un ejercicio → **colócate dentro del contorno punteado que aparece en la imagen**;
+cuando la calibración se complete, pulsa «Empezar» y empezará el conteo.
 
 > ⚠️ **No hagas doble clic directamente en `index.html`**. Si abres la página con `file://`, el navegador bloqueará la cámara y la carga del wasm,
 > así que tienes que entrar por `http://127.0.0.1:...` (localhost se considera un contexto seguro).
@@ -296,18 +300,45 @@ Por defecto solo escucha en `127.0.0.1` (solo accesible desde tu propio equipo):
 
 ---
 
+## Calibración previa
+
+Cuando hayas elegido el ejercicio, en la imagen aparece un **contorno punteado con forma de cuerpo**: ese es tu objetivo de colocación. El panel de calibración va marcando cada comprobación:
+
+| Comprobación | Significado |
+|---|---|
+| Cuerpo detectado | La cámara te ve bien |
+| Cuerpo entero visible | De la cabeza a los pies, todo dentro del encuadre |
+| Distancia correcta | Tu cuerpo ocupa el tamaño adecuado en la imagen (si estás demasiado lejos o demasiado cerca, te indica hacia dónde moverte) |
+| Bien centrado | Colócate en el centro del contorno |
+| Altura correcta | Tu posición vertical dentro del encuadre es la adecuada |
+| Ángulo correcto | En la sentadilla hay que **ponerse de frente** a la cámara; en el resto de ejercicios, **de perfil** |
+| Sin moverte | Mantente quieto alrededor de 1 segundo, para que no te evalúe mientras te mueves |
+
+Cuando las siete comprobaciones están correctas y se mantienen un momento, el contorno se vuelve verde y aparece «Calibración completada ✓»; en ese momento el botón «Empezar» ya está disponible.
+Púlsalo (o la barra espaciadora) → cuenta atrás 3-2-1 → empieza el conteo.
+
+> Si no estás bien colocado, debajo del panel te dice directamente qué hacer (por ejemplo «retrocede un poco», «muévete un poco a la derecha», «ponte de frente a la cámara»),
+> y la barra de estado de debajo de la imagen muestra lo mismo, así que nunca te quedas sin saber qué falla.
+> Para volver a calibrar: pulsa el botón «Volver a calibrar» que hay debajo de la imagen; además, cada vez que terminas una serie vuelves automáticamente a la calibración.
+
+---
+
 ## Cómo usarlo: la posición de la cámara es clave
 
-**En los seis ejercicios conviene colocarse de perfil a la cámara** (con el cuerpo perpendicular), porque solo así los ángulos de las articulaciones son los ángulos reales:
+**En la sentadilla hay que ponerse de frente a la cámara; en los otros cinco ejercicios, de perfil**:
 
-- Colócate a **2-3 m** de la cámara y deja que **el cuerpo entero entre en el encuadre** (de la cabeza a los pies);
-- **Sentadilla / zancada**: de pie y de perfil a la cámara, de forma que en el encuadre se vean a la vez tobillos, rodillas, cadera y hombros;
+- **Sentadilla**: de frente a la cámara. En la sentadilla, la flexión de rodilla ocurre en el eje «de delante hacia atrás» y, al grabar de lado, ese eje cae justo sobre el eje horizontal de la imagen,
+  donde se mide mejor; pero **solo de frente a la cámara se ve si las rodillas se meten hacia dentro** y si los dos lados son simétricos, así que la sentadilla se hace de frente.
+  La profundidad se mide ahora con «cuánto más alta está la cadera que la rodilla», un valor que en vista frontal no se comprime y que resulta incluso más directo que el ángulo de rodilla.
+
+- A **2-3 m** de la cámara, con **el cuerpo entero dentro del encuadre** (de la cabeza a los pies);
+- **Zancada**: de pie y de perfil a la cámara, de forma que en el encuadre se vean a la vez tobillos, rodillas, cadera y hombros;
 - **Flexión / plancha**: túmbate o apóyate en perpendicular a la cámara, con las manos y los pies dentro del encuadre;
 - **Puente de glúteos / puente estático**: tumbado de lado, de forma que se vean a la vez hombros, cadera, rodillas y tobillos;
 - Con una luz uniforme y un fondo no demasiado recargado; la ropa ajustada hace que el reconocimiento sea más estable.
 
 **Ojo: el reconocimiento empieza en cuanto eliges el ejercicio, no hace falta pulsar «Empezar» antes.**
-En cuanto te coloques de perfil a la cámara, los puntos y el aviso sonoro del paso «postura» aparecerán al instante. Pulsar «Empezar» solo sirve para arrancar el cronómetro y registrar una serie.
+El conteo arranca solo después de que te coloques dentro del contorno punteado y pases la calibración.
 
 **Atajos de teclado**: `1`–`6` cambiar de ejercicio · `Espacio` iniciar/pausar · `R` reiniciar el conteo · `Esc` terminar la serie · `M` espejo · `S` esqueleto · `F` pantalla completa
 
@@ -320,13 +351,15 @@ Si **completas todos los pasos de la ronda** te llevas además una bonificación
 
 ### Sentadilla (45 puntos por ronda)
 
+En la sentadilla se usa la **vista frontal** y la profundidad se mide con «cuánto más alta está la cadera que la rodilla / longitud de la pantorrilla» (de pie ≈ 1.0; con el muslo horizontal ≈ 0):
+
 | Paso | Condición | Puntos |
 |---|---|---|
-| ① Colócate de perfil a la cámara, con el cuerpo entero en el encuadre y recto | Vista lateral + cuerpo entero visible + cuerpo casi vertical + ángulo de rodilla >150° | +4 |
-| ② Lleva la cadera hacia atrás y hacia abajo (empieza por la cadera) | Ángulo de rodilla ≤152° y ángulo de cadera abierto | +6 |
-| ③ Flexiona las rodillas siguiendo la dirección de los pies y baja | Ángulo de rodilla ≤135° | +7 |
-| ④ **Baja hasta que el muslo quede casi horizontal** | Ángulo del muslo con el suelo ≤25° (o cadera por debajo de la rodilla) | **+14** |
-| ⑤ Empuja con los pies y sube con cadera y rodillas del todo extendidas | Ángulo de rodilla ≥150° y ángulo de cadera otra vez ≥130° | +8 |
+| ① Ponte de frente a la cámara, con el cuerpo entero en el encuadre y recto | Vista frontal + cuerpo entero visible + cuerpo vertical + cadera claramente más alta que la rodilla (ratio >0.86) | +4 |
+| ② Flexiona las rodillas y baja la cadera | Ratio de altura cadera-rodilla ≤0.72 (muslo a unos 46° de la horizontal) | +6 |
+| ③ Sigue bajando | Ratio ≤0.50 (unos 30°) | +7 |
+| ④ **Baja hasta que el muslo quede casi horizontal** | Ratio ≤0.25 (muslo a 15° o menos de la horizontal, o más abajo) | **+14** |
+| ⑤ Empuja con los pies y sube con cadera y rodillas del todo extendidas | El ratio vuelve a ≥0.80 | +8 |
 | 🎁 Todos los pasos de la ronda | Los 5 pasos anteriores completados en la misma ronda | +6 |
 
 ### Zancada (54 puntos por ronda)
@@ -418,21 +451,24 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 ---
 
-## Si ya estás colocado y no reacciona: tres pasos de diagnóstico
+## Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico
 
 **① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.3`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
 
-**② Mira la barra de estado que hay debajo de la imagen.** Te dice en todo momento dónde te has quedado:
+**② Mira primero el panel «Calibración previa» de la derecha.** De las siete comprobaciones, la que no esté marcada te dice lo que tienes que hacer, siguiendo la frase que aparece debajo del panel:
 
-| Texto de la barra de estado | Significado |
+| Mensaje del panel | Significado |
 |---|---|
-| No veo a nadie: colócate en el centro del encuadre… | El modelo no encuentra a nadie → mira el apartado «Preguntas frecuentes» |
-| Siguiente paso «Colócate de perfil a la cámara…»: te veo de frente o en diagonal | Te ha encontrado, pero la posición de la cámara no es la correcta |
-| Siguiente paso «…»: no veo tu cuerpo entero | Te ha encontrado, pero alguna parte del cuerpo se sale del encuadre |
-| ¡Te veo! ✓ Mantén esta posición y haz el ejercicio | Todo correcto: solo tienes que hacer el ejercicio |
-| Cámara desactivada / Cargando el modelo… | La cadena de reconocimiento todavía no está en marcha |
+| No veo bien todo tu cuerpo: retrocede un poco… | El modelo no te encuentra o alguna parte del cuerpo se sale del encuadre |
+| Estás demasiado lejos / demasiado cerca de la cámara: acércate un poco / retrocede un poco | Tu cuerpo no ocupa el tamaño adecuado en el encuadre |
+| Muévete un poco a la derecha / a la izquierda, al centro del contorno | No estás centrado |
+| Sitúate un poco más arriba / más abajo en el encuadre | La posición vertical no es la correcta |
+| Ponte de frente a la cámara / Ponte de perfil a la cámara | El ángulo no coincide con el ejercicio actual |
+| Muy bien, no te muevas… | Solo falta el último segundo |
 
-**③ Activa «🐞 Métricas» en la esquina superior derecha.** Debajo de la imagen verás en tiempo real los números que ve el detector, por ejemplo:
+**③ Después, mira la barra de estado que hay debajo de la imagen**: muestra la misma frase; cuando ya has empezado a entrenar, indica «qué toca hacer ahora y cuánto te falta».
+
+**④ Activa «🐞 Métricas» en la esquina superior derecha** (funciona tanto en la calibración como durante el entrenamiento). Debajo de la imagen verás en tiempo real los números que ve el detector, por ejemplo:
 
 ```
 Vista Lateral ✓(0.18) · Cuerpo entero ✓ · Piernas visibles ✓ · Inclinación del torso 6° · Rodilla 176° · Codo 172° ·
@@ -443,11 +479,11 @@ Compáralo con esta tabla:
 
 | Síntoma | Causa | Solución |
 |---|---|---|
-| `Vista Frontal ✗(0.90)` | En realidad estás de frente o en diagonal a la cámara | Gírate y ponte de perfil a la cámara |
+| `Vista Lateral ✗(0.90)` | El ángulo no coincide con lo que pide el ejercicio actual (la sentadilla se hace de frente y el resto, de perfil) | Gírate siguiendo lo que indica la barra de estado; sentadilla de frente y el resto de perfil |
 | `Cuerpo entero ✗` | Alguna parte del cuerpo se sale del encuadre | Retrocede 1-2 pasos para que entren la cabeza y los pies |
 | `No se detecta cuerpo` | Estás demasiado lejos o demasiado cerca, hay contraluz, o el fondo y la ropa son del mismo color | Acércate un poco, ponte de cara a la luz, cámbiate de ropa o usa una cámara con más resolución |
 | `Inclinación del torso` siempre > 32° | La cámara está torcida o no estás recto | Nivela la cámara (o ponle unos libros debajo para calzarla) |
-| Los números están bien pero no se marca la casilla | Te has quedado justo en el umbral de un paso | La barra de estado te dice exactamente cuánto te falta (por ejemplo, «te faltan unos 12° para el paralelo») |
+| Los números están bien pero no se marca la casilla | Te has quedado justo en el umbral de un paso | La barra de estado te dice exactamente cuánto te falta (por ejemplo, «ya has bajado hasta el 62 % (100 % = muslo horizontal)») |
 
 ---
 
@@ -479,7 +515,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (285 pruebas)
+npm test                       # las cuatro suites juntas (332 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -489,10 +525,10 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 
 | Archivo de prueba | N.º de pruebas | Cobertura |
 |---|---|---|
-| `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, y sin texto chino escrito a fuego en el código fuente |
-| `tests/test-detectors.mjs` | 91 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores |
+| `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
+| `tests/test-detectors.mjs` | 122 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-page.mjs` | 89 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
-| `tests/test-app.mjs` | 73 | Arranque del `app.js` real, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
+| `tests/test-app.mjs` | 89 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
 
 ---
 
@@ -509,6 +545,7 @@ motion-fitness-game/
 │  ├─ geometry.js        Geometría y tratamiento de señal (ángulos, suavizado One Euro)
 │  ├─ metrics.js         Métricas del ejercicio en cada fotograma (ángulos de las articulaciones, elevación de cadera, alineación del cuerpo…)
 │  ├─ steps.js           ★ «Pasos de puntuación de la técnica» de cada ejercicio (condición + puntos + clave del aviso)
+│  ├─ calibration.js     ★ Calibración previa: esqueleto objetivo del contorno punteado + las siete comprobaciones de colocación
 │  ├─ exercises.js       ★ Máquina de estados del reconocimiento de los seis ejercicios + motor de puntuación
 │  ├─ pose-engine.js     Envoltorio de MediaPipe PoseLandmarker + gestión de la cámara
 │  ├─ render.js          Dibujo del esqueleto
@@ -525,7 +562,8 @@ motion-fitness-game/
 - **Cambiar los puntos o el texto de un paso**: edita `src/steps.js` (estructura y puntos) y `src/locales/*.js` (textos).
   Cada paso es un objeto `{ id, labelKey, points, check, hint }`; si `check(frame, det)` devuelve `true`, ese paso cuenta como cumplido.
 - **Cambiar los umbrales de decisión**: edita las constantes que hay al principio de cada ejercicio en `src/exercises.js`; todas llevan comentarios en chino:
-  - `SQUAT.thighParallel`: cuántos grados de ángulo entre el muslo y el suelo cuentan como «haber bajado lo suficiente» (por defecto 25°; cuanto menor, más estricto);
+  - `SQUAT_FRONT` (en `src/steps.js`): umbrales de profundidad de la sentadilla en vista frontal — `standRatio` 0.86 / `enterRatio` 0.72 /
+  `bottomRatio` 0.25 (cuanto menor, más estricto) / `looseRatio` 0.45; la unidad es «cuánto más alta está la cadera que la rodilla ÷ longitud de la pantorrilla»; de pie ≈ 1.0;
   - `LUNGE.backKneeDrop`: altura de la rodilla de atrás respecto al suelo / longitud de la pantorrilla (por defecto 0.35; cuanto menor, más estricto);
   - `PUSHUP.elbowFull`: ángulo del codo en la parte baja de la flexión (por defecto 92°);
   - `BRIDGE.upRise` / `BRIDGE_HOLD.holdRise`: altura a la que se sube la cadera en el puente de glúteos (en unidades de longitud del torso);

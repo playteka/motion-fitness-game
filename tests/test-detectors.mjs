@@ -11,6 +11,7 @@
 import { toMetric, LandmarkSmoother, LM } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
 import { createDetector } from '../src/exercises.js';
+import { Calibrator, outlineJoints, outlinePoint, OUTLINE_SEGMENTS } from '../src/calibration.js';
 import { t, setLang } from '../src/i18n.js';
 import {
   ASPECT, standingPose, pronePose, supinePose, twoLegPose, lostFrame,
@@ -110,6 +111,12 @@ const lerp = (a, b, p) => a + (b - a) * p;
  * 动作参数（合成骨架）
  * ------------------------------------------------------------------ */
 
+/**
+ * 深蹲姿势生成器。
+ * 深蹲现在是**正面模式**（判据是「髋比膝高多少 / 小腿长」，不是膝角），
+ * 所以这里给 view:'front'。膝角与 hipAboveKnee 的对应关系（实测）：
+ *   178° → 1.00 ｜ 145° → 0.90 ｜ 130° → 0.79 ｜ 110° → 0.61 ｜ 88° → 0.35 ｜ 75° → 0.18 ｜ 62° → -0.04
+ */
 const squatPose = (kneeMin) => (p) => {
   // p: 0→1 一个完整循环
   const s = Math.sin(Math.PI * p);
@@ -119,6 +126,7 @@ const squatPose = (kneeMin) => (p) => {
     lean: 6 + (178 - knee) * 0.28,
     armDown: (178 - knee) * 0.45,
     ankleX: 1.0,
+    view: 'front',
   });
 };
 
@@ -211,7 +219,7 @@ const plankPose = (opts = {}) => pronePose({
   sag: opts.sag ?? 0,
 });
 
-const standingIdle = standingPose({ knee: 178, lean: 6, armDown: 0, ankleX: 1.0 });
+const standingIdle = standingPose({ knee: 178, lean: 6, armDown: 0, ankleX: 1.0, view: 'front' });
 
 /* ------------------------------------------------------------------ *
  * 指标自检（阈值调好后这些值就是回归基线）
@@ -225,13 +233,15 @@ console.log('\n[0] 指标基线');
   ok('站立：膝角≈180', Math.abs(fStand.kneeAngle - 180) < 6, `knee=${fStand.kneeAngle?.toFixed(1)}`);
   ok('站立：髋远高于膝', fStand.hipBelowKnee === false);
 
-  const deep = r.peek(standingPose({ knee: 88, lean: 30, armDown: 40, ankleX: 1.0 }));
+  const deep = r.peek(standingPose({ knee: 75, lean: 30, armDown: 40, ankleX: 1.0, view: 'front' }));
   if (DUMP) console.log('   深蹲底:', dump(deep));
-  ok('深蹲底：大腿接近水平', deep.thighFromHoriz < 25, `thigh=${deep.thighFromHoriz?.toFixed(1)}`);
-  ok('深蹲底：膝角≈88', Math.abs(deep.kneeAngle - 88) < 6, `knee=${deep.kneeAngle?.toFixed(1)}`);
+  ok('深蹲底：判为正面视角', deep.view === 'front', deep.view);
+  ok('深蹲底：髋到膝的高度差已进入“接近水平”区间', deep.hipAboveKnee <= 0.25, `hipAboveKnee=${deep.hipAboveKnee?.toFixed(3)}`);
+  ok('深蹲底：大腿确实接近水平', deep.thighFromHoriz < 12, `thigh=${deep.thighFromHoriz?.toFixed(1)}`);
 
-  const half = r.peek(standingPose({ knee: 128, lean: 18, armDown: 25, ankleX: 1.0 }));
-  ok('半蹲：大腿明显高于水平', half.thighFromHoriz > 32, `thigh=${half.thighFromHoriz?.toFixed(1)}`);
+  const half = r.peek(standingPose({ knee: 120, lean: 18, armDown: 25, ankleX: 1.0, view: 'front' }));
+  ok('半蹲：髋仍明显高于膝（够不到“接近水平”）', half.hipAboveKnee > 0.25, `hipAboveKnee=${half.hipAboveKnee?.toFixed(3)}`);
+  ok('半蹲：不会算成蹲到水平', half.thighFromHoriz > 20, `thigh=${half.thighFromHoriz?.toFixed(1)}`);
 
   const fPlank = r.peek(plankPose());
   if (DUMP) console.log('   平板:', dump(fPlank));
@@ -270,23 +280,23 @@ console.log('\n[1] 深蹲计数');
 {
   const det = fresh('squat');
   const r = makeRunner(det);
-  r.run(repeat(squatPose(88), 1600, 10));
+  r.run(repeat(squatPose(75), 1600, 10));
   ok('10 次标准深蹲 = 10', det.validReps === 10, `实际 ${det.validReps}`);
   ok('无半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
 }
 {
   const det = fresh('squat');
   const r = makeRunner(det);
-  r.run(repeat(squatPose(88), 1600, 3));
+  r.run(repeat(squatPose(75), 1600, 3));
   const base = det.validReps;
   r.run([{ pose: standingIdle, ms: 800 }]);
-  r.run(repeat(squatPose(88), 1600, 3));
+  r.run(repeat(squatPose(75), 1600, 3));
   ok('中途站直休息不影响累计', det.validReps === base + 3, `实际 ${det.validReps}，期望 ${base + 3}`);
 }
 {
   const det = fresh('squat');
   const r = makeRunner(det);
-  r.run(repeat(squatPose(130), 1600, 6));
+  r.run(repeat(squatPose(110), 1600, 6));
   ok('6 次半蹲不计入有效次数', det.validReps === 0, `实际 ${det.validReps}`);
   atLeast('半蹲被记为半程并提示', det.partialReps, 5);
   ok('提示了“蹲低一点”', r.cues.some((c) => c.code === 'depth' || c.code === 'depthAborted'), r.cues.map((c) => c.code).join(','));
@@ -294,7 +304,7 @@ console.log('\n[1] 深蹲计数');
 {
   const det = fresh('squat');
   const r = makeRunner(det);
-  r.run(repeat(squatPose(88), 500, 6));
+  r.run(repeat(squatPose(75), 500, 6));
   ok('过快抖动不计数', det.validReps === 0, `实际 ${det.validReps}`);
   ok('提示了速度太快', r.cues.some((c) => c.code === 'tempo'));
 }
@@ -316,9 +326,9 @@ console.log('\n[1] 深蹲计数');
   // 跟踪丢失后不应串数
   const det = fresh('squat');
   const r = makeRunner(det);
-  r.run(repeat(squatPose(88), 1600, 1));
+  r.run(repeat(squatPose(75), 1600, 1));
   r.run([{ pose: lostFrame(), ms: 1000 }]);
-  r.run(repeat(squatPose(88), 1600, 1));
+  r.run(repeat(squatPose(75), 1600, 1));
   ok('丢失跟踪后重连：2 次', det.validReps === 2, `实际 ${det.validReps}`);
 }
 
@@ -502,7 +512,7 @@ console.log('\n[7] 按动作要领计分');
   // 深蹲：整轮要领全过 = 4+6+7+14+8 = 39，外加满分奖励 6
   const det = fresh('squat');
   const r = makeRunner(det);
-  r.run(repeat(squatPose(88), 1600, 10));
+  r.run(repeat(squatPose(75), 1600, 10));
   ok('深蹲 10 次满分：要领分累计正确', det.score >= 10 * 45 && det.score <= 10 * 45 + 10,
     `得分 ${det.score}（期望 450~460）`);
   ok('“蹲到大腿接近水平”每轮都拿到分', r.steps.filter((s) => s.id === 'parallel').length === 10,
@@ -519,11 +529,11 @@ console.log('\n[7] 按动作要领计分');
   // 半蹲：站姿、屈髋、下沉、站直都能得分，但“蹲到水平”永远拿不到，也没有满分奖励
   const det = fresh('squat');
   const r = makeRunner(det);
-  r.run(repeat(squatPose(130), 1600, 6));
+  r.run(repeat(squatPose(110), 1600, 6));
   ok('半蹲：拿不到“大腿接近水平”这一步的分',
     !r.steps.some((s) => s.id === 'parallel'), '不应该出现 parallel');
   ok('半蹲：拿不到整轮满分奖励', r.bonuses.length === 0, `实际 ${r.bonuses.length}`);
-  ok('半蹲：仍然有部分要领得分', det.score >= 6 * 20, `得分 ${det.score}`);
+  ok('半蹲：仍然有部分要领得分', det.score >= 6 * 18, `得分 ${det.score}`);
   ok('半蹲得分明显低于标准深蹲', det.score < 10 * 45, `得分 ${det.score}`);
 }
 {
@@ -631,6 +641,128 @@ console.log('\n[7] 按动作要领计分');
     `knee=${f.kneeAngle?.toFixed(1)}`);
   r.run([{ pose: bad, ms: 1500 }]);
   ok('远侧腿估歪时依然能拿到站姿分', det.stepStatus()[0].done === true, `得分 ${det.score}`);
+}
+
+/* ------------------------------------------------------------------ *
+ * 运动前校准
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8] 运动前校准');
+
+/** 把姿势缩放到校准目标大小并摆到画面中间（踝部对齐地面线、身体居中） */
+const fitToOutline = (lm, { k = 0.78, centerX = 0.5, groundY = 0.92, dx = 0 } = {}) => {
+  const ankleY = Math.max(lm[LM.L_ANKLE].y, lm[LM.R_ANKLE].y);
+  const cx = (lm[LM.L_HIP].x + lm[LM.R_HIP].x + lm[LM.L_SHOULDER].x + lm[LM.R_SHOULDER].x) / 4;
+  return lm.map((p) => ({
+    ...p,
+    x: centerX + dx + (p.x - cx) * k,
+    y: groundY + (p.y - ankleY) * k,
+  }));
+};
+
+/** 把一帧关键点跑成校准结果 */
+function calibOnce(cal, lm, now) {
+  const metric = toMetric(lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT);
+  const f = computeFrame(metric, null, now, false, null);
+  return { f, res: cal.update(f, now) };
+}
+
+{
+  const standing = (view) => standingPose({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view });
+  const idleFront = fitToOutline(standing('front'));
+  const idleSide = fitToOutline(standing('side'));
+
+  // 1) 站进轮廓里：应该逐项通过并最终判定完成
+  const cal = new Calibrator('squat');
+  let res = null;
+  let t = 0;
+  for (let i = 0; i < 60; i++) {
+    ({ res } = calibOnce(cal, idleFront, t));
+    t += 33.4;
+  }
+  ok('站进轮廓里：全部检查通过', res.checks.every((c) => c.ok),
+    res.checks.filter((c) => !c.ok).map((c) => c.id).join(','));
+  ok('站进轮廓里：保持一小会儿后判定校准完成', res.done === true, `progress=${res.progress.toFixed(2)}`);
+  ok('校准完成时给出“可以开始”的提示', res.hintKey === 'calib.ready', res.hintKey);
+  ok('深蹲要求的机位是正面', cal.view === 'front', cal.view);
+
+  // 2) 离得太远
+  const far = new Calibrator('squat');
+  const r2 = calibOnce(far, fitToOutline(standing('front'), { k: 0.5 }), 0).res;
+  ok('离太远：距离检查不通过', r2.checks.find((c) => c.id === 'distance').ok === false);
+  ok('离太远：提示“往前走一点”', r2.hintKey === 'calib.tooFar', r2.hintKey);
+
+  // 3) 离得太近
+  const near = new Calibrator('squat');
+  const r3 = calibOnce(near, fitToOutline(standing('front'), { k: 0.86 }), 0).res;
+  ok('离太近：距离检查不通过', r3.checks.find((c) => c.id === 'distance').ok === false);
+  ok('离太近：提示“往后退一点”', r3.hintKey === 'calib.tooClose', r3.hintKey);
+
+  // 再近到头顶出画：提示换成“头顶出画了”，方向同样是后退
+  const tooNear = new Calibrator('squat');
+  const r3b = calibOnce(tooNear, fitToOutline(standing('front'), { k: 1.05 }), 0).res;
+  ok('近到头顶出画：给出后退方向的提示', ['calib.headCut', 'calib.tooClose'].includes(r3b.hintKey), r3b.hintKey);
+
+  // 3.5) 大小合适但整体偏高：头顶与脚位都没落在轮廓上（修好前这里会误判为全绿）
+  const high = new Calibrator('squat');
+  const r3c = calibOnce(high, fitToOutline(standing('front'), { k: 0.62, groundY: 0.7 }), 0).res;
+  ok('身体偏高：大小检查通过但“站进轮廓”不通过',
+    r3c.checks.find((c) => c.id === 'distance').ok === true
+    && r3c.checks.find((c) => c.id === 'vertical').ok === false,
+    r3c.checks.map((c) => `${c.id}:${c.ok ? '✓' : '✗'}`).join(' '));
+  ok('身体偏高：提示往下站', r3c.hintKey === 'calib.moveDown', r3c.hintKey);
+  ok('身体偏高：不会判定校准完成', r3c.done === false);
+
+  // 4) 站偏了
+  const off = new Calibrator('squat');
+  const r4 = calibOnce(off, fitToOutline(standing('front'), { dx: 0.26 }), 0).res;
+  ok('站偏了：左右位置检查不通过', r4.checks.find((c) => c.id === 'center').ok === false);
+  ok('站偏了：提示往左/往右站', r4.hintKey === 'calib.centerLeft', r4.hintKey);
+
+  // 5) 机位不对：深蹲却侧对镜头
+  const wrongView = new Calibrator('squat');
+  const r5 = calibOnce(wrongView, idleSide, 0).res;
+  ok('深蹲侧对镜头：机位检查不通过', r5.checks.find((c) => c.id === 'view').ok === false);
+  ok('深蹲侧对镜头：提示“请正对摄像头”', r5.hintKey === 'calib.viewFront', r5.hintKey);
+  ok('机位不对时不判定完成', r5.done === false);
+
+  // 6) 侧拍动作换成正面，也应提示换机位
+  const lunge = new Calibrator('lunge');
+  ok('箭步蹲要求的机位是侧面', lunge.view === 'side', lunge.view);
+  const r6 = calibOnce(lunge, idleFront, 0).res;
+  ok('箭步蹲正对镜头：提示“请侧对摄像头”', r6.hintKey === 'calib.viewSide', r6.hintKey);
+
+  // 7) 没识别到人
+  const nobody = new Calibrator('squat');
+  const r7 = calibOnce(nobody, lostFrame(), 0).res;
+  ok('没识别到人：只报“人体识别”这一项不通过', r7.checks.length === 1 && r7.checks[0].ok === false);
+  ok('没识别到人：提示看清全身', r7.hintKey === 'calib.visible', r7.hintKey);
+
+  // 8) 一直动来动去
+  const moving = new Calibrator('squat');
+  let r8 = null;
+  for (let i = 0; i < 40; i++) {
+    ({ res: r8 } = calibOnce(moving, fitToOutline(standing('front'), { dx: i % 2 ? 0.05 : -0.05 }), i * 33.4));
+  }
+  ok('来回晃动：站定检查不通过', r8.checks.find((c) => c.id === 'steady').ok === false);
+  ok('来回晃动：不会判定校准完成', r8.done === false);
+
+  // 9) 校准完成后再动，应该掉出“完成”状态
+  const cal2 = new Calibrator('squat');
+  let r9 = null;
+  for (let i = 0; i < 60; i++) ({ res: r9 } = calibOnce(cal2, idleFront, i * 33.4));
+  ok('先完成校准', r9.done === true);
+  const r10 = calibOnce(cal2, fitToOutline(standing('front'), { dx: 0.3 }), 60 * 33.4).res;
+  ok('离开轮廓后不再处于已就位状态', r10.ready === false);
+
+  // 10) 轮廓几何本身
+  for (const view of ['front', 'side']) {
+    const joints = outlineJoints(view);
+    ok(`${view} 轮廓的每个连线段都有端点`,
+      OUTLINE_SEGMENTS.every(([a, b]) => outlinePoint(joints, a) && outlinePoint(joints, b)));
+    ok(`${view} 轮廓在画面范围内`,
+      Object.values(joints).every(([x, y]) => x > 0 && x < 1 && y > 0 && y < 1));
+  }
 }
 
 /* ------------------------------------------------------------------ *

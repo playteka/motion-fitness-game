@@ -9,7 +9,7 @@
  */
 
 import { LM, dist2, clamp } from './geometry.js';
-import { getStepPlan } from './steps.js';
+import { getStepPlan, SQUAT_FRONT } from './steps.js';
 import { t, tList } from './i18n.js';
 
 /* ------------------------------------------------------------------ *
@@ -267,28 +267,33 @@ function bendPct(angle, straight, bent) {
 }
 
 /* ------------------------------------------------------------------ *
- * 计数类：深蹲
+ * 计数类：深蹲（正面模式）
  * ------------------------------------------------------------------ */
 
-const SQUAT = {
-  standKnee: 155,      // 回到站姿
-  enterKnee: 148,      // 开始下蹲
-  bottomKnee: 105,     // 进入“底部”状态
-  partialKneeMax: 138, // 到不了这个角度就当作“没蹲”
-  thighParallel: 25,   // 严格模式：大腿与地面夹角 ≤ 25° 才算蹲到位（≈ 大腿接近水平）
-  kneeFallback: 112,   // 非严格模式：膝角 ≤ 112° 即算到位
-  minRepMs: 620,
-  minDownMs: 180,
-};
+/**
+ * 为什么深蹲改成「正对摄像头」：
+ *
+ * 深蹲的屈膝发生在**前后方向**上，而正对镜头时，这个方向正好被投影压掉。
+ * 实测同一组三维姿势（见 commit 说明）：侧拍时膝角随下蹲从 172° 降到 63°，
+ * 正拍时只从 178.7° 变到 177.7°，髋-膝-踝在画面里始终接近一条竖线 ——
+ * **膝角在正视图里基本失效**，判不出"蹲没蹲到底"，也判不出"有没有在蹲"。
+ *
+ * 正面改用「髋比膝高多少 / 小腿长」：
+ *   站直 ≈ 1.0，蹲到大腿水平 ≈ 0，蹲过水平 < 0
+ * 竖直方向的差值在正视图里**不被压缩**，所以这个量测得很准；
+ * 而且它本来就是「蹲到大腿水平」的严格定义，比膝角更直接。
+ * 小腿在图中的长度在下蹲过程中基本不变，是稳定的比例尺。
+ *
+ * 附带好处：膝盖内扣只有正面才看得出来，这条纠错现在才真正生效。
+ */
+const SQUAT = SQUAT_FRONT;
 
 class SquatDetector extends DetectorBase {
   onReset() {
     this.stage = 'up';
     this.repStartAt = 0;
-    this.minKnee = 180;
-    this.minThigh = 90;
+    this.minRatio = 9;
     this.depthOk = false;
-    this.stuckSince = 0;
     this.cycleDescended = false;
   }
   onLost() { this.stage = 'up'; this.repStartAt = 0; }
@@ -297,42 +302,41 @@ class SquatDetector extends DetectorBase {
   step(f, now) {
     this.active = true;
     this.standby = '';
-    const knee = f.kneeAngle;
-    this.depthPct = bendPct(knee, 168, 96);
-    if (knee <= 140) this.cycleDescended = true;
+    const r = f.hipAboveKnee;   // 髋比膝高多少（除以小腿长）
 
-    // 实时姿势提醒
-    if (f.view === 'front' && f.valgus > 0.45 && knee < 145) {
+    // 进度条：0% = 站直，100% = 蹲到大腿水平或更低
+    this.depthPct = clamp(((SQUAT.standRatio - r) / SQUAT.standRatio) * 100, 0, 100);
+    if (r <= SQUAT.enterRatio) this.cycleDescended = true;
+
+    // 实时姿势提醒（都是正面视角才能看出来的问题）
+    if (f.view === 'front' && f.valgus > 0.45 && r < 0.75) {
       this.cue('valgus', null, 'warn', now);
     }
-    if (f.trunkLean > 62 && knee < 150) {
-      this.cue('lean', null, 'warn', now);
+    if (f.trunkLean > 20 && r < 0.75) {
+      this.cue('lateral', null, 'warn', now);
     }
-    if (this.stage !== 'up' && knee <= 128 && f.thighFromHoriz > 32) {
+    if (this.stage !== 'up' && r > 0.30 && r <= SQUAT.enterRatio) {
       this.cue('depth', null, 'warn', now, 3000);
     }
 
     switch (this.stage) {
       case 'up':
-        if (knee <= SQUAT.enterKnee) {
+        if (r <= SQUAT.enterRatio) {
           this.stage = 'descending';
           this.repStartAt = now;
-          this.minKnee = knee;
-          this.minThigh = f.thighFromHoriz;
-          this.depthOk = f.thighFromHoriz <= SQUAT.thighParallel || f.hipBelowKnee;
-          this.stuckSince = 0;
+          this.minRatio = r;
+          this.depthOk = r <= SQUAT.bottomRatio;
         }
         break;
 
       case 'descending':
-        this.minKnee = Math.min(this.minKnee, knee);
-        this.minThigh = Math.min(this.minThigh, f.thighFromHoriz);
-        if (f.thighFromHoriz <= SQUAT.thighParallel || f.hipBelowKnee) this.depthOk = true;
-        if (knee <= SQUAT.bottomKnee) {
+        this.minRatio = Math.min(this.minRatio, r);
+        if (r <= SQUAT.bottomRatio) {
+          this.depthOk = true;
           this.stage = 'bottom';
           this.phase = 'bottom';
           this.emit({ type: 'phase', phase: 'bottom' });
-        } else if (knee >= SQUAT.standKnee) {
+        } else if (r >= SQUAT.standRatio) {
           this.finish(f, now, true);
         } else if (now - this.repStartAt > 2500) {
           this.cue('halfway', null, 'warn', now, 4000);
@@ -341,10 +345,8 @@ class SquatDetector extends DetectorBase {
         break;
 
       case 'bottom':
-        this.minKnee = Math.min(this.minKnee, knee);
-        this.minThigh = Math.min(this.minThigh, f.thighFromHoriz);
-        if (f.thighFromHoriz <= SQUAT.thighParallel || f.hipBelowKnee) this.depthOk = true;
-        if (knee >= SQUAT.standKnee) this.finish(f, now, false);
+        this.minRatio = Math.min(this.minRatio, r);
+        if (r >= SQUAT.standRatio) this.finish(f, now, false);
         break;
       default:
         break;
@@ -353,19 +355,19 @@ class SquatDetector extends DetectorBase {
 
   finish(f, now, aborted) {
     const dur = now - this.repStartAt;
-    const deepEnough = this.depthOk || (!this.strict && this.minKnee <= SQUAT.kneeFallback);
+    const deepEnough = this.depthOk || (!this.strict && this.minRatio <= SQUAT.looseRatio);
     this.stage = 'up';
     this.phase = 'up';
     this.repStartAt = 0;
 
-    if (aborted && this.minKnee > SQUAT.partialKneeMax) {
+    if (aborted && this.minRatio > SQUAT.partialRatioMax) {
       // 只是晃了一下，不算一次尝试（也不重置要领清单）
       return;
     }
     if (aborted || !deepEnough) {
       this.partialReps += 1;
       this.cue(aborted ? 'depthAborted' : 'depth', null, 'warn', now, 2600);
-      this.emit({ type: 'rep', valid: false, reason: 'depth', knee: this.minKnee, thigh: this.minThigh });
+      this.emit({ type: 'rep', valid: false, reason: 'depth', ratio: this.minRatio });
       this.nextCycle(now);
       return;
     }
@@ -379,8 +381,12 @@ class SquatDetector extends DetectorBase {
     this.validReps += 1;
     this.reps = this.validReps;
     this.cycleHadValidRep = true;
-    const quality = clamp(Math.round(60 + (this.minThigh <= 12 ? 30 : this.minThigh <= 25 ? 22 : 12) + (dur > 1200 ? 10 : 5)), 0, 100);
-    this.emit({ type: 'rep', valid: true, index: this.validReps, quality, duration: dur, thigh: this.minThigh });
+    const quality = clamp(Math.round(
+      60 + (this.minRatio <= 0.05 ? 30 : this.minRatio <= 0.18 ? 22 : 12) + (dur > 1200 ? 10 : 5),
+    ), 0, 100);
+    this.emit({
+      type: 'rep', valid: true, index: this.validReps, quality, duration: dur, ratio: this.minRatio,
+    });
     this.nextCycle(now);
   }
 }

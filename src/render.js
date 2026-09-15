@@ -4,6 +4,7 @@
 
 import { LM, SKELETON_EDGES } from './geometry.js';
 import { t } from './i18n.js';
+import { outlineJoints, outlinePoint, OUTLINE_SEGMENTS } from './calibration.js';
 
 const COLORS = {
   ok: '#34e5c4',
@@ -43,15 +44,80 @@ export class PoseRenderer {
   }
 
   /**
+   * 运动前校准用的虚线人体轮廓。
+   * @param {'front'|'side'} view 动作要求的机位
+   * @param {'search'|'adjust'|'ready'} status 未找到人 / 正在调整 / 已就位
+   */
+  drawOutline(view, status = 'search') {
+    const { ctx, canvas } = this;
+    const W = canvas.width;
+    const H = canvas.height;
+    const joints = outlineJoints(view);
+    const color = status === 'ready' ? COLORS.good : (status === 'adjust' ? COLORS.warn : COLORS.idle);
+    const base = Math.max(2, W / 420);
+
+    ctx.save();
+    ctx.setLineDash([base * 3.2, base * 2.8]);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = status === 'ready' ? 0.9 : 0.55;
+    ctx.lineWidth = base * 1.1;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = base * 4;
+
+    // 每段画成「空心胶囊」轮廓，而不是粗线，这样看起来才是人体外形
+    for (const [a, b, w] of OUTLINE_SEGMENTS) {
+      const p = outlinePoint(joints, a);
+      const q = outlinePoint(joints, b);
+      this.capsulePath(p[0] * W, p[1] * H, q[0] * W, q[1] * H, w * H);
+      ctx.stroke();
+    }
+    // 头部
+    ctx.beginPath();
+    ctx.arc(joints.nose[0] * W, joints.nose[1] * H, 0.05 * H, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 空心胶囊路径 */
+  capsulePath(x1, y1, x2, y2, width) {
+    const { ctx } = this;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = Math.hypot(dx, dy);
+    const r = width / 2;
+    if (len < 1e-3 || r < 0.5) {
+      ctx.beginPath();
+      ctx.arc(x1, y1, Math.max(r, 1), 0, Math.PI * 2);
+      return;
+    }
+    const ang = Math.atan2(dy, dx);
+    const nx = (-dy / len) * r;
+    const ny = (dx / len) * r;
+    ctx.beginPath();
+    ctx.moveTo(x1 + nx, y1 + ny);
+    ctx.lineTo(x2 + nx, y2 + ny);
+    ctx.arc(x2, y2, r, ang - Math.PI / 2, ang + Math.PI / 2);
+    ctx.lineTo(x1 - nx, y1 - ny);
+    ctx.arc(x1, y1, r, ang + Math.PI / 2, ang - Math.PI / 2);
+    ctx.closePath();
+  }
+
+  /**
    * @param {object} o
    *   landmarks 归一化关键点（原始帧坐标）
    *   frame     computeFrame 的结果
    *   exerciseId 当前动作
    *   status    'ok' | 'good' | 'warn' | 'bad' | 'idle'
+   *   outline   { view, status } 传入时先画校准轮廓
    */
-  draw({ landmarks, frame, exerciseId, status = 'idle' }) {
+  draw({
+    landmarks, frame, exerciseId, status = 'idle', outline = null,
+  }) {
     const { ctx, canvas } = this;
     this.clear();
+    if (outline) this.drawOutline(outline.view, outline.status);
     if (!landmarks || !landmarks.length) return;
 
     const W = canvas.width;

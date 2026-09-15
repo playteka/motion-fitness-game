@@ -174,6 +174,9 @@ export function toMetric(landmarks, aspect) {
   for (const p of landmarks) {
     out.push({ x: p.x * aspect, y: p.y, z: (p.z ?? 0) * aspect, v: p.v ?? p.visibility ?? 1 });
   }
+  // 顺带把宽高比挂在数组上：下游要把 x 换算回「画面宽度比例」时（例如校准的居中判断）需要它，
+  // 这样就不用给 computeFrame 再加一个参数。
+  out.aspect = aspect;
   return out;
 }
 

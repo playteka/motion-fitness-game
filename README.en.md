@@ -24,10 +24,11 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   - [Don't want to install Node.js? Use Python instead](#dont-want-to-install-nodejs-use-python-instead)
 - [Running and accessing the app](#running-and-accessing-the-app)
 - [Camera permissions](#camera-permissions)
+- [Pre-workout calibration](#pre-workout-calibration)
 - [How to use it (camera angle matters)](#how-to-use-it-camera-angle-matters)
 - [Scoring rules](#scoring-rules)
 - [Languages](#languages)
-- [Standing there with no response? Three checks](#standing-there-with-no-response-three-checks)
+- [Can't fit into the outline or getting no response? Four checks](#cant-fit-into-the-outline-or-getting-no-response-four-checks)
 - [FAQ](#faq)
 - [Tests](#tests)
 - [Project structure](#project-structure)
@@ -38,6 +39,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 
 ## Feature highlights
 
+- **Pre-workout calibration**: before you start, a **dashed body outline** appears on screen to guide you into position; you're only cleared to start once body detection, full-body framing, distance, centering, height, camera angle and holding still — all **seven** — pass, so you never “stand off-center and wonder why nothing counts”.
 - **Form steps scored one at a time**: each exercise is broken into 4–6 judgeable steps — hit one and you immediately get points, a chime, and a checkmark;
   finishing every step in a round earns a perfect-round bonus, and hold exercises give **+1 point for every second you hold**.
 - **Valid rep detection**: half reps, reps that are too fast, a sagging lower back, a piked hip and so on don't count as valid reps — they're tracked separately and you get a correction cue.
@@ -124,7 +126,7 @@ If both print a version number (for example `v22.14.0` / `10.9.2`), you're set.
 
 **Option 1: Homebrew (recommended)**
 
-If you don't have Homebrew yet, first run the command from the official site in **Terminal** (<https://brew.sh>):
+If you don't have Homebrew yet, first run the command from the official site in “Terminal” (<https://brew.sh>):
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -140,7 +142,7 @@ brew install node
 
 1. Open <https://nodejs.org/> → download the **LTS** **macOS Installer (.pkg)**
 2. Double-click it and keep clicking Continue
-3. Open **Terminal** to verify
+3. Open “Terminal” to verify
 
 **Verify:**
 
@@ -252,7 +254,7 @@ Then open this in your browser:
 
 ### 👉 <http://127.0.0.1:4174>
 
-The first time in, click “Start camera” → choose “Allow” in the browser prompt → pick an exercise → **stand sideways to the camera and you start scoring right away**.
+The first time in, click “Start camera” → choose “Allow” in the browser prompt → pick an exercise → **step into the dashed body outline on screen**; once calibration passes, click “Start set” and counting begins.
 
 > ⚠️ **Don't just double-click `index.html`**. When you open it over `file://`, the browser blocks the camera and the wasm load,
 > so you have to go through `http://127.0.0.1:...` (localhost counts as a secure context).
@@ -296,18 +298,45 @@ By default the server only listens on `127.0.0.1` (local machine only) — that 
 
 ---
 
+## Pre-workout calibration
+
+Once you pick an exercise, a **dashed body outline** appears in the video — that's your standing target. The calibration panel ticks off each item as it passes:
+
+| Check | Meaning |
+|---|---|
+| Body detected | The camera can see you clearly |
+| Full body in frame | Head to feet are all inside the frame |
+| Good distance | Your body is the right size in the frame (too far or too close, and you get a direction cue) |
+| Centered | You're standing in the middle of the outline |
+| Good height | Your body sits at the right height in the frame |
+| Camera angle right | Squats need a **front-on** camera, everything else needs a **side-on** camera |
+| Holding still | Hold still for about 1 second so you aren't judged mid-step |
+
+Once all seven pass and stay that way for a moment, the outline turns green and shows “Calibrated ✓”, and only then does the “Start set” button become available.
+Click it (or press Space) → 3-2-1 countdown → counting starts.
+
+> If you're not in position, the text below the panel tells you exactly what to do (for example “step forward into the dashed outline”, “shift a little to the right”, “face the camera”),
+> and the status bar below the video shows the same message, so you're never left wondering what's wrong.
+> To recalibrate: click the “Recalibrate” button below the video; every set also returns to calibration automatically.
+
+---
+
 ## How to use it (camera angle matters)
 
-**All six exercises work best with you sideways to the camera** (body perpendicular to the lens) — that's the only way the joint angles are real angles:
+**Squats are done facing the camera; the other five exercises are done sideways to it**:
+
+- **Squat**: face the camera. A squat's knee bend happens in the "front-to-back" direction, and from the side that direction falls right along the horizontal axis of the frame,
+  where it measures most accurately — but **only a front-on view shows whether your knees are caving inward**, and whether your left and right sides are symmetric, so squats use the front view.
+  Depth is now judged by "how much higher your hips are than your knees", which isn't compressed in a front view and is actually more direct than a knee angle.
 
 - Stand **2–3 m (6–10 ft)** away from the camera with your **whole body in frame** (head to feet);
-- **Squat / Lunge**: stand sideways to the camera so your ankles, knees, hips and shoulders are all visible at once;
+- **Lunge**: stand sideways to the camera so your ankles, knees, hips and shoulders are all visible at once;
 - **Push-up / Plank**: lie or face perpendicular to the lens with both hands and both feet inside the frame;
 - **Glute Bridge / Static Glute Bridge**: camera at your side, so your shoulders, hips, knees and ankles are all visible at once;
 - Even lighting, a clean background, and closer-fitting clothes all make tracking more stable.
 
-**Note: tracking starts the moment you pick an exercise — you don't have to click “Start set” first.**
-Stand sideways to the camera and the “stance” step's points and chime appear immediately. Clicking “Start set” only starts the timer and records a set.
+**Note: detection starts the moment you pick an exercise, but standing there no longer earns you any points.**
+Counting begins only after you step into the dashed outline, pass calibration, and click “Start set”.
 
 **Shortcuts**: `1`–`6` switch exercise · `Space` start/pause · `R` reset reps · `Esc` end set · `M` mirror · `S` skeleton · `F` fullscreen
 
@@ -320,13 +349,15 @@ Completing **every form step in the round** earns an extra perfect-round bonus, 
 
 ### Squat (45 points per round)
 
+Squats use a **front-on** camera angle, and depth is judged by “how much higher your hips are than your knees / shin length” (standing tall ≈ 1.0, thighs level ≈ 0):
+
 | Form step | How it's judged | Points |
 |---|---|---|
-| ① Stand sideways to the camera, full body in frame and upright | Side view + full body visible + body close to vertical + knee angle >150° | +4 |
-| ② Push your hips back and down (start from the hips) | Knee angle ≤152° and the hip angle opens up | +6 |
-| ③ Bend both knees, tracking over your toes | Knee angle ≤135° | +7 |
-| ④ **Squat until your thighs are near horizontal (top-scoring step)** | Thigh ≤25° from the floor (or hips below knees) | **+14** |
-| ⑤ Drive up to standing, full hip and knee extension | Knee angle ≥150° and the hip angle back to ≥130° | +8 |
+| ① Stand facing the camera with your whole body in frame and your body upright | Front view + full body visible + body vertical + hips clearly above the knees (ratio >0.86) | +4 |
+| ② Bend your knees and sink down, hips going downward | Hip-knee height ratio ≤0.72 (thighs about 46° from horizontal) | +6 |
+| ③ Bend both knees, tracking over your toes | Ratio ≤0.50 (about 30°) | +7 |
+| ④ **Squat until your thighs are near horizontal (top-scoring step)** | Ratio ≤0.25 (thighs within about 15° of horizontal, or lower) | **+14** |
+| ⑤ Drive up to standing, full hip and knee extension | Ratio back to ≥0.80 | +8 |
 | 🎁 All form steps complete for the round | All 5 steps above hit within the same round | +6 |
 
 ### Lunge (54 points per round)
@@ -418,21 +449,24 @@ then run `npm run test:i18n` again — the test checks every entry for missing k
 
 ---
 
-## Standing there with no response? Three checks
+## Can't fit into the outline or getting no response? Four checks
 
-**① Check the version first.** The page title should show `v1.3` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (**Cmd + Shift + R** on Mac).
+**① Check the version first.** The page title should show `v1.3` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
 
-**② Look at the status bar below the video.** It always tells you where you're stuck:
+**② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked, do what the line under the panel tells you:
 
-| Status bar text | Meaning |
+| Panel message | Meaning |
 |---|---|
-| No person detected: step into the middle of the frame… | The model can't find a person → see “FAQ” below |
-| Next up, “Stand sideways to the camera…”: you look like you're facing the camera | It found you, but the camera angle is wrong |
-| Next up, “…”: can't see your whole body | It found you, but some body parts are out of frame |
-| Got you ✓ hold that spot and start moving | All good — just do the exercise |
-| Start the camera first / Loading model… | The pipeline isn't up yet |
+| Can't make out your whole body: back up a little… | The model can't find you, or a body part is out of frame |
+| You're too far from / too close to the camera: step forward / back up a little | Your body is the wrong size in the frame |
+| Shift a little to the right / to the left, into the middle of the outline | You're not centered left to right |
+| Move a little higher / lower in the frame | Your vertical position is off |
+| Face the camera / turn sideways to the camera | The camera angle doesn't match the current exercise |
+| Nice — hold still… | You're one second away from being done |
 
-**③ Turn on “🐞 Metrics” in the top-right corner.** The numbers the detector sees are listed live below the video, for example:
+**③ Then look at the status bar below the video** — it shows the same message in sync, and once training starts it shows “what step is next and how far off you are”.
+
+**④ Turn on “🐞 Metrics” in the top-right corner** (it works during calibration and during training). The numbers the detector sees are listed live below the video, for example:
 
 ```
 View Side ✓(0.18) · Full body ✓ · Both legs visible ✓ · Trunk lean 6° · Knee 176° · Elbow 172° ·
@@ -443,11 +477,11 @@ Read them like this:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `View Front ✗(0.90)` | You're actually facing the camera or turned toward it | Turn sideways to the camera |
+| `View Side ✗(0.90)` | The camera angle doesn't match what this exercise needs (squats want front-on, everything else wants the side) | Turn as the status bar says: face the camera for squats, sideways for everything else |
 | `Full body ✗` | Some body parts are out of frame | Back up 1–2 steps so you're in frame from head to feet |
 | `No person detected` | Too far / too close, backlighting, or a background the same color as your clothes | Move closer, face the light source, change clothes, or use a higher-resolution camera |
 | `Trunk lean` stuck above 32° | The camera is tilted or you're standing crooked | Straighten the camera (or level it with a book) |
-| The numbers look fine but nothing gets checked off | You're stuck right on a step's threshold | The status bar spells out exactly how far off you are (for example, “your thighs are still about 12° from horizontal”) |
+| The numbers look fine but nothing gets checked off | You're stuck right on a step's threshold | The status bar spells out exactly how far off you are (for example, “your squat depth is now at 62% (100% = thighs level)”) |
 
 ---
 
@@ -465,7 +499,7 @@ That's almost always the wrong MIME type for `.wasm`. The bundled `node preview-
 Also make sure the `vendor/` directory is complete (when you download the ZIP from GitHub, forgetting to unzip the whole directory is the most common slip).
 
 **Q: The video stutters / the frame rate is low?**
-Switch **Model** in the top bar to **Lite**; turn off **📐 Angles**; try a faster device. Tracking still works fine at 10–15 FPS.
+Switch “Model” in the top bar to **Lite**; turn off “📐 Angles”; try a faster device. Tracking still works fine at 10–15 FPS.
 
 **Q: Does it work on a phone?**
 Yes. Open the same address in your phone's browser (the phone and the computer need to be on the same local network, and the server has to listen on `0.0.0.0`:
@@ -479,7 +513,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (285 cases)
+npm test                       # run all four suites (332 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
 npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
@@ -489,10 +523,10 @@ npm run test:app               # integration test that loads the real app.js wit
 
 | Test file | Cases | Coverage |
 |---|---|---|
-| `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source |
-| `tests/test-detectors.mjs` | 91 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep |
+| `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
+| `tests/test-detectors.mjs` | 122 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-page.mjs` | 89 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
-| `tests/test-app.mjs` | 73 | Startup, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
+| `tests/test-app.mjs` | 89 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
 
 ---
 
@@ -509,6 +543,7 @@ motion-fitness-game/
 │  ├─ geometry.js        geometry and signal processing (angles, One Euro smoothing)
 │  ├─ metrics.js         per-frame exercise metrics (joint angles, hip lift, body straightness…)
 │  ├─ steps.js           ★ the scored form steps per exercise (condition + points + hint key)
+│  ├─ calibration.js     ★ pre-workout calibration: target skeleton for the dashed outline + the seven positioning checks
 │  ├─ exercises.js       ★ detection state machines + scoring engine for the six exercises
 │  ├─ pose-engine.js     MediaPipe PoseLandmarker wrapper + camera management
 │  ├─ render.js          skeleton rendering
@@ -525,7 +560,8 @@ motion-fitness-game/
 - **Change point values or form-step wording**: edit `src/steps.js` (structure and points) and `src/locales/*.js` (wording).
   Each step is one `{ id, labelKey, points, check, hint }`; when `check(frame, det)` returns `true`, that step counts as hit.
 - **Change the judging thresholds**: edit the constants at the top of each exercise in `src/exercises.js` — they all have Chinese comments:
-  - `SQUAT.thighParallel`: how many degrees from horizontal counts as “deep enough” (default 25°, lower is stricter);
+  - `SQUAT_FRONT` (in `src/steps.js`): the squat's front-on depth thresholds — `standRatio` 0.86 / `enterRatio` 0.72 /
+  `bottomRatio` 0.25 (lower is stricter) / `looseRatio` 0.45; measured as “how much higher your hips are than your knees ÷ shin length”, standing tall ≈ 1.0;
   - `LUNGE.backKneeDrop`: back-knee height off the floor / shin length (default 0.35, lower is stricter);
   - `PUSHUP.elbowFull`: elbow angle at the bottom of a push-up (default 92°);
   - `BRIDGE.upRise` / `BRIDGE_HOLD.holdRise`: glute bridge hip-lift height (in units of torso length);

@@ -326,6 +326,82 @@ kbd {
   100% { transform: scale(1); }
 }
 .step-note { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+
+/* 运动前校准 */
+.calib-card { border-color: rgba(56, 189, 248, 0.35); }
+.calib-card[hidden] { display: none; }
+.calib-badge {
+  background: rgba(56, 189, 248, 0.16);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #9fd8ff;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.calib-lead { margin: 0 0 10px; font-size: 12.5px; color: #9fd8ff; }
+.calib-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+.calib-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 12.5px;
+  color: var(--muted);
+  transition: 0.18s ease;
+}
+.calib-item .calib-check {
+  width: 16px; height: 16px;
+  flex: 0 0 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.08);
+}
+.calib-item.done { color: #d6ffe4; background: rgba(74, 222, 128, 0.1); }
+.calib-item.done .calib-check { background: var(--good); color: #06240f; }
+.calib-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+  margin-top: 10px;
+}
+.calib-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-2), var(--good));
+  transition: width 0.12s linear;
+}
+.calib-hint {
+  margin: 10px 0 0;
+  padding: 8px 11px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: rgba(251, 191, 36, 0.1);
+  border-left: 3px solid var(--warn);
+  color: #ffe9b8;
+  min-height: 36px;
+}
+.calib-hint.good {
+  background: rgba(74, 222, 128, 0.12);
+  border-left-color: var(--good);
+  color: #d6ffe4;
+}
 .step-hint {
   margin: 8px 0 0;
   padding: 8px 11px;

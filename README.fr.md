@@ -25,10 +25,11 @@ Tout est côté client : le modèle de posture MediaPipe et le wasm sont stocké
   - [Pas envie d'installer Node.js ? Utilise Python](#pas-envie-dinstaller-nodejs--utilise-python)
 - [Démarrage et accès](#démarrage-et-accès)
 - [Réglages des autorisations caméra](#réglages-des-autorisations-caméra)
+- [Calibrage avant la séance](#calibrage-avant-la-séance)
 - [Comment jouer (le cadrage est essentiel)](#comment-jouer-le-cadrage-est-essentiel)
 - [Règles de score](#règles-de-score)
 - [Langues](#langues)
-- [Rien ne se passe ? Diagnostic en trois étapes](#rien-ne-se-passe--diagnostic-en-trois-étapes)
+- [Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes](#calibrage-bloqué-ou-rien-ne-se-passe--diagnostic-en-quatre-étapes)
 - [Questions fréquentes](#questions-fréquentes)
 - [Tests](#tests)
 - [Structure du projet](#structure-du-projet)
@@ -39,6 +40,8 @@ Tout est côté client : le modèle de posture MediaPipe et le wasm sont stocké
 
 ## Points forts
 
+- **Calibrage avant la séance** : une **silhouette en pointillés** s'affiche dans l'image pour te montrer où te placer ; l'identification du corps, le corps entier dans l'image, la distance, le centrage,
+  la hauteur, l'angle de vue et l'immobilité — **sept critères** à valider tous ensemble avant que le comptage démarre, pour éviter de « t'entraîner dans le vide » quand tu es mal placé.
 - **Un score attribué étape par étape selon les étapes techniques** : chaque exercice est découpé en 4 à 6 étapes vérifiables ; chaque étape réussie
   rapporte aussitôt des points, déclenche un bip et coche la ligne ; valider toutes les étapes d'une série donne droit à un bonus de série parfaite ;
   pour les exercices chronométrés, **chaque seconde tenue rapporte +1 point**.
@@ -255,7 +258,8 @@ Ouvre ensuite cette adresse dans ton navigateur :
 
 ### 👉 <http://127.0.0.1:4174>
 
-À la première ouverture, clique sur « Activer la caméra » → choisis « Autoriser » dans la fenêtre du navigateur → choisis un exercice → **mets-toi de profil face à la caméra et tu marques déjà des points**.
+À la première ouverture, clique sur « Activer la caméra » → choisis « Autoriser » dans la fenêtre du navigateur → choisis un exercice → **place-toi dans la silhouette en pointillés** ;
+une fois le calibrage validé, clique sur « Démarrer la séance » pour lancer le comptage.
 
 > ⚠️ **N'ouvre surtout pas `index.html` en double-cliquant dessus.** Ouverte en `file://`, la page verra le navigateur bloquer la caméra et le chargement du wasm :
 > il faut passer par `http://127.0.0.1:...` (localhost est considéré par le navigateur comme un contexte sécurisé).
@@ -299,18 +303,45 @@ Par défaut, le serveur n'écoute que sur `127.0.0.1` (accessible uniquement dep
 
 ---
 
+## Calibrage avant la séance
+
+Une fois ton exercice choisi, une **silhouette en pointillés** apparaît dans l'image : c'est ta cible de placement. Le panneau de calibrage coche les critères un par un :
+
+| Critère | Signification |
+|---|---|
+| Corps détecté | La caméra te voit bien |
+| Corps entier | De la tête aux pieds, tout est dans l'image |
+| Bonne distance | Ta taille dans l'image est la bonne (trop loin / trop près : le panneau te dit dans quel sens bouger) |
+| Bien centré | Tu es au milieu de la silhouette |
+| Bonne hauteur | Ta position verticale dans l'image est la bonne |
+| Bon angle | Le squat se filme **de face**, les autres exercices **de profil** |
+| Immobile | Reste sans bouger environ 1 seconde, pour éviter une validation en pleine marche |
+
+Une fois les sept critères validés et tenus un court instant, la silhouette devient verte et le message « Calibrage terminé ✓ » s'affiche : c'est seulement à ce moment que le bouton « Démarrer la séance » devient actif.
+Clique dessus (ou appuie sur Espace) → décompte 3-2-1 → le comptage démarre.
+
+> Si tu n'es pas bien placé, le panneau t'indique directement quoi faire (par exemple « recule un peu », « décale-toi vers la droite », « mets-toi face à la caméra »),
+> et la barre d'état sous l'image affiche le même message : impossible de rester dans le flou.
+> Pour refaire le calibrage : clique sur « Recalibrer » sous l'image ; chaque fin de série te ramène aussi automatiquement au calibrage.
+
+---
+
 ## Comment jouer (le cadrage est essentiel)
 
-**Pour les six exercices, mieux vaut te mettre de profil face à la caméra** (corps perpendiculaire à l'objectif) : c'est la seule prise de vue qui donne de vrais angles articulaires.
+**Le squat se filme de face, les cinq autres exercices de profil** :
+
+- **Squat** : face à la caméra. La flexion du genou se fait dans l'axe « avant-arrière » : de profil, cet axe tombe pile sur l'axe horizontal de l'image, donc il se mesure très bien —
+  mais **seul un cadrage de face permet de voir si les genoux rentrent vers l'intérieur**, et de vérifier la symétrie gauche-droite ; le squat se filme donc de face.
+  La profondeur se juge sur « de combien les hanches dépassent les genoux », une grandeur que la vue de face n'écrase pas, et qui est même plus directe que l'angle du genou.
 
 - Place-toi à **2–3 m** de la caméra et fais entrer **tout ton corps** dans l'image (de la tête aux pieds) ;
-- **Squat / fente** : debout de profil face à la caméra, avec chevilles, genoux, hanches et épaules visibles en même temps ;
+- **Fente** : debout de profil face à la caméra, avec chevilles, genoux, hanches et épaules visibles en même temps ;
 - **Pompe / planche** : le corps allongé ou à plat perpendiculaire à l'objectif, mains et pieds dans le cadre ;
 - **Pont fessier / pont fessier statique** : allongé de profil, avec épaules, hanches, genoux et chevilles visibles en même temps ;
 - Éclairage homogène, arrière-plan pas trop chargé, et vêtements plutôt ajustés : la détection sera plus stable.
 
-**À noter : la détection démarre dès l'instant où tu choisis un exercice, pas besoin de cliquer d'abord sur « Démarrer la séance ».**
-Il suffit de te placer de profil face à la caméra pour que les points et le bip de l'étape « posture » arrivent aussitôt. Le bouton « Démarrer la séance » ne fait que lancer le chrono et enregistrer une série.
+**À noter : l'analyse démarre dès l'instant où tu choisis un exercice ; inutile de cliquer d'abord sur « Démarrer la séance ».**
+Le comptage, lui, ne démarre qu'une fois que tu es bien placé dans la silhouette et que le calibrage est validé.
 
 **Raccourcis clavier** : `1`~`6` changer d'exercice · `Espace` démarrer/pause · `R` réinitialiser le compteur · `Esc` terminer la série · `M` miroir · `S` squelette · `F` plein écran
 
@@ -324,13 +355,15 @@ chronométrés, **chaque seconde tenue rapporte 1 point de plus**.
 
 ### Squat (45 points par série au maximum)
 
+Le squat se filme **de face** ; la profondeur se juge sur le rapport « écart de hauteur entre hanches et genoux / longueur du tibia » (debout ≈ 1,0 ; cuisses à l'horizontale ≈ 0) :
+
 | Étape technique | Condition de validation | Points |
 |---|---|---|
-| ① Mets-toi de profil face à la caméra, corps entier dans l'image et bien droit | Vue de profil + corps entier visible + corps presque vertical + angle du genou > 150° | +4 |
-| ② Pousse les hanches vers l'arrière et vers le bas (départ en flexion de hanche) | Angle du genou ≤ 152° et angle de hanche ouvert | +6 |
-| ③ Plie les genoux dans l'axe des pieds | Angle du genou ≤ 135° | +7 |
-| ④ **Descends jusqu'à ce que les cuisses soient presque horizontales** | Angle entre la cuisse et le sol ≤ 25° (ou hanche plus basse que le genou) | **+14** |
-| ⑤ Pousse dans le sol et redresse-toi, hanches et genoux tendus | Angle du genou ≥ 150° et retour de l'angle de hanche à ≥ 130° | +8 |
+| ① Mets-toi face à la caméra, tout le corps dans l'image et bien droit | Vue de face + corps entier visible + corps bien vertical + hanches nettement plus hautes que les genoux (rapport > 0,86) | +4 |
+| ② Plie les genoux et descends, hanches vers le bas | Rapport d'écart de hauteur ≤ 0,72 (cuisses à environ 46° de l'horizontale) | +6 |
+| ③ Plie les genoux dans l'axe des pieds | Rapport ≤ 0,50 (environ 30°) | +7 |
+| ④ **Descends jusqu'à ce que les cuisses soient presque horizontales** | Rapport ≤ 0,25 (cuisses à 15° de l'horizontale au plus, ou plus bas) | **+14** |
+| ⑤ Pousse dans le sol et redresse-toi, hanches et genoux tendus | Rapport revenu à ≥ 0,80 | +8 |
 | 🎁 Toutes les étapes de la série validées | Les 5 étapes ci-dessus validées dans la même série | +6 |
 
 ### Fente (54 points par série au maximum)
@@ -422,21 +455,24 @@ puis relance `npm run test:i18n` — le test vérifie une par une les clés manq
 
 ---
 
-## Rien ne se passe ? Diagnostic en trois étapes
+## Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes
 
 **① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v1.3`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
 
-**② Regarde la barre d'état sous l'image.** Elle t'indique en permanence où tu bloques :
+**② Regarde d'abord le panneau « Calibrage avant la séance » à droite.** Le critère qui reste décoché te dit quoi faire, juste en dessous :
 
-| Texte de la barre d'état | Signification |
+| Message du panneau | Signification |
 |---|---|
-| Aucun corps détecté : place-toi au centre de l'image… | Le modèle n'a trouvé personne → voir « Questions fréquentes » ci-dessous |
-| Étape suivante « Mets-toi de profil, corps entier dans l'image… » : tu es détecté de face ou de trois-quarts | La personne est trouvée, mais le cadrage n'est pas bon |
-| Étape suivante « … » : on ne voit pas tout ton corps | La personne est trouvée, mais une partie du corps sort du cadre |
-| Te voilà ✓ Garde cette position pour travailler | Tout est normal, il n'y a plus qu'à faire l'exercice |
-| Caméra inactive / Chargement du modèle… | La chaîne de détection n'est pas encore prête |
+| On ne voit pas tout ton corps : recule un peu… | Le modèle ne te trouve pas, ou une partie du corps sort du cadre |
+| Tu es trop loin de la caméra : avance un peu / trop près : recule un peu | Ta taille dans l'image n'est pas la bonne |
+| Décale-toi vers la droite / vers la gauche pour te mettre au centre de la silhouette | Tu n'es pas centré |
+| Décale-toi vers le haut / vers le bas de l'image | Ta position verticale n'est pas la bonne |
+| Mets-toi face à la caméra / Mets-toi de profil face à la caméra | Le cadrage ne correspond pas à l'exercice choisi |
+| Bonne position, ne bouge pas… | Il ne manque plus qu'une seconde |
 
-**③ Ouvre « 🐞 Métriques » en haut à droite.** Les chiffres que voit le détecteur s'affichent en temps réel sous l'image, par exemple :
+**③ Regarde ensuite la barre d'état sous l'image** : elle affiche le même message ; une fois la séance lancée, elle indique quelle est l'étape suivante et ce qu'il reste à faire.
+
+**④ Ouvre « 🐞 Métriques » en haut à droite** (utilisable pendant le calibrage comme pendant la séance). Les chiffres que voit le détecteur s'affichent en temps réel sous l'image, par exemple :
 
 ```
 Vue Profil ✓(0.18) · Corps entier ✓ · Jambes visibles ✓ · Inclinaison du torse 6° · Genou 176° · Coude 172° ·
@@ -447,11 +483,11 @@ Hanche 172° · Alignement du corps 175° · Élévation des hanches -0.98 · An
 
 | Symptôme | Cause | À faire |
 |---|---|---|
-| `Vue Face ✗(0.90)` | Tu te tiens en réalité de face ou de trois-quarts | Tourne-toi pour te mettre de profil face à la caméra |
+| `Vue Profil ✗(0.90)` | Le cadrage ne correspond pas à l'exercice choisi (le squat se filme de face, les autres de profil) | Tourne-toi comme l'indique la barre d'état : de face pour le squat, de profil pour les autres |
 | `Corps entier ✗` | Une partie de ton corps sort du cadre | Recule d'1 à 2 pas pour que tout, de la tête aux pieds, entre dans l'image |
 | `Aucun corps détecté` | Trop loin / trop près, contre-jour, arrière-plan de la même couleur que tes vêtements | Rapproche-toi, mets-toi face à la source de lumière, change de vêtements, essaie une caméra de meilleure résolution |
 | `Inclinaison du torse` durablement > 32° | La caméra est penchée, ou tu te tiens de travers | Remets la caméra droite (cale-la avec un livre) |
-| Les chiffres sont bons mais aucune coche n'apparaît | Tu bloques sur le seuil d'une étape | La barre d'état indique directement ce qu'il manque (par exemple « il te reste 12° avant l'horizontale ») |
+| Les chiffres sont bons mais aucune coche n'apparaît | Tu bloques sur le seuil d'une étape | La barre d'état indique directement ce qu'il manque (par exemple « tu es déjà à 62 % (100 % = cuisses à l'horizontale) ») |
 
 ---
 
@@ -483,7 +519,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les quatre suites d'un coup (285 tests)
+npm test                       # les quatre suites d'un coup (332 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources
 npm run test:detectors         # détection et logique de score (squelettes synthétiques)
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
@@ -493,10 +529,10 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 
 | Fichier de test | Nombre de tests | Contenu couvert |
 |---|---|---|
-| `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources |
-| `tests/test-detectors.mjs` | 91 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés |
+| `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
+| `tests/test-detectors.mjs` | 122 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
 | `tests/test-page.mjs` | 89 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
-| `tests/test-app.mjs` | 73 | Démarrage du vrai `app.js`, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
+| `tests/test-app.mjs` | 89 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
 
 ---
 
@@ -513,6 +549,7 @@ motion-fitness-game/
 │  ├─ geometry.js        géométrie et traitement du signal (angles, lissage One Euro)
 │  ├─ metrics.js         métriques par image (angles articulaires, élévation des hanches, alignement du corps…)
 │  ├─ steps.js           ★ « étapes techniques » notées de chaque exercice (condition + points + clé d'indice)
+│  ├─ calibration.js     ★ calibrage avant la séance : squelette cible de la silhouette en pointillés + sept critères de placement
 │  ├─ exercises.js       ★ machines à états et moteur de score des six exercices
 │  ├─ pose-engine.js     enveloppe MediaPipe PoseLandmarker + gestion de la caméra
 │  ├─ render.js          tracé du squelette
@@ -529,7 +566,8 @@ motion-fitness-game/
 - **Modifier les points ou le texte des étapes** : édite `src/steps.js` (structure et points) et `src/locales/*.js` (textes).
   Chaque étape est un objet `{ id, labelKey, points, check, hint }` ; quand `check(frame, det)` renvoie `true`, l'étape est considérée comme validée.
 - **Modifier les seuils de validation** : édite les constantes en haut de chaque exercice dans `src/exercises.js` — elles sont toutes commentées en chinois :
-  - `SQUAT.thighParallel` : à partir de quel angle entre la cuisse et le sol on considère que tu es « descendu assez bas » (25° par défaut, plus la valeur est petite, plus c'est strict) ;
+  - `SQUAT_FRONT` (dans `src/steps.js`) : les seuils de profondeur du squat filmé de face — `standRatio` 0,86 / `enterRatio` 0,72 /
+  `bottomRatio` 0,25 (plus la valeur est petite, plus c'est strict) / `looseRatio` 0,45 ; l'unité est « écart de hauteur hanches-genoux ÷ longueur du tibia », debout ≈ 1,0 ;
   - `LUNGE.backKneeDrop` : hauteur du genou arrière au-dessus du sol / longueur du tibia (0,35 par défaut, plus la valeur est petite, plus c'est strict) ;
   - `PUSHUP.elbowFull` : angle du coude en bas de la pompe (92° par défaut) ;
   - `BRIDGE.upRise` / `BRIDGE_HOLD.holdRise` : hauteur d'élévation des hanches pour le pont fessier (en unités de longueur de tronc) ;

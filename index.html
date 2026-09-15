@@ -91,6 +91,7 @@
             <select id="camSel"></select>
           </label>
           <div class="spacer"></div>
+          <button class="ghost-btn" id="btnRecalibrate" type="button" data-i18n="calib.recalibrate"></button>
           <button class="ghost-btn" id="btnResetReps" type="button" data-i18n="ui.resetReps"></button>
         </div>
         <div class="debug-line" id="debugLine" hidden></div>
@@ -117,6 +118,17 @@
           <ul class="step-list" id="stepList"></ul>
           <p class="step-hint" id="stepHint"></p>
           <p class="step-note" data-i18n="ui.stepsNote"></p>
+        </section>
+
+        <section class="card calib-card" id="calibCard">
+          <div class="card-title-row">
+            <h2 class="card-title" data-i18n="calib.title"></h2>
+            <span class="calib-badge" id="calibBadge">0/0</span>
+          </div>
+          <p class="calib-lead" data-i18n="calib.lead"></p>
+          <ul class="calib-list" id="calibList"></ul>
+          <div class="calib-bar"><div class="calib-fill" id="calibFill"></div></div>
+          <p class="calib-hint" id="calibHint"></p>
         </section>
 
         <section class="card">

@@ -83,7 +83,7 @@ export default {
     noHistory: 'Todavía no hay entrenamientos.',
     clearConfirm: '¿Seguro que quieres borrar todo el historial y las mejores marcas?',
 
-    stepsNote: 'Sigue los pasos uno a uno: cada vez que cumplas uno, sumas puntos al momento, suena un aviso y se marca. En cuanto elijas el ejercicio, solo con colocarte ya empiezas a sumar con la “postura”, sin pulsar Empezar.',
+    stepsNote: 'Sigue los pasos uno a uno: cada vez que cumplas uno, sumas puntos al momento, suena un aviso y se marca; y si completas todos los pasos de la ronda, te llevas un bonus por puntuación máxima.',
     nextStep: 'Siguiente paso',
     stepsAllDone: '¡Pasos de esta ronda completados! ✓',
     nextStepWithHint: 'Siguiente paso «{label}»: {hint}',
@@ -91,7 +91,7 @@ export default {
 
     maskTitle: 'Activa la cámara para entrenar',
     maskText: 'Todo el reconocimiento se hace en tu propio navegador: la imagen no se sube a ningún servidor.',
-    maskHint: 'Consejo: móvil en horizontal o cámara del ordenador, a 2-3 m de distancia y de perfil a la cámara.',
+    maskHint: 'Consejo: móvil en horizontal o cámara del ordenador, a 2-3 m de distancia; en la sentadilla, de frente a la cámara, y en el resto de ejercicios, de perfil.',
     maskOpening: 'Abriendo la cámara…',
     maskOpeningText: 'Elige “Permitir” en la ventana del navegador. Si no pasa nada, pulsa el botón de abajo para reintentar.',
     maskCamFailTitle: 'No se pudo abrir la cámara',
@@ -102,6 +102,40 @@ export default {
     maskUnsupportedTitle: 'Este navegador no admite la cámara',
     maskUnsupportedText: 'Usa la última versión de Chrome / Edge / Safari y abre esta página por http(s).',
     unknownError: 'Error desconocido',
+  },
+
+  /* ---------------- Calibración previa al entrenamiento ---------------- */
+  calib: {
+    title: 'Calibración previa',
+    lead: 'Colócate dentro del muñeco de líneas punteadas, con todo el cuerpo en el encuadre',
+    waiting: 'Esperando la calibración…',
+    needCalib: 'Colócate dentro del contorno punteado y completa la calibración antes de pulsar «Empezar»',
+    doneVoice: 'Calibración completada, ya puedes empezar',
+    startNow: 'Calibración completada ✓ Pulsa «Empezar» o la barra espaciadora para empezar a contar',
+    recalibrate: 'Volver a calibrar',
+    ready: 'Estás en una buena posición, no te muevas…',
+    adjust: 'Colócate dentro del muñeco de líneas punteadas',
+    visible: 'No veo bien todo tu cuerpo: retrocede un poco para que salgan la cabeza y los pies',
+    headCut: 'Se te corta la cabeza: retrocede un poco',
+    feetCut: 'Se te cortan los pies: retrocede un poco',
+    tooFar: 'Estás demasiado lejos de la cámara: acércate un poco y colócate dentro del contorno punteado',
+    tooClose: 'Estás demasiado cerca de la cámara: retrocede un poco y colócate dentro del contorno punteado',
+    centerLeft: 'Muévete un poco a la derecha, al centro del contorno',
+    centerRight: 'Muévete un poco a la izquierda, al centro del contorno',
+    moveUp: 'Sitúate un poco más arriba en el encuadre (ahora estás demasiado abajo)',
+    moveDown: 'Sitúate un poco más abajo en el encuadre (ahora estás demasiado arriba)',
+    viewFront: 'Ponte de frente a la cámara: en la sentadilla hay que grabar de frente para medir bien la profundidad',
+    viewSide: 'Ponte de perfil a la cámara: en este ejercicio hay que grabar de lado para medir bien los ángulos',
+    steady: 'Muy bien, no te muevas…',
+    check: {
+      visible: 'Cuerpo detectado',
+      framing: 'Cuerpo entero visible',
+      distance: 'Distancia correcta',
+      center: 'Bien centrado',
+      vertical: 'Altura correcta',
+      view: 'Ángulo correcto',
+      steady: 'Sin moverte',
+    },
   },
 
   /* ---------------- Barra de estado / avisos ---------------- */
@@ -118,7 +152,7 @@ export default {
     strictOff: 'Modo flexible: las repeticiones parciales también cuentan.',
     skeletonOn: 'Esqueleto visible.',
     skeletonOff: 'Esqueleto oculto; solo se ve la imagen de la cámara.',
-    modelReady: 'Modelo listo. Elige el ejercicio y colócate de perfil: la postura ya suma puntos sola.',
+    modelReady: 'Modelo listo. Elige el ejercicio, colócate dentro del contorno punteado para completar la calibración y empieza a entrenar.',
     modelSwitched: 'Modelo «{model}» activado.',
     modelSwitchFail: 'No se pudo cambiar de modelo: {msg}',
     fileProtocol: 'Has abierto la página con file://: el navegador bloqueará el modelo y la cámara. Ábrela con node preview-server.js en http://127.0.0.1.',
@@ -167,8 +201,8 @@ export default {
   debug: {
     noPerson: 'Métricas: no se detecta cuerpo',
     view: 'Vista',
-    viewSide: 'Lateral ✓',
-    viewFront: 'Frontal ✗ (ponte de perfil)',
+    viewSide: 'Lateral',
+    viewFront: 'Frontal',
     bodyVisible: 'Cuerpo entero',
     legsVisible: 'Piernas visibles',
     trunkLean: 'Inclinación del torso',
@@ -188,9 +222,9 @@ export default {
   ex: {
     squat: {
       name: 'Sentadilla',
-      cameraHint: 'De perfil a la cámara (mirando a la izquierda o a la derecha) y con el cuerpo entero en el encuadre',
+      cameraHint: 'De frente a la cámara y con el cuerpo entero en el encuadre (en la sentadilla hay que grabar de frente para medir bien la profundidad)',
       goal: 'Baja hasta que el muslo quede paralelo al suelo o más abajo',
-      howto: ['Ponte de pie con los pies a la anchura de los hombros y de perfil a la cámara', 'Lleva la cadera hacia atrás y hacia abajo, con las rodillas siguiendo la dirección de los pies', 'Baja hasta que el muslo quede paralelo al suelo o más abajo', 'Empuja con los pies para subir: cuenta cuando cadera y rodillas estén del todo extendidas'],
+      howto: ['Ponte de pie con los pies a la anchura de los hombros y de frente a la cámara', 'Flexiona las rodillas y baja la cadera hacia abajo, con las rodillas siguiendo la dirección de los pies', 'Baja hasta que el muslo quede paralelo al suelo o más abajo', 'Empuja con los pies para subir: cuenta cuando cadera y rodillas estén del todo extendidas'],
       tips: ['Mantén todo el pie apoyado, sin levantar los talones', 'No dejes que las rodillas se metan hacia dentro', 'No tires de la zona lumbar al subir'],
     },
     lunge: {
@@ -234,22 +268,22 @@ export default {
   steps: {
     squat: {
       stance: {
-        label: 'Colócate de perfil a la cámara, recto y con el cuerpo entero en el encuadre',
-        side: 'Te veo de frente o en diagonal: ponte de perfil a la cámara (cuerpo perpendicular), solo así se miden bien los ángulos',
+        label: 'Colócate de frente a la cámara, recto y con el cuerpo entero en el encuadre',
+        view: 'Te veo de perfil: ponte de frente a la cámara (en la sentadilla hay que grabar de frente para medir bien la profundidad)',
         body: 'No veo tu cuerpo entero: retrocede un poco para que salgan la cabeza y los pies',
-        lean: 'Estás algo torcido o inclinado: ponte recto, con los hombros justo encima de la cadera',
+        lean: 'Estás algo torcido: ponte recto y mantén la simetría entre izquierda y derecha',
         knee: 'Estira del todo las dos piernas',
         tune: 'Endereza un poco más y te llevas este paso',
       },
-      hinge: { label: 'Lleva la cadera hacia atrás y hacia abajo (empieza por la cadera)', hint: 'Empieza a bajar: cadera atrás y abajo, no solo doblar la espalda' },
+      hinge: { label: 'Flexiona las rodillas y baja la cadera', hint: 'Empieza a bajar: flexiona las rodillas y lleva la cadera hacia abajo' },
       descend: { label: 'Flexiona las rodillas siguiendo la dirección de los pies y baja', hint: 'Sigue bajando y flexiona más las rodillas' },
-      parallel: { label: 'Baja hasta que el muslo quede casi horizontal (el paso que más puntúa)', hint: 'Baja un poco más: te faltan unos {deg}° para el paralelo' },
+      parallel: { label: 'Baja hasta que el muslo quede casi horizontal (el paso que más puntúa)', hint: 'Baja un poco más: ahora estás al {pct}% (100% = muslo horizontal)' },
       stand: { label: 'Empuja con los pies y sube con cadera y rodillas del todo extendidas', hint: 'Empuja el suelo con los pies y estira la cadera y las rodillas' },
     },
     lunge: {
       stance: {
         label: 'Colócate de perfil a la cámara, recto y con el cuerpo entero en el encuadre',
-        side: 'Te veo de frente o en diagonal: ponte de perfil a la cámara (cuerpo perpendicular), solo así se miden bien los ángulos',
+        view: 'Te veo de frente o en diagonal: ponte de perfil a la cámara (cuerpo perpendicular), solo así se miden bien los ángulos',
         body: 'No veo tu cuerpo entero: retrocede un poco para que salgan la cabeza y los pies',
         lean: 'Estás algo torcido o inclinado: ponte recto, con los hombros justo encima de la cadera',
         knee: 'Estira del todo las dos piernas',
@@ -320,7 +354,7 @@ export default {
   cues: {
     squat: {
       valgus: 'No metas las rodillas hacia dentro: ábrelas hacia la punta de los pies',
-      lean: 'No inclines tanto el torso: pecho arriba y mirada al frente',
+      lateral: 'No te ladees: mantén la simetría entre izquierda y derecha, con los hombros justo encima de la cadera',
       depth: 'Baja un poco más, hasta que el muslo quede casi horizontal',
       depthAborted: 'Baja más: las repeticiones parciales no cuentan',
       halfway: 'Baja hasta que el muslo quede paralelo al suelo y luego sube',

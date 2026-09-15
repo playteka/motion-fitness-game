@@ -82,7 +82,7 @@ export default {
     noHistory: 'No workouts yet.',
     clearConfirm: 'Clear all workout history and best scores?',
 
-    stepsNote: 'Work through the form steps one at a time: hit a step and you instantly get points, a chime, and a checkmark. Once you pick an exercise, just stand there to start earning stance points — no need to press start.',
+    stepsNote: 'Work through the form steps one at a time: hit a step and you instantly get points, a chime, and a checkmark. Complete every step in the round and you get a full-marks bonus.',
     nextStep: 'Next',
     stepsAllDone: 'All form steps complete for this round ✓',
     nextStepWithHint: 'Next up, “{label}”: {hint}',
@@ -90,7 +90,7 @@ export default {
 
     maskTitle: 'Start the camera to train',
     maskText: 'Everything runs right here in your browser. No video ever leaves your device.',
-    maskHint: 'Tip: use a webcam or hold your phone in landscape, stand 6–10 ft (2–3 m) away, and turn sideways to the camera.',
+    maskHint: 'Tip: use a webcam or hold your phone in landscape, stand 6–10 ft (2–3 m) from the camera; face the camera for squats and turn sideways for every other exercise.',
     maskOpening: 'Opening the camera…',
     maskOpeningText: 'Choose “Allow” in the browser prompt. If nothing happens, tap the button below to retry.',
     maskCamFailTitle: 'Couldn’t open the camera',
@@ -101,6 +101,40 @@ export default {
     maskUnsupportedTitle: 'This browser doesn’t support the camera',
     maskUnsupportedText: 'Please use the latest Chrome / Edge / Safari and open this page over http(s).',
     unknownError: 'Unknown error',
+  },
+
+  /* ---------------- Pre-workout calibration ---------------- */
+  calib: {
+    title: 'Pre-workout calibration',
+    lead: 'Step into the dashed stick-figure outline and get your whole body in frame',
+    waiting: 'Waiting for calibration…',
+    needCalib: 'Step into the dashed outline and finish calibration first, then tap “Start set”',
+    doneVoice: 'Calibration complete, you can start now',
+    startNow: 'Calibrated ✓ tap “Start set” or press Space to start counting',
+    recalibrate: 'Recalibrate',
+    ready: 'Great position — hold it…',
+    adjust: 'Step into the dashed stick-figure outline',
+    visible: 'Can’t make out your whole body: back up a little so you’re in frame from head to feet',
+    headCut: 'Your head is out of frame: back up a little',
+    feetCut: 'Your feet are out of frame: back up a little',
+    tooFar: 'You’re too far from the camera: step forward into the dashed outline',
+    tooClose: 'You’re too close to the camera: back up into the dashed outline',
+    centerLeft: 'Shift a little to the right, into the middle of the outline',
+    centerRight: 'Shift a little to the left, into the middle of the outline',
+    moveUp: 'Move a little higher in the frame (you’re too low right now)',
+    moveDown: 'Move a little lower in the frame (you’re too high right now)',
+    viewFront: 'Face the camera: squats need a front-on view to measure depth accurately',
+    viewSide: 'Turn sideways to the camera: this move needs a side view to measure angles accurately',
+    steady: 'Nice — hold still…',
+    check: {
+      visible: 'Body detected',
+      framing: 'Full body in frame',
+      distance: 'Good distance',
+      center: 'Centered',
+      vertical: 'Good height',
+      view: 'Camera angle right',
+      steady: 'Holding still',
+    },
   },
 
   /* ---------------- Status bar / notices ---------------- */
@@ -117,7 +151,7 @@ export default {
     strictOff: 'Relaxed mode: partial reps count too.',
     skeletonOn: 'Skeleton overlay on.',
     skeletonOff: 'Skeleton overlay hidden — camera view only.',
-    modelReady: 'Model ready. Pick an exercise and stand sideways to the camera — your stance starts scoring on its own.',
+    modelReady: 'Model ready. Pick an exercise, step into the dashed outline to finish calibration, then start your set.',
     modelSwitched: 'Switched to the “{model}” model.',
     modelSwitchFail: 'Model switch failed: {msg}',
     fileProtocol: 'Opened over file:// — the browser will block the model and the camera. Run node preview-server.js and open http://127.0.0.1 instead.',
@@ -166,8 +200,10 @@ export default {
   debug: {
     noPerson: 'Metrics: no person detected',
     view: 'View',
-    viewSide: 'Side ✓',
-    viewFront: 'Front ✗ (turn sideways)',
+    // The app appends ✓/✗ itself — whether a view is “correct” depends on the exercise
+    // (squats need a front-on view, everything else needs a side view).
+    viewSide: 'Side',
+    viewFront: 'Front',
     bodyVisible: 'Full body',
     legsVisible: 'Both legs visible',
     trunkLean: 'Trunk lean',
@@ -187,9 +223,9 @@ export default {
   ex: {
     squat: {
       name: 'Squat',
-      cameraHint: 'Turn sideways to the camera (facing left or right) with your whole body in frame',
+      cameraHint: 'Face the camera with your whole body in frame (squats need a front-on view to measure depth accurately)',
       goal: 'Squat until your thighs are parallel to the floor or lower',
-      howto: ['Stand with feet shoulder-width apart, sideways to the camera', 'Push your hips back and down, knees tracking over your toes', 'Squat until your thighs are parallel to the floor or lower', 'Drive through your feet to stand tall — full hip and knee extension counts as one rep'],
+      howto: ['Stand with your feet shoulder-width apart, facing the camera', 'Bend your knees and sink down, sending your hips downward with your knees tracking over your toes', 'Squat until your thighs are parallel to the floor or lower', 'Drive through your feet to stand tall — full hip and knee extension counts as one rep'],
       tips: ['Keep the whole foot planted — heels stay down', 'Don’t let your knees cave inward', 'Don’t arch your lower back on the way up'],
     },
     lunge: {
@@ -233,22 +269,22 @@ export default {
   steps: {
     squat: {
       stance: {
-        label: 'Stand sideways to the camera, full body in frame and upright',
-        side: 'You look like you’re facing the camera: turn sideways (perpendicular to the lens) — angles can only be measured from the side',
+        label: 'Stand facing the camera with your whole body in frame and your body upright',
+        view: 'You look like you’re sideways to the camera: face the camera instead (squats need a front-on view to measure depth accurately)',
         body: 'Can’t see your whole body: back up a little so you’re in frame from head to feet',
-        lean: 'You’re a bit tilted or leaning forward: stand tall with your shoulders right over your hips',
+        lean: 'You’re tilting to one side: stand up straighter and stay symmetrical left to right',
         knee: 'Straighten both legs all the way',
         tune: 'Square up a little more to earn this step',
       },
-      hinge: { label: 'Push your hips back and down (start from the hips)', hint: 'Start the squat: send your hips back and down — don’t just bend over' },
+      hinge: { label: 'Bend your knees and sink down, hips going downward', hint: 'Start the squat: bend your knees and send your hips downward' },
       descend: { label: 'Bend both knees, tracking over your toes', hint: 'Keep sinking down and bend your knees a bit more' },
-      parallel: { label: 'Squat until your thighs are near horizontal (top-scoring step)', hint: 'Go a little lower — your thighs are still about {deg}° from horizontal' },
+      parallel: { label: 'Squat until your thighs are near horizontal (top-scoring step)', hint: 'Go a little lower — your squat depth is now at {pct}% (100% = thighs level)' },
       stand: { label: 'Drive up to standing, full hip and knee extension', hint: 'Push through your feet to stand up and straighten both hips and knees' },
     },
     lunge: {
       stance: {
         label: 'Stand sideways to the camera, upright and full body in frame',
-        side: 'You look like you’re facing the camera: turn sideways (perpendicular to the lens) — angles can only be measured from the side',
+        view: 'You look like you’re facing the camera: turn sideways (perpendicular to the lens) — angles can only be measured from the side',
         body: 'Can’t see your whole body: back up a little so you’re in frame from head to feet',
         lean: 'You’re a bit tilted or leaning forward: stand tall with your shoulders right over your hips',
         knee: 'Straighten both legs all the way',
@@ -319,7 +355,7 @@ export default {
   cues: {
     squat: {
       valgus: 'Don’t let your knees cave in — push them out over your toes',
-      lean: 'Chest up, head up — don’t fold your torso forward',
+      lateral: 'Don’t tilt: stay symmetrical side to side and keep your shoulders stacked right over your hips',
       depth: 'Go lower — squat until your thighs are near horizontal',
       depthAborted: 'Squat deeper — partial reps don’t count',
       halfway: 'Squat until your thighs are parallel to the floor, then stand up',

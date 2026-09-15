@@ -19,7 +19,7 @@ export const SEG = {
   upper: 0.18,
   fore: 0.17,
   head: 0.13,
-  shoulderW: 0.22,
+  shoulderW: 0.26,   // 正面视角：肩宽/躯干长 ≈ 0.81，与真人比例一致，便于机位识别
   hipW: 0.18,
 };
 
@@ -219,14 +219,19 @@ function assemble(p) {
   set(LM.R_SHOULDER, shR, view === 'front' ? 0.92 : farVis);
   set(LM.L_HIP, hipL, nearVis);
   set(LM.R_HIP, hipR, view === 'front' ? 0.92 : farVis);
-  set(LM.L_KNEE, knee, nearVis);
-  set(LM.R_KNEE, farKnee, farKneeVis);
-  set(LM.L_ANKLE, ankle, nearVis);
-  set(LM.R_ANKLE, farAnkle, farKneeVis);
-  set(LM.L_HEEL, add(ankle, up(90), 0.07), nearVis);
-  set(LM.R_HEEL, add(farAnkle, up(90), 0.07), farKneeVis);
-  set(LM.L_FOOT, add(ankle, up(90), -0.13), nearVis);
-  set(LM.R_FOOT, add(farAnkle, up(90), -0.13), farKneeVis);
+  // 正面视角时两腿要左右分开（真人就是这样），否则膝间距为 0 会被误判成膝盖内扣
+  const latK = view === 'front' ? SEG.hipW / 2 + 0.02 : 0;
+  const latA = view === 'front' ? SEG.hipW / 2 + 0.03 : 0;
+  const shiftX = (q, dx) => ({ x: q.x + dx, y: q.y, z: q.z ?? 0 });
+
+  set(LM.L_KNEE, shiftX(knee, latK), nearVis);
+  set(LM.R_KNEE, shiftX(farKnee, -latK), farKneeVis);
+  set(LM.L_ANKLE, shiftX(ankle, latA), nearVis);
+  set(LM.R_ANKLE, shiftX(farAnkle, -latA), farKneeVis);
+  set(LM.L_HEEL, shiftX(add(ankle, up(90), 0.07), latA), nearVis);
+  set(LM.R_HEEL, shiftX(add(farAnkle, up(90), 0.07), -latA), farKneeVis);
+  set(LM.L_FOOT, shiftX(add(ankle, up(90), -0.13), latA), nearVis);
+  set(LM.R_FOOT, shiftX(add(farAnkle, up(90), -0.13), -latA), farKneeVis);
   set(LM.L_ELBOW, elbow, nearVis);
   set(LM.R_ELBOW, elbow, farVis);
   set(LM.L_WRIST, wrist, nearVis);

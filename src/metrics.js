@@ -123,6 +123,24 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const thighDY = P(idx.knee).y - hipMid.y;
   const thighFromHoriz = Math.abs(toDeg(Math.atan2(Math.abs(thighDY), Math.abs(thighDX))));
 
+  // ---- 正面视角专用：竖直方向的量在正视图里不被压缩 ----
+  // 小腿在图中的长度：深蹲时小腿的前倾发生在「前后」方向，正视图看不到，
+  // 所以这个长度在下蹲过程中基本不变，是一个稳定的比例尺。
+  const shinLen = Math.max(1e-3, dist2(P(idx.knee), P(idx.ankle)));
+  // 髋比膝高多少（除以小腿长）：≈1.0 = 站直，≈0 = 蹲到大腿水平，<0 = 蹲过水平。
+  // 这正是「蹲到平行」的严格定义，而且正对镜头也能测准。
+  const hipAboveKnee = (P(idx.knee).y - hipMid.y) / shinLen;
+
+  // ---- 校准用：人体在画面里的大小与位置 ----
+  const bodyTop = Math.min(P(LM.NOSE).y, shoulderMid.y);
+  const bodyBottom = groundY;
+  const bodySpan = bodyBottom - bodyTop;
+  const centerX = (shoulderMid.x + hipMid.x) / 2;
+  // 上面这些量的单位是「画面高度」，而 x 还要除回宽高比才是「画面宽度比例」，
+  // 校准的目标轮廓是画在归一化坐标里的，所以这里给出宽度比例版本，两者才能直接比较。
+  const aspect = metric.aspect || 1;
+  const centerXFrac = centerX / aspect;
+
   // 躯干相对竖直的倾斜（带方向：正=前倾到 +x 方向）
   const trunkLean = torsoIncl;
 
@@ -171,6 +189,13 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     hipLineDev,
     hipBelowKnee,
     thighFromHoriz,
+    shinLen,
+    hipAboveKnee,
+    bodyTop,
+    bodyBottom,
+    bodySpan,
+    centerX,
+    centerXFrac,
     valgus,
     view,
     viewRatio,

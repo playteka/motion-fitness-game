@@ -243,7 +243,7 @@ console.log('\n[2] 切换动作与要领清单');
     api.selectExercise('squat');
     return elements.get('stepList').innerHTML;
   })();
-  ok('深蹲：要领清单独立', squatSteps.includes('髋部向后向下坐'));
+  ok('深蹲：要领清单独立', squatSteps.includes('屈膝下蹲，髋部向下沉'));
   ok('切换动作后要领清单同步刷新', !squatSteps.includes('向前迈出'));
 }
 
@@ -349,33 +349,22 @@ console.log('\n[3] 动作 → 计分 → 音效与界面');
     elements.get('hudScore').textContent === `${det.score} 分`,
     `${elements.get('hudScore').textContent} vs ${det.score}`);
 
-  // 未点“开始训练”时也要实时给反馈（这是用户明确要求的）
+  // 现在流程是「校准 → 开始 → 计数」：校准阶段不计数、不计分
   const before = det.score;
+  // 先退出训练态，避免切换动作时把上一组存成记录、干扰后面的结算用例
   api.state.session = 'idle';
   const det2 = (() => { api.selectExercise('squat'); return api.state.detector; })();
+  ok('切换动作后回到校准阶段', api.state.session === 'calibrating', api.state.session);
   let t2 = t;
   for (let i = 0; i < 45; i++) {
-    const lm = standingPose({ knee: 178, lean: 6, armDown: 0, ankleX: 1.0 });
+    const lm = standingPose({ knee: 176, lean: 6, armDown: 0, ankleX: 1.0, view: 'front' });
     const sm = smoother.apply(lm.map((q) => ({ ...q, v: q.visibility })), t2 / 1000);
     const f = computeFrame(toMetric(sm, ASPECT), null, t2, false, null);
     api.handleEvents(api.feedDetector(f, t2));
     api.updateHud();
     t2 += 33.4;
   }
-  ok('未点开始训练也能实时得分（站姿要领立刻给分）', det2.score > 0, `得分 ${det2.score}`);
-  ok('未开始时要领清单同样会打勾', elements.get('stepList').innerHTML.includes('step-item done'));
-  ok('要领清单下方给出“下一步该做什么”', elements.get('stepHint').textContent.includes('下一步'));
-  ok('继续站着不会重复加分', (() => {
-    const s = det2.score;
-    for (let i = 0; i < 60; i++) {
-      const lm = standingPose({ knee: 178, lean: 6, armDown: 0, ankleX: 1.0 });
-      const sm = smoother.apply(lm.map((q) => ({ ...q, v: q.visibility })), t2 / 1000);
-      const f = computeFrame(toMetric(sm, ASPECT), null, t2, false, null);
-      api.feedDetector(f, t2);
-      t2 += 33.4;
-    }
-    return det2.score === s;
-  })());
+  ok('校准阶段站着不会计分', det2.score === 0 && det2.validReps === 0, `score=${det2.score} reps=${det2.validReps}`);
   ok('箭步蹲得分未被深蹲影响', before > 0);
 }
 
@@ -552,6 +541,83 @@ console.log('\n[7] 多语言切换');
     `score=${api.state.detector.score} reps=${api.state.detector.validReps}`);
   api.changeLang('zh');
   ok('切回中文后动作名恢复', elements.get('hudName').textContent === zhName);
+}
+
+/* ------------------------------------------------------------------ *
+ * 运动前校准（应用接线）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8] 运动前校准流程');
+{
+  const { toMetric: tm, LandmarkSmoother: LS, LM: LMK } = await import('../src/geometry.js');
+  const { computeFrame: cf } = await import('../src/metrics.js');
+  const { ASPECT: A, standingPose: sp } = await import('./synthetic-pose.mjs');
+  const api = windowStub.__mfg;
+
+  /** 把姿势缩放到校准目标大小并摆到画面中间 */
+  const fit = (lm, { k = 0.78, cx0 = 0.5, groundY = 0.92, dx = 0 } = {}) => {
+    const ankleY = Math.max(lm[LMK.L_ANKLE].y, lm[LMK.R_ANKLE].y);
+    const cx = (lm[LMK.L_HIP].x + lm[LMK.R_HIP].x + lm[LMK.L_SHOULDER].x + lm[LMK.R_SHOULDER].x) / 4;
+    return lm.map((p) => ({ ...p, x: cx0 + dx + (p.x - cx) * k, y: groundY + (p.y - ankleY) * k }));
+  };
+  const frameOf = (lm, t) => cf(tm(lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), A), null, t, false, null);
+
+  api.selectExercise('squat');
+  ok('选中动作后进入校准阶段', api.state.session === 'calibrating', api.state.session);
+  ok('校准面板可见', elements.get('calibCard').hidden === false);
+  ok('校准阶段开始按钮不可用', elements.get('btnStart').disabled === true);
+  ok('校准阶段按钮文案提示等待校准',
+    elements.get('btnStart').textContent.includes('等待校准'), elements.get('btnStart').textContent);
+
+  api.startSession();
+  ok('未完成校准时不会进入倒计时', api.state.session !== 'countdown', api.state.session);
+
+  // 站进轮廓并保持
+  const idle = fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }));
+  let outline = null;
+  let t3 = 500000;
+  for (let i = 0; i < 60; i++) {
+    outline = api.calibrationStep(frameOf(idle, t3), t3);
+    t3 += 33.4;
+  }
+  ok('站进轮廓并保持后判定校准完成', api.state.session === 'ready', api.state.session);
+  ok('校准完成时轮廓切到「已就位」配色', outline.status === 'ready', outline.status);
+  ok('校准完成后开始按钮可用', elements.get('btnStart').disabled === false);
+  ok('校准清单逐项打勾', elements.get('calibList').innerHTML.includes('calib-item done'),
+    elements.get('calibList').innerHTML.slice(0, 60));
+  ok('校准完成后给出开始提示', elements.get('cueLine').textContent.includes('开始'),
+    elements.get('cueLine').textContent);
+
+  // 机位跟着动作变
+  api.selectExercise('lunge');
+  ok('切到箭步蹲后要求侧面机位', api.state.calibrator.view === 'side', api.state.calibrator.view);
+  const sideIdle = fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'side' }));
+  const o2 = api.calibrationStep(frameOf(sideIdle, t3), t3);
+  ok('箭步蹲的虚线轮廓是侧面形状', o2.view === 'side', o2.view);
+
+  // 站偏时给方向提示
+  api.toCalibration();
+  ok('重新校准后回到校准阶段', api.state.session === 'calibrating');
+  api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.3 }), t3), t3);
+  ok('站偏时给出左右方向提示', /左|右/.test(elements.get('calibHint').textContent),
+    elements.get('calibHint').textContent);
+  ok('站偏时有人体但未就位（轮廓为调整色）',
+    api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.3 }), t3), t3).status === 'adjust');
+
+  // 轮廓是独立的一层：关掉“火柴人”也必须照常显示引导
+  api.renderer.showSkeleton = false;
+  resetCtxCounts();
+  api.renderer.draw({ landmarks: null, frame: null, exerciseId: 'squat', status: 'idle', outline: { view: 'front', status: 'adjust' } });
+  const outlineCalls = { ...ctxCounts };
+  ok('关掉火柴人时虚线轮廓照常绘制', outlineCalls.lineTo > 5 && outlineCalls.arc > 0,
+    `lineTo=${outlineCalls.lineTo} arc=${outlineCalls.arc}`);
+  ok('关掉火柴人且没有关键点时也不会画骨架',
+    outlineCalls.stroke > 0 && outlineCalls.fill === 0, `stroke=${outlineCalls.stroke} fill=${outlineCalls.fill}`);
+
+  api.renderer.showSkeleton = true;
+  resetCtxCounts();
+  api.renderer.draw({ landmarks: null, frame: null, exerciseId: 'squat', status: 'idle', outline: null });
+  ok('不传轮廓时不画任何东西', ctxCounts.stroke === 0 && ctxCounts.lineTo === 0);
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

@@ -82,7 +82,7 @@ export default {
     noHistory: 'Pas encore d’historique.',
     clearConfirm: 'Effacer tout l’historique et les meilleurs scores ?',
 
-    stepsNote: 'Suis les étapes une par une : chaque étape validée rapporte aussitôt des points, un bip et une coche. Une fois l’exercice choisi, ta simple position debout rapporte déjà les points de « posture » : pas besoin d’attendre de démarrer.',
+    stepsNote: 'Suis les étapes une par une : chaque étape validée rapporte aussitôt des points, un bip et une coche ; et si tu valides toutes les étapes de la série, tu reçois en plus le bonus du score maximal.',
     nextStep: 'Étape suivante',
     stepsAllDone: 'Toutes les étapes de cette série sont validées ✓',
     nextStepWithHint: 'Étape suivante « {label} » : {hint}',
@@ -90,7 +90,7 @@ export default {
 
     maskTitle: 'Active la caméra pour commencer',
     maskText: 'Toute la détection se fait dans ton navigateur : aucune image n’est envoyée à un serveur.',
-    maskHint: 'Conseil : téléphone à l’horizontale ou webcam d’ordinateur, à 2–3 m de la caméra, de profil.',
+    maskHint: 'Conseil : téléphone à l’horizontale ou webcam d’ordinateur, à 2–3 m de la caméra ; face à la caméra pour le squat, de profil pour les autres exercices.',
     maskOpening: 'Ouverture de la caméra…',
     maskOpeningText: 'Choisis « Autoriser » dans la fenêtre du navigateur. Si rien ne se passe, clique sur le bouton ci-dessous pour réessayer.',
     maskCamFailTitle: 'Impossible d’ouvrir la caméra',
@@ -101,6 +101,40 @@ export default {
     maskUnsupportedTitle: 'Ce navigateur ne gère pas la caméra',
     maskUnsupportedText: 'Utilise une version récente de Chrome / Edge / Safari et ouvre cette page en http(s).',
     unknownError: 'Erreur inconnue',
+  },
+
+  /* ---------------- Calibrage avant la séance ---------------- */
+  calib: {
+    title: 'Calibrage avant la séance',
+    lead: 'Place-toi dans la silhouette en pointillés : tout ton corps doit entrer dans l’image',
+    waiting: 'Calibrage en cours…',
+    needCalib: 'Place-toi d’abord dans la silhouette en pointillés pour finir le calibrage, puis clique sur « Démarrer la séance »',
+    doneVoice: 'Calibrage terminé, tu peux commencer',
+    startNow: 'Calibrage terminé ✓ Clique sur « Démarrer la séance » ou appuie sur Espace pour lancer le comptage',
+    recalibrate: 'Recalibrer',
+    ready: 'Bonne position, ne bouge pas…',
+    adjust: 'Place-toi dans la silhouette en pointillés',
+    visible: 'On ne voit pas tout ton corps : recule un peu pour que la tête et les pieds entrent dans l’image',
+    headCut: 'Le haut de ta tête sort de l’image : recule un peu',
+    feetCut: 'Tes pieds sortent de l’image : recule un peu',
+    tooFar: 'Tu es trop loin de la caméra : avance un peu et place-toi dans la silhouette en pointillés',
+    tooClose: 'Tu es trop près de la caméra : recule un peu et place-toi dans la silhouette en pointillés',
+    centerLeft: 'Décale-toi vers la droite pour te mettre au centre de la silhouette',
+    centerRight: 'Décale-toi vers la gauche pour te mettre au centre de la silhouette',
+    moveUp: 'Décale-toi vers le haut de l’image (tu es trop bas)',
+    moveDown: 'Décale-toi vers le bas de l’image (tu es trop haut)',
+    viewFront: 'Mets-toi face à la caméra : le squat se filme de face pour bien mesurer la profondeur',
+    viewSide: 'Mets-toi de profil face à la caméra : cet exercice se filme de profil pour bien mesurer les angles',
+    steady: 'Parfait, ne bouge plus…',
+    check: {
+      visible: 'Corps détecté',
+      framing: 'Corps entier',
+      distance: 'Bonne distance',
+      center: 'Bien centré',
+      vertical: 'Bonne hauteur',
+      view: 'Bon angle',
+      steady: 'Immobile',
+    },
   },
 
   /* ---------------- Barre d'état / messages ---------------- */
@@ -117,7 +151,7 @@ export default {
     strictOff: 'Mode souple : les répétitions partielles comptent aussi.',
     skeletonOn: 'Squelette affiché.',
     skeletonOff: 'Squelette masqué : seule l’image de la caméra reste visible.',
-    modelReady: 'Modèle prêt. Choisis ton exercice et mets-toi de profil : les points de posture arrivent tout seuls.',
+    modelReady: 'Modèle prêt. Choisis ton exercice, place-toi dans la silhouette en pointillés pour terminer le calibrage, puis lance la séance.',
     modelSwitched: 'Modèle « {model} » activé.',
     modelSwitchFail: 'Échec du changement de modèle : {msg}',
     fileProtocol: 'Page ouverte en file:// : le navigateur bloque le modèle et la caméra. Lance node preview-server.js et ouvre http://127.0.0.1.',
@@ -169,8 +203,8 @@ export default {
   debug: {
     noPerson: 'Métriques : aucun corps détecté',
     view: 'Vue',
-    viewSide: 'Profil ✓',
-    viewFront: 'Face ✗ (profil requis)',
+    viewSide: 'Profil',
+    viewFront: 'Face',
     bodyVisible: 'Corps entier',
     legsVisible: 'Jambes visibles',
     trunkLean: 'Inclinaison du torse',
@@ -190,9 +224,9 @@ export default {
   ex: {
     squat: {
       name: 'Squat',
-      cameraHint: 'De profil face à la caméra (vers la gauche ou vers la droite), corps entier dans l’image',
+      cameraHint: 'Face à la caméra, tout le corps dans l’image (le squat se filme de face pour bien mesurer la profondeur)',
       goal: 'Descends jusqu’à ce que les cuisses soient parallèles au sol ou plus bas',
-      howto: ['Pieds écartés à la largeur des épaules, de profil face à la caméra', 'Pousse les hanches vers l’arrière et vers le bas, genoux dans l’axe des pieds', 'Descends jusqu’à ce que les cuisses soient parallèles au sol ou plus bas', 'Pousse dans le sol pour te relever : une répétition quand hanches et genoux sont bien tendus'],
+      howto: ['Pieds écartés à la largeur des épaules, face à la caméra', 'Fléchis les genoux et descends, hanches vers le bas, genoux dans l’axe des pieds', 'Descends jusqu’à ce que les cuisses soient parallèles au sol ou plus bas', 'Pousse dans le sol pour te relever : une répétition quand hanches et genoux sont bien tendus'],
       tips: ['Garde les pieds bien à plat, les talons ne décollent pas', 'Les genoux ne rentrent pas vers l’intérieur', 'À la remontée, ne tire pas sur le bas du dos'],
     },
     lunge: {
@@ -236,22 +270,22 @@ export default {
   steps: {
     squat: {
       stance: {
-        label: 'Mets-toi de profil, corps entier dans l’image et bien droit',
-        side: 'Tu es de face ou de trois-quarts : mets-toi de profil (corps perpendiculaire à la caméra), c’est la seule prise de vue qui permet de mesurer les angles',
+        label: 'Mets-toi face à la caméra, tout le corps dans l’image et bien droit',
+        view: 'Tu es de profil : mets-toi face à la caméra (le squat se filme de face pour bien mesurer la profondeur)',
         body: 'On ne voit pas tout ton corps : recule un peu pour que la tête et les pieds entrent dans l’image',
-        lean: 'Tu es un peu penché ou incliné : redresse-toi, épaules juste au-dessus des hanches',
+        lean: 'Ta position est un peu de travers : redresse-toi et reste bien symétrique',
         knee: 'Tends bien les deux jambes pour te tenir droit',
         tune: 'Redresse-toi encore un peu pour gagner cette étape',
       },
-      hinge: { label: 'Pousse les hanches vers l’arrière et vers le bas (départ en flexion de hanche)', hint: 'Commence à descendre : pousse les hanches en arrière et en bas, ne te contente pas de pencher le buste' },
+      hinge: { label: 'Plie les genoux et descends, hanches vers le bas', hint: 'Commence à descendre : plie les genoux, hanches vers le bas' },
       descend: { label: 'Plie les genoux dans l’axe des pieds', hint: 'Continue à descendre et plie davantage les genoux' },
-      parallel: { label: 'Descends jusqu’à ce que les cuisses soient presque horizontales (l’étape qui rapporte le plus)', hint: 'Descends encore : il te reste environ {deg}° avant l’horizontale' },
+      parallel: { label: 'Descends jusqu’à ce que les cuisses soient presque horizontales (l’étape qui rapporte le plus)', hint: 'Descends encore un peu : tu es déjà à {pct} % (100 % = cuisses à l’horizontale)' },
       stand: { label: 'Pousse dans le sol et redresse-toi, hanches et genoux tendus', hint: 'Pousse dans les pieds pour te relever et tends bien hanches et genoux' },
     },
     lunge: {
       stance: {
         label: 'Mets-toi de profil, corps entier dans l’image et bien droit',
-        side: 'Tu es de face ou de trois-quarts : mets-toi de profil (corps perpendiculaire à la caméra), c’est la seule prise de vue qui permet de mesurer les angles',
+        view: 'Tu es de face ou de trois-quarts : mets-toi de profil (corps perpendiculaire à la caméra), c’est la seule prise de vue qui permet de mesurer les angles',
         body: 'On ne voit pas tout ton corps : recule un peu pour que la tête et les pieds entrent dans l’image',
         lean: 'Tu es un peu penché ou incliné : redresse-toi, épaules juste au-dessus des hanches',
         knee: 'Tends bien les deux jambes pour te tenir droit',
@@ -322,7 +356,7 @@ export default {
   cues: {
     squat: {
       valgus: 'Les genoux ne rentrent pas : pousse-les vers l’extérieur, dans l’axe des pieds',
-      lean: 'Ne penche pas trop le buste : poitrine haute, tête haute',
+      lateral: 'Ne te penche pas sur le côté : reste bien symétrique, épaules juste au-dessus des hanches',
       depth: 'Descends encore un peu, jusqu’à ce que les cuisses soient presque horizontales',
       depthAborted: 'Descends plus bas : une répétition partielle ne compte pas',
       halfway: 'Descends jusqu’à ce que les cuisses soient parallèles au sol, puis remonte',
