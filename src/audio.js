@@ -16,37 +16,57 @@ import { t, getMeta } from './i18n.js';
 export const mtof = (midi) => 440 * (2 ** ((midi - 69) / 12));
 
 /**
- * 欢快的四小节循环：I–V–vi–IV（C–G–Am–F），116 BPM。
- * 每小节 8 个八分音符：低音根音、分解和弦琶音、轻微的底鼓/军鼓/踩镲，
- * 听起来像一段轻快的练习背景乐，又不会盖住语音。
+ * 欢快的四小节循环：I–V–vi–IV（C–G–Am–F），132 BPM，带一点摇摆（swing）。
+ * 每小节：跳跃的低音 + 明亮的主旋律 + 每小节开头的和弦点缀 + 底鼓/军鼓/踩镲（含切分），
+ * 听起来是「轻快有推动力」的练习背景乐；音量仍然压在语音之下，念要领时还会自动降低。
+ *
+ * melody 是 8 个八分音符的音级偏移（相对 root + 12）；缺省时退回和弦琶音。
  */
 export const MUSIC = {
-  bpm: 116,
+  bpm: 132,
+  swing: 0.16,   // 每对八分音符的第二个稍晚一点 → 更有律动
   bars: [
-    { root: 48, notes: [0, 4, 7, 12, 7, 4, 7, 12] },   // C
-    { root: 43, notes: [0, 4, 7, 12, 7, 4, 7, 12] },   // G
-    { root: 45, notes: [0, 3, 7, 12, 7, 3, 7, 12] },   // Am
-    { root: 41, notes: [0, 4, 7, 12, 7, 4, 7, 12] },   // F
+    { root: 48, notes: [0, 4, 7, 12, 7, 4, 7, 12], melody: [0, 0, 4, 0, 7, 4, 0, 2] },   // C
+    { root: 43, notes: [0, 4, 7, 12, 7, 4, 7, 12], melody: [0, 4, 7, 4, 12, 7, 4, 0] },  // G
+    { root: 45, notes: [0, 3, 7, 12, 7, 3, 7, 12], melody: [0, 3, 7, 3, 12, 7, 3, 0] },  // Am
+    { root: 41, notes: [0, 4, 7, 12, 7, 4, 7, 12], melody: [0, 4, 7, 12, 9, 7, 4, 2] },  // F
   ],
 };
 
 /** 一个完整循环的所有音符事件（t 是相对循环起点的秒数），确定性输出，方便测试 */
 export function musicEvents(music = MUSIC) {
   const beat = 60 / music.bpm;
+  const swing = music.swing || 0;
+  // 第 b 小节第 i 个八分音符落在第几拍（奇数位加摇摆偏移）
+  const at = (b, i) => (b * 4 + (i >> 1) + ((i & 1) ? 0.5 + swing : 0)) * beat;
   const out = [];
   music.bars.forEach((bar, b) => {
+    const mel = bar.melody || bar.notes;
+    // 主旋律：8 个八分音符，明亮的三角波
     for (let i = 0; i < 8; i++) {
-      const t = (b * 4 + i / 2) * beat;
-      const note = bar.notes[i % bar.notes.length];
-      // 主旋律：八分音符分解和弦
-      out.push({ t, kind: 'lead', freq: mtof(bar.root + 12 + note), dur: beat * 0.42, gain: 0.055, type: 'triangle' });
-      // 低音：每拍一次
-      if (i % 2 === 0) out.push({ t, kind: 'bass', freq: mtof(bar.root - 12), dur: beat * 0.85, gain: 0.075, type: 'sine' });
-      // 踩镲：每个八分音符一次，很轻
-      out.push({ t, kind: 'hat', freq: 7200, dur: 0.025, gain: 0.012, type: 'square' });
-      // 底鼓 / 军鼓：给出「一、二、三、四」的律动
-      if (i === 0 || i === 4) out.push({ t, kind: 'kick', freq: 110, dur: 0.11, gain: 0.11, type: 'sine', slideTo: 55 });
-      if (i === 2 || i === 6) out.push({ t, kind: 'snare', freq: 1900, dur: 0.07, gain: 0.03, type: 'triangle' });
+      out.push({
+        t: at(b, i), kind: 'lead', freq: mtof(bar.root + 12 + mel[i % mel.length]),
+        dur: beat * 0.38, gain: 0.075, type: 'triangle',
+      });
+    }
+    // 低音：根音-根音-五音-五音的跳跃进行
+    for (const [i, deg] of [[0, 0], [3, 0], [4, 7], [6, 7]]) {
+      out.push({ t: at(b, i), kind: 'bass', freq: mtof(bar.root - 12 + deg), dur: beat * 0.5, gain: 0.1, type: 'sine' });
+    }
+    // 每小节开头一个明亮的和弦点缀（两个音）
+    out.push({ t: at(b, 0), kind: 'stab', freq: mtof(bar.root + 12), dur: beat * 0.22, gain: 0.05, type: 'square' });
+    out.push({ t: at(b, 0), kind: 'stab', freq: mtof(bar.root + 19), dur: beat * 0.22, gain: 0.035, type: 'square' });
+    // 踩镲：每个八分音符，反拍更响一点 → 有推动力
+    for (let i = 0; i < 8; i++) {
+      out.push({ t: at(b, i), kind: 'hat', freq: 8200, dur: 0.022, gain: (i & 1) ? 0.028 : 0.016, type: 'square' });
+    }
+    // 底鼓：1、3 拍 + 第 2 拍后半的切分（这也是「活泼」的关键）
+    for (const i of [0, 3, 4]) {
+      out.push({ t: at(b, i), kind: 'kick', freq: 120, dur: 0.1, gain: 0.14, type: 'sine', slideTo: 58 });
+    }
+    // 军鼓：2、4 拍 + 第 4 拍后半的轻打
+    for (const [i, g] of [[2, 0.055], [6, 0.055], [7, 0.025]]) {
+      out.push({ t: at(b, i), kind: 'snare', freq: 2000, dur: 0.07, gain: g, type: 'triangle' });
     }
   });
   return out.sort((a, b) => a.t - b.t);
@@ -73,8 +93,8 @@ export class AudioKit {
     this._musicGain = null;
     this._musicTimer = null;
     this._musicLoopAt = 0;
-    this.musicVolume = 0.12;      // 正常音量（足够欢快，又不盖住语音）
-    this.musicDuckVolume = 0.04;  // 念要领时压低
+    this.musicVolume = 0.3;       // 正常音量（要能明显听到，又不盖住语音）
+    this.musicDuckVolume = 0.11;  // 念要领时压低
   }
 
   /* ---------- 基础 ---------- */

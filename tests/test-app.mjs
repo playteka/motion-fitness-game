@@ -1035,17 +1035,32 @@ console.log('\n[11] 背景音乐');
   ok('一个循环 16 拍、约 8.3 秒',
     Math.abs(musicLoopSeconds() - 16 * (60 / MUSIC.bpm)) < 1e-9,
     `${musicLoopSeconds().toFixed(2)}s`);
-  ok('音符事件确定性：32 个旋律 + 16 个低音 + 32 个踩镲 + 8 底鼓 + 8 军鼓',
-    count('lead') === 32 && count('bass') === 16 && count('hat') === 32
-    && count('kick') === 8 && count('snare') === 8,
-    JSON.stringify({ lead: count('lead'), bass: count('bass'), hat: count('hat'), kick: count('kick'), snare: count('snare') }));
+  ok('音符事件确定性：32 旋律 + 16 低音 + 8 和弦点缀 + 32 踩镲 + 12 底鼓 + 12 军鼓',
+    count('lead') === 32 && count('bass') === 16 && count('stab') === 8 && count('hat') === 32
+    && count('kick') === 12 && count('snare') === 12,
+    JSON.stringify({ lead: count('lead'), bass: count('bass'), stab: count('stab'), hat: count('hat'), kick: count('kick'), snare: count('snare') }));
   ok('事件按时间排好序，且从 0 开始',
     ev[0].t === 0 && ev.every((e, i) => i === 0 || e.t >= ev[i - 1].t));
   ok('所有音高都在可听范围内（40Hz~12kHz）',
     ev.every((e) => e.freq >= 40 && e.freq <= 12000),
     `${Math.min(...ev.map((e) => e.freq)).toFixed(1)}~${Math.max(...ev.map((e) => e.freq)).toFixed(1)}`);
-  ok('音量足够轻，不会盖住语音（单个音符 ≤ 0.12）',
-    ev.every((e) => e.gain <= 0.12), String(Math.max(...ev.map((e) => e.gain))));
+  ok('单个音符音量不超过 0.15（不刺耳、也不会盖住语音）',
+    ev.every((e) => e.gain <= 0.15), String(Math.max(...ev.map((e) => e.gain))));
+  // 「更活泼」的三条特征：切分底鼓、摇摆、以及足够快的速度
+  const beat = 60 / MUSIC.bpm;
+  ok('速度 132 BPM（比原来更欢快）', MUSIC.bpm === 132, String(MUSIC.bpm));
+  const kicks = ev.filter((e) => e.kind === 'kick').map((e) => e.t / beat);
+  ok('底鼓有切分（有的落在拍与拍之间，不只是死板的正拍）',
+    kicks.length === 12 && kicks.some((t) => Math.abs(t - Math.round(t)) > 0.3),
+    kicks.slice(0, 6).map((t) => t.toFixed(2)).join(','));
+  const hatPhase = ev.filter((e) => e.kind === 'hat').map((e) => (e.t / beat) % 1);
+  ok('八分音符带摇摆（反拍落在半拍之后，而不是正中 0.5）',
+    hatPhase.some((p) => p > 0.55) && !hatPhase.some((p) => Math.abs(p - 0.5) < 1e-6),
+    hatPhase.slice(0, 4).map((p) => p.toFixed(3)).join(','));
+  const musicVolume = windowStub.__mfg.audio.musicVolume;
+  const duckVolume = windowStub.__mfg.audio.musicDuckVolume;
+  ok('音乐音量明显调大（≥0.25），且念要领时仍会压低',
+    musicVolume >= 0.25 && musicVolume > duckVolume, `${musicVolume} vs ${duckVolume}`);
 
   // 开关接线：没有 WebAudio 环境时也不能报错（Node 里就是这样）
   const api = windowStub.__mfg;
