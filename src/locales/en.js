@@ -109,8 +109,8 @@ export default {
     lead: 'Move into the dashed body outline so your whole body is in frame',
     waiting: 'Waiting for calibration…',
     needCalib: 'Move into the dashed outline and finish calibration first, then tap “Start set”',
-    doneVoice: 'Calibration complete, you can start now',
-    startNow: 'Calibrated ✓ tap “Start set” or press Space to start counting',
+    doneVoice: 'All rested? Tap Start set for the next set',
+    startNow: 'Rested? Tap “Start set” for the next set (or press Space)',
     recalibrate: 'Recalibrate',
     ready: 'Great position — hold it…',
     adjust: 'Move into the dashed body outline',
@@ -144,6 +144,7 @@ export default {
   /* ---------------- Status bar / notices ---------------- */
   status: {
     noPerson: 'No person detected — step into the middle of the frame and keep your whole body in view (back up 1–2 steps)',
+    noDetector: 'Detector not ready: retap the action button',
     ready: 'Got you ✓ hold that spot and start moving',
     needCamera: 'Start the camera first',
     countdownGo: 'Go! Follow the cues — partial reps don’t count.',

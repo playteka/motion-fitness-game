@@ -637,17 +637,18 @@ console.log('\n[8] 运动前校准流程');
   ok('校准清单逐项打勾', elements.get('calibList').innerHTML.includes('calib-item done'),
     elements.get('calibList').innerHTML.slice(0, 60));
 
-  // 一组结束后回到校准：这一轮不再自动开始，要用户自己点（否则刚练完就被拽进下一组）
+  // 一组结束后回到校准：停在原地不自动开始，要用户自己点（否则刚练完就被拽进下一组）
   api.stopSession('goal');
   ok('一组结束后回到校准阶段', api.state.session === 'calibrating', api.state.session);
-  ok('一组结束后不再自动开始', api.state.autoStart === false);
+  ok('一组结束后进入「休息态」：留在原地不会自动开始',
+    api.state.afterSet === true, `afterSet=${api.state.afterSet}`);
   let t3b = t3 + 100000;
   let outlineAfterSet = null;
   for (let i = 0; i < 60; i++) {
     outlineAfterSet = api.calibrationStep(frameOf(idle, t3b), t3b);
     t3b += 33.4;
   }
-  ok('再次校准完成后停在「可以开始」而不是自动开始',
+  ok('留在原地再次识别完成，也只停在「可以开始」而不是自动开始',
     api.state.session === 'ready', api.state.session);
   ok('这一轮保留绿色轮廓，等用户自己点开始',
     outlineAfterSet && outlineAfterSet.status === 'ready', JSON.stringify(outlineAfterSet));
@@ -660,6 +661,16 @@ console.log('\n[8] 运动前校准流程');
   ok('手动点开始训练仍然可用（进入倒计时）', api.state.session === 'countdown', api.state.session);
   api.stopSession('user');
   api.camera.stream = savedStreamLying;
+
+  // 休息够了走开再回来：自动开始重新装填，站好就又会自动开始
+  api.toCalibration({ silent: true, afterSet: true });   // 等价于「一组结束后回到校准」
+  ok('结束一组后处于休息态', api.state.afterSet === true);
+  api.calibrationStep(frameOf(lostFrame(), t3b), t3b);   // 人离开画面
+  t3b += 33.4;
+  ok('离开画面后自动开始重新装填', api.state.afterSet === false);
+  for (let i = 0; i < 60; i++) { api.calibrationStep(frameOf(idle, t3b), t3b); t3b += 33.4; }
+  ok('走开再回来站好 → 又会自动开始', api.state.session === 'countdown', api.state.session);
+  api.stopSession('user');
 
   // 机位跟着动作变
   api.selectExercise('lunge');
@@ -862,6 +873,35 @@ console.log('\n[8] 运动前校准流程');
       `reps=${api.state.detector.validReps}`);
     ok('端到端：训练过程中有语音提示（要领/报数）', saidNow.length > beforeVoices,
       saidNow.slice(beforeVoices, beforeVoices + 4).join(' / '));
+
+    // 状态条纪律 1：有待完成的要领时，即使这一步没有具体提示，也必须写清卡在哪一步
+    const detRef = api.state.detector;
+    const origPending = detRef.pendingHint;
+    detRef.pendingHint = () => ({ id: 'x', labelKey: 'steps.squat.hinge.label', hint: null });
+    api.state.hintUntil = 0;
+    api.updateStatusHint({ ok: true }, performance.now() + 1000);
+    ok('待完成要领没有具体提示时，状态条写「下一步…」而不是「已识别到你 ✓」',
+      elements.get('poseHint').textContent.includes('下一步')
+      && !elements.get('poseHint').textContent.includes('保持这个位置做动作'),
+      elements.get('poseHint').textContent.slice(0, 60));
+    detRef.pendingHint = origPending;
+
+    // 状态条纪律 2：识别器缺失这类异常要显式说出来，不能安静地什么都不显示
+    const savedDetector = api.state.detector;
+    api.state.detector = null;
+    api.state.hintUntil = 0;
+    api.updateStatusHint({ ok: true }, performance.now() + 2000);
+    ok('识别器缺失时状态条给出明确提示（不再假装正常）',
+      elements.get('poseHint').textContent.includes('识别器'), elements.get('poseHint').textContent.slice(0, 60));
+    api.state.detector = savedDetector;
+
+    // 倒计时兜底：定时器被浏览器节流/打断时，渲染循环里的时间判断能把状态推进到 running
+    api.state.session = 'countdown';
+    api.state.countdownStartedAt = performance.now() - 5000;
+    api.finishCountdown();
+    ok('倒计时能被时间兜底推进到计数状态', api.state.session === 'running', api.state.session);
+    api.finishCountdown();
+    ok('兜底推进是幂等的（重复调用不会把 running 打回去）', api.state.session === 'running', api.state.session);
     api.audio.say = origSay;
     api.stopSession('user');
     api.camera.stream = savedStream;

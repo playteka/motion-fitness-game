@@ -110,8 +110,8 @@ export default {
     lead: 'Entra en el contorno punteado con todo el cuerpo dentro del encuadre',
     waiting: 'Esperando la calibración…',
     needCalib: 'Entra primero en el contorno punteado y completa la calibración antes de pulsar «Empezar»',
-    doneVoice: 'Calibración completada, ya puedes empezar',
-    startNow: 'Calibración completada ✓ Pulsa «Empezar» o la barra espaciadora para empezar a contar',
+    doneVoice: 'Descansa y pulsa Empezar para otra serie',
+    startNow: '¿Descansado? Pulsa «Empezar» (o espacio) para otra serie',
     recalibrate: 'Volver a calibrar',
     ready: 'Estás en una buena posición, no te muevas…',
     adjust: 'Entra en el contorno punteado',
@@ -145,6 +145,7 @@ export default {
   /* ---------------- Barra de estado / avisos ---------------- */
   status: {
     noPerson: 'No veo a nadie: colócate en el centro del encuadre con la cabeza y los pies visibles (da 1-2 pasos atrás)',
+    noDetector: 'Detector no listo: pulsa otra vez el botón',
     ready: '¡Te veo! ✓ Mantén esta posición y haz el ejercicio',
     needCamera: 'Activa primero la cámara',
     countdownGo: '¡Vamos! Sigue las indicaciones; las repeticiones parciales no cuentan.',

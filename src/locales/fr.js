@@ -109,8 +109,8 @@ export default {
     lead: 'Entre dans la silhouette en pointillés pour que tout ton corps entre dans l’image',
     waiting: 'Calibrage en cours…',
     needCalib: 'Entre d’abord dans la silhouette en pointillés pour finir le calibrage, puis clique sur « Démarrer la séance »',
-    doneVoice: 'Calibrage terminé, tu peux commencer',
-    startNow: 'Calibrage terminé ✓ Clique sur « Démarrer la séance » ou appuie sur Espace pour lancer le comptage',
+    doneVoice: 'Repose-toi, clique sur Démarrer la séance',
+    startNow: 'Reposé ? Clique sur « Démarrer la séance » pour enchaîner',
     recalibrate: 'Recalibrer',
     ready: 'Bonne position, ne bouge pas…',
     adjust: 'Entre dans la silhouette en pointillés',
@@ -144,6 +144,7 @@ export default {
   /* ---------------- Barre d'état / messages ---------------- */
   status: {
     noPerson: 'Aucun corps détecté : place-toi au centre de l’image, de la tête aux pieds (recule d’1 à 2 pas)',
+    noDetector: 'Détecteur non prêt : retape le bouton d’action',
     ready: 'Te voilà ✓ Garde cette position pour travailler',
     needCamera: 'Active d’abord la caméra',
     countdownGo: 'C’est parti ! Suis les indications ; les répétitions partielles ne comptent pas.',

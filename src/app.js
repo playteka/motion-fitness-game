@@ -57,12 +57,14 @@ const state = {
   target: 15,
   session: 'calibrating',   // calibrating | ready | countdown | running | paused
   autoStart: false,         // 校准识别完成后是否自动进入运动状态（选好动作后为 true）
+  afterSet: false,          // 刚结束一组：先让用户休息，不自动开始；离开轮廓后自动恢复
   detector: null,
   calibrator: null,
   calib: null,
   elapsedMs: 0,
   lastTick: 0,
   countdownTimer: null,
+  countdownStartedAt: 0,    // 倒计时的起点，用于「定时器被节流」时的时间兜底
   lastCueAt: 0,
   lastCueLevel: 'warn',
   hintUntil: 0,
@@ -185,7 +187,7 @@ function selectExercise(id) {
   state.saidSteps = new Set();
   state.lastScoreMilestone = 0;
   // 选好动作 → 校准一完成就自动开始（这是用户明确选的动作，不用再点一次）
-  toCalibration({ silent: true, autoStart: true });
+  toCalibration({ silent: true });
   updateHud();
   renderRecords();
 }
@@ -193,18 +195,20 @@ function selectExercise(id) {
 /**
  * 进入「运动前校准」阶段：显示虚线人体轮廓，不计数。
  *
- * autoStart=true（默认）：全身识别一完成，虚线框消失并自动进入运动状态（3-2-1 倒计时）。
- * autoStart=false：一组结束后回到校准，摆好姿势只显示绿色轮廓，等用户自己点「开始训练」
- * —— 否则刚练完还站在原地就会被立刻拽进下一组，休息和看小结都来不及。
+ * 默认（afterSet=false）：全身识别一完成，虚线框消失并自动进入运动状态（3-2-1 倒计时）。
+ * afterSet=true：一组结束后回到校准，先让用户休息 —— 停在原地不会自动开始（画面上的提示条
+ *   会写明「点开始训练」）；一旦离开轮廓（站起来、走开），自动开始立刻恢复，再站好就又会自动开始。
  */
-function toCalibration({ silent = false, autoStart = true } = {}) {
+function toCalibration({ silent = false, afterSet = false } = {}) {
   clearInterval(state.countdownTimer);
   state.countdownTimer = null;
+  state.countdownStartedAt = 0;
   $('countdown').hidden = true;
   $('celebrate').hidden = true;
   releaseWakeLock();
   state.session = 'calibrating';
-  state.autoStart = autoStart;
+  state.autoStart = true;
+  state.afterSet = afterSet;
   state.calibrator?.reset();
   state.calib = null;
   state.elapsedMs = 0;
@@ -449,7 +453,7 @@ function startSession() {
  * 两条路径都会走到这里：校准识别完成后自动开始，以及用户手动点「开始训练」/按空格。
  */
 function beginCountdown() {
-  audio.unlock();
+  try { audio.unlock(); } catch { /* 音频初始化失败不影响开始训练 */ }
   const det = ensureDetector();
   // 注意：不重置计数与得分。识别从选好动作那一刻就开始反馈，
   // 开始一组只是开始计时/记一组，方便用户先摆好姿势拿到要领分。
@@ -465,6 +469,7 @@ function beginCountdown() {
   requestWakeLock();
 
   state.session = 'countdown';
+  state.countdownStartedAt = performance.now();
   let n = 3;
   $('countdownNum').textContent = String(n);
   $('countdown').hidden = false;
@@ -482,18 +487,30 @@ function beginCountdown() {
       audio.tick();
       audio.sayCountdown(n);
     } else {
-      clearInterval(state.countdownTimer);
-      state.countdownTimer = null;
-      $('countdown').hidden = true;
-      state.session = 'running';
-      state.lastTick = performance.now();
-      det.resetClock?.();
-      audio.go();
-      audio.sayStart();
-      setCueLine(t('status.countdownGo'), 'good');
-      updateButtons();
+      finishCountdown(det);
     }
   }, 850);
+  updateButtons();
+}
+
+/**
+ * 倒计时结束，正式开始计数。
+ * 定时器与「渲染循环里的时间兜底」都会调用它，所以做成幂等的：
+ * 浏览器把定时器节流/暂停时（例如切到别的标签页再回来），靠这里兜底推进，
+ * 不会一直停在「3」上。
+ */
+function finishCountdown(det = state.detector) {
+  if (state.session !== 'countdown') return;
+  clearInterval(state.countdownTimer);
+  state.countdownTimer = null;
+  state.countdownStartedAt = 0;
+  $('countdown').hidden = true;
+  state.session = 'running';
+  state.lastTick = performance.now();
+  det?.resetClock?.();
+  audio.go();
+  audio.sayStart();
+  setCueLine(t('status.countdownGo'), 'good');
   updateButtons();
 }
 
@@ -566,7 +583,7 @@ function stopSession(reason = 'user') {
   setHint('', 'warn', 0);
   // 一组结束后回到校准阶段：下一组开始前重新确认站位与机位，
   // 但这一轮不再自动开始（autoStart: false），给用户留出休息和小结的时间。
-  toCalibration({ silent: false, autoStart: false });
+  toCalibration({ silent: false, afterSet: true });
 }
 
 function requestWakeLock() {
@@ -758,6 +775,11 @@ function calibrationStep(frame, now) {
     flip: state.calibrator.facing < 0,
   });
 
+  // 一组结束后先休息：停在原地不自动开始（提示条会写明要自己点「开始训练」）；
+  // 一旦从画面里消失（站起来走开、喝水），自动开始立刻重新装填，再站好就又会自动开始。
+  const lost = !calib.checks.length || (calib.checks[0].id === 'visible' && !calib.checks[0].ok);
+  if (state.afterSet && lost) state.afterSet = false;
+
   // 全身识别完成（七项全部达标并保持住）
   if (calib.done && state.session === 'calibrating') {
     state.session = 'ready';
@@ -767,12 +789,21 @@ function calibrationStep(frame, now) {
     updateButtons();
     // 校准阶段的引导统一走画面上方的提示条：底部状态条收起来，避免同一句话出现两次
     setHint(null);
-    if (state.autoStart) {
+    if (state.autoStart && !state.afterSet) {
       // 识别完成 → 虚线框消失，直接进入运动状态（3-2-1 倒计时后开始计数）。
       // 这里不再单独念「校准完成」：紧接着的倒计时语音会把它打断。
       renderCalibration(null);
-      beginCountdown();
-      return null;
+      try {
+        beginCountdown();
+        return null;
+      } catch (err) {
+        // 自动开始万一失败（浏览器差异导致初始化异常等），绝不能把用户卡在绿色轮廓上：
+        // 退回「手动点开始训练」这条老路，并把错误抛到控制台（页面底部会显示红色错误条）
+        state.autoStart = false;   // 自动开始失败：退回手动，避免把用户卡在绿色轮廓上
+        console.error('auto start failed:', err);
+        renderCalibration(calib);
+        return outlineOf('ready');
+      }
     }
     // 一组结束后的再次校准：轮廓转绿留在画面上，等用户自己点「开始训练」
     audio.say(t('calib.doneVoice'), { rate: 1.15, force: true });
@@ -796,6 +827,31 @@ function feedDetector(f, now) {
   // 这道门控放在这里而不是调用处，避免以后新增调用点忘了加判断。
   if (state.session !== 'running') return [];
   return det.update(f, now);
+}
+
+/**
+ * 画面下方的状态条：任何时刻都要说清「现在是什么状态、卡在哪一步」。
+ * 单独抽出来是为了两条纪律：
+ *   1) 有待完成的要领时绝不回落成「已识别到你 ✓」这种空话（那会让人以为一切正常、
+ *      却在等一个永远不会来的反馈）；
+ *   2) 识别器缺失这类异常必须显式写出来，而不是安静地什么都不显示。
+ */
+function updateStatusHint(frame, now) {
+  if (now <= state.hintUntil) return;
+  const det = state.detector;
+  if (!frame || !frame.ok) { setHint(t('status.noPerson'), 'bad', 700); return; }
+  if (!det) { setHint(t('status.noDetector'), 'bad', 700); return; }
+  const pending = det.pendingHint();
+  const recentCue = det.feedback && now - det.feedback.at < 3200 ? det.feedback : null;
+  if (pending) {
+    setHint(pending.hint
+      ? t('ui.nextStepWithHint', { label: t(pending.labelKey), hint: t(pending.hint.key, pending.hint.params) })
+      : t('ui.nextStepNoHint', { label: t(pending.labelKey) }), 'warn', 700);
+    return;
+  }
+  if (recentCue) { setHint(t(recentCue.key, recentCue.params), recentCue.level, 700); return; }
+  if (!det.active && det.standby) { setHint(t(det.standby), 'warn', 700); return; }
+  setHint(t('status.ready'), 'good', 700);
 }
 
 function handleEvents(events) {
@@ -892,6 +948,12 @@ function loop() {
   state.lastVideoTime = video.currentTime;
 
   const now = performance.now();
+  // 倒计时兜底：定时器被浏览器节流/打断时（切标签页、后台标签等），
+  // 靠时间判断继续推进，避免永远停在「3」上，之后既不计数也不报语音。
+  if (state.session === 'countdown' && state.countdownStartedAt
+    && now - state.countdownStartedAt > 3600) {
+    finishCountdown();
+  }
   const res = engine.detect(video, now);
   state.detectCount += 1;
 
@@ -927,29 +989,7 @@ function loop() {
       handleEvents(events);
     }
     renderCalibration(null);
-
-    // 提示条：任何时刻都要有反馈，明确告诉用户“现在是什么状态、卡在哪”
-    if (now > state.hintUntil) {
-      const det0 = state.detector;
-      if (!frame.ok) {
-        setHint(t('status.noPerson'), 'bad', 700);
-      } else {
-        const pending = det0 ? det0.pendingHint() : null;
-        const recentCue = det0 && det0.feedback && now - det0.feedback.at < 3200 ? det0.feedback : null;
-        if (pending && pending.hint) {
-          setHint(t('ui.nextStepWithHint', {
-            label: t(pending.labelKey),
-            hint: t(pending.hint.key, pending.hint.params),
-          }), 'warn', 700);
-        } else if (recentCue) {
-          setHint(t(recentCue.key, recentCue.params), recentCue.level, 700);
-        } else if (det0 && !det0.active && det0.standby) {
-          setHint(t(det0.standby), 'warn', 700);
-        } else {
-          setHint(t('status.ready'), 'good', 700);
-        }
-      }
-    }
+    updateStatusHint(frame, now);
   }
 
   // 计时
@@ -1369,6 +1409,6 @@ window.__mfg = {
   state, engine, camera, audio, renderer,
   selectExercise, startSession, pauseSession, resumeSession, stopSession, toCalibration,
   feedDetector, handleEvents, updateHud, renderSteps, renderDebug, updatePipelineStatus,
-  calibrationStep, renderCalibration, syncFullscreenSupport,
+  calibrationStep, renderCalibration, syncFullscreenSupport, finishCountdown, updateStatusHint,
   setTarget, buildExerciseGrid, changeLang, refreshForLang,
 };
