@@ -63,10 +63,11 @@ export class PoseRenderer {
    * 颜色一律取高饱和亮色 + 高不透明度 + 外发光：摄像头画面里什么背景都有
    *（白墙、木地板、深色衣服），灰蓝色线条很容易糊在背景里看不见。
    *
-   * @param {'front'|'side'} view 动作要求的机位
+   * @param {string} kind 剪影种类：front / side / pushup / plank / bridge
    * @param {'search'|'adjust'|'ready'} status 未找到人 / 正在调整 / 已就位
+   * @param {boolean} flip 左右翻转（用户侧拍时朝左，轮廓要跟着翻）
    */
-  drawOutline(view, status = 'search') {
+  drawOutline(kind, status = 'search', flip = false) {
     const { ctx, canvas } = this;
     const W = canvas.width;
     const H = canvas.height;
@@ -83,7 +84,7 @@ export class PoseRenderer {
     ctx.shadowColor = color;
     ctx.shadowBlur = base * 7;
 
-    this.closedCurvePath(outlinePath(view).map(([x, y]) => [x * W, y * H]));
+    this.closedCurvePath(outlinePath(kind, { flip }).map(([x, y]) => [x * W, y * H]));
     ctx.stroke();
     ctx.restore();
   }
@@ -112,14 +113,14 @@ export class PoseRenderer {
    *   frame     computeFrame 的结果
    *   exerciseId 当前动作
    *   status    'ok' | 'good' | 'warn' | 'bad' | 'idle'
-   *   outline   { view, status } 传入时先画校准轮廓
+   *   outline   { kind, status, flip } 传入时先画校准轮廓
    */
   draw({
     landmarks, frame, exerciseId, status = 'idle', outline = null,
   }) {
     const { ctx, canvas } = this;
     this.clear();
-    if (outline) this.drawOutline(outline.view, outline.status);
+    if (outline) this.drawOutline(outline.kind || outline.view, outline.status, !!outline.flip);
     if (!landmarks || !landmarks.length) return;
 
     const W = canvas.width;

@@ -302,24 +302,30 @@ By default the server only listens on `127.0.0.1` (local machine only) — that 
 
 ## Pre-workout calibration
 
-Once you pick an exercise, a **dashed body silhouette** appears in the video: one clean outer contour line (not joint-to-joint skeleton lines) — that's your standing target;
-a line of text also appears above the video telling you straight out to “step into the dashed outline”. The calibration panel ticks off each item as it passes:
+Once you pick an exercise, a **dashed body silhouette** appears in the video: one clean outer contour line (not joint-to-joint skeleton lines) — that's your posture target;
+a line of text also appears above the video telling you straight out to “move into the dashed outline”. The calibration panel ticks off each item as it passes:
 
 | Check | Meaning |
 |---|---|
 | Body detected | The camera can see you clearly |
 | Full body in frame | Head to feet are all inside the frame |
 | Good distance | Your body is the right size in the frame (too far or too close, and you get a direction cue) |
-| Centered | You're standing in the middle of the outline |
+| Centered | Your body sits in the middle of the outline |
 | Good height | Your body sits at the right height in the frame |
 | Camera angle right | Squats need a **front-on** camera, everything else needs a **side-on** camera |
-| Holding still | Hold still for about 1 second so you aren't judged mid-step |
+| Holding still | Hold still for about 1 second so you aren't misjudged while you're moving about |
+
+**Each of the six exercises has its own silhouette**, so just set yourself up to match the outline: squats use a front-on standing pose, lunges a side-on standing pose,
+push-ups a **side-on top-of-the-push-up position** (arms straight, hands on the floor), planks a **side-on forearm-supported prone position** (on your forearms, body low),
+and glute bridges and static glute bridges a **side-on lying pose with bent knees** (on your back, knees bent, feet flat on the floor, hips resting on the ground).
+When you film from the side, the outline flips left to right automatically to match which way you're facing.
 
 Once all seven pass and stay that way for a moment, the outline turns green and shows “Calibrated ✓”, and only then does the “Start set” button become available.
 Click it (or press Space) → 3-2-1 countdown → counting starts.
 
 > If you're not in position, the text prompt above the video and the calibration panel both spell out exactly what to do (for example “step forward into the dashed outline”, “shift a little to the right”, “face the camera”),
 > so you're never left wondering what's wrong.
+> For the lying-down exercises (push-up / plank / glute bridge), distance is judged by **body length**, so you don't need to stand up.
 > To recalibrate: click the “Recalibrate” button below the video; every set also returns to calibration automatically.
 
 ---
@@ -454,7 +460,7 @@ then run `npm run test:i18n` again — the test checks every entry for missing k
 
 ## Can't fit into the outline or getting no response? Four checks
 
-**① Check the version first.** The page title should show `v1.4` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
+**① Check the version first.** The page title should show `v1.5` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
 
 **② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked, do what the line under the panel tells you:
 
@@ -516,7 +522,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (380 cases)
+npm test                       # run all four suites (445 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
 npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
@@ -527,9 +533,9 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
-| `tests/test-detectors.mjs` | 137 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
+| `tests/test-detectors.mjs` | 192 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-page.mjs` | 97 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
-| `tests/test-app.mjs` | 114 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
+| `tests/test-app.mjs` | 124 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
 
 ---
 

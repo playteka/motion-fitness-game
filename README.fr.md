@@ -307,24 +307,30 @@ Par défaut, le serveur n'écoute que sur `127.0.0.1` (accessible uniquement dep
 
 ## Calibrage avant la séance
 
-Une fois ton exercice choisi, une **silhouette en pointillés** apparaît dans l'image : une ligne de contour extérieur nette (et non un squelette articulé), c'est ta cible de placement ;
-une ligne de texte s'affiche aussi en haut de l'image et te dit directement « place-toi dans la silhouette en pointillés ». Le panneau de calibrage coche les critères un par un :
+Une fois ton exercice choisi, une **silhouette en pointillés** apparaît dans l'image : une ligne de contour extérieur nette (et non un squelette articulé), c'est ta cible de posture ;
+une ligne de texte s'affiche aussi en haut de l'image et te dit directement « entre dans la silhouette en pointillés ». Le panneau de calibrage coche les critères un par un :
 
 | Critère | Signification |
 |---|---|
 | Corps détecté | La caméra te voit bien |
 | Corps entier | De la tête aux pieds, tout est dans l'image |
 | Bonne distance | Ta taille dans l'image est la bonne (trop loin / trop près : le panneau te dit dans quel sens bouger) |
-| Bien centré | Tu es au milieu de la silhouette |
+| Bien centré | Ton corps se trouve au milieu de la silhouette |
 | Bonne hauteur | Ta position verticale dans l'image est la bonne |
 | Bon angle | Le squat se filme **de face**, les autres exercices **de profil** |
-| Immobile | Reste sans bouger environ 1 seconde, pour éviter une validation en pleine marche |
+| Immobile | Reste sans bouger environ 1 seconde, pour éviter une validation pendant que tu bouges |
+
+**Chacun des six exercices a sa propre silhouette** : il suffit de te mettre en position et de suivre le contour — le squat est une posture debout de face, la fente une posture debout de profil,
+la pompe une **position haute de pompe, vue de profil** (bras tendus, mains au sol), la planche une **position allongée de profil sur les avant-bras** (sur les avant-bras, corps au ras du sol),
+et le pont fessier comme le pont fessier statique une **position allongée de profil, jambes fléchies** (allongé sur le dos, genoux fléchis, pieds à plat au sol, bassin posé au sol).
+De profil, le contour se retourne automatiquement de gauche à droite selon ton orientation.
 
 Une fois les sept critères validés et tenus un court instant, la silhouette devient verte et le message « Calibrage terminé ✓ » s'affiche : c'est seulement à ce moment que le bouton « Démarrer la séance » devient actif.
 Clique dessus (ou appuie sur Espace) → décompte 3-2-1 → le comptage démarre.
 
 > Si tu n'es pas bien placé, la ligne de texte en haut de l'image et le panneau de calibrage t'indiquent tous les deux directement quoi faire (par exemple « recule un peu », « décale-toi vers la droite », « mets-toi face à la caméra »),
 > tu ne resteras jamais sans savoir ce qui ne va pas.
+> Pour les exercices allongés (pompe / planche / pont fessier), la distance se juge d'après la **longueur du corps** : pas besoin de te lever.
 > Pour refaire le calibrage : clique sur « Recalibrer » sous l'image ; chaque fin de série te ramène aussi automatiquement au calibrage.
 
 ---
@@ -460,7 +466,7 @@ puis relance `npm run test:i18n` — le test vérifie une par une les clés manq
 
 ## Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes
 
-**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v1.4`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
+**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v1.5`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
 
 **② Regarde d'abord le panneau « Calibrage avant la séance » à droite.** Le critère qui reste décoché te dit quoi faire, juste en dessous :
 
@@ -522,7 +528,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les quatre suites d'un coup (380 tests)
+npm test                       # les quatre suites d'un coup (445 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources
 npm run test:detectors         # détection et logique de score (squelettes synthétiques)
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
@@ -533,9 +539,9 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | Fichier de test | Nombre de tests | Contenu couvert |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
-| `tests/test-detectors.mjs` | 137 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
+| `tests/test-detectors.mjs` | 192 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
 | `tests/test-page.mjs` | 97 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
-| `tests/test-app.mjs` | 114 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
+| `tests/test-app.mjs` | 124 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
 
 ---
 

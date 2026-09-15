@@ -746,8 +746,10 @@ function calibrationStep(frame, now) {
   // 否则同一句话会在用户眼前出现两次。
   setHint(null);
   return {
-    view: state.calibrator.view,
+    kind: state.calibrator.kind,
     status: !frame.ok ? 'search' : (calib.ready ? 'ready' : 'adjust'),
+    // 侧拍时人可能朝左：轮廓跟着翻，头脚方向才不会反
+    flip: state.calibrator.facing < 0,
   };
 }
 

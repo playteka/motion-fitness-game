@@ -303,24 +303,30 @@ Por defecto solo escucha en `127.0.0.1` (solo accesible desde tu propio equipo):
 
 ## Calibración previa
 
-Cuando hayas elegido el ejercicio, en la imagen aparece una **silueta punteada del cuerpo**: una línea de contorno exterior limpia (no es un esqueleto articulado), y ese es tu objetivo de colocación;
-arriba aparece además una línea de texto que te dice directamente «colócate dentro del contorno punteado». El panel de calibración va marcando cada comprobación:
+Cuando hayas elegido el ejercicio, en la imagen aparece una **silueta punteada del cuerpo**: una línea de contorno exterior limpia (no es un esqueleto articulado), y ese es tu objetivo de postura;
+arriba aparece además una línea de texto que te dice directamente «entra dentro del contorno punteado». El panel de calibración va marcando cada comprobación:
 
 | Comprobación | Significado |
 |---|---|
 | Cuerpo detectado | La cámara te ve bien |
 | Cuerpo entero visible | De la cabeza a los pies, todo dentro del encuadre |
 | Distancia correcta | Tu cuerpo ocupa el tamaño adecuado en la imagen (si estás demasiado lejos o demasiado cerca, te indica hacia dónde moverte) |
-| Bien centrado | Colócate en el centro del contorno |
+| Bien centrado | Tu cuerpo queda en el centro del contorno |
 | Altura correcta | Tu posición vertical dentro del encuadre es la adecuada |
 | Ángulo correcto | En la sentadilla hay que **ponerse de frente** a la cámara; en el resto de ejercicios, **de perfil** |
-| Sin moverte | Mantente quieto alrededor de 1 segundo, para que no te evalúe mientras te mueves |
+| Sin moverte | Mantente quieto alrededor de 1 segundo, para que no te evalúe mientras te mueves de aquí para allá |
+
+**Cada uno de los seis ejercicios tiene su propia silueta**, así que solo tienes que colocarte y encajar con el contorno: la sentadilla es una postura de pie de frente, la zancada una postura de pie de perfil,
+la flexión una **posición alta de flexión, vista de perfil** (brazos estirados apoyados en el suelo), la plancha una **posición tumbada de perfil apoyada en los antebrazos** (sobre los antebrazos, cuerpo bajo),
+y el puente de glúteos y el puente estático una **postura tumbada de perfil con las piernas dobladas** (boca arriba, rodillas dobladas, pies apoyados en el suelo, cadera apoyada en el suelo).
+Al grabar de perfil, el contorno se voltea automáticamente de izquierda a derecha según hacia dónde estés mirando.
 
 Cuando las siete comprobaciones están correctas y se mantienen un momento, el contorno se vuelve verde y aparece «Calibración completada ✓»; en ese momento el botón «Empezar» ya está disponible.
 Púlsalo (o la barra espaciadora) → cuenta atrás 3-2-1 → empieza el conteo.
 
-> Si no estás bien colocado, el texto que aparece arriba de la imagen y el panel de calibración te dicen directamente qué hacer (por ejemplo «retrocede un poco», «muévete un poco a la derecha», «ponte de frente a la cámara»),
+> Si no estás bien colocado, el texto que aparece arriba de la imagen y el panel de calibración te dicen directamente qué hacer (por ejemplo «retrocede un poco», «desplázate un poco a la derecha», «ponte de frente a la cámara»),
 > así que nunca te quedas sin saber qué falla.
+> En los ejercicios tumbado (flexión / plancha / puente de glúteos) la distancia se mide por la **longitud del cuerpo**, así que no hace falta que te levantes.
 > Para volver a calibrar: pulsa el botón «Volver a calibrar» que hay debajo de la imagen; además, cada vez que terminas una serie vuelves automáticamente a la calibración.
 
 ---
@@ -455,7 +461,7 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 ## Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico
 
-**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.4`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
+**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.5`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
 
 **② Mira primero el panel «Calibración previa» de la derecha.** De las siete comprobaciones, la que no esté marcada te dice lo que tienes que hacer, siguiendo la frase que aparece debajo del panel:
 
@@ -517,7 +523,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (380 pruebas)
+npm test                       # las cuatro suites juntas (445 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -528,9 +534,9 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | Archivo de prueba | N.º de pruebas | Cobertura |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
-| `tests/test-detectors.mjs` | 137 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
+| `tests/test-detectors.mjs` | 192 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-page.mjs` | 97 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
-| `tests/test-app.mjs` | 114 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
+| `tests/test-app.mjs` | 124 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
 
 ---
 

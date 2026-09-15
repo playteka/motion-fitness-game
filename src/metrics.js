@@ -141,6 +141,27 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const aspect = metric.aspect || 1;
   const centerXFrac = centerX / aspect;
 
+  // ---- 躺姿（俯卧撑 / 平板支撑 / 臀桥）专用：躺下时身体是横着的 ----
+  // 站立动作用 bodySpan（竖直跨度）判断「距离是否合适」；躺姿的竖直跨度只剩身体厚度
+  //（约 0.2），拿它判断距离会永远不达标 —— 所以躺姿改量「身体在水平方向有多长」，
+  // 单位同样是画面高度，阈值区间可以直接复用。
+  const boxIdx = [
+    LM.NOSE, LM.L_SHOULDER, LM.R_SHOULDER, LM.L_HIP, LM.R_HIP,
+    LM.L_KNEE, LM.R_KNEE, LM.L_ANKLE, LM.R_ANKLE, LM.L_FOOT, LM.R_FOOT,
+  ];
+  const boxXs = boxIdx.map((i) => metric[i].x);
+  const boxYs = boxIdx.map((i) => metric[i].y);
+  const bodyLeft = Math.min(...boxXs);
+  const bodyRight = Math.max(...boxXs);
+  const bodySpanX = bodyRight - bodyLeft;       // 身体水平长度（画面高度为单位）
+  const bodyLeftFrac = bodyLeft / aspect;       // 换成「画面宽度比例」，好跟轮廓比较
+  const bodyRightFrac = bodyRight / aspect;
+  const bodyMidFrac = (bodyLeftFrac + bodyRightFrac) / 2;
+  const bodyTopY = Math.min(...boxYs);          // 躺姿的上下范围（抬腿时膝是最高的）
+  const bodyBottomY = Math.max(...boxYs);
+  // 侧拍时人可能朝左也可能朝右（±1）：用来把校准轮廓左右翻过来对上朝向
+  const facingX = P(LM.NOSE).x >= hipMid.x ? 1 : -1;
+
   // 躯干相对竖直的倾斜（带方向：正=前倾到 +x 方向）
   const trunkLean = torsoIncl;
 
@@ -196,6 +217,13 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     bodySpan,
     centerX,
     centerXFrac,
+    bodySpanX,
+    bodyLeftFrac,
+    bodyRightFrac,
+    bodyMidFrac,
+    bodyTopY,
+    bodyBottomY,
+    facingX,
     valgus,
     view,
     viewRatio,

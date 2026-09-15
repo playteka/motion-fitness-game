@@ -643,7 +643,21 @@ console.log('\n[8] 运动前校准流程');
   ok('切到箭步蹲后要求侧面机位', api.state.calibrator.view === 'side', api.state.calibrator.view);
   const sideIdle = fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'side' }));
   const o2 = api.calibrationStep(frameOf(sideIdle, t3), t3);
-  ok('箭步蹲的虚线轮廓是侧面形状', o2.view === 'side', o2.view);
+  ok('箭步蹲的虚线轮廓是站姿侧面形状', o2.kind === 'side', o2.kind);
+
+  // 躺姿动作：轮廓要换成俯卧 / 仰卧的形状，而且是横着的
+  for (const [id, kind, label] of [
+    ['pushup', 'pushup', '俯卧撑用俯卧撑起来的侧面轮廓'],
+    ['plank', 'plank', '平板支撑用小臂撑地的侧面轮廓'],
+    ['bridge', 'bridge', '臀桥用仰卧屈腿的侧面轮廓'],
+    ['bridgehold', 'bridge', '静态臀桥与臀桥共用同一轮廓'],
+  ]) {
+    api.selectExercise(id);
+    const lying = fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'side' }));
+    const o = api.calibrationStep(frameOf(lying, t3), t3);
+    ok(label, o.kind === kind && api.state.calibrator.lying === true, `kind=${o.kind}`);
+  }
+  api.selectExercise('lunge');
 
   // 站偏时给方向提示
   api.toCalibration();
@@ -699,8 +713,8 @@ console.log('\n[8] 运动前校准流程');
   api.selectExercise('squat');
   const early = api.calibrationStep(frameOf(fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.3 }), t3 + 10000), t3 + 10000);
   ok('校准阶段画面上出现文字提示条', elements.get('calibPrompt').hidden === false);
-  ok('提示条第一行是「站进虚线轮廓内」',
-    elements.get('calibPromptMain').textContent.includes('站进虚线轮廓'), elements.get('calibPromptMain').textContent);
+  ok('提示条第一行是「进入虚线轮廓内」',
+    elements.get('calibPromptMain').textContent.includes('进入虚线轮廓'), elements.get('calibPromptMain').textContent);
   ok('提示条第二行给出还差什么', /左|右/.test(elements.get('calibPromptSub').textContent),
     elements.get('calibPromptSub').textContent);
   // 提示条走 t()，必须跟着语言切换
@@ -740,6 +754,49 @@ console.log('\n[8] 运动前校准流程');
   ok('离开校准阶段后提示条隐藏', elements.get('calibPrompt').hidden === true);
   ok('侧面机位的剪影也照常绘制',
     api.renderer.draw({ landmarks: null, frame: null, exerciseId: 'lunge', status: 'idle', outline: { view: 'side', status: 'search' } }) === undefined);
+
+  // 躺姿动作的完整链路：摆好躺姿 → 校准通过 → 可以开始训练
+  // （修好前俯卧撑会被「左右居中」卡住、臀桥会被「距离合适」卡死，永远进不了训练）
+  {
+    const { pronePose, supinePose } = await import('./synthetic-pose.mjs');
+    const CORE = [
+      LMK.NOSE, LMK.L_SHOULDER, LMK.R_SHOULDER, LMK.L_HIP, LMK.R_HIP,
+      LMK.L_KNEE, LMK.R_KNEE, LMK.L_ANKLE, LMK.R_ANKLE, LMK.L_FOOT, LMK.R_FOOT,
+    ];
+    const lyingFit = (lm, { target = 0.72, groundY = 0.9 } = {}) => {
+      const xs = CORE.map((i) => lm[i].x * A);
+      const ys = CORE.map((i) => lm[i].y);
+      const k = target / (Math.max(...xs) - Math.min(...xs));
+      const midX = (Math.max(...xs) + Math.min(...xs)) / 2;
+      const baseY = Math.max(...ys);
+      return lm.map((p) => ({
+        ...p,
+        x: (0.5 * A + (p.x * A - midX) * k) / A,
+        y: groundY - (baseY - p.y) * k,
+      }));
+    };
+    for (const [id, pose, label] of [
+      ['pushup', pronePose({ hip: { x: 0.9, y: 0.7 }, bodyTilt: 66, elbow: 172, armDown: 6 }), '俯卧撑'],
+      ['plank', pronePose({ hip: { x: 0.9, y: 0.7 }, bodyTilt: 66, elbow: 92, armDown: 4 }), '平板支撑'],
+      ['bridge', supinePose({ hip: { x: 0.75, y: 0.9 }, armDown: 90 }), '臀桥'],
+    ]) {
+      api.selectExercise(id);
+      let tt = 900000;
+      for (let i = 0; i < 60; i++) { api.calibrationStep(frameOf(lyingFit(pose), tt), tt); tt += 33.4; }
+      const failed = (api.state.calib?.checks || []).filter((c) => !c.ok).map((c) => c.id).join(',');
+      ok(`${label}：摆好躺姿后能通过校准并进入可开始状态`,
+        api.state.session === 'ready', `${api.state.session}/${failed}`);
+      // 校准通过后必须能真正开始（camera.active 依赖真实视频流，这里用桩模拟）
+      const savedStream = api.camera.stream;
+      api.camera.stream = {};
+      api.startSession();
+      ok(`${label}：校准通过后点「开始训练」能进入倒计时`, api.state.session === 'countdown', api.state.session);
+      api.stopSession('user');
+      api.camera.stream = savedStream;
+    }
+    api.selectExercise('squat');
+    api.toCalibration({ silent: true });
+  }
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

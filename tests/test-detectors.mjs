@@ -11,7 +11,9 @@
 import { toMetric, LandmarkSmoother, LM } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
 import { createDetector } from '../src/exercises.js';
-import { Calibrator, OUTLINE, outlinePath, outlineBounds } from '../src/calibration.js';
+import {
+  Calibrator, OUTLINE, LYING, outlinePath, outlineBounds, outlineKind,
+} from '../src/calibration.js';
 import { t, setLang } from '../src/i18n.js';
 import {
   ASPECT, standingPose, pronePose, supinePose, twoLegPose, lostFrame,
@@ -761,6 +763,83 @@ function calibOnce(cal, lm, now) {
   const r10 = calibOnce(cal2, fitToOutline(standing('front'), { dx: 0.3 }), 60 * 33.4).res;
   ok('离开轮廓后不再处于已就位状态', r10.ready === false);
 
+  // 9.5) 躺姿动作（俯卧撑 / 平板支撑 / 臀桥 / 静态臀桥）
+  // 躺下以后身体是横着的：竖直跨度只剩身体厚度，所以距离要量水平长度、高度要看上下范围，
+  // 否则臀桥这类动作永远过不了校准（旧版本就是卡在这里）。
+  const lyingFit = (lm, { target = 0.72, groundY = 0.9, dx = 0 } = {}) => {
+    const core = [
+      LM.NOSE, LM.L_SHOULDER, LM.R_SHOULDER, LM.L_HIP, LM.R_HIP,
+      LM.L_KNEE, LM.R_KNEE, LM.L_ANKLE, LM.R_ANKLE, LM.L_FOOT, LM.R_FOOT,
+    ];
+    const xs = core.map((i) => lm[i].x * ASPECT);
+    const ys = core.map((i) => lm[i].y);
+    const k = target / (Math.max(...xs) - Math.min(...xs));
+    const midX = (Math.max(...xs) + Math.min(...xs)) / 2;
+    const baseY = Math.max(...ys);
+    return lm.map((p) => ({
+      ...p,
+      x: dx + (0.5 * ASPECT + (p.x * ASPECT - midX) * k) / ASPECT,
+      y: groundY - (baseY - p.y) * k,
+    }));
+  };
+  const proneArm = pronePose({ hip: { x: 0.9, y: 0.7 }, bodyTilt: 66, elbow: 172, armDown: 6 });
+  const proneForearm = pronePose({ hip: { x: 0.9, y: 0.7 }, bodyTilt: 66, elbow: 92, armDown: 4 });
+  const supineLegs = supinePose({ hip: { x: 0.75, y: 0.9 }, armDown: 90 });
+
+  for (const [id, pose, label] of [
+    ['pushup', proneArm, '俯卧撑'],
+    ['plank', proneForearm, '平板支撑'],
+    ['bridge', supineLegs, '臀桥'],
+    ['bridgehold', supineLegs, '静态臀桥'],
+  ]) {
+    const cal = new Calibrator(id);
+    let out = null;
+    let tt = 0;
+    for (let i = 0; i < 60; i++) {
+      ({ res: out } = calibOnce(cal, lyingFit(pose), tt));
+      tt += 33.4;
+    }
+    ok(`${label}：躺姿摆好后能通过校准（修好前这里永远过不了）`, out.done === true,
+      out.checks.filter((c) => !c.ok).map((c) => c.id).join(','));
+    ok(`${label}：机位要求是侧面`, cal.view === 'side' && cal.lying === true, `${cal.view}/${cal.posture}`);
+
+    const far = calibOnce(new Calibrator(id), lyingFit(pose, { target: 0.5 }), 0).res;
+    ok(`${label}：身体太短 → 提示靠近镜头`, far.hintKey === 'calib.tooFar', far.hintKey);
+    const near = calibOnce(new Calibrator(id), lyingFit(pose, { target: 0.9 }), 0).res;
+    ok(`${label}：身体太长 → 提示离镜头远一点`, near.hintKey === 'calib.tooClose', near.hintKey);
+    const off = calibOnce(new Calibrator(id), lyingFit(pose, { dx: 0.2 }), 0).res;
+    ok(`${label}：横着偏了 → 给出左右方向提示`,
+      ['calib.centerLeft', 'calib.centerRight'].includes(off.hintKey), off.hintKey);
+    const up = calibOnce(new Calibrator(id), lyingFit(pose, { groundY: 0.45 }), 0).res;
+    ok(`${label}：整体跑到画面上半部分 → 提示往下挪`, up.hintKey === 'calib.moveDown', up.hintKey);
+    const cut = calibOnce(new Calibrator(id), lyingFit(pose, { dx: 0.8 }), 0).res;
+    ok(`${label}：身体出画 → 提示回到画面里`, cut.hintKey === 'calib.cutOff', cut.hintKey);
+    ok(`${label}：没就位时不会判定完成`, far.done === false && cut.done === false);
+  }
+
+  // 9.6) 侧拍时人朝左：轮廓要跟着翻，否则头脚方向是反的
+  {
+    const ahead = outlinePath('pushup');
+    const behind = outlinePath('pushup', { flip: true });
+    ok('轮廓支持左右翻转，且是严格镜像',
+      ahead.length === behind.length
+      && ahead.every((p, i) => Math.abs(p[0] + behind[i][0] - 2 * OUTLINE.centerX) < 1e-9
+        && Math.abs(p[1] - behind[i][1]) < 1e-9));
+    const mirroredPose = (lm) => lm.map((p) => ({ ...p, x: 1 - p.x }));
+    const straight = new Calibrator('pushup');
+    const mirrored = new Calibrator('pushup');
+    let rs = null; let rm = null;
+    let tt = 0;
+    for (let i = 0; i < 60; i++) {
+      ({ res: rs } = calibOnce(straight, lyingFit(proneArm), tt));
+      ({ res: rm } = calibOnce(mirrored, mirroredPose(lyingFit(proneArm)), tt));
+      tt += 33.4;
+    }
+    ok('人朝右时轮廓不翻转', straight.facing === 1, String(straight.facing));
+    ok('人朝左时轮廓自动翻转（判定与朝向无关）',
+      mirrored.facing === -1 && rm.done === true, `${mirrored.facing}/${rm.done}`);
+  }
+
   // 10) 剪影几何本身：一条简单闭合的外部轮廓
   for (const view of ['front', 'side']) {
     const pts = outlinePath(view);
@@ -778,6 +857,71 @@ function calibOnce(cal, lm, now) {
     ok(`${view} 剪影身材接近真人（不要又宽又矮）`,
       b.width / b.height > 0.10 && b.width / b.height < 0.30,
       `宽高比=${(b.width / b.height).toFixed(3)}`);
+  }
+
+  // 10.5) 躺姿剪影：横着放、宽而扁，水平长度要落在「距离合适」的区间里
+  for (const kind of ['pushup', 'plank', 'bridge']) {
+    const pts = outlinePath(kind);
+    const b = outlineBounds(kind);
+    const metricWidth = b.width * (16 / 9);
+    ok(`${kind} 剪影是一条闭合轮廓`, pts.length >= 24 && pts.length <= 90, `pts=${pts.length}`);
+    ok(`${kind} 剪影全部落在画面内`,
+      pts.every(([x, y]) => x > 0 && x < 1 && y > 0 && y < 1));
+    ok(`${kind} 剪影是「横着躺」的（宽大于高）`, b.width > b.height * 1.2,
+      `宽=${b.width.toFixed(3)} 高=${b.height.toFixed(3)}`);
+    ok(`${kind} 剪影的身体长度落在躺姿距离区间内（躺进去就能过距离判定）`,
+      metricWidth >= LYING.spanMin && metricWidth <= LYING.spanMax,
+      `长度=${metricWidth.toFixed(3)} ∈ [${LYING.spanMin}, ${LYING.spanMax}]`);
+  }
+  {
+    // 俯卧撑 vs 平板支撑：手臂形状必须不同（一个是直臂撑起，一个是小臂贴地横放）
+    const flatRuns = (kind) => outlinePath(kind).filter((p, i, arr) => {
+      const q = arr[(i + 1) % arr.length];
+      return Math.abs(p[1] - q[1]) < 0.015 && Math.abs(p[0] - q[0]) > 0.03;
+    }).length;
+    ok('平板支撑的剪影里小臂贴地横放（至少 3 段水平线）', flatRuns('plank') >= 3, `水平段=${flatRuns('plank')}`);
+    ok('俯卧撑的剪影没有横放的小臂（只有躯干那一小段，是直臂撑起）',
+      flatRuns('pushup') <= 1, `水平段=${flatRuns('pushup')}`);
+    // 臀桥：最高点在身体中段（抬起的膝盖），而不是头那一端
+    const bPts = outlinePath('bridge');
+    const topPt = bPts.reduce((a, p) => (p[1] < a[1] ? p : a), bPts[0]);
+    ok('臀桥剪影的最高点是抬起的膝盖（在身体中段）',
+      Math.abs(topPt[0] - OUTLINE.centerX) < 0.15, `最高点 x=${topPt[0].toFixed(3)}`);
+    const headEndYs = bPts.filter(([x]) => x > OUTLINE.centerX + 0.15).map(([, y]) => y);
+    ok('臀桥的头部贴近地面（不是抬着头的姿势）',
+      headEndYs.every((y) => y > 0.72) && headEndYs.length > 0,
+      `头端 y=${headEndYs.map((y) => y.toFixed(2)).join(',')}`);
+    // 静态臀桥与臀桥共用同一个剪影
+    ok('静态臀桥与臀桥共用同一剪影',
+      outlineKind('bridgehold') === outlineKind('bridge')
+      && JSON.stringify(outlinePath(outlineKind('bridgehold')))
+        === JSON.stringify(outlinePath(outlineKind('bridge'))));
+  }
+  {
+    // 俯卧撑与平板支撑是两种不同形状，用户一眼能分辨
+    ok('俯卧撑与平板支撑的剪影不是同一条曲线',
+      JSON.stringify(outlinePath('pushup')) !== JSON.stringify(outlinePath('plank')));
+    // 每个动作都能查到自己的剪影种类
+    const expected = {
+      squat: 'front', lunge: 'side', pushup: 'pushup', plank: 'plank', bridge: 'bridge', bridgehold: 'bridge',
+    };
+    ok('六个动作都能查到对应的剪影种类',
+      Object.entries(expected).every(([id, kind]) => outlineKind(id) === kind),
+      Object.entries(expected).map(([id, kind]) => `${id}:${outlineKind(id)}≠${kind}`).join(' '));
+    // 手写点列最容易出的错是「点序写乱」：相邻两点之间跨越大半张画面，画出来会有一条怪线
+    const jumps = {};
+    for (const kind of ['front', 'side', 'pushup', 'plank', 'bridge']) {
+      const pts = outlinePath(kind);
+      let max = 0;
+      pts.forEach((p, i) => {
+        const q = pts[(i + 1) % pts.length];
+        max = Math.max(max, Math.hypot(p[0] - q[0], p[1] - q[1]));
+      });
+      jumps[kind] = max;
+    }
+    ok('五种剪影的相邻两点都没有「跨越大半张画面」的怪线段（点序没写乱）',
+      Object.values(jumps).every((d) => d < 0.2),
+      Object.entries(jumps).map(([k, d]) => `${k}:${d.toFixed(3)}`).join(' '));
   }
   {
     // 正面剪影由「半侧 + 镜像」生成：左右必须严格对称，中线外不能有多出来的点
