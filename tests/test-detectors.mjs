@@ -717,7 +717,13 @@ function calibOnce(cal, lm, now) {
   const off = new Calibrator('squat');
   const r4 = calibOnce(off, fitToOutline(standing('front'), { dx: 0.26 }), 0).res;
   ok('站偏了：左右位置检查不通过', r4.checks.find((c) => c.id === 'center').ok === false);
-  ok('站偏了：提示往左/往右站', r4.hintKey === 'calib.centerLeft', r4.hintKey);
+  // 预览默认镜像：原始画面偏右 = 用户看到自己偏左 → 应该提示「往右站」
+  ok('站偏了：提示往右站（镜像预览下）', r4.hintKey === 'calib.centerRight', r4.hintKey);
+
+  // 关掉镜像后，方向提示必须反过来
+  const offNoMirror = new Calibrator('squat', { mirror: false });
+  const r4b = calibOnce(offNoMirror, fitToOutline(standing('front'), { dx: 0.26 }), 0).res;
+  ok('关掉镜像后方向提示相反', r4b.hintKey === 'calib.centerLeft', r4b.hintKey);
 
   // 5) 机位不对：深蹲却侧对镜头
   const wrongView = new Calibrator('squat');

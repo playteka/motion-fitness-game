@@ -159,8 +159,9 @@ function selectExercise(id) {
   const ex = localizedExercise(id);
   state.target = state.settings.targets[id] || ex.defaultTarget;
   state.detector = createDetector(id, { strict: state.settings.strict });
-  state.calibrator = state.calibrator || new Calibrator(id);
+  state.calibrator = state.calibrator || new Calibrator(id, { mirror: state.settings.mirror });
   state.calibrator.setExercise(id);
+  state.calibrator.setMirror(state.settings.mirror);
   saveSettings();
 
   document.querySelectorAll('.exercise-btn').forEach((b) => {
@@ -1086,7 +1087,10 @@ function bindUI() {
 
   // [按钮 id, 设置键, 应用函数, 点击后要不要提示一句话]
   const toggles = [
-    ['btnMirror', 'mirror', (v) => $('stage').classList.toggle('mirror', v), null],
+    ['btnMirror', 'mirror', (v) => {
+      $('stage').classList.toggle('mirror', v);
+      state.calibrator?.setMirror(v); // 左右方向提示要跟着镜像走
+    }, null],
     ['btnVoice', 'voice', (v) => { audio.voiceOn = v; if (!v) audio.stopSpeech(); }, null],
     ['btnSfx', 'sfx', (v) => { audio.sfxOn = v; }, null],
     ['btnStrict', 'strict', (v) => {

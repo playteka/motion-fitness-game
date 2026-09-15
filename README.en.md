@@ -513,7 +513,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (332 cases)
+npm test                       # run all four suites (333 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
 npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
@@ -524,7 +524,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
-| `tests/test-detectors.mjs` | 122 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
+| `tests/test-detectors.mjs` | 123 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-page.mjs` | 89 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
 | `tests/test-app.mjs` | 89 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
 

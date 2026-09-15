@@ -108,11 +108,16 @@ export function requiredView(exerciseId) {
  *   }
  */
 export class Calibrator {
-  constructor(exerciseId) {
+  constructor(exerciseId, opts = {}) {
     this.exerciseId = exerciseId;
     this.view = requiredView(exerciseId);
+    // 预览是否镜像：左右方向提示必须按「用户屏幕上看到的」来给，
+    // 否则关掉镜像后会让人往反方向站。
+    this.mirror = opts.mirror !== false;
     this.reset();
   }
+
+  setMirror(on) { this.mirror = !!on; }
 
   reset() {
     this.readySince = null;
@@ -199,8 +204,14 @@ export class Calibrator {
         return { key: f && f.groundY >= 0.968 ? 'calib.feetCut' : 'calib.headCut' };
       case 'distance':
         return { key: f && f.bodySpan < OUTLINE.spanMin ? 'calib.tooFar' : 'calib.tooClose' };
-      case 'center':
-        return { key: f && f.centerXFrac < OUTLINE.centerX ? 'calib.centerRight' : 'calib.centerLeft' };
+      case 'center': {
+        // centerLeft / centerRight 的语义是「该往哪边站」，不是「现在偏哪边」。
+        // 先算出用户在**自己屏幕上**看到的位置（镜像时左右相反），再让他往反方向站。
+        const appearsRight = this.mirror
+          ? f.centerXFrac < OUTLINE.centerX
+          : f.centerXFrac > OUTLINE.centerX;
+        return { key: appearsRight ? 'calib.centerLeft' : 'calib.centerRight' };
+      }
       case 'vertical': {
         // 头顶与脚位哪个偏得多就用哪个：整体偏下 → 往上站；偏上 → 往下站
         const dTop = (f?.bodyTop ?? OUTLINE.bodyTopY) - OUTLINE.bodyTopY;

@@ -519,7 +519,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les quatre suites d'un coup (332 tests)
+npm test                       # les quatre suites d'un coup (333 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources
 npm run test:detectors         # détection et logique de score (squelettes synthétiques)
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
@@ -530,7 +530,7 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | Fichier de test | Nombre de tests | Contenu couvert |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
-| `tests/test-detectors.mjs` | 122 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
+| `tests/test-detectors.mjs` | 123 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
 | `tests/test-page.mjs` | 89 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
 | `tests/test-app.mjs` | 89 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
 
