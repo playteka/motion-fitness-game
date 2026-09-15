@@ -517,7 +517,7 @@ PORT=8080 node preview-server.js
 ## 测试
 
 ```bash
-npm test                       # 四套测试一起跑（365 项）
+npm test                       # 四套测试一起跑（367 项）
 npm run test:i18n              # 多语言：缺键 / 漏翻 / 占位符 / 数组长度 / 源码残留中文
 npm run test:detectors         # 识别与计分逻辑（合成骨架驱动）
 npm run test:dump              # 额外打印基线姿势指标，便于调阈值
@@ -529,7 +529,7 @@ npm run test:app               # 最小 DOM 桩加载真实 app.js 的集成测�
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | 四种语言键结构一致、无漏翻、占位符与数组长度一致、源码里无写死中文、四份文档结构一致 |
 | `tests/test-detectors.mjs` | 137 | 标准动作与错误动作的计数、计时、要领得分与得分顺序，以及运动前校准的判定 |
-| `tests/test-page.mjs` | 89 | DOM 接线、模块导入导出、静态资源、计分方案完整性 |
+| `tests/test-page.mjs` | 91 | DOM 接线、模块导入导出、静态资源、计分方案完整性 |
 | `tests/test-app.mjs` | 107 | 真实 `app.js` 的启动、校准流程、切动作、计分、音效、结算、骨架开关、多语言切换 |
 
 ---

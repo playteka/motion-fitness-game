@@ -137,6 +137,23 @@ console.log('\n[3] 静态资源与模型文件');
   ]) {
     ok(`${f} 存在且非空`, fs.existsSync(path.join(ROOT, f)) && fs.statSync(path.join(ROOT, f)).size > 1000);
   }
+
+  // 校准提示条是压在摄像头画面上方的，太长会折成一大块挡住头顶。
+  // 这条断言把「宽度够宽」和「文案够短」两件事都锁住，免得以后加长文案才发现挡住画面。
+  const css = read('style.css');
+  const promptBlock = /\.calib-prompt\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+  const maxWidth = /max-width:\s*([\d.]+)%/.exec(promptBlock)?.[1];
+  ok('校准提示条够宽（≥70%，长文案才不会折成高块挡住头顶）',
+    Number(maxWidth) >= 70, `max-width=${maxWidth}%`);
+  const overlong = [];
+  for (const lang of LANG_ORDER) {
+    for (const key of ['promptIn', 'promptSearch', 'promptReady']) {
+      const text = LOCALES[lang]?.calib?.[key];
+      if (typeof text !== 'string') { overlong.push(`${lang}.${key}=缺失`); continue; }
+      if (text.length > 130) overlong.push(`${lang}.${key}=${text.length} 字`);
+    }
+  }
+  ok('四语言的提示条文案都不超过 130 字（折 2 行以内）', overlong.length === 0, overlong.join(', '));
 }
 
 /* ---------- 4. 动作与界面按钮一一对应 ---------- */

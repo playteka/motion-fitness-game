@@ -452,19 +452,21 @@ kbd {
 .pose-hint.good { border-color: rgba(74, 222, 128, 0.5); color: #d6ffe4; }
 
 /* 校准阶段压在画面上方的文字引导：告诉用户「站进虚线轮廓内」。
-   配色跟画布上的剪影一致（亮蓝 = 找人 / 亮琥珀 = 调整 / 亮绿 = 已就位），读起来是一套信号。 */
+   配色跟画布上的剪影一致（亮蓝 = 找人 / 亮琥珀 = 调整 / 亮绿 = 已就位），读起来是一套信号。
+   宽度给到 80%：西语/法语的「没找到你…」有 115~119 字符，太窄会折成三行挡住头顶。 */
 .calib-prompt {
   position: absolute;
   top: 14px;
   left: 50%;
   transform: translateX(-50%);
-  max-width: 62%;
+  max-width: 80%;
   padding: 8px 16px;
   border-radius: 12px;
   background: rgba(8, 15, 26, 0.86);
   border: 1px solid rgba(56, 189, 248, 0.6);
   box-shadow: 0 0 18px rgba(56, 189, 248, 0.25), var(--shadow);
   text-align: center;
+  line-height: 1.35;
   z-index: 5;
   pointer-events: none;
 }
