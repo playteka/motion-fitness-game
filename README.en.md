@@ -40,14 +40,16 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 ## Feature highlights
 
 - **Pre-workout calibration**: before you start there's a **dashed body silhouette** in the frame (it only traces your outer shape — you don't need to line up your joints), and a text prompt above the video tells you
-  “move into the dashed outline”; you're only cleared to start once body detection, full-body framing, distance,
-  centering, height, camera angle and holding still — all **seven** — pass, so you never “stand off-center and wonder why nothing counts”.
+  “move into the dashed outline”; **as long as a body is detected and your whole body is in frame you're cleared to start** (about 0.6 seconds), while
+  distance, centering, height, camera angle and holding still are only recommendations (marked with “·” in the panel) and no longer block the start.
 - **Form steps scored one at a time**: each exercise is broken into 4–6 judgeable steps — hit one and you immediately get points, a chime, and a checkmark;
   finishing every step in a round earns a perfect-round bonus, and hold exercises give **+1 point for every second you hold**.
 - **Valid rep detection**: half reps, reps that are too fast, a sagging lower back, a piked hip and so on don't count as valid reps — they're tracked separately and you get a correction cue.
 - **Live status feedback**: the area below the video always shows what state you're in, which step you're stuck on, and how many degrees you still need.
 - **🐞 Metrics panel**: one click shows every raw number the detector sees (view, visibility, each joint angle), so camera-position problems are obvious at a glance.
 - **Spoken counting in your language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
+- **🎶 Cheerful background music**: a built-in looped BGM (synthesised live — it takes up no space and needs no internet), with a “🎶 Background music” toggle in the top right corner;
+  the music is turned down automatically while a cue is spoken, so it never fights the voice.
 - **🦴 Skeleton toggle**: hide the skeleton overlay and keep just the camera view; the angle labels toggle independently.
 - **Goal progress ring, best scores and workout history** (saved locally in your browser).
 - **Works offline**: the model and wasm are local files, so it runs with no internet at all — and no video is ever uploaded.
@@ -304,17 +306,18 @@ By default the server only listens on `127.0.0.1` (local machine only) — that 
 ## Pre-workout calibration
 
 Once you pick an exercise, a **dashed body silhouette** appears in the video: one clean outer contour line (not joint-to-joint skeleton lines) — that's your posture target;
-a line of text also appears above the video telling you straight out to “move into the dashed outline”. The calibration panel ticks off each item as it passes: **The outline is only a reference — you don’t have to match it exactly**: as long as your whole body is basically in frame (head and feet not cut off), it passes and training starts automatically.
+a line of text also appears above the video telling you straight out to “move into the dashed outline”. The calibration panel ticks off each item as it passes: **only “Body detected” and “Full body in frame” are required** (✓ when it passes, ○ when it doesn't — that one blocks the start);
+the other five are marked with “·” and are only **recommendations** — following them makes recognition more accurate, but they don't stop you from starting.
 
 | Check | Meaning |
 |---|---|
-| Body detected | The camera can see you clearly |
-| Full body in frame | Head to feet are all inside the frame |
-| Good distance | Your body is the right size in the frame (too far or too close, and you get a direction cue) |
-| Centered | Your body sits in the middle of the outline |
-| Good height | Your body sits at the right height in the frame |
-| Camera angle right | Squats need a **front-on** camera, everything else needs a **side-on** camera |
-| Holding still | Hold still for about 1 second so you aren't misjudged while you're moving about |
+| Body detected (**required**) | The camera can see you clearly |
+| Full body in frame (**required**) | Head to feet are all inside the frame, not cut off by the edges |
+| Good distance (recommended) | Your body is the right size in the frame (too far or too close, and you get a direction cue) |
+| Centered (recommended) | Your body sits in the middle of the outline |
+| Good height (recommended) | Your body sits at the right height in the frame |
+| Camera angle right (recommended) | Squats need a **front-on** camera, everything else needs a **side-on** camera |
+| Holding still (recommended) | Holding still makes recognition steadier (you can start without holding still too) |
 
 **Each of the six exercises has its own silhouette**, so just set yourself up to match the outline: squats use a front-on standing pose, lunges a side-on standing pose,
 push-ups a **side-on top-of-the-push-up position** (arms straight, hands on the floor), planks a **side-on forearm-supported prone position** (on your forearms, body low),
@@ -465,7 +468,7 @@ then run `npm run test:i18n` again — the test checks every entry for missing k
 
 ## Can't fit into the outline or getting no response? Four checks
 
-**① Check the version first.** The page title should show `v2.0` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
+**① Check the version first.** The page title should show `v2.1` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
 
 **② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked, do what the line under the panel tells you:
 
@@ -527,7 +530,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (469 cases)
+npm test                       # run all four suites (488 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
 npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
@@ -538,9 +541,9 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
-| `tests/test-detectors.mjs` | 192 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
+| `tests/test-detectors.mjs` | 198 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-page.mjs` | 97 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
-| `tests/test-app.mjs` | 148 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
+| `tests/test-app.mjs` | 161 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
 
 ---
 

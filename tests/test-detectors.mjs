@@ -688,9 +688,37 @@ function calibOnce(cal, lm, now) {
   ok('校准完成时给出“可以开始”的提示', res.hintKey === 'calib.ready', res.hintKey);
   ok('深蹲要求的机位是正面', cal.view === 'front', cal.view);
 
+  // 1.5) 只有「识别到人体 + 全身在画面里」是必须项，其余都是建议项
+  {
+    const cal3 = new Calibrator('squat');
+    const tiny = calibOnce(new Calibrator('squat'), fitToOutline(standing('front'), { k: 0.2 }), 0).res;
+    let r = null;
+    let t = 0;
+    for (let i = 0; i < 40; i++) { ({ res: r } = calibOnce(cal3, fitToOutline(standing('front'), { k: 0.2 }), t)); t += 33.4; }
+    ok('人小一点（离得远）也能开始：距离只是建议项',
+      r.ready === true && r.done === true
+      && r.checks.find((c) => c.id === 'distance').ok === false,
+      `ready=${r.ready} done=${r.done} distance=${r.checks.find((c) => c.id === 'distance').ok}`);
+    ok('必须项只有「识别到人体」「全身入镜」两项',
+      tiny.checks.filter((c) => c.blocking).every((c) => c.id === 'visible' || c.id === 'framing')
+      && tiny.checks.filter((c) => !c.blocking).length === 5,
+      tiny.checks.map((c) => `${c.id}:${c.blocking ? '必须' : '建议'}`).join(' '));
+    // 站偏、高度不对同样不拦人
+    const offC = new Calibrator('squat');
+    let roff = null; let t2 = 0;
+    for (let i = 0; i < 40; i++) { ({ res: roff } = calibOnce(offC, fitToOutline(standing('front'), { dx: 0.36 }), t2)); t2 += 33.4; }
+    ok('站偏一点也能开始：左右只是建议项', roff.ready === true && roff.done === true, String(roff.done));
+    // 但被画面切掉（头顶出画）必须拦住
+    const cutC = new Calibrator('squat');
+    let rcut = null; let t3c = 0;
+    for (let i = 0; i < 40; i++) { ({ res: rcut } = calibOnce(cutC, fitToOutline(standing('front'), { k: 1.25 }), t3c)); t3c += 33.4; }
+    ok('被画面切掉（头顶出画）必须拦住', rcut.ready === false && rcut.done === false,
+      `ready=${rcut.ready} done=${rcut.done} hint=${rcut.hintKey}`);
+  }
+
   // 2) 离得太远（放宽后：身体至少要占画面高度 42%）
   const far = new Calibrator('squat');
-  const r2 = calibOnce(far, fitToOutline(standing('front'), { k: 0.4 }), 0).res;
+  const r2 = calibOnce(far, fitToOutline(standing('front'), { k: 0.25 }), 0).res;
   ok('离太远：距离检查不通过', r2.checks.find((c) => c.id === 'distance').ok === false);
   ok('离太远：提示“往前走一点”', r2.hintKey === 'calib.tooFar', r2.hintKey);
 
@@ -719,14 +747,14 @@ function calibOnce(cal, lm, now) {
 
   // 4) 站偏了（放宽后左右可偏 30%，再偏就该提示了）
   const off = new Calibrator('squat');
-  const r4 = calibOnce(off, fitToOutline(standing('front'), { dx: 0.45 }), 0).res;
+  const r4 = calibOnce(off, fitToOutline(standing('front'), { dx: 0.36 }), 0).res;
   ok('站偏了：左右位置检查不通过', r4.checks.find((c) => c.id === 'center').ok === false);
   // 预览默认镜像：原始画面偏右 = 用户看到自己偏左 → 应该提示「往右站」
   ok('站偏了：提示往右站（镜像预览下）', r4.hintKey === 'calib.centerRight', r4.hintKey);
 
   // 关掉镜像后，方向提示必须反过来
   const offNoMirror = new Calibrator('squat', { mirror: false });
-  const r4b = calibOnce(offNoMirror, fitToOutline(standing('front'), { dx: 0.45 }), 0).res;
+  const r4b = calibOnce(offNoMirror, fitToOutline(standing('front'), { dx: 0.36 }), 0).res;
   ok('关掉镜像后方向提示相反', r4b.hintKey === 'calib.centerLeft', r4b.hintKey);
 
   // 5) 机位不对：深蹲却侧对镜头
@@ -749,21 +777,28 @@ function calibOnce(cal, lm, now) {
   ok('没识别到人：提示看清全身', r7.hintKey === 'calib.visible', r7.hintKey);
 
   // 8) 一直动来动去
+  // 「站定不动」现在只是建议项：晃来晃去照样能开始（用户要求「人在画面里就开始」），
+  // 但面板里仍然会把这一项标成没达标，提醒用户站定更稳。
   const moving = new Calibrator('squat');
   let r8 = null;
   for (let i = 0; i < 40; i++) {
     ({ res: r8 } = calibOnce(moving, fitToOutline(standing('front'), { dx: i % 2 ? 0.05 : -0.05 }), i * 33.4));
   }
-  ok('来回晃动：站定检查不通过', r8.checks.find((c) => c.id === 'steady').ok === false);
-  ok('来回晃动：不会判定校准完成', r8.done === false);
+  ok('来回晃动：站定检查标为不合格（只是建议）', r8.checks.find((c) => c.id === 'steady').ok === false);
+  ok('来回晃动：不再拦着开始（必须项仍满足）', r8.ready === true && r8.done === true,
+    `ready=${r8.ready} done=${r8.done}`);
 
-  // 9) 校准完成后再动，应该掉出“完成”状态
+  // 9) 校准完成后再动：只要人还在画面里就仍算就位；走出画面才会掉出「已就位」
   const cal2 = new Calibrator('squat');
   let r9 = null;
   for (let i = 0; i < 60; i++) ({ res: r9 } = calibOnce(cal2, idleFront, i * 33.4));
   ok('先完成校准', r9.done === true);
-  const r10 = calibOnce(cal2, fitToOutline(standing('front'), { dx: 0.3 }), 60 * 33.4).res;
-  ok('离开轮廓后不再处于已就位状态', r10.ready === false);
+  const r10 = calibOnce(cal2, fitToOutline(standing('front'), { dx: 0.36 }), 60 * 33.4).res;
+  ok('偏了一点仍在画面里：依旧算就位（只提示左右建议）', r10.ready === true, String(r10.ready));
+  const r10b = calibOnce(cal2, fitToOutline(standing('front'), { dx: 0.9 }), 61 * 33.4).res;
+  ok('走出画面后不再处于已就位状态', r10b.ready === false, String(r10b.ready));
+  ok('走出画面时提示的是必须项（全身入镜）',
+    ['calib.headCut', 'calib.feetCut', 'calib.cutOff'].includes(r10b.hintKey), r10b.hintKey);
 
   // 9.5) 躺姿动作（俯卧撑 / 平板支撑 / 臀桥 / 静态臀桥）
   // 躺下以后身体是横着的：竖直跨度只剩身体厚度，所以距离要量水平长度、高度要看上下范围，

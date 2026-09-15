@@ -8,17 +8,73 @@
 
 import { t, getMeta } from './i18n.js';
 
+/* ------------------------------------------------------------------ *
+ * 背景音乐：**全部现场合成**，不依赖任何音频文件
+ * ------------------------------------------------------------------ */
+
+/** MIDI 音高 → 频率（A4 = 69 = 440Hz） */
+export const mtof = (midi) => 440 * (2 ** ((midi - 69) / 12));
+
+/**
+ * 欢快的四小节循环：I–V–vi–IV（C–G–Am–F），116 BPM。
+ * 每小节 8 个八分音符：低音根音、分解和弦琶音、轻微的底鼓/军鼓/踩镲，
+ * 听起来像一段轻快的练习背景乐，又不会盖住语音。
+ */
+export const MUSIC = {
+  bpm: 116,
+  bars: [
+    { root: 48, notes: [0, 4, 7, 12, 7, 4, 7, 12] },   // C
+    { root: 43, notes: [0, 4, 7, 12, 7, 4, 7, 12] },   // G
+    { root: 45, notes: [0, 3, 7, 12, 7, 3, 7, 12] },   // Am
+    { root: 41, notes: [0, 4, 7, 12, 7, 4, 7, 12] },   // F
+  ],
+};
+
+/** 一个完整循环的所有音符事件（t 是相对循环起点的秒数），确定性输出，方便测试 */
+export function musicEvents(music = MUSIC) {
+  const beat = 60 / music.bpm;
+  const out = [];
+  music.bars.forEach((bar, b) => {
+    for (let i = 0; i < 8; i++) {
+      const t = (b * 4 + i / 2) * beat;
+      const note = bar.notes[i % bar.notes.length];
+      // 主旋律：八分音符分解和弦
+      out.push({ t, kind: 'lead', freq: mtof(bar.root + 12 + note), dur: beat * 0.42, gain: 0.055, type: 'triangle' });
+      // 低音：每拍一次
+      if (i % 2 === 0) out.push({ t, kind: 'bass', freq: mtof(bar.root - 12), dur: beat * 0.85, gain: 0.075, type: 'sine' });
+      // 踩镲：每个八分音符一次，很轻
+      out.push({ t, kind: 'hat', freq: 7200, dur: 0.025, gain: 0.012, type: 'square' });
+      // 底鼓 / 军鼓：给出「一、二、三、四」的律动
+      if (i === 0 || i === 4) out.push({ t, kind: 'kick', freq: 110, dur: 0.11, gain: 0.11, type: 'sine', slideTo: 55 });
+      if (i === 2 || i === 6) out.push({ t, kind: 'snare', freq: 1900, dur: 0.07, gain: 0.03, type: 'triangle' });
+    }
+  });
+  return out.sort((a, b) => a.t - b.t);
+}
+
+/** 一个循环的时长（秒） */
+export function musicLoopSeconds(music = MUSIC) {
+  return music.bars.length * 4 * (60 / music.bpm);
+}
+
 export class AudioKit {
   constructor() {
     this.ctx = null;
     this.sfxOn = true;
     this.voiceOn = true;
+    this.musicOn = false;
     this.volume = 0.8;
     this._voice = null;
     this._speaking = false;
     this._speakingSince = 0;
     this._lastVoiceAt = 0;
     this._unlocked = false;
+    // 背景音乐
+    this._musicGain = null;
+    this._musicTimer = null;
+    this._musicLoopAt = 0;
+    this.musicVolume = 0.12;      // 正常音量（足够欢快，又不盖住语音）
+    this.musicDuckVolume = 0.04;  // 念要领时压低
   }
 
   /* ---------- 基础 ---------- */
@@ -202,4 +258,76 @@ export class AudioKit {
   sayStart() { this.say(t('speech.start'), { rate: 1.3, force: true }); }
   sayCue(text) { this.say(text, { rate: 1.15, minGapMs: 6000 }); }
   stopSpeech() { try { speechSynthesis.cancel(); } catch { /* ignore */ } }
+
+  /* ---------- 背景音乐 ---------- */
+
+  /** 开/关背景音乐（开关状态由界面维护） */
+  setMusic(on) {
+    this.musicOn = !!on;
+    if (this.musicOn) this.startMusic();
+    else this.stopMusic();
+  }
+
+  startMusic() {
+    if (!this.musicOn || this._musicTimer) return;
+    let ctx = null;
+    try { ctx = this.ensureCtx(); } catch { ctx = null; }
+    if (!ctx) return;   // 环境不支持 WebAudio：安静地不播，不影响其它功能
+    try {
+      this._musicGain = ctx.createGain();
+      this._musicGain.gain.value = 0.0001;
+      this._musicGain.connect(ctx.destination);
+      this._musicLoopAt = ctx.currentTime + 0.15;
+      this._pumpMusic();
+      this._musicTimer = setInterval(() => this._pumpMusic(), 500);
+      this._musicGain.gain.setTargetAtTime(this.musicVolume, ctx.currentTime, 0.8);  // 淡入
+    } catch {
+      this.stopMusic();
+    }
+  }
+
+  stopMusic() {
+    if (this._musicTimer) { clearInterval(this._musicTimer); this._musicTimer = null; }
+    try {
+      if (this._musicGain && this.ctx) {
+        this._musicGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.15);  // 淡出
+        const g = this._musicGain;
+        setTimeout(() => { try { g.disconnect(); } catch { /* ignore */ } }, 400);
+      }
+    } catch { /* ignore */ }
+    this._musicGain = null;
+  }
+
+  /** 提前把接下来的循环排进音频时间线（每次调用最多排 2 个循环，够稳又不会堆积） */
+  _pumpMusic() {
+    const ctx = this.ctx;
+    if (!ctx || !this._musicGain) return;
+    // 说话时压低音乐，念完再抬回来，保证语音听得清
+    const target = this._speaking ? this.musicDuckVolume : this.musicVolume;
+    try { this._musicGain.gain.setTargetAtTime(target, ctx.currentTime, 0.25); } catch { /* ignore */ }
+    const loop = musicLoopSeconds();
+    let guard = 0;
+    while (this._musicLoopAt < ctx.currentTime + 2 && guard < 3) {
+      for (const e of musicEvents()) this._playNote(e, this._musicLoopAt + e.t);
+      this._musicLoopAt += loop;
+      guard += 1;
+    }
+  }
+
+  /** 排一个音符（音高、包络都现场算，不需要任何音频素材） */
+  _playNote(e, at) {
+    const ctx = this.ctx;
+    if (!ctx || !this._musicGain) return;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = e.type || 'sine';
+    osc.frequency.setValueAtTime(e.freq, at);
+    if (e.slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(40, e.slideTo), at + e.dur);
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, e.gain), at + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + e.dur);
+    osc.connect(g).connect(this._musicGain);
+    osc.start(at);
+    osc.stop(at + e.dur + 0.03);
+  }
 }

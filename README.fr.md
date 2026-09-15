@@ -42,8 +42,8 @@ Tout est côté client : le modèle de posture MediaPipe et le wasm sont stocké
 
 - **Calibrage avant la séance** : avant de commencer, une **silhouette en pointillés** s'affiche dans l'image (elle n'esquisse que le contour extérieur,
   rien à aligner sur un squelette) et une ligne de texte en haut de l'image t'indique « entre dans la silhouette en pointillés » ;
-  l'identification du corps, le corps entier dans l'image, la distance, le centrage, la hauteur, l'angle de vue et l'immobilité —
-  **sept critères** à valider tous ensemble avant que le comptage démarre, pour éviter de « t'entraîner dans le vide » quand tu es mal placé.
+  **il suffit qu'un corps soit détecté et que ton corps entier soit dans l'image pour lancer la séance** (environ 0,6 seconde) ; en revanche,
+  la distance, le centrage, la hauteur, l'angle de vue et l'immobilité ne sont que des recommandations (marquées d'un « · » dans le panneau) et ne bloquent plus le démarrage.
 - **Un score attribué étape par étape selon les étapes techniques** : chaque exercice est découpé en 4 à 6 étapes vérifiables ; chaque étape réussie
   rapporte aussitôt des points, déclenche un bip et coche la ligne ; valider toutes les étapes d'une série donne droit à un bonus de série parfaite ;
   pour les exercices chronométrés, **chaque seconde tenue rapporte +1 point**.
@@ -52,6 +52,8 @@ Tout est côté client : le modèle de posture MediaPipe et le wasm sont stocké
 - **Un retour d'état en temps réel** : sous l'image, tu vois en permanence « dans quel état tu es, à quelle étape tu bloques et combien de degrés il te reste ».
 - **🐞 Panneau « Métriques »** : affiche d'un clic tous les chiffres bruts que voit le détecteur (vue, visibilité, angles des articulations) — un problème de cadrage se repère au premier coup d'œil.
 - **Annonce vocale en chinois + effets sonores** : chaque étape validée est saluée par une gamme montante, la première réussite d'une étape est annoncée à voix haute, et le score est annoncé tous les 50 points.
+- **🎶 Une musique de fond entraînante** : une musique de fond en boucle intégrée (synthétisée sur place : aucun espace occupé et pas besoin d'internet), avec l'interrupteur « 🎶 Musique de fond » en haut à droite à activer ou couper à tout moment ;
+  le volume baisse automatiquement pendant l'annonce d'un conseil, pour ne jamais couvrir la voix.
 - **🦴 Interrupteur du squelette** : permet de masquer le squelette pour ne garder que l'image de la caméra ; les annotations d'angles s'activent séparément.
 - **Anneau de progression vers l'objectif, meilleur score et historique d'entraînement** (conservés en local dans le navigateur).
 - **Fonctionne hors ligne** : le modèle et le wasm sont en local, tout marche même sans connexion ; aucune image n'est envoyée.
@@ -308,17 +310,18 @@ Par défaut, le serveur n'écoute que sur `127.0.0.1` (accessible uniquement dep
 ## Calibrage avant la séance
 
 Une fois ton exercice choisi, une **silhouette en pointillés** apparaît dans l'image : une ligne de contour extérieur nette (et non un squelette articulé), c'est ta cible de posture ;
-une ligne de texte s'affiche aussi en haut de l'image et te dit directement « entre dans la silhouette en pointillés ». Le panneau de calibrage coche les critères un par un : **La silhouette n’est qu’une référence : inutile d’y coller au millimètre** ; il suffit que ton corps soit globalement dans l’image (tête et pieds non coupés) pour que le calibrage passe et que la séance démarre toute seule.
+une ligne de texte s'affiche aussi en haut de l'image et te dit directement « entre dans la silhouette en pointillés ». Le panneau de calibrage coche les critères un par un : **seuls « Corps détecté » et « Corps entier » sont obligatoires** (✓ validé, ○ non validé bloque le démarrage) ;
+les cinq autres sont marqués d'un « · » et ne sont que des **recommandations** — les respecter rend la détection plus précise, mais n'empêche pas de commencer.
 
 | Critère | Signification |
 |---|---|
-| Corps détecté | La caméra te voit bien |
-| Corps entier | De la tête aux pieds, tout est dans l'image |
-| Bonne distance | Ta taille dans l'image est la bonne (trop loin / trop près : le panneau te dit dans quel sens bouger) |
-| Bien centré | Ton corps se trouve au milieu de la silhouette |
-| Bonne hauteur | Ta position verticale dans l'image est la bonne |
-| Bon angle | Le squat se filme **de face**, les autres exercices **de profil** |
-| Immobile | Reste sans bouger environ 1 seconde, pour éviter une validation pendant que tu bouges |
+| Corps détecté (**obligatoire**) | La caméra te voit bien |
+| Corps entier (**obligatoire**) | De la tête aux pieds, tout est dans l'image, sans être coupé par les bords |
+| Bonne distance (recommandé) | Ta taille dans l'image est la bonne (trop loin / trop près : le panneau te dit dans quel sens bouger) |
+| Bien centré (recommandé) | Ton corps se trouve au milieu de la silhouette |
+| Bonne hauteur (recommandé) | Ta position verticale dans l'image est la bonne |
+| Bon angle (recommandé) | Le squat se filme **de face**, les autres exercices **de profil** |
+| Immobile (recommandé) | Rester immobile rend la détection plus stable (tu peux aussi commencer sans rester immobile) |
 
 **Chacun des six exercices a sa propre silhouette** : il suffit de te mettre en position et de suivre le contour — le squat est une posture debout de face, la fente une posture debout de profil,
 la pompe une **position haute de pompe, vue de profil** (bras tendus, mains au sol), la planche une **position allongée de profil sur les avant-bras** (sur les avant-bras, corps au ras du sol),
@@ -470,7 +473,7 @@ puis relance `npm run test:i18n` — le test vérifie une par une les clés manq
 
 ## Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes
 
-**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v2.0`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
+**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v2.1`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
 
 **② Regarde d'abord le panneau « Calibrage avant la séance » à droite.** Le critère qui reste décoché te dit quoi faire, juste en dessous :
 
@@ -532,7 +535,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les quatre suites d'un coup (469 tests)
+npm test                       # les quatre suites d'un coup (488 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources
 npm run test:detectors         # détection et logique de score (squelettes synthétiques)
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
@@ -543,9 +546,9 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | Fichier de test | Nombre de tests | Contenu couvert |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
-| `tests/test-detectors.mjs` | 192 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
+| `tests/test-detectors.mjs` | 198 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
 | `tests/test-page.mjs` | 97 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
-| `tests/test-app.mjs` | 148 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
+| `tests/test-app.mjs` | 161 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
 
 ---
 

@@ -704,14 +704,21 @@ console.log('\n[8] 运动前校准流程');
   }
   api.selectExercise('lunge');
 
-  // 站偏时给方向提示
+  // 站偏时给方向提示（左右现在是建议项：面板会提示，但不拦着开始）
   api.toCalibration();
   ok('重新校准后回到校准阶段', api.state.session === 'calibrating');
-  api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.45 }), t3), t3);
-  ok('站偏时给出左右方向提示', /左|右/.test(elements.get('calibHint').textContent),
+  api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.36 }), t3), t3);
+  ok('站偏时面板给出左右方向提示', /左|右/.test(elements.get('calibHint').textContent),
     elements.get('calibHint').textContent);
-  ok('站偏时有人体但未就位（轮廓为调整色）',
-    api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.45 }), t3), t3).status === 'adjust');
+  ok('站偏时仍然算就位（建议项不拦人，轮廓已是已就位配色）',
+    api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.36 }), t3), t3).status === 'ready');
+  ok('面板把没达标的建议项标成「·」而不是「○」',
+    elements.get('calibList').innerHTML.includes('calib-item soft'),
+    elements.get('calibList').innerHTML.slice(0, 120));
+  // 只有被画面切掉（必须项不达标）才会停在「调整」
+  api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.9 }), t3), t3);
+  ok('身体出画时必须项拦住，轮廓回到调整色',
+    api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.9 }), t3), t3).status === 'adjust');
 
   // 轮廓是独立的一层：关掉“火柴人”也必须照常显示引导
   api.renderer.showSkeleton = false;
@@ -754,19 +761,21 @@ console.log('\n[8] 运动前校准流程');
   api.renderer.draw({ landmarks: null, frame: null, exerciseId: 'squat', status: 'idle', outline: null });
   ok('不传轮廓时不画任何东西', ctxCounts.stroke === 0 && ctxCounts.lineTo === 0);
 
-  // 画面上的文字引导：必须始终告诉用户「站进虚线轮廓内」
+  // 画面上的文字引导：必须始终告诉用户「进入虚线轮廓内」
   api.selectExercise('squat');
-  const early = api.calibrationStep(frameOf(fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.45 }), t3 + 10000), t3 + 10000);
+  // 被画面切掉（必须项不达标）时，提示条第二行要给出具体该做什么
+  const cutFrame = () => frameOf(fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.9 }), t3 + 10000);
+  api.calibrationStep(cutFrame(), t3 + 10000);
   ok('校准阶段画面上出现文字提示条', elements.get('calibPrompt').hidden === false);
   ok('提示条第一行是「进入虚线轮廓内」',
     elements.get('calibPromptMain').textContent.includes('进入虚线轮廓'), elements.get('calibPromptMain').textContent);
-  ok('提示条第二行给出还差什么', /左|右/.test(elements.get('calibPromptSub').textContent),
+  ok('提示条第二行给出还差什么', /出画/.test(elements.get('calibPromptSub').textContent),
     elements.get('calibPromptSub').textContent);
   // 提示条走 t()，必须跟着语言切换
   api.changeLang('en');
-  api.calibrationStep(frameOf(fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.45 }), t3 + 10200), t3 + 10200);
+  api.calibrationStep(cutFrame(), t3 + 10200);
   ok('提示条文案跟随语言切换（英文）',
-    /dashed outline/i.test(elements.get('calibPromptMain').textContent),
+    /outline/i.test(elements.get('calibPromptMain').textContent),
     elements.get('calibPromptMain').textContent);
   api.changeLang('zh');
   ok('人没进画面时提示条换成「没找到你」',
@@ -778,10 +787,10 @@ console.log('\n[8] 运动前校准流程');
     elements.get('calibPrompt').className.includes('search'), elements.get('calibPrompt').className);
   ok('底部状态条在校准阶段让位（同一句话不重复出现）', elements.get('poseHint').hidden === true);
 
-  // 站好后就位：先进入「保持不动」，保持满 1.1 秒后识别完成 → 自动进入倒计时
+  // 站好后就位：只等「人在画面里」这一必须项（保持 0.6 秒）→ 自动进入倒计时
   let t4 = t3 + 20000;
-  for (let i = 0; i < 20; i++) { api.calibrationStep(frameOf(idle, t4), t4); t4 += 33.4; }
-  ok('就位后提示条变成「位置很好」',
+  for (let i = 0; i < 8; i++) { api.calibrationStep(frameOf(idle, t4), t4); t4 += 33.4; }
+  ok('进画面约 0.27 秒后提示条已是「位置很好」',
     api.state.session === 'calibrating' && elements.get('calibPromptMain').textContent.includes('位置很好'),
     `session=${api.state.session} text=${elements.get('calibPromptMain').textContent}`);
   ok('提示条在就位保持阶段转绿',
@@ -1006,6 +1015,54 @@ console.log('\n[10] 声音自检');
   ok('诊断面板里有一项「声音」状态', elements.get('debugLine').textContent.includes('声音'),
     elements.get('debugLine').textContent.slice(-90));
   api.state.settings.debug = false;
+}
+
+/* ------------------------------------------------------------------ *
+ * 背景音乐（现场合成，不依赖音频文件）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[11] 背景音乐');
+{
+  const { musicEvents, musicLoopSeconds, mtof, MUSIC } = await import('../src/audio.js');
+  const ev = musicEvents();
+  const count = (k) => ev.filter((e) => e.kind === k).length;
+
+  ok('mtof 换算正确（A4 = 440Hz）', mtof(69) === 440 && Math.abs(mtof(60) - 261.63) < 0.01);
+  ok('循环是 4 小节 I–V–vi–IV（C–G–Am–F）',
+    MUSIC.bars.length === 4
+    && MUSIC.bars.map((b) => b.root).join(',') === '48,43,45,41',
+    MUSIC.bars.map((b) => b.root).join(','));
+  ok('一个循环 16 拍、约 8.3 秒',
+    Math.abs(musicLoopSeconds() - 16 * (60 / MUSIC.bpm)) < 1e-9,
+    `${musicLoopSeconds().toFixed(2)}s`);
+  ok('音符事件确定性：32 个旋律 + 16 个低音 + 32 个踩镲 + 8 底鼓 + 8 军鼓',
+    count('lead') === 32 && count('bass') === 16 && count('hat') === 32
+    && count('kick') === 8 && count('snare') === 8,
+    JSON.stringify({ lead: count('lead'), bass: count('bass'), hat: count('hat'), kick: count('kick'), snare: count('snare') }));
+  ok('事件按时间排好序，且从 0 开始',
+    ev[0].t === 0 && ev.every((e, i) => i === 0 || e.t >= ev[i - 1].t));
+  ok('所有音高都在可听范围内（40Hz~12kHz）',
+    ev.every((e) => e.freq >= 40 && e.freq <= 12000),
+    `${Math.min(...ev.map((e) => e.freq)).toFixed(1)}~${Math.max(...ev.map((e) => e.freq)).toFixed(1)}`);
+  ok('音量足够轻，不会盖住语音（单个音符 ≤ 0.12）',
+    ev.every((e) => e.gain <= 0.12), String(Math.max(...ev.map((e) => e.gain))));
+
+  // 开关接线：没有 WebAudio 环境时也不能报错（Node 里就是这样）
+  const api = windowStub.__mfg;
+  const musicBtn = elements.get('btnMusic');
+  musicBtn.setAttribute('aria-pressed', 'false');
+  musicBtn.dispatch('click');
+  ok('点「音乐」开关打开音乐并记住设置',
+    api.audio.musicOn === true && api.state.settings.music === true);
+  musicBtn.dispatch('click');
+  ok('再点一次关闭音乐',
+    api.audio.musicOn === false && api.state.settings.music === false);
+  musicBtn.dispatch('click');   // 恢复默认（开）
+  ok('没有 WebAudio 环境时启动音乐不报错（静默降级）',
+    api.audio._musicTimer === null || typeof api.audio._musicTimer === 'object');
+  ok('控制台里没有因音乐产生的错误',
+    !api.state.consoleErrors.some((e) => /music/i.test(e)),
+    api.state.consoleErrors.slice(-2).join(' | '));
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

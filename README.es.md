@@ -40,14 +40,16 @@ Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la car
 ## Puntos destacados
 
 - **Calibración previa**: antes de empezar, en la imagen aparece una **silueta punteada del cuerpo** (solo el contorno exterior, sin alinear ningún esqueleto) y arriba aparece un texto que te indica
-  «entra dentro del contorno punteado»; cuerpo detectado, cuerpo entero visible, distancia,
-  centrado, altura, ángulo y quietud: **las siete** comprobaciones tienen que estar correctas para poder empezar, así no pierdes el tiempo entrenando mal colocado.
+  «entra dentro del contorno punteado»; **basta con que se detecte el cuerpo y que todo el cuerpo esté dentro del encuadre para poder empezar** (unos 0,6 segundos), mientras que
+  la distancia, el centrado, la altura, el ángulo y la quietud son solo recomendaciones (marcadas con «·» en el panel) y ya no bloquean el inicio.
 - **Puntuación progresiva según la técnica**: cada ejercicio se divide en 4-6 pasos que se pueden evaluar; cada paso correcto suma puntos al instante, suena un aviso y se marca una casilla;
   si completas todos los pasos de la ronda, te llevas una bonificación de puntuación perfecta; en los ejercicios de cronómetro, **cada segundo aguantado suma +1 punto**.
 - **Conteo con criterio**: las repeticiones a medias, demasiado rápidas, con la lumbar hundida o el trasero alto no cuentan como válidas: se cuentan aparte y te dan un aviso para corregir.
 - **Estado en tiempo real**: debajo de la imagen siempre ves «en qué estado estás, en qué paso te has quedado y cuántos grados te faltan».
 - **🐞 Métricas**: muestra con un clic todos los números en bruto que ve el detector (vista, visibilidad, ángulos de cada articulación), así localizas de un vistazo cualquier problema de colocación.
 - **Voz con conteo + sonidos**: cada paso cumplido suena con un aviso ascendente; la primera vez que lo cumples, la voz lo anuncia, y cada 50 puntos te canta la puntuación.
+- **🎶 Música de fondo alegre**: una BGM en bucle integrada (sintetizada en vivo: no ocupa espacio ni necesita internet) y el interruptor «🎶 Música de fondo» en la esquina superior derecha para activarla o desactivarla cuando quieras;
+  al anunciar un consejo en voz alta, la música baja automáticamente para no tapar la voz.
 - **🦴 Esqueleto**: puedes ocultarlo y dejar solo la imagen de la cámara; las anotaciones de ángulos se activan por separado.
 - **Anillo de progreso del objetivo, mejor marca e historial de entrenamientos** (se guardan en el navegador).
 - **Funciona sin conexión**: el modelo y el wasm están en local, así que funciona sin internet; la imagen no se sube a ningún sitio.
@@ -304,17 +306,18 @@ Por defecto solo escucha en `127.0.0.1` (solo accesible desde tu propio equipo):
 ## Calibración previa
 
 Cuando hayas elegido el ejercicio, en la imagen aparece una **silueta punteada del cuerpo**: una línea de contorno exterior limpia (no es un esqueleto articulado), y ese es tu objetivo de postura;
-arriba aparece además una línea de texto que te dice directamente «entra dentro del contorno punteado». El panel de calibración va marcando cada comprobación: **El contorno es solo una referencia: no hace falta encajar exactamente en él**; basta con que todo el cuerpo esté más o menos dentro del encuadre (sin cortar la cabeza ni los pies) para que se valide y empiece solo.
+arriba aparece además una línea de texto que te dice directamente «entra dentro del contorno punteado». El panel de calibración va marcando cada comprobación: **solo «Cuerpo detectado» y «Cuerpo entero visible» son obligatorias** (✓ si cumple; ○ si no cumple, bloquea el inicio);
+las otras cinco se marcan con «·» y son solo **recomendaciones**: seguirlas hace que el reconocimiento sea más preciso, pero no impiden empezar.
 
 | Comprobación | Significado |
 |---|---|
-| Cuerpo detectado | La cámara te ve bien |
-| Cuerpo entero visible | De la cabeza a los pies, todo dentro del encuadre |
-| Distancia correcta | Tu cuerpo ocupa el tamaño adecuado en la imagen (si estás demasiado lejos o demasiado cerca, te indica hacia dónde moverte) |
-| Bien centrado | Tu cuerpo queda en el centro del contorno |
-| Altura correcta | Tu posición vertical dentro del encuadre es la adecuada |
-| Ángulo correcto | En la sentadilla hay que **ponerse de frente** a la cámara; en el resto de ejercicios, **de perfil** |
-| Sin moverte | Mantente quieto alrededor de 1 segundo, para que no te evalúe mientras te mueves de aquí para allá |
+| Cuerpo detectado (**obligatorio**) | La cámara te ve bien |
+| Cuerpo entero visible (**obligatorio**) | De la cabeza a los pies, todo dentro del encuadre, sin cortes en los bordes |
+| Distancia correcta (recomendado) | Tu cuerpo ocupa el tamaño adecuado en la imagen (si estás demasiado lejos o demasiado cerca, te indica hacia dónde moverte) |
+| Bien centrado (recomendado) | Tu cuerpo queda en el centro del contorno |
+| Altura correcta (recomendado) | Tu posición vertical dentro del encuadre es la adecuada |
+| Ángulo correcto (recomendado) | En la sentadilla hay que **ponerse de frente** a la cámara; en el resto de ejercicios, **de perfil** |
+| Sin moverte (recomendado) | Estar quieto hace que el reconocimiento sea más estable (también puedes empezar sin quedarte quieto) |
 
 **Cada uno de los seis ejercicios tiene su propia silueta**, así que solo tienes que colocarte y encajar con el contorno: la sentadilla es una postura de pie de frente, la zancada una postura de pie de perfil,
 la flexión una **posición alta de flexión, vista de perfil** (brazos estirados apoyados en el suelo), la plancha una **posición tumbada de perfil apoyada en los antebrazos** (sobre los antebrazos, cuerpo bajo),
@@ -465,7 +468,7 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 ## Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico
 
-**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v2.0`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
+**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v2.1`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
 
 **② Mira primero el panel «Calibración previa» de la derecha.** De las siete comprobaciones, la que no esté marcada te dice lo que tienes que hacer, siguiendo la frase que aparece debajo del panel:
 
@@ -527,7 +530,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (469 pruebas)
+npm test                       # las cuatro suites juntas (488 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -538,9 +541,9 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | Archivo de prueba | N.º de pruebas | Cobertura |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
-| `tests/test-detectors.mjs` | 192 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
+| `tests/test-detectors.mjs` | 198 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-page.mjs` | 97 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
-| `tests/test-app.mjs` | 148 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
+| `tests/test-app.mjs` | 161 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
 
 ---
 

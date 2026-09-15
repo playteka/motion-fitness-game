@@ -29,6 +29,7 @@ const DEFAULT_SETTINGS = {
   mirror: true,
   voice: true,
   sfx: true,
+  music: true,
   strict: true,
   showAngles: true,
   showSkeleton: true,
@@ -707,12 +708,14 @@ function renderCalibration(calib) {
     return;
   }
   card.hidden = false;
-  const sig = `${getLang()}|${calib.checks.map((c) => (c.ok ? 1 : 0)).join('')}`;
+  const sig = `${getLang()}|${calib.checks.map((c) => (c.ok ? 1 : (c.blocking ? 0 : 2))).join('')}`;
   if (sig !== state.calibSig) {
     state.calibSig = sig;
     $('calibList').innerHTML = calib.checks.map((c) => {
-      const mark = c.ok ? '✓' : '○';
-      return `<li class="calib-item${c.ok ? ' done' : ''}">`
+      // ✓ 达标；○ 必须项没达标（会拦着开始）；· 建议项没达标（不拦人，只是建议站得更准）
+      const mark = c.ok ? '✓' : (c.blocking ? '○' : '·');
+      const cls = c.ok ? ' done' : (c.blocking ? '' : ' soft');
+      return `<li class="calib-item${cls}">`
         + `<span class="calib-check">${mark}</span>`
         + `<span>${t(`calib.check.${c.id}`)}</span></li>`;
     }).join('');
@@ -722,7 +725,8 @@ function renderCalibration(calib) {
   $('calibFill').style.width = `${Math.round(calib.progress * 100)}%`;
   const hintEl = $('calibHint');
   hintEl.textContent = t(calib.hintKey, calib.hintParams);
-  hintEl.className = `calib-hint ${calib.ready ? 'good' : 'warn'}`;
+  // 必须项都过了、只是建议项没达标时用柔和配色，别让人以为「还没法开始」
+  hintEl.className = `calib-hint ${calib.ready ? (calib.advisory ? 'soft' : 'good') : 'warn'}`;
 }
 
 /**
@@ -1235,6 +1239,10 @@ function bindUI() {
       audio.sfxOn = v;
       if (v) { audio.unlock(); audio.milestone(); }   // 打开音效也立刻响一声
     }, null],
+    ['btnMusic', 'music', (v) => {
+      audio.setMusic(v);
+      if (v) audio.unlock();
+    }, (v) => setCueLine(t(v ? 'status.musicOn' : 'status.musicOff'))],
     ['btnStrict', 'strict', (v) => {
       if (state.detector) state.detector.strict = v;
     }, (v) => setCueLine(t(v ? 'status.strictOn' : 'status.strictOff'))],
@@ -1267,6 +1275,8 @@ function bindUI() {
   // 免得后面由「自动识别完成」触发的倒计时、要领语音因为没赶上手势而整场静音。
   const unlockOnFirstGesture = () => {
     try { audio.unlock(); } catch { /* ignore */ }
+    // 背景音乐要等这次用户手势之后才能出声（浏览器 autoplay 策略）
+    if (state.settings.music) { try { audio.setMusic(true); } catch { /* ignore */ } }
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
       document.removeEventListener(ev, unlockOnFirstGesture);
     }

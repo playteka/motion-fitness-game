@@ -12,28 +12,34 @@
 /**
  * 目标轮廓与判定阈值（归一化画面坐标，x/y 都是画面宽/高的比例）。
  *
- * 判定原则：**「全身基本都在画面里」就算过**，轮廓只是给眼睛看的参考目标。
- * 早先的版本要求人体几乎和轮廓重合（距离 0.60~0.84、头顶误差 ≤0.14、左右误差 ≤0.16），
- * 实际使用中极难命中 —— 用户反馈「站在那半天也识别不出来」。现在大幅放宽：
- *   - 大小：只要求身体占画面高度的 42%~90%（原来 60%~84%）
- *   - 位置：头顶/脚位误差放宽到 0.34/0.26（原来 0.14/0.11），左右放宽到 0.30（原来 0.16）
- *   - 站定：允许的晃动放宽到 0.05（原来 0.028），并且单帧闪失不再清零保持进度
- * 真正兜住「有没有完整进画」的是 framing（头顶不出画、脚不贴边）那一项。
+ * 判定原则：**「人在画面里」就放行**（见 BLOCKING_CHECKS），轮廓只是给眼睛看的参考目标。
+ * 演进过程记在这里，免得以后又被改回「必须套进轮廓」：
+ *   1) 最初：必须和轮廓几乎重合（大小 0.60~0.84、头顶误差 ≤0.14、左右误差 ≤0.16）→ 极难通过
+ *   2) 放宽：大小 0.42~0.90、左右 0.30、头顶 0.34、脚位 0.26 → 仍然会卡住一部分人
+ *   3) 现在：只有「识别到人体 + 全身在画面里」这两条是**必须**的，
+ *      大小/位置/机位/站定只当**建议**（面板里照常提示，但不拦着开始）
  */
 export const OUTLINE = {
   centerX: 0.5,
   groundY: 0.92,        // 目标脚踝高度
   bodyTopY: 0.155,      // 目标头顶位置 → 身体约占画面高度 0.765
-  spanMin: 0.42,        // 身体至少占画面高度 42%（再小就真的看不清了）
-  spanMax: 0.90,        // 超过 90% 基本会顶到画面边缘，由 framing 项给出「往后退一点」
-  centerTol: 0.30,      // 左右允许偏 30% 画面宽度
-  topTol: 0.34,         // 头顶允许偏离目标位置多少
-  groundTol: 0.26,      // 脚踝允许偏离目标地面线多少
-  holdMs: 900,          // 全部通过后保持这么久就算校准完成
+  spanMin: 0.30,        // 建议值：身体至少占画面高度 30%（更小只是提示，不再拦人）
+  spanMax: 0.98,        // 建议值：接近满画就会顶到边缘，由 framing 负责拦
+  centerTol: 0.34,      // 建议值：左右偏多少算「不太居中」
+  topTol: 0.36,         // 建议值：头顶偏离目标位置多少算「高度不太对」
+  groundTol: 0.28,      // 建议值：脚位偏离目标地面线多少算「高度不太对」
+  holdMs: 600,          // 满足必须项后保持这么久就放行（够看清人、又不让人觉得卡）
   steadyWindowMs: 700,  // 「保持不动」的观察窗口
-  steadyTol: 0.05,      // 窗口内的最大位移（归一化）
+  steadyTol: 0.06,      // 窗口内的最大位移（归一化）
   flickerGraceMs: 300,  // 单帧不达标不立刻清零保持进度（模型抖动、一瞬间低头很常见）
 };
+
+/**
+ * 必须通过的检查项：只有「识别到人体」和「全身在画面里」。
+ * 其余（大小、左右、高度、机位、站定）都是**建议项** —— 面板里照样提示，但不拦着开始，
+ * 用户反馈「站在那半天也识别不出来」就是被这些建议项拦住了。
+ */
+export const BLOCKING_CHECKS = new Set(['visible', 'framing']);
 
 /**
  * 虚线剪影：**只勾勒人体外形的一条闭合曲线**，不再把关节连成「火柴人」。
@@ -386,14 +392,14 @@ export class Calibrator {
   /** 躺姿（俯卧 / 仰卧）？——身体横着放，距离和高度要换一套量法 */
   get lying() { return this.posture !== 'stand'; }
 
-  /** 返回 [{id, ok}]，顺序就是界面上的检查清单顺序 */
+  /** 返回 [{id, ok, blocking}]，顺序就是界面上的检查清单顺序 */
   evaluate(f) {
     const checks = [];
-    const push = (id, ok) => checks.push({ id, ok });
+    const push = (id, ok) => checks.push({ id, ok, blocking: BLOCKING_CHECKS.has(id) });
 
-    // 可见度门槛放宽到 0.5 → 0.35：侧拍时远侧肢体天然容易被挡住，
+    // 可见度门槛放宽到 0.3：侧拍时远侧肢体天然容易被挡住，
     // 原来的门槛会让「人明明在画面里」也判成不可见，从而卡住整个校准。
-    const visible = !!(f && f.ok && f.bodyVisible && f.coreVis > 0.35
+    const visible = !!(f && f.ok && f.bodyVisible && f.coreVis > 0.3
       && f.perSide[f.side] && Number.isFinite(f.perSide[f.side].knee));
     push('visible', visible);
     if (!visible) {
@@ -402,11 +408,12 @@ export class Calibrator {
     }
 
     if (!this.lying) {
-      // framing 是真正兜住「完整进画」的一项：头顶不出画、脚不贴到最下边
-      push('framing', f.bodyTop > 0.015 && f.groundY < 0.985);
+      // framing 是「必须项」：上下不出画、左右也不出画，也就是全身都在画面里
+      push('framing', f.bodyTop > 0.02 && f.groundY < 0.98
+        && f.bodyLeftFrac > 0.01 && f.bodyRightFrac < 0.99);
+      // 以下都是建议项：会提示，但不拦着开始
       push('distance', f.bodySpan >= OUTLINE.spanMin && f.bodySpan <= OUTLINE.spanMax);
       push('center', Math.abs(f.centerXFrac - OUTLINE.centerX) <= OUTLINE.centerTol);
-      // 位置检查只做「别偏太远」的粗判，精确对齐交给轮廓本身引导
       push('vertical', Math.abs(f.bodyTop - OUTLINE.bodyTopY) <= OUTLINE.topTol
         && Math.abs(f.groundY - OUTLINE.groundY) <= OUTLINE.groundTol);
     } else {
@@ -451,7 +458,8 @@ export class Calibrator {
     if (f && f.ok && Number.isFinite(f.facingX)) this.facing = f.facingX >= 0 ? 1 : -1;
 
     const checks = this.evaluate(f);
-    const ready = checks.length > 0 && checks.every((c) => c.ok);
+    // 「就位」只看必须项（识别到人体 + 全身在画面里）；建议项不拦人
+    const ready = checks.length > 0 && checks.every((c) => c.ok || !c.blocking);
 
     // 保持进度：单帧不达标（模型抖动、一瞬间低头、远侧肢体被挡）不立刻清零，
     // 连续不达标超过 flickerGraceMs 才算真的没站好 —— 否则永远攒不满 holdMs。
@@ -468,7 +476,8 @@ export class Calibrator {
     const heldMs = this.readySince === null ? 0 : now - this.readySince;
     const done = heldMs >= OUTLINE.holdMs;
 
-    const firstFail = checks.find((c) => !c.ok);
+    // 提示优先给「必须项」：先让用户能开始，再顺手建议站得更准
+    const firstFail = checks.find((c) => !c.ok && c.blocking) || checks.find((c) => !c.ok);
     const hint = firstFail ? this.hintFor(firstFail.id, f) : { key: 'calib.ready', params: null };
 
     return {
@@ -478,6 +487,8 @@ export class Calibrator {
       checks,
       hintKey: hint.key,
       hintParams: hint.params,
+      // 建议项还没达标时给界面用（面板显示「·」，提示条用较柔和的语气）
+      advisory: checks.some((c) => !c.ok && !c.blocking),
     };
   }
 
@@ -485,10 +496,13 @@ export class Calibrator {
     switch (id) {
       case 'visible':
         return { key: 'calib.visible' };
-      case 'framing':
+      case 'framing': {
         // 躺姿是被左右边框切掉的（身体横着放），提示统一按「往中间挪 / 退后」给
         if (this.lying) return { key: 'calib.cutOff' };
+        const verticalCut = f && (f.bodyTop <= 0.02 || f.groundY >= 0.98);
+        if (!verticalCut) return { key: 'calib.cutOff' };   // 左右被切掉
         return { key: f && f.groundY >= 0.968 ? 'calib.feetCut' : 'calib.headCut' };
+      }
       case 'distance': {
         if (this.lying) {
           return { key: f && f.bodySpanX < LYING.spanMin ? 'calib.tooFar' : 'calib.tooClose' };
