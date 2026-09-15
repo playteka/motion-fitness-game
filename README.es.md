@@ -357,7 +357,7 @@ En la sentadilla se usa la **vista frontal** y la profundidad se mide con «cuá
 |---|---|---|
 | ① Ponte de frente a la cámara, con el cuerpo entero en el encuadre y recto | Vista frontal + cuerpo entero visible + cuerpo vertical + cadera claramente más alta que la rodilla (ratio >0.86) | +4 |
 | ② Flexiona las rodillas y baja la cadera | Ratio de altura cadera-rodilla ≤0.72 (muslo a unos 46° de la horizontal) | +6 |
-| ③ Sigue bajando | Ratio ≤0.50 (unos 30°) | +7 |
+| ③ Flexiona las rodillas siguiendo la dirección de los pies y baja | Ratio ≤0.50 (unos 30°) | +7 |
 | ④ **Baja hasta que el muslo quede casi horizontal** | Ratio ≤0.25 (muslo a 15° o menos de la horizontal, o más abajo) | **+14** |
 | ⑤ Empuja con los pies y sube con cadera y rodillas del todo extendidas | El ratio vuelve a ≥0.80 | +8 |
 | 🎁 Todos los pasos de la ronda | Los 5 pasos anteriores completados en la misma ronda | +6 |
