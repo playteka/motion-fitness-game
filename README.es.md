@@ -464,7 +464,7 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 ## Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico
 
-**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.6`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
+**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.7`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
 
 **② Mira primero el panel «Calibración previa» de la derecha.** De las siete comprobaciones, la que no esté marcada te dice lo que tienes que hacer, siguiendo la frase que aparece debajo del panel:
 
@@ -526,7 +526,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (447 pruebas)
+npm test                       # las cuatro suites juntas (454 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -539,7 +539,7 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
 | `tests/test-detectors.mjs` | 192 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-page.mjs` | 97 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
-| `tests/test-app.mjs` | 126 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
+| `tests/test-app.mjs` | 133 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
 
 ---
 

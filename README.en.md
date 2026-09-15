@@ -464,7 +464,7 @@ then run `npm run test:i18n` again — the test checks every entry for missing k
 
 ## Can't fit into the outline or getting no response? Four checks
 
-**① Check the version first.** The page title should show `v1.6` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
+**① Check the version first.** The page title should show `v1.7` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
 
 **② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked, do what the line under the panel tells you:
 
@@ -526,7 +526,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (447 cases)
+npm test                       # run all four suites (454 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
 npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
@@ -539,7 +539,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
 | `tests/test-detectors.mjs` | 192 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-page.mjs` | 97 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
-| `tests/test-app.mjs` | 126 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
+| `tests/test-app.mjs` | 133 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
 
 ---
 

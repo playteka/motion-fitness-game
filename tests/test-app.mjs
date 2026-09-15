@@ -824,6 +824,88 @@ console.log('\n[8] 运动前校准流程');
     api.selectExercise('squat');
     api.toCalibration({ silent: true });
   }
+
+  // 端到端：校准完成 → 自动 3-2-1 倒计时 → 真正开始计数（等真实计时器走完）
+  // 这一条覆盖「识别完成后到底有没有真的进入计数」——中间任何一环断掉，深蹲都不会计数。
+  {
+    const savedStream = api.camera.stream;
+    api.camera.stream = {};   // camera.active 依赖真实视频流，这里用桩模拟
+    const saidNow = [];
+    const origSay = api.audio.say;
+    api.audio.say = (txt, o) => { saidNow.push(txt); return origSay.call(api.audio, txt, o); };
+    api.selectExercise('squat');
+    let te = 1200000;
+    for (let i = 0; i < 60; i++) { api.calibrationStep(frameOf(idle, te), te); te += 33.4; }
+    ok('端到端：校准完成即进入倒计时', api.state.session === 'countdown', api.state.session);
+
+    await new Promise((r) => setTimeout(r, 2900));   // 3 × 850ms 倒计时
+    ok('端到端：倒计时结束自动进入计数状态', api.state.session === 'running', api.state.session);
+    ok('端到端：倒计时报了 3 个数', saidNow.includes('3') && saidNow.includes('2') && saidNow.includes('1'),
+      saidNow.join(' / '));
+
+    const beforeVoices = saidNow.length;
+    const sm2 = new LS();
+    for (let rep = 0; rep < 3; rep++) {
+      for (let i = 0; i <= 60; i++) {
+        const s = Math.sin(Math.PI * (i / 60));
+        const knee = 178 - (178 - 75) * s;
+        const lm = fit(sp({
+          knee, lean: 6 + (178 - knee) * 0.28, armDown: (178 - knee) * 0.45, ankleX: 1.0, view: 'front',
+        }));
+        const smp = sm2.apply(lm.map((q) => ({ ...q, v: q.visibility })), te / 1000);
+        api.handleEvents(api.feedDetector(frameOf(smp, te), te));
+        api.updateHud();
+        te += 33.4;
+      }
+    }
+    ok('端到端：深蹲被计入有效次数', api.state.detector.validReps >= 2,
+      `reps=${api.state.detector.validReps}`);
+    ok('端到端：训练过程中有语音提示（要领/报数）', saidNow.length > beforeVoices,
+      saidNow.slice(beforeVoices, beforeVoices + 4).join(' / '));
+    api.audio.say = origSay;
+    api.stopSession('user');
+    api.camera.stream = savedStream;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 语音播报的健壮性（浏览器不给被取消的那句触发 onend 时不能永久哑掉）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[9] 语音播报健壮性');
+{
+  const { AudioKit } = await import('../src/audio.js');
+  const spoken = [];
+  const oldSynth = globalThis.speechSynthesis;
+  const oldUtter = globalThis.SpeechSynthesisUtterance;
+  globalThis.speechSynthesis = {
+    cancel() {},
+    speak(u) { spoken.push(u.text); u.onstart?.(); u.onend?.(); },
+    getVoices: () => [],
+  };
+  globalThis.SpeechSynthesisUtterance = class { constructor(text) { this.text = String(text); } };
+  const kit = new AudioKit();
+  kit.voiceOn = true;
+
+  // 模拟「上一句被 cancel 后再也没有 onend」：_speaking 卡死 20 秒
+  kit._speaking = true;
+  kit._speakingSince = performance.now() - 20000;
+  kit.say('第一句');
+  await new Promise((r) => setTimeout(r, 20));
+  ok('语音状态卡死超过 10 秒后能自动恢复（不会永久没声音）', spoken.includes('第一句'), spoken.join(' / '));
+
+  // 连发两句（间隔超过 minGapMs）：cancel + speak 不该把后一句吞掉
+  spoken.length = 0;
+  await new Promise((r) => setTimeout(r, 320));   // 先让上一条的节流窗口过去
+  kit.say('A');
+  await new Promise((r) => setTimeout(r, 320));
+  kit.say('B');
+  await new Promise((r) => setTimeout(r, 20));
+  ok('连续两次提示都能发声（cancel 后不会吞掉新的一句）',
+    spoken.includes('A') && spoken.includes('B'), spoken.join(' / '));
+
+  globalThis.speechSynthesis = oldSynth;
+  globalThis.SpeechSynthesisUtterance = oldUtter;
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

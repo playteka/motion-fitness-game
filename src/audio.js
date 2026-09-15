@@ -16,6 +16,7 @@ export class AudioKit {
     this.volume = 0.8;
     this._voice = null;
     this._speaking = false;
+    this._speakingSince = 0;
     this._lastVoiceAt = 0;
     this._unlocked = false;
   }
@@ -124,12 +125,19 @@ export class AudioKit {
   say(text, { rate = 1.25, pitch = 1.05, force = false, minGapMs = 250 } = {}) {
     if (!this.voiceOn || typeof speechSynthesis === 'undefined' || !text) return;
     const now = performance.now();
+    // 兜底：某些浏览器不会给「被 cancel 掉的那句」触发 onend，_speaking 会一直卡在 true，
+    // 之后所有非 force 的提示（要领、报数）就全被丢掉 —— 表现就是「语音提示突然都没了」。
+    // 这里用「开始说话的时间」做过期判断，超过 10 秒一律认为已经说完。
+    if (this._speaking && now - (this._speakingSince || 0) > 10000) this._speaking = false;
     if (!force && now - this._lastVoiceAt < minGapMs) return;
     if (!force && this._speaking) return; // 不排队，只报最新的
     this._lastVoiceAt = now;
     const meta = getMeta();
     try {
       speechSynthesis.cancel();
+      // cancel 之后立刻 speak 在 Chrome 上偶发「新的一句不响」，所以先复位状态、下一拍再 speak
+      this._speaking = false;
+      this._speakingSince = now;
       const u = new SpeechSynthesisUtterance(String(text));
       if (this._voice && this._voice.lang && String(this._voice.lang).toLowerCase().startsWith(meta.speechLang.split('-')[0])) {
         u.voice = this._voice;
@@ -138,11 +146,11 @@ export class AudioKit {
       u.rate = rate;
       u.pitch = pitch;
       u.volume = this.volume;
-      u.onstart = () => { this._speaking = true; };
+      u.onstart = () => { this._speaking = true; this._speakingSince = performance.now(); };
       u.onend = () => { this._speaking = false; };
       u.onerror = () => { this._speaking = false; };
-      speechSynthesis.speak(u);
-    } catch { /* 忽略语音异常 */ }
+      setTimeout(() => { try { speechSynthesis.speak(u); } catch { this._speaking = false; } }, 0);
+    } catch { this._speaking = false; }
   }
 
   /** 报数：数字交给 TTS，单位后缀随语言变化 */
