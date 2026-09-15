@@ -41,7 +41,7 @@ Tout est côté client : le modèle de posture MediaPipe et le wasm sont stocké
 ## Points forts
 
 - **Calibrage avant la séance** : avant de commencer, une **silhouette en pointillés** s'affiche dans l'image (elle n'esquisse que le contour extérieur,
-  rien à aligner sur un squelette) et une ligne de texte en haut de l'image t'indique « place-toi dans la silhouette en pointillés » ;
+  rien à aligner sur un squelette) et une ligne de texte en haut de l'image t'indique « entre dans la silhouette en pointillés » ;
   l'identification du corps, le corps entier dans l'image, la distance, le centrage, la hauteur, l'angle de vue et l'immobilité —
   **sept critères** à valider tous ensemble avant que le comptage démarre, pour éviter de « t'entraîner dans le vide » quand tu es mal placé.
 - **Un score attribué étape par étape selon les étapes techniques** : chaque exercice est découpé en 4 à 6 étapes vérifiables ; chaque étape réussie
@@ -260,7 +260,7 @@ Ouvre ensuite cette adresse dans ton navigateur :
 
 ### 👉 <http://127.0.0.1:4174>
 
-À la première ouverture, clique sur « Activer la caméra » → choisis « Autoriser » dans la fenêtre du navigateur → choisis un exercice → **place-toi dans la silhouette en pointillés** ;
+À la première ouverture, clique sur « Activer la caméra » → choisis « Autoriser » dans la fenêtre du navigateur → choisis un exercice → **entre dans la silhouette en pointillés** ;
 une fois le calibrage validé, clique sur « Démarrer la séance » pour lancer le comptage.
 
 > ⚠️ **N'ouvre surtout pas `index.html` en double-cliquant dessus.** Ouverte en `file://`, la page verra le navigateur bloquer la caméra et le chargement du wasm :
@@ -328,7 +328,7 @@ De profil, le contour se retourne automatiquement de gauche à droite selon ton 
 Une fois les sept critères validés et tenus un court instant, la silhouette devient verte et le message « Calibrage terminé ✓ » s'affiche : c'est seulement à ce moment que le bouton « Démarrer la séance » devient actif.
 Clique dessus (ou appuie sur Espace) → décompte 3-2-1 → le comptage démarre.
 
-> Si tu n'es pas bien placé, la ligne de texte en haut de l'image et le panneau de calibrage t'indiquent tous les deux directement quoi faire (par exemple « recule un peu », « décale-toi vers la droite », « mets-toi face à la caméra »),
+> Si tu n'es pas bien placé, la ligne de texte en haut de l'image et le panneau de calibrage t'indiquent tous les deux directement quoi faire (par exemple « rapproche-toi un peu de la caméra », « décale-toi vers la droite », « mets-toi face à la caméra »),
 > tu ne resteras jamais sans savoir ce qui ne va pas.
 > Pour les exercices allongés (pompe / planche / pont fessier), la distance se juge d'après la **longueur du corps** : pas besoin de te lever.
 > Pour refaire le calibrage : clique sur « Recalibrer » sous l'image ; chaque fin de série te ramène aussi automatiquement au calibrage.
@@ -350,7 +350,7 @@ Clique dessus (ou appuie sur Espace) → décompte 3-2-1 → le comptage démarr
 - Éclairage homogène, arrière-plan pas trop chargé, et vêtements plutôt ajustés : la détection sera plus stable.
 
 **À noter : l'analyse démarre dès l'instant où tu choisis un exercice ; inutile de cliquer d'abord sur « Démarrer la séance ».**
-Le comptage, lui, ne démarre qu'une fois que tu es bien placé dans la silhouette et que le calibrage est validé.
+Le comptage, lui, ne démarre qu'une fois que tu es entré dans la silhouette et que le calibrage est validé.
 
 **Raccourcis clavier** : `1`~`6` changer d'exercice · `Espace` démarrer/pause · `R` réinitialiser le compteur · `Esc` terminer la série · `M` miroir · `S` squelette · `F` plein écran sur la vidéo
 

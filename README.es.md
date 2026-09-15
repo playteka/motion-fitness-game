@@ -40,7 +40,7 @@ Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la car
 ## Puntos destacados
 
 - **Calibración previa**: antes de empezar, en la imagen aparece una **silueta punteada del cuerpo** (solo el contorno exterior, sin alinear ningún esqueleto) y arriba aparece un texto que te indica
-  «colócate dentro del contorno punteado»; cuerpo detectado, cuerpo entero visible, distancia,
+  «entra dentro del contorno punteado»; cuerpo detectado, cuerpo entero visible, distancia,
   centrado, altura, ángulo y quietud: **las siete** comprobaciones tienen que estar correctas para poder empezar, así no pierdes el tiempo entrenando mal colocado.
 - **Puntuación progresiva según la técnica**: cada ejercicio se divide en 4-6 pasos que se pueden evaluar; cada paso correcto suma puntos al instante, suena un aviso y se marca una casilla;
   si completas todos los pasos de la ronda, te llevas una bonificación de puntuación perfecta; en los ejercicios de cronómetro, **cada segundo aguantado suma +1 punto**.
@@ -256,7 +256,7 @@ Y después abre en el navegador:
 
 ### 👉 <http://127.0.0.1:4174>
 
-La primera vez, pulsa «Activar la cámara» → elige «Permitir» en la ventana del navegador → elige un ejercicio → **colócate dentro del contorno punteado que aparece en la imagen**;
+La primera vez, pulsa «Activar la cámara» → elige «Permitir» en la ventana del navegador → elige un ejercicio → **entra dentro del contorno punteado que aparece en la imagen**;
 cuando la calibración se complete, pulsa «Empezar» y empezará el conteo.
 
 > ⚠️ **No hagas doble clic directamente en `index.html`**. Si abres la página con `file://`, el navegador bloqueará la cámara y la carga del wasm,
@@ -324,7 +324,7 @@ Al grabar de perfil, el contorno se voltea automáticamente de izquierda a derec
 Cuando las siete comprobaciones están correctas y se mantienen un momento, el contorno se vuelve verde y aparece «Calibración completada ✓»; en ese momento el botón «Empezar» ya está disponible.
 Púlsalo (o la barra espaciadora) → cuenta atrás 3-2-1 → empieza el conteo.
 
-> Si no estás bien colocado, el texto que aparece arriba de la imagen y el panel de calibración te dicen directamente qué hacer (por ejemplo «retrocede un poco», «desplázate un poco a la derecha», «ponte de frente a la cámara»),
+> Si no estás bien colocado, el texto que aparece arriba de la imagen y el panel de calibración te dicen directamente qué hacer (por ejemplo «acércate un poco a la cámara», «desplázate un poco a la derecha», «ponte de frente a la cámara»),
 > así que nunca te quedas sin saber qué falla.
 > En los ejercicios tumbado (flexión / plancha / puente de glúteos) la distancia se mide por la **longitud del cuerpo**, así que no hace falta que te levantes.
 > Para volver a calibrar: pulsa el botón «Volver a calibrar» que hay debajo de la imagen; además, cada vez que terminas una serie vuelves automáticamente a la calibración.
@@ -346,7 +346,7 @@ Púlsalo (o la barra espaciadora) → cuenta atrás 3-2-1 → empieza el conteo.
 - Con una luz uniforme y un fondo no demasiado recargado; la ropa ajustada hace que el reconocimiento sea más estable.
 
 **Ojo: el reconocimiento empieza en cuanto eliges el ejercicio, no hace falta pulsar «Empezar» antes.**
-El conteo arranca solo después de que te coloques dentro del contorno punteado y pases la calibración.
+El conteo arranca solo después de que entres dentro del contorno punteado y pases la calibración.
 
 **Atajos de teclado**: `1`–`6` cambiar de ejercicio · `Espacio` iniciar/pausar · `R` reiniciar el conteo · `Esc` terminar la serie · `M` espejo · `S` esqueleto · `F` pantalla completa del vídeo
 

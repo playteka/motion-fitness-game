@@ -40,7 +40,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 ## Feature highlights
 
 - **Pre-workout calibration**: before you start there's a **dashed body silhouette** in the frame (it only traces your outer shape — you don't need to line up your joints), and a text prompt above the video tells you
-  “step into the dashed outline”; you're only cleared to start once body detection, full-body framing, distance,
+  “move into the dashed outline”; you're only cleared to start once body detection, full-body framing, distance,
   centering, height, camera angle and holding still — all **seven** — pass, so you never “stand off-center and wonder why nothing counts”.
 - **Form steps scored one at a time**: each exercise is broken into 4–6 judgeable steps — hit one and you immediately get points, a chime, and a checkmark;
   finishing every step in a round earns a perfect-round bonus, and hold exercises give **+1 point for every second you hold**.
@@ -256,7 +256,7 @@ Then open this in your browser:
 
 ### 👉 <http://127.0.0.1:4174>
 
-The first time in, click “Start camera” → choose “Allow” in the browser prompt → pick an exercise → **step into the dashed body outline on screen**; once calibration passes, click “Start set” and counting begins.
+The first time in, click “Start camera” → choose “Allow” in the browser prompt → pick an exercise → **move into the dashed body outline on screen**; once calibration passes, click “Start set” and counting begins.
 
 > ⚠️ **Don't just double-click `index.html`**. When you open it over `file://`, the browser blocks the camera and the wasm load,
 > so you have to go through `http://127.0.0.1:...` (localhost counts as a secure context).
@@ -323,7 +323,7 @@ When you film from the side, the outline flips left to right automatically to ma
 Once all seven pass and stay that way for a moment, the outline turns green and shows “Calibrated ✓”, and only then does the “Start set” button become available.
 Click it (or press Space) → 3-2-1 countdown → counting starts.
 
-> If you're not in position, the text prompt above the video and the calibration panel both spell out exactly what to do (for example “step forward into the dashed outline”, “shift a little to the right”, “face the camera”),
+> If you're not in position, the text prompt above the video and the calibration panel both spell out exactly what to do (for example “move a little toward the camera”, “shift a little to the right”, “face the camera”),
 > so you're never left wondering what's wrong.
 > For the lying-down exercises (push-up / plank / glute bridge), distance is judged by **body length**, so you don't need to stand up.
 > To recalibrate: click the “Recalibrate” button below the video; every set also returns to calibration automatically.
@@ -345,7 +345,7 @@ Click it (or press Space) → 3-2-1 countdown → counting starts.
 - Even lighting, a clean background, and closer-fitting clothes all make tracking more stable.
 
 **Note: detection starts the moment you pick an exercise, but standing there no longer earns you any points.**
-Counting begins only after you step into the dashed outline, pass calibration, and click “Start set”.
+Counting begins only after you move into the dashed outline, pass calibration, and click “Start set”.
 
 **Shortcuts**: `1`–`6` switch exercise · `Space` start/pause · `R` reset reps · `Esc` end set · `M` mirror · `S` skeleton · `F` fullscreen the video frame
 
