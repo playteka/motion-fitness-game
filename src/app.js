@@ -712,7 +712,7 @@ function renderCalibPrompt(calib) {
     level = 'ready';
   } else if (noBody) {
     mainKey = 'calib.promptSearch';
-    level = 'bad';
+    level = 'search';
   }
   // 具体差在哪：只在「人已识别但还没就位」时补充，避免与主提示重复
   const sub = (!confirmed && !calib.ready && !noBody) ? t(calib.hintKey, calib.hintParams) : '';

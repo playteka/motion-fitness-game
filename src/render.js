@@ -14,6 +14,17 @@ const COLORS = {
   idle: '#7c8aa5',
 };
 
+/**
+ * 校准剪影专用配色（跟骨架分开，避免和画面里的火柴人撞色）。
+ * 三种状态都是「亮到能在任何背景上看清」的高饱和色：
+ * 亮天蓝 = 还没找到人、亮琥珀 = 正在调整、亮绿 = 已就位。
+ */
+const OUTLINE_COLORS = {
+  search: '#38bdf8',
+  adjust: '#fbbf24',
+  ready: '#4ade80',
+};
+
 /** 每个动作重点关注的关节（用于高亮与角度标注） */
 const FOCUS = {
   squat: ['knee', 'hip'],
@@ -49,6 +60,9 @@ export class PoseRenderer {
    * 只画**一条闭合的外部轮廓**：用户要做的事就是站进去，画骨骼只会让画面变乱。
    * 点位之间用二次贝塞尔平滑（以相邻两点的中点为锚），避免出现折线感。
    *
+   * 颜色一律取高饱和亮色 + 高不透明度 + 外发光：摄像头画面里什么背景都有
+   *（白墙、木地板、深色衣服），灰蓝色线条很容易糊在背景里看不见。
+   *
    * @param {'front'|'side'} view 动作要求的机位
    * @param {'search'|'adjust'|'ready'} status 未找到人 / 正在调整 / 已就位
    */
@@ -56,7 +70,7 @@ export class PoseRenderer {
     const { ctx, canvas } = this;
     const W = canvas.width;
     const H = canvas.height;
-    const color = status === 'ready' ? COLORS.good : (status === 'adjust' ? COLORS.warn : COLORS.idle);
+    const color = OUTLINE_COLORS[status] || OUTLINE_COLORS.search;
     const base = Math.max(2, W / 420);
 
     ctx.save();
@@ -64,10 +78,10 @@ export class PoseRenderer {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = color;
-    ctx.globalAlpha = status === 'ready' ? 0.95 : 0.6;
-    ctx.lineWidth = base * 1.3;
+    ctx.globalAlpha = 0.96;
+    ctx.lineWidth = base * 1.8;
     ctx.shadowColor = color;
-    ctx.shadowBlur = base * 5;
+    ctx.shadowBlur = base * 7;
 
     this.closedCurvePath(outlinePath(view).map(([x, y]) => [x * W, y * H]));
     ctx.stroke();

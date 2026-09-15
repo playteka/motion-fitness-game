@@ -451,7 +451,8 @@ kbd {
 .pose-hint.bad { border-color: rgba(248, 113, 113, 0.55); color: #ffd5d5; }
 .pose-hint.good { border-color: rgba(74, 222, 128, 0.5); color: #d6ffe4; }
 
-/* 校准阶段压在画面上方的文字引导：告诉用户「站进虚线轮廓内」 */
+/* 校准阶段压在画面上方的文字引导：告诉用户「站进虚线轮廓内」。
+   配色跟画布上的剪影一致（亮蓝 = 找人 / 亮琥珀 = 调整 / 亮绿 = 已就位），读起来是一套信号。 */
 .calib-prompt {
   position: absolute;
   top: 14px;
@@ -460,22 +461,28 @@ kbd {
   max-width: 62%;
   padding: 8px 16px;
   border-radius: 12px;
-  background: rgba(8, 15, 26, 0.82);
-  border: 1px solid rgba(124, 138, 165, 0.5);
+  background: rgba(8, 15, 26, 0.86);
+  border: 1px solid rgba(56, 189, 248, 0.6);
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.25), var(--shadow);
   text-align: center;
   z-index: 5;
   pointer-events: none;
-  box-shadow: var(--shadow);
 }
 .calib-prompt[hidden] { display: none; }
-.calib-prompt-main { font-size: 15px; font-weight: 700; color: #e8f2ff; }
+.calib-prompt-main { font-size: 15px; font-weight: 700; color: #dcf2ff; }
 .calib-prompt-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
 .calib-prompt-sub:empty { display: none; }
-.calib-prompt.ready { border-color: rgba(74, 222, 128, 0.55); }
+.calib-prompt.warn {
+  border-color: rgba(251, 191, 36, 0.65);
+  box-shadow: 0 0 18px rgba(251, 191, 36, 0.25), var(--shadow);
+}
+.calib-prompt.warn .calib-prompt-main { color: #ffe9b8; }
+.calib-prompt.ready {
+  border-color: rgba(74, 222, 128, 0.65);
+  box-shadow: 0 0 18px rgba(74, 222, 128, 0.25), var(--shadow);
+}
 .calib-prompt.ready .calib-prompt-main { color: #d6ffe4; }
 .calib-prompt.ready .calib-prompt-sub { color: #a9e8bd; }
-.calib-prompt.warn { border-color: rgba(251, 191, 36, 0.5); }
-.calib-prompt.warn .calib-prompt-main { color: #ffe9b8; }
 
 /* 要领加分飘字 */
 .score-pop {

@@ -87,14 +87,23 @@ class El {
 const elements = new Map();
 for (const id of htmlIds) elements.set(id, new El('div', id));
 elements.get('video').tagName = 'VIDEO';
-const ctxCounts = { stroke: 0, fill: 0, arc: 0, moveTo: 0, lineTo: 0, quadraticCurveTo: 0, fillText: 0 };
+const ctxCounts = {
+  stroke: 0, fill: 0, arc: 0, moveTo: 0, lineTo: 0, quadraticCurveTo: 0, fillText: 0,
+  strokeStyle: null, globalAlpha: null, lineWidth: null,
+};
 const ctxStub = {
   clearRect() {}, beginPath() {}, closePath() {}, save() {}, restore() {}, setLineDash() {},
   arcTo() {},
   moveTo() { ctxCounts.moveTo += 1; },
   lineTo() { ctxCounts.lineTo += 1; },
   quadraticCurveTo() { ctxCounts.quadraticCurveTo += 1; },
-  stroke() { ctxCounts.stroke += 1; },
+  // 记录真实用到的画笔参数，供「线条要醒目」这类断言使用
+  stroke() {
+    ctxCounts.stroke += 1;
+    ctxCounts.strokeStyle = this.strokeStyle;
+    ctxCounts.globalAlpha = this.globalAlpha;
+    ctxCounts.lineWidth = this.lineWidth;
+  },
   fill() { ctxCounts.fill += 1; },
   arc() { ctxCounts.arc += 1; },
   fillText() { ctxCounts.fillText += 1; },
@@ -102,6 +111,9 @@ const ctxStub = {
 };
 const resetCtxCounts = () => { for (const k of Object.keys(ctxCounts)) ctxCounts[k] = 0; };
 elements.get('overlay').getContext = () => ctxStub;
+// 画布尺寸跟真实页面一致（1280×720），这样画笔粗细（lineWidth）之类的断言才有意义
+elements.get('overlay').width = 1280;
+elements.get('overlay').height = 720;
 
 const created = [];
 
@@ -619,6 +631,28 @@ console.log('\n[8] 运动前校准流程');
   ok('关掉火柴人且没有关键点时也不会画骨架',
     outlineCalls.stroke > 0 && outlineCalls.fill === 0, `stroke=${outlineCalls.stroke} fill=${outlineCalls.fill}`);
 
+  // 线条要醒目：灰蓝色在摄像头画面里（白墙、木地板、深色衣服）会糊掉看不见
+  const outlinePen = {};
+  for (const st of ['search', 'adjust', 'ready']) {
+    resetCtxCounts();
+    api.renderer.draw({
+      landmarks: null, frame: null, exerciseId: 'squat', status: 'idle', outline: { view: 'front', status: st },
+    });
+    outlinePen[st] = { color: ctxCounts.strokeStyle, alpha: ctxCounts.globalAlpha, width: ctxCounts.lineWidth };
+  }
+  ok('剪影三种状态都用高饱和亮色（亮蓝找人 / 亮琥珀调整 / 亮绿已就位）',
+    outlinePen.search.color === '#38bdf8' && outlinePen.adjust.color === '#fbbf24'
+    && outlinePen.ready.color === '#4ade80',
+    JSON.stringify(outlinePen));
+  ok('剪影不再使用灰蓝色（旧配色不醒目）',
+    ['search', 'adjust', 'ready'].every((k) => outlinePen[k].color !== '#7c8aa5'),
+    ['search', 'adjust', 'ready'].map((k) => outlinePen[k].color).join(' '));
+  ok('剪影线条不透明且够粗（1280 宽下 ≥5px）',
+    ['search', 'adjust', 'ready'].every((k) => outlinePen[k].alpha >= 0.9 && outlinePen[k].width >= 5),
+    ['search', 'adjust', 'ready'].map((k) => `${k}:a=${outlinePen[k].alpha},w=${outlinePen[k].width}`).join(' '));
+  ok('三种状态的颜色互不相同（能一眼看出状态变化）',
+    new Set(['search', 'adjust', 'ready'].map((k) => outlinePen[k].color)).size === 3);
+
   api.renderer.showSkeleton = true;
   resetCtxCounts();
   api.renderer.draw({ landmarks: null, frame: null, exerciseId: 'squat', status: 'idle', outline: null });
@@ -644,6 +678,8 @@ console.log('\n[8] 运动前校准流程');
       const r = api.calibrationStep(frameOf(lostFrame(), t3 + 10100), t3 + 10100);
       return r.status === 'search' && elements.get('calibPromptMain').textContent.includes('没找到你');
     })(), elements.get('calibPromptMain').textContent);
+  ok('提示条配色跟着剪影状态走（找人 = 亮蓝 search 配色）',
+    elements.get('calibPrompt').className.includes('search'), elements.get('calibPrompt').className);
   ok('底部状态条在校准阶段让位（同一句话不重复出现）', elements.get('poseHint').hidden === true);
 
   // 站好后就位：先进入「保持不动」，保持满 1.1 秒才算确认
