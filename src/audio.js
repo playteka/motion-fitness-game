@@ -23,14 +23,37 @@ export class AudioKit {
 
   /* ---------- 基础 ---------- */
 
+  /**
+   * 解锁声音。可以重复调用（每次用户交互都调一次最稳）：
+   * ensureCtx 只在必要时创建上下文、并在 suspended 时尝试 resume。
+   */
   unlock() {
-    if (this._unlocked) return;
     this._unlocked = true;
-    this.ensureCtx();
-    if (typeof speechSynthesis !== 'undefined') {
-      this.pickVoice();
-      speechSynthesis.onvoiceschanged = () => this.pickVoice();
-    }
+    try { this.ensureCtx(); } catch { /* 音频上下文创建失败也不该影响别的声音逻辑 */ }
+    try {
+      if (typeof speechSynthesis !== 'undefined') {
+        this.pickVoice();
+        speechSynthesis.onvoiceschanged = () => this.pickVoice();
+      }
+    } catch { /* ignore */ }
+  }
+
+  /**
+   * 声音自检信息（给诊断面板用）。
+   * 用户说「没有声音」时，这两个值能立刻区分：是音频上下文没跑起来，还是系统里根本没有语音包。
+   */
+  state() {
+    let ctx = 'none';
+    try {
+      if (this.ctx) ctx = this.ctx.state || 'unknown';
+    } catch { ctx = 'unknown'; }
+    let voices = 0;
+    try {
+      voices = (typeof speechSynthesis !== 'undefined' && speechSynthesis.getVoices?.() || []).length;
+    } catch { voices = 0; }
+    return {
+      ctx, voices, voiceOn: !!this.voiceOn, sfxOn: !!this.sfxOn, unlocked: !!this._unlocked,
+    };
   }
 
   ensureCtx() {

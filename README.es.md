@@ -346,6 +346,7 @@ así puedes descansar y mirar el resumen sin que te arrastre enseguida a la seri
 - **Flexión / plancha**: túmbate o apóyate en perpendicular a la cámara, con las manos y los pies dentro del encuadre;
 - **Puente de glúteos / puente estático**: tumbado de lado, de forma que se vean a la vez hombros, cadera, rodillas y tobillos;
 - Con una luz uniforme y un fondo no demasiado recargado; la ropa ajustada hace que el reconocimiento sea más estable.
+- **¿Sin sonido?** ① comprueba que la pestaña no esté silenciada (icono del altavoz) ② pulsa una vez el interruptor «🔊 Voz»: reproduce una frase de prueba al instante ③ abre «🐞 Métricas»: la última línea muestra «Sonido» como `running` y un número de voces mayor que 0.
 
 **Ojo: el reconocimiento empieza en cuanto eliges el ejercicio, no hace falta pulsar «Empezar» antes.**
 **Fíjate en el orden: entras en el contorno punteado → se reconoce tu cuerpo entero (el contorno punteado desaparece) → cuenta atrás 3-2-1 automática → empieza el conteo;
@@ -464,7 +465,7 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 ## Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico
 
-**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.8`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
+**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.9`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
 
 **② Mira primero el panel «Calibración previa» de la derecha.** De las siete comprobaciones, la que no esté marcada te dice lo que tienes que hacer, siguiendo la frase que aparece debajo del panel:
 
@@ -526,7 +527,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (461 pruebas)
+npm test                       # las cuatro suites juntas (469 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -539,7 +540,7 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
 | `tests/test-detectors.mjs` | 192 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-page.mjs` | 97 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
-| `tests/test-app.mjs` | 140 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
+| `tests/test-app.mjs` | 148 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
 
 ---
 

@@ -152,7 +152,18 @@ const documentStub = {
     return all.filter((el) => matches(el, sel));
   },
   querySelector: (sel) => documentStub.querySelectorAll(sel)[0] || null,
-  addEventListener() {},
+  _listeners: {},
+  addEventListener(type, fn) {
+    (documentStub._listeners[type] || (documentStub._listeners[type] = [])).push(fn);
+  },
+  removeEventListener(type, fn) {
+    const l = documentStub._listeners[type] || [];
+    const i = l.indexOf(fn);
+    if (i >= 0) l.splice(i, 1);
+  },
+  dispatch(type, ev = {}) {
+    for (const fn of [...(documentStub._listeners[type] || [])]) fn({ type, preventDefault() {}, ...ev });
+  },
 };
 documentStub.body = new El('body');
 
@@ -946,6 +957,55 @@ console.log('\n[9] 语音播报健壮性');
 
   globalThis.speechSynthesis = oldSynth;
   globalThis.SpeechSynthesisUtterance = oldUtter;
+}
+
+/* ------------------------------------------------------------------ *
+ * 声音自检：首次交互解锁音频 + 开关立刻试播 + 诊断面板显示音频状态
+ * ------------------------------------------------------------------ */
+
+console.log('\n[10] 声音自检');
+{
+  const api = windowStub.__mfg;
+
+  // 浏览器要求「页面先有过一次交互」才允许出声：第一次点击/按键/触摸就要把音频解锁
+  const keydownBefore = (documentStub._listeners.keydown || []).length;
+  documentStub.dispatch('pointerdown');
+  ok('第一次用户交互后音频被解锁', api.audio._unlocked === true);
+  ok('解锁用的监听器用完即撤（keydown 上少了一个）',
+    (documentStub._listeners.keydown || []).length === keydownBefore - 1,
+    `before=${keydownBefore} after=${(documentStub._listeners.keydown || []).length}`);
+  documentStub.dispatch('pointerdown');   // 再点一次也不该报错
+  ok('重复点击不会报错', true);
+
+  // 打开「语音」开关：立刻试播一句，用户当场就能确认有没有声音
+  const spoken = [];
+  const origSay = api.audio.say;
+  api.audio.say = (txt, o) => { spoken.push(txt); return origSay.call(api.audio, txt, o); };
+  const voiceBtn = elements.get('btnVoice');
+  voiceBtn.setAttribute('aria-pressed', 'false');
+  voiceBtn.dispatch('click');
+  ok('打开语音开关会立刻试播一句', spoken.length === 1, spoken.join(' / '));
+  ok('试播之后语音开关处于开启状态', api.audio.voiceOn === true);
+  voiceBtn.dispatch('click');   // 关掉
+  ok('关掉语音开关会停止朗读并静音', api.audio.voiceOn === false);
+  voiceBtn.dispatch('click');   // 再打开，恢复原样
+  api.audio.say = origSay;
+
+  // 诊断面板显示音频状态，便于用户自查「为什么没声音」
+  const st = api.audio.state();
+  ok('audio.state() 给出音频上下文与语音包数量',
+    typeof st.ctx === 'string' && typeof st.voices === 'number',
+    JSON.stringify(st));
+  api.state.settings.debug = true;
+  const fakeFrame = {
+    ok: true, view: 'front', viewRatio: 0.85, bodyVisible: true, legsVisible: true,
+    trunkLean: 6, kneeAngle: 176, elbowAngle: 170, hipAngle: 175, bodyStraight: 178,
+    hipRise: 0.1, thighFromHoriz: 60, coreVis: 0.9,
+  };
+  api.renderDebug(fakeFrame);
+  ok('诊断面板里有一项「声音」状态', elements.get('debugLine').textContent.includes('声音'),
+    elements.get('debugLine').textContent.slice(-90));
+  api.state.settings.debug = false;
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

@@ -145,6 +145,7 @@ export default {
   status: {
     noPerson: 'No person detected — step into the middle of the frame and keep your whole body in view (back up 1–2 steps)',
     noDetector: 'Detector not ready: retap the action button',
+    noSound: 'No sound: ① check the tab isn’t muted (speaker icon) ② volume isn’t 0 ③ a voice pack is installed',
     ready: 'Got you ✓ hold that spot and start moving',
     needCamera: 'Start the camera first',
     countdownGo: 'Go! Follow the cues — partial reps don’t count.',
@@ -219,6 +220,7 @@ export default {
     hipRise: 'Hip lift',
     thighFromHoriz: 'Thigh from horizontal',
     visibility: 'Visibility',
+    sound: 'Sound',
     state: 'State',
     yes: '✓',
     no: '✗',
@@ -408,6 +410,7 @@ export default {
     scoreSuffix: 'points',
     start: 'Go',
     half: 'Halfway there, keep it up',
+    voiceTest: 'Voice is on',
     goal: 'Goal reached, awesome',
   },
 };

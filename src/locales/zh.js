@@ -145,6 +145,7 @@ export default {
   status: {
     noPerson: '没检测到人体：请站到画面中间，让头顶到脚都在画面里（退后 1~2 步）',
     noDetector: '识别器没就绪：请重新点一次左边的动作按钮',
+    noSound: '没声音：① 看标签页有没有被静音（标签上的小喇叭）② 音量不是 0 ③ 系统里要装有语音包',
     ready: '已识别到你 ✓ 保持这个位置做动作',
     needCamera: '请先开启摄像头',
     countdownGo: '开始！跟着提示做动作，半程动作不会计入次数。',
@@ -220,6 +221,7 @@ export default {
     hipRise: '髋抬起',
     thighFromHoriz: '大腿离水平',
     visibility: '可见度',
+    sound: '声音',
     state: '状态',
     yes: '✓',
     no: '✗',
@@ -409,6 +411,7 @@ export default {
     scoreSuffix: '分',
     start: '开始',
     half: '完成一半，继续保持',
+    voiceTest: '语音已开启',
     goal: '目标完成，太棒了',
   },
 };

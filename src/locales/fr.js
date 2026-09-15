@@ -145,6 +145,7 @@ export default {
   status: {
     noPerson: 'Aucun corps détecté : place-toi au centre de l’image, de la tête aux pieds (recule d’1 à 2 pas)',
     noDetector: 'Détecteur non prêt : retape le bouton d’action',
+    noSound: 'Pas de son : ① vérifie que l’onglet n’est pas coupé ② volume pas à 0 ③ voix système installée',
     ready: 'Te voilà ✓ Garde cette position pour travailler',
     needCamera: 'Active d’abord la caméra',
     countdownGo: 'C’est parti ! Suis les indications ; les répétitions partielles ne comptent pas.',
@@ -220,6 +221,7 @@ export default {
     hipRise: 'Élévation des hanches',
     thighFromHoriz: 'Angle cuisse-horizontale',
     visibility: 'Visibilité',
+    sound: 'Son',
     state: 'État',
     yes: '✓',
     no: '✗',
@@ -409,6 +411,7 @@ export default {
     scoreSuffix: 'points',
     start: 'C’est parti',
     half: 'À mi-chemin, continue',
+    voiceTest: 'Voix activée',
     goal: 'Objectif atteint, bravo',
   },
 };

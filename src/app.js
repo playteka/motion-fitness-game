@@ -310,6 +310,7 @@ function renderDebug(f) {
   }
   const n = (v, d = 0) => (Number.isFinite(v) ? v.toFixed(d) : '—');
   const mark = (v) => (v ? t('debug.yes') : t('debug.no'));
+  const snd = audio.state();
   // 机位是否“正确”取决于当前动作：深蹲要正面，其余要侧面
   const wantView = requiredView(state.exerciseId);
   const viewName = f.view === 'front' ? t('debug.viewFront') : t('debug.viewSide');
@@ -325,6 +326,7 @@ function renderDebug(f) {
     `${t('debug.hipRise')} ${n(f.hipRise, 2)}`,
     `${t('debug.thighFromHoriz')} ${n(f.thighFromHoriz)}°`,
     `${t('debug.visibility')} ${n(f.coreVis, 2)}`,
+    `🔊 ${t('debug.sound')} ${snd.ctx}/${snd.voices}`,
     `${t('debug.state')} ${state.session}`,
   ].join(' · ');
 }
@@ -1183,7 +1185,10 @@ function syncFullscreenSupport() {
 }
 
 function bindUI() {
-  $('btnStartCam').addEventListener('click', () => startCamera());
+  $('btnStartCam').addEventListener('click', () => {
+    try { audio.unlock(); } catch { /* ignore */ }   // 最早的合法用户手势，先把声音解锁
+    startCamera();
+  });
   $('btnStart').addEventListener('click', () => startSession());
   $('btnPause').addEventListener('click', () => (state.session === 'paused' ? resumeSession() : pauseSession()));
   $('btnStop').addEventListener('click', () => stopSession('user'));
@@ -1215,8 +1220,21 @@ function bindUI() {
       $('stage').classList.toggle('mirror', v);
       state.calibrator?.setMirror(v); // 左右方向提示要跟着镜像走
     }, null],
-    ['btnVoice', 'voice', (v) => { audio.voiceOn = v; if (!v) audio.stopSpeech(); }, null],
-    ['btnSfx', 'sfx', (v) => { audio.sfxOn = v; }, null],
+    ['btnVoice', 'voice', (v) => {
+      audio.voiceOn = v;
+      if (!v) { audio.stopSpeech(); return; }
+      // 打开语音时立刻试播一句：用户马上就能确认到底有没有声音，
+      // 而不是等到训练时才发现整场是静音的（顺便也是一次解锁音频的用户手势）
+      audio.unlock();
+      audio.say(t('speech.voiceTest'), { force: true });
+      const st = audio.state();
+      // 只开着门没出声的情况也要说清楚：上下文没跑起来（被浏览器挡住）或系统里没有语音包
+      if (st.ctx !== 'running' || st.voices === 0) setCueLine(t('status.noSound'), 'warn');
+    }, null],
+    ['btnSfx', 'sfx', (v) => {
+      audio.sfxOn = v;
+      if (v) { audio.unlock(); audio.milestone(); }   // 打开音效也立刻响一声
+    }, null],
     ['btnStrict', 'strict', (v) => {
       if (state.detector) state.detector.strict = v;
     }, (v) => setCueLine(t(v ? 'status.strictOn' : 'status.strictOff'))],
@@ -1243,6 +1261,19 @@ function bindUI() {
   }
   audio.voiceOn = state.settings.voice;
   audio.sfxOn = state.settings.sfx;
+
+  // 浏览器要求「页面先有过一次用户交互」才允许出声（WebAudio 的 AudioContext 会一直 suspended，
+  // Chrome 也会拦住没有交互就发起的语音）。所以在第一次点击/按键/触摸时就把音频解锁，
+  // 免得后面由「自动识别完成」触发的倒计时、要领语音因为没赶上手势而整场静音。
+  const unlockOnFirstGesture = () => {
+    try { audio.unlock(); } catch { /* ignore */ }
+    for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
+      document.removeEventListener(ev, unlockOnFirstGesture);
+    }
+  };
+  for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
+    document.addEventListener(ev, unlockOnFirstGesture, { passive: true });
+  }
 
   // 全屏只放大「视频框」(#stage)，不是整个 HTML 页面：
   // 整页全屏会把侧栏、要领清单、成绩卡一起放大，反而看不清动作。

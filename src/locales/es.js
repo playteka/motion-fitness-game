@@ -146,6 +146,7 @@ export default {
   status: {
     noPerson: 'No veo a nadie: colócate en el centro del encuadre con la cabeza y los pies visibles (da 1-2 pasos atrás)',
     noDetector: 'Detector no listo: pulsa otra vez el botón',
+    noSound: 'Sin sonido: ① mira si la pestaña está silenciada (altavoz) ② el volumen no es 0 ③ voz del sistema instalada',
     ready: '¡Te veo! ✓ Mantén esta posición y haz el ejercicio',
     needCamera: 'Activa primero la cámara',
     countdownGo: '¡Vamos! Sigue las indicaciones; las repeticiones parciales no cuentan.',
@@ -218,6 +219,7 @@ export default {
     hipRise: 'Elevación de cadera',
     thighFromHoriz: 'Muslo respecto a la horizontal',
     visibility: 'Visibilidad',
+    sound: 'Sonido',
     state: 'Estado',
     yes: '✓',
     no: '✗',
@@ -407,6 +409,7 @@ export default {
     scoreSuffix: 'puntos',
     start: 'Empezamos',
     half: 'Vas por la mitad, sigue así',
+    voiceTest: 'Voz activada',
     goal: 'Objetivo cumplido, ¡increíble!',
   },
 };
