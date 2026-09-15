@@ -39,7 +39,9 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 
 ## Feature highlights
 
-- **Pre-workout calibration**: before you start, a **dashed body outline** appears on screen to guide you into position; you're only cleared to start once body detection, full-body framing, distance, centering, height, camera angle and holding still — all **seven** — pass, so you never “stand off-center and wonder why nothing counts”.
+- **Pre-workout calibration**: before you start there's a **dashed body silhouette** in the frame (it only traces your outer shape — you don't need to line up your joints), and a text prompt above the video tells you
+  “step into the dashed outline”; you're only cleared to start once body detection, full-body framing, distance,
+  centering, height, camera angle and holding still — all **seven** — pass, so you never “stand off-center and wonder why nothing counts”.
 - **Form steps scored one at a time**: each exercise is broken into 4–6 judgeable steps — hit one and you immediately get points, a chime, and a checkmark;
   finishing every step in a round earns a perfect-round bonus, and hold exercises give **+1 point for every second you hold**.
 - **Valid rep detection**: half reps, reps that are too fast, a sagging lower back, a piked hip and so on don't count as valid reps — they're tracked separately and you get a correction cue.
@@ -300,7 +302,8 @@ By default the server only listens on `127.0.0.1` (local machine only) — that 
 
 ## Pre-workout calibration
 
-Once you pick an exercise, a **dashed body outline** appears in the video — that's your standing target. The calibration panel ticks off each item as it passes:
+Once you pick an exercise, a **dashed body silhouette** appears in the video: one clean outer contour line (not joint-to-joint skeleton lines) — that's your standing target;
+a line of text also appears above the video telling you straight out to “step into the dashed outline”. The calibration panel ticks off each item as it passes:
 
 | Check | Meaning |
 |---|---|
@@ -315,8 +318,8 @@ Once you pick an exercise, a **dashed body outline** appears in the video — th
 Once all seven pass and stay that way for a moment, the outline turns green and shows “Calibrated ✓”, and only then does the “Start set” button become available.
 Click it (or press Space) → 3-2-1 countdown → counting starts.
 
-> If you're not in position, the text below the panel tells you exactly what to do (for example “step forward into the dashed outline”, “shift a little to the right”, “face the camera”),
-> and the status bar below the video shows the same message, so you're never left wondering what's wrong.
+> If you're not in position, the text prompt above the video and the calibration panel both spell out exactly what to do (for example “step forward into the dashed outline”, “shift a little to the right”, “face the camera”),
+> so you're never left wondering what's wrong.
 > To recalibrate: click the “Recalibrate” button below the video; every set also returns to calibration automatically.
 
 ---
@@ -451,7 +454,7 @@ then run `npm run test:i18n` again — the test checks every entry for missing k
 
 ## Can't fit into the outline or getting no response? Four checks
 
-**① Check the version first.** The page title should show `v1.3` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
+**① Check the version first.** The page title should show `v1.4` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
 
 **② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked, do what the line under the panel tells you:
 
@@ -513,7 +516,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (333 cases)
+npm test                       # run all four suites (360 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
 npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
@@ -524,9 +527,9 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
-| `tests/test-detectors.mjs` | 123 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
+| `tests/test-detectors.mjs` | 137 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-page.mjs` | 89 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
-| `tests/test-app.mjs` | 89 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
+| `tests/test-app.mjs` | 102 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
 
 ---
 
@@ -543,7 +546,7 @@ motion-fitness-game/
 │  ├─ geometry.js        geometry and signal processing (angles, One Euro smoothing)
 │  ├─ metrics.js         per-frame exercise metrics (joint angles, hip lift, body straightness…)
 │  ├─ steps.js           ★ the scored form steps per exercise (condition + points + hint key)
-│  ├─ calibration.js     ★ pre-workout calibration: target skeleton for the dashed outline + the seven positioning checks
+│  ├─ calibration.js     ★ pre-workout calibration: dashed body silhouette outline + the seven positioning checks
 │  ├─ exercises.js       ★ detection state machines + scoring engine for the six exercises
 │  ├─ pose-engine.js     MediaPipe PoseLandmarker wrapper + camera management
 │  ├─ render.js          skeleton rendering

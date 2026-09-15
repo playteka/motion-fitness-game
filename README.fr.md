@@ -40,8 +40,10 @@ Tout est côté client : le modèle de posture MediaPipe et le wasm sont stocké
 
 ## Points forts
 
-- **Calibrage avant la séance** : une **silhouette en pointillés** s'affiche dans l'image pour te montrer où te placer ; l'identification du corps, le corps entier dans l'image, la distance, le centrage,
-  la hauteur, l'angle de vue et l'immobilité — **sept critères** à valider tous ensemble avant que le comptage démarre, pour éviter de « t'entraîner dans le vide » quand tu es mal placé.
+- **Calibrage avant la séance** : avant de commencer, une **silhouette en pointillés** s'affiche dans l'image (elle n'esquisse que le contour extérieur,
+  rien à aligner sur un squelette) et une ligne de texte en haut de l'image t'indique « place-toi dans la silhouette en pointillés » ;
+  l'identification du corps, le corps entier dans l'image, la distance, le centrage, la hauteur, l'angle de vue et l'immobilité —
+  **sept critères** à valider tous ensemble avant que le comptage démarre, pour éviter de « t'entraîner dans le vide » quand tu es mal placé.
 - **Un score attribué étape par étape selon les étapes techniques** : chaque exercice est découpé en 4 à 6 étapes vérifiables ; chaque étape réussie
   rapporte aussitôt des points, déclenche un bip et coche la ligne ; valider toutes les étapes d'une série donne droit à un bonus de série parfaite ;
   pour les exercices chronométrés, **chaque seconde tenue rapporte +1 point**.
@@ -305,7 +307,8 @@ Par défaut, le serveur n'écoute que sur `127.0.0.1` (accessible uniquement dep
 
 ## Calibrage avant la séance
 
-Une fois ton exercice choisi, une **silhouette en pointillés** apparaît dans l'image : c'est ta cible de placement. Le panneau de calibrage coche les critères un par un :
+Une fois ton exercice choisi, une **silhouette en pointillés** apparaît dans l'image : une ligne de contour extérieur nette (et non un squelette articulé), c'est ta cible de placement ;
+une ligne de texte s'affiche aussi en haut de l'image et te dit directement « place-toi dans la silhouette en pointillés ». Le panneau de calibrage coche les critères un par un :
 
 | Critère | Signification |
 |---|---|
@@ -320,8 +323,8 @@ Une fois ton exercice choisi, une **silhouette en pointillés** apparaît dans l
 Une fois les sept critères validés et tenus un court instant, la silhouette devient verte et le message « Calibrage terminé ✓ » s'affiche : c'est seulement à ce moment que le bouton « Démarrer la séance » devient actif.
 Clique dessus (ou appuie sur Espace) → décompte 3-2-1 → le comptage démarre.
 
-> Si tu n'es pas bien placé, le panneau t'indique directement quoi faire (par exemple « recule un peu », « décale-toi vers la droite », « mets-toi face à la caméra »),
-> et la barre d'état sous l'image affiche le même message : impossible de rester dans le flou.
+> Si tu n'es pas bien placé, la ligne de texte en haut de l'image et le panneau de calibrage t'indiquent tous les deux directement quoi faire (par exemple « recule un peu », « décale-toi vers la droite », « mets-toi face à la caméra »),
+> tu ne resteras jamais sans savoir ce qui ne va pas.
 > Pour refaire le calibrage : clique sur « Recalibrer » sous l'image ; chaque fin de série te ramène aussi automatiquement au calibrage.
 
 ---
@@ -457,7 +460,7 @@ puis relance `npm run test:i18n` — le test vérifie une par une les clés manq
 
 ## Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes
 
-**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v1.3`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
+**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v1.4`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
 
 **② Regarde d'abord le panneau « Calibrage avant la séance » à droite.** Le critère qui reste décoché te dit quoi faire, juste en dessous :
 
@@ -519,7 +522,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les quatre suites d'un coup (333 tests)
+npm test                       # les quatre suites d'un coup (360 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources
 npm run test:detectors         # détection et logique de score (squelettes synthétiques)
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
@@ -530,9 +533,9 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | Fichier de test | Nombre de tests | Contenu couvert |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
-| `tests/test-detectors.mjs` | 123 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
+| `tests/test-detectors.mjs` | 137 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
 | `tests/test-page.mjs` | 89 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
-| `tests/test-app.mjs` | 89 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
+| `tests/test-app.mjs` | 102 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
 
 ---
 
@@ -549,7 +552,7 @@ motion-fitness-game/
 │  ├─ geometry.js        géométrie et traitement du signal (angles, lissage One Euro)
 │  ├─ metrics.js         métriques par image (angles articulaires, élévation des hanches, alignement du corps…)
 │  ├─ steps.js           ★ « étapes techniques » notées de chaque exercice (condition + points + clé d'indice)
-│  ├─ calibration.js     ★ calibrage avant la séance : squelette cible de la silhouette en pointillés + sept critères de placement
+│  ├─ calibration.js     ★ calibrage avant la séance : contour de la silhouette en pointillés + sept critères de placement
 │  ├─ exercises.js       ★ machines à états et moteur de score des six exercices
 │  ├─ pose-engine.js     enveloppe MediaPipe PoseLandmarker + gestion de la caméra
 │  ├─ render.js          tracé du squelette

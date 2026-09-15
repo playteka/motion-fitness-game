@@ -39,7 +39,8 @@ Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la car
 
 ## Puntos destacados
 
-- **Calibración previa**: antes de empezar, en la imagen aparece un **contorno punteado con forma de cuerpo** que te guía para colocarte dentro; cuerpo detectado, cuerpo entero visible, distancia,
+- **Calibración previa**: antes de empezar, en la imagen aparece una **silueta punteada del cuerpo** (solo el contorno exterior, sin alinear ningún esqueleto) y arriba aparece un texto que te indica
+  «colócate dentro del contorno punteado»; cuerpo detectado, cuerpo entero visible, distancia,
   centrado, altura, ángulo y quietud: **las siete** comprobaciones tienen que estar correctas para poder empezar, así no pierdes el tiempo entrenando mal colocado.
 - **Puntuación progresiva según la técnica**: cada ejercicio se divide en 4-6 pasos que se pueden evaluar; cada paso correcto suma puntos al instante, suena un aviso y se marca una casilla;
   si completas todos los pasos de la ronda, te llevas una bonificación de puntuación perfecta; en los ejercicios de cronómetro, **cada segundo aguantado suma +1 punto**.
@@ -302,7 +303,8 @@ Por defecto solo escucha en `127.0.0.1` (solo accesible desde tu propio equipo):
 
 ## Calibración previa
 
-Cuando hayas elegido el ejercicio, en la imagen aparece un **contorno punteado con forma de cuerpo**: ese es tu objetivo de colocación. El panel de calibración va marcando cada comprobación:
+Cuando hayas elegido el ejercicio, en la imagen aparece una **silueta punteada del cuerpo**: una línea de contorno exterior limpia (no es un esqueleto articulado), y ese es tu objetivo de colocación;
+arriba aparece además una línea de texto que te dice directamente «colócate dentro del contorno punteado». El panel de calibración va marcando cada comprobación:
 
 | Comprobación | Significado |
 |---|---|
@@ -317,8 +319,8 @@ Cuando hayas elegido el ejercicio, en la imagen aparece un **contorno punteado c
 Cuando las siete comprobaciones están correctas y se mantienen un momento, el contorno se vuelve verde y aparece «Calibración completada ✓»; en ese momento el botón «Empezar» ya está disponible.
 Púlsalo (o la barra espaciadora) → cuenta atrás 3-2-1 → empieza el conteo.
 
-> Si no estás bien colocado, debajo del panel te dice directamente qué hacer (por ejemplo «retrocede un poco», «muévete un poco a la derecha», «ponte de frente a la cámara»),
-> y la barra de estado de debajo de la imagen muestra lo mismo, así que nunca te quedas sin saber qué falla.
+> Si no estás bien colocado, el texto que aparece arriba de la imagen y el panel de calibración te dicen directamente qué hacer (por ejemplo «retrocede un poco», «muévete un poco a la derecha», «ponte de frente a la cámara»),
+> así que nunca te quedas sin saber qué falla.
 > Para volver a calibrar: pulsa el botón «Volver a calibrar» que hay debajo de la imagen; además, cada vez que terminas una serie vuelves automáticamente a la calibración.
 
 ---
@@ -453,7 +455,7 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 ## Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico
 
-**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.3`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
+**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.4`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
 
 **② Mira primero el panel «Calibración previa» de la derecha.** De las siete comprobaciones, la que no esté marcada te dice lo que tienes que hacer, siguiendo la frase que aparece debajo del panel:
 
@@ -515,7 +517,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (333 pruebas)
+npm test                       # las cuatro suites juntas (360 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -526,9 +528,9 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | Archivo de prueba | N.º de pruebas | Cobertura |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
-| `tests/test-detectors.mjs` | 123 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
+| `tests/test-detectors.mjs` | 137 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-page.mjs` | 89 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
-| `tests/test-app.mjs` | 89 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
+| `tests/test-app.mjs` | 102 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
 
 ---
 
@@ -545,7 +547,7 @@ motion-fitness-game/
 │  ├─ geometry.js        Geometría y tratamiento de señal (ángulos, suavizado One Euro)
 │  ├─ metrics.js         Métricas del ejercicio en cada fotograma (ángulos de las articulaciones, elevación de cadera, alineación del cuerpo…)
 │  ├─ steps.js           ★ «Pasos de puntuación de la técnica» de cada ejercicio (condición + puntos + clave del aviso)
-│  ├─ calibration.js     ★ Calibración previa: esqueleto objetivo del contorno punteado + las siete comprobaciones de colocación
+│  ├─ calibration.js     ★ Calibración previa: contorno de la silueta punteada del cuerpo + las siete comprobaciones de colocación
 │  ├─ exercises.js       ★ Máquina de estados del reconocimiento de los seis ejercicios + motor de puntuación
 │  ├─ pose-engine.js     Envoltorio de MediaPipe PoseLandmarker + gestión de la cámara
 │  ├─ render.js          Dibujo del esqueleto

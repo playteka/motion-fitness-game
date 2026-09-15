@@ -87,12 +87,13 @@ class El {
 const elements = new Map();
 for (const id of htmlIds) elements.set(id, new El('div', id));
 elements.get('video').tagName = 'VIDEO';
-const ctxCounts = { stroke: 0, fill: 0, arc: 0, moveTo: 0, lineTo: 0, fillText: 0 };
+const ctxCounts = { stroke: 0, fill: 0, arc: 0, moveTo: 0, lineTo: 0, quadraticCurveTo: 0, fillText: 0 };
 const ctxStub = {
   clearRect() {}, beginPath() {}, closePath() {}, save() {}, restore() {}, setLineDash() {},
   arcTo() {},
   moveTo() { ctxCounts.moveTo += 1; },
   lineTo() { ctxCounts.lineTo += 1; },
+  quadraticCurveTo() { ctxCounts.quadraticCurveTo += 1; },
   stroke() { ctxCounts.stroke += 1; },
   fill() { ctxCounts.fill += 1; },
   arc() { ctxCounts.arc += 1; },
@@ -551,7 +552,7 @@ console.log('\n[8] 运动前校准流程');
 {
   const { toMetric: tm, LandmarkSmoother: LS, LM: LMK } = await import('../src/geometry.js');
   const { computeFrame: cf } = await import('../src/metrics.js');
-  const { ASPECT: A, standingPose: sp } = await import('./synthetic-pose.mjs');
+  const { ASPECT: A, standingPose: sp, lostFrame } = await import('./synthetic-pose.mjs');
   const api = windowStub.__mfg;
 
   /** 把姿势缩放到校准目标大小并摆到画面中间 */
@@ -609,8 +610,12 @@ console.log('\n[8] 运动前校准流程');
   resetCtxCounts();
   api.renderer.draw({ landmarks: null, frame: null, exerciseId: 'squat', status: 'idle', outline: { view: 'front', status: 'adjust' } });
   const outlineCalls = { ...ctxCounts };
-  ok('关掉火柴人时虚线轮廓照常绘制', outlineCalls.lineTo > 5 && outlineCalls.arc > 0,
-    `lineTo=${outlineCalls.lineTo} arc=${outlineCalls.arc}`);
+  ok('关掉火柴人时虚线轮廓照常绘制',
+    outlineCalls.quadraticCurveTo > 20 && outlineCalls.stroke === 1,
+    `quadraticCurveTo=${outlineCalls.quadraticCurveTo} stroke=${outlineCalls.stroke}`);
+  ok('轮廓只画一条闭合曲线（不再拼十几段胶囊，画面才不乱）',
+    outlineCalls.moveTo === 1 && outlineCalls.stroke === 1,
+    `moveTo=${outlineCalls.moveTo} stroke=${outlineCalls.stroke}`);
   ok('关掉火柴人且没有关键点时也不会画骨架',
     outlineCalls.stroke > 0 && outlineCalls.fill === 0, `stroke=${outlineCalls.stroke} fill=${outlineCalls.fill}`);
 
@@ -618,6 +623,50 @@ console.log('\n[8] 运动前校准流程');
   resetCtxCounts();
   api.renderer.draw({ landmarks: null, frame: null, exerciseId: 'squat', status: 'idle', outline: null });
   ok('不传轮廓时不画任何东西', ctxCounts.stroke === 0 && ctxCounts.lineTo === 0);
+
+  // 画面上的文字引导：必须始终告诉用户「站进虚线轮廓内」
+  api.selectExercise('squat');
+  const early = api.calibrationStep(frameOf(fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.3 }), t3 + 10000), t3 + 10000);
+  ok('校准阶段画面上出现文字提示条', elements.get('calibPrompt').hidden === false);
+  ok('提示条第一行是「站进虚线轮廓内」',
+    elements.get('calibPromptMain').textContent.includes('站进虚线轮廓'), elements.get('calibPromptMain').textContent);
+  ok('提示条第二行给出还差什么', /左|右/.test(elements.get('calibPromptSub').textContent),
+    elements.get('calibPromptSub').textContent);
+  // 提示条走 t()，必须跟着语言切换
+  api.changeLang('en');
+  api.calibrationStep(frameOf(fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.3 }), t3 + 10200), t3 + 10200);
+  ok('提示条文案跟随语言切换（英文）',
+    /dashed outline/i.test(elements.get('calibPromptMain').textContent),
+    elements.get('calibPromptMain').textContent);
+  api.changeLang('zh');
+  ok('人没进画面时提示条换成「没找到你」',
+    (() => {
+      const r = api.calibrationStep(frameOf(lostFrame(), t3 + 10100), t3 + 10100);
+      return r.status === 'search' && elements.get('calibPromptMain').textContent.includes('没找到你');
+    })(), elements.get('calibPromptMain').textContent);
+  ok('底部状态条在校准阶段让位（同一句话不重复出现）', elements.get('poseHint').hidden === true);
+
+  // 站好后就位：先进入「保持不动」，保持满 1.1 秒才算确认
+  let t4 = t3 + 20000;
+  let last = null;
+  for (let i = 0; i < 20; i++) { last = api.calibrationStep(frameOf(idle, t4), t4); t4 += 33.4; }
+  ok('就位后提示条变成「位置很好」',
+    api.state.session === 'calibrating' && elements.get('calibPromptMain').textContent.includes('位置很好'),
+    `session=${api.state.session} text=${elements.get('calibPromptMain').textContent}`);
+  for (let i = 0; i < 60; i++) { last = api.calibrationStep(frameOf(idle, t4), t4); t4 += 33.4; }
+  ok('校准确认后提示条给出开始训练的话',
+    api.state.session === 'ready' && elements.get('calibPromptMain').textContent.includes('开始训练'),
+    `session=${api.state.session} text=${elements.get('calibPromptMain').textContent}`);
+  ok('就位后轮廓切到「已就位」配色', last.status === 'ready', last.status);
+  ok('提示条的配色跟着状态切换',
+    elements.get('calibPrompt').className.includes('ready'), elements.get('calibPrompt').className);
+
+  // 离开校准阶段后提示条要收起来
+  api.toCalibration({ silent: true });
+  api.renderCalibration(null);
+  ok('离开校准阶段后提示条隐藏', elements.get('calibPrompt').hidden === true);
+  ok('侧面机位的剪影也照常绘制',
+    api.renderer.draw({ landmarks: null, frame: null, exerciseId: 'lunge', status: 'idle', outline: { view: 'side', status: 'search' } }) === undefined);
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

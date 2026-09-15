@@ -451,6 +451,32 @@ kbd {
 .pose-hint.bad { border-color: rgba(248, 113, 113, 0.55); color: #ffd5d5; }
 .pose-hint.good { border-color: rgba(74, 222, 128, 0.5); color: #d6ffe4; }
 
+/* 校准阶段压在画面上方的文字引导：告诉用户「站进虚线轮廓内」 */
+.calib-prompt {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 62%;
+  padding: 8px 16px;
+  border-radius: 12px;
+  background: rgba(8, 15, 26, 0.82);
+  border: 1px solid rgba(124, 138, 165, 0.5);
+  text-align: center;
+  z-index: 5;
+  pointer-events: none;
+  box-shadow: var(--shadow);
+}
+.calib-prompt[hidden] { display: none; }
+.calib-prompt-main { font-size: 15px; font-weight: 700; color: #e8f2ff; }
+.calib-prompt-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.calib-prompt-sub:empty { display: none; }
+.calib-prompt.ready { border-color: rgba(74, 222, 128, 0.55); }
+.calib-prompt.ready .calib-prompt-main { color: #d6ffe4; }
+.calib-prompt.ready .calib-prompt-sub { color: #a9e8bd; }
+.calib-prompt.warn { border-color: rgba(251, 191, 36, 0.5); }
+.calib-prompt.warn .calib-prompt-main { color: #ffe9b8; }
+
 /* 要领加分飘字 */
 .score-pop {
   position: absolute;

@@ -11,7 +11,7 @@
 import { toMetric, LandmarkSmoother, LM } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
 import { createDetector } from '../src/exercises.js';
-import { Calibrator, outlineJoints, outlinePoint, OUTLINE_SEGMENTS } from '../src/calibration.js';
+import { Calibrator, OUTLINE, outlinePath, outlineBounds } from '../src/calibration.js';
 import { t, setLang } from '../src/i18n.js';
 import {
   ASPECT, standingPose, pronePose, supinePose, twoLegPose, lostFrame,
@@ -761,13 +761,89 @@ function calibOnce(cal, lm, now) {
   const r10 = calibOnce(cal2, fitToOutline(standing('front'), { dx: 0.3 }), 60 * 33.4).res;
   ok('离开轮廓后不再处于已就位状态', r10.ready === false);
 
-  // 10) 轮廓几何本身
+  // 10) 剪影几何本身：一条简单闭合的外部轮廓
   for (const view of ['front', 'side']) {
-    const joints = outlineJoints(view);
-    ok(`${view} 轮廓的每个连线段都有端点`,
-      OUTLINE_SEGMENTS.every(([a, b]) => outlinePoint(joints, a) && outlinePoint(joints, b)));
-    ok(`${view} 轮廓在画面范围内`,
-      Object.values(joints).every(([x, y]) => x > 0 && x < 1 && y > 0 && y < 1));
+    const pts = outlinePath(view);
+    const b = outlineBounds(view);
+    ok(`${view} 剪影是一条闭合轮廓（点数够密、也不过密）`,
+      pts.length >= 24 && pts.length <= 90, `pts=${pts.length}`);
+    ok(`${view} 剪影全部落在画面内`,
+      pts.every(([x, y]) => x > 0 && x < 1 && y > 0 && y < 1));
+    ok(`${view} 剪影头顶对齐 OUTLINE.bodyTopY、脚底落到 OUTLINE 地面线`,
+      Math.abs(b.top - OUTLINE.bodyTopY) < 1e-9 && Math.abs(b.bottom - 0.938) < 1e-9,
+      `top=${b.top} bottom=${b.bottom}`);
+    ok(`${view} 剪影高度落在「距离合适」区间内（站进去就能过距离判定）`,
+      b.height >= OUTLINE.spanMin && b.height <= OUTLINE.spanMax, `height=${b.height}`);
+    // 真人身材是「瘦长」的：肩宽/身高 ≈ 0.24。老版本那种又宽又矮的雪人身材会在这里挂掉。
+    ok(`${view} 剪影身材接近真人（不要又宽又矮）`,
+      b.width / b.height > 0.10 && b.width / b.height < 0.30,
+      `宽高比=${(b.width / b.height).toFixed(3)}`);
+  }
+  {
+    // 正面剪影由「半侧 + 镜像」生成：左右必须严格对称，中线外不能有多出来的点
+    const pts = outlinePath('front');
+    const b = outlineBounds('front');
+    const onAxis = pts.filter(([x]) => Math.abs(x - OUTLINE.centerX) < 1e-9).length;
+    const right = pts.filter(([x]) => x > OUTLINE.centerX).length;
+    const left = pts.filter(([x]) => x < OUTLINE.centerX).length;
+    ok('正面剪影左右对称', Math.abs((b.left + b.right) / 2 - OUTLINE.centerX) < 1e-9,
+      `left=${b.left} right=${b.right}`);
+    ok('正面剪影左右点数一致、只有头顶与裆部落在中线上',
+      left === right && left > 10 && onAxis === 2, `left=${left} right=${right} onAxis=${onAxis}`);
+
+    // 身材比例必须像真人：横向尺寸换算成「占身高比例」要乘宽高比
+    const ASPECT_RATIO = 16 / 9;
+    const toHeight = (dx) => (dx * ASPECT_RATIO) / b.height;
+    const spansAt = (poly, y) => {
+      const xs = [];
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [xi, yi] = poly[i];
+        const [xj, yj] = poly[j];
+        if ((yi > y) !== (yj > y)) xs.push(xi + ((y - yi) / (yj - yi)) * (xj - xi));
+      }
+      xs.sort((m, n) => m - n);
+      const out = [];
+      for (let i = 0; i + 1 < xs.length; i += 2) out.push([xs[i], xs[i + 1]]);
+      return out;
+    };
+
+    const headSpans = spansAt(pts, 0.190);
+    const shoulderSpans = spansAt(pts, 0.300);
+    const chestSpans = spansAt(pts, 0.375);
+    const waistSpans = spansAt(pts, 0.452);
+    const hipSpans = spansAt(pts, 0.530);
+    const kneeSpans = spansAt(pts, 0.715);
+
+    ok('剪影头宽占身高 9%~13%（真人约 1/9）',
+      headSpans.length === 1 && toHeight(headSpans[0][1] - headSpans[0][0]) > 0.09
+      && toHeight(headSpans[0][1] - headSpans[0][0]) < 0.13,
+      `头宽=${toHeight(headSpans[0][1] - headSpans[0][0]).toFixed(3)}`);
+    ok('剪影肩宽占身高 21%~29%（真人约 1/4）',
+      shoulderSpans.length === 1 && toHeight(shoulderSpans[0][1] - shoulderSpans[0][0]) > 0.21
+      && toHeight(shoulderSpans[0][1] - shoulderSpans[0][0]) < 0.29,
+      `肩宽=${toHeight(shoulderSpans[0][1] - shoulderSpans[0][0]).toFixed(3)}`);
+    // 有腰身：腰比胸和髋都细，否则剪影就是个水桶
+    const torsoWidth = (spans) => {
+      const mid = spans.length === 1 ? spans[0] : spans[Math.floor(spans.length / 2)];
+      return mid[1] - mid[0];
+    };
+    ok('剪影有腰身（腰比胸、比髋都细）',
+      torsoWidth(waistSpans) < torsoWidth(chestSpans) && torsoWidth(waistSpans) < torsoWidth(hipSpans),
+      `胸=${torsoWidth(chestSpans).toFixed(3)} 腰=${torsoWidth(waistSpans).toFixed(3)} 髋=${torsoWidth(hipSpans).toFixed(3)}`);
+    // 手臂与躯干之间要留出缝隙：既是「双臂微张」的站姿要求，也避免手臂挡住躯干影响识别
+    ok('剪影的手臂与躯干分开（留出缝隙）',
+      chestSpans.length === 3
+      && (chestSpans[1][0] - chestSpans[0][1]) > 0.008
+      && (chestSpans[2][0] - chestSpans[1][1]) > 0.008,
+      `缝宽=${(chestSpans[1][0] - chestSpans[0][1]).toFixed(4)}`);
+    // 双腿：膝高处必须是两条独立的腿，中间有可见缝隙
+    ok('剪影的双腿分开（膝高处两条腿、中间有缝）',
+      kneeSpans.length === 2 && (kneeSpans[1][0] - kneeSpans[0][1]) > 0.01,
+      `缝宽=${kneeSpans.length === 2 ? (kneeSpans[1][0] - kneeSpans[0][1]).toFixed(4) : 'n/a'}`);
+    // 手臂自然下垂：手的轮廓要低到髋部以下，否则剪影看起来像「举手投降」
+    const handPts = pts.filter(([x, y]) => y > 0.50 && y < 0.62 && Math.abs(x - OUTLINE.centerX) > 0.04);
+    ok('正面剪影的手臂垂到髋部以下、双脚完整（不是半身像）',
+      handPts.length >= 2 && b.bottom > 0.9, `hand=${handPts.length} bottom=${b.bottom}`);
   }
 }
 

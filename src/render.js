@@ -4,7 +4,7 @@
 
 import { LM, SKELETON_EDGES } from './geometry.js';
 import { t } from './i18n.js';
-import { outlineJoints, outlinePoint, OUTLINE_SEGMENTS } from './calibration.js';
+import { outlinePath } from './calibration.js';
 
 const COLORS = {
   ok: '#34e5c4',
@@ -44,7 +44,11 @@ export class PoseRenderer {
   }
 
   /**
-   * 运动前校准用的虚线人体轮廓。
+   * 运动前校准用的虚线人体剪影。
+   *
+   * 只画**一条闭合的外部轮廓**：用户要做的事就是站进去，画骨骼只会让画面变乱。
+   * 点位之间用二次贝塞尔平滑（以相邻两点的中点为锚），避免出现折线感。
+   *
    * @param {'front'|'side'} view 动作要求的机位
    * @param {'search'|'adjust'|'ready'} status 未找到人 / 正在调整 / 已就位
    */
@@ -52,55 +56,39 @@ export class PoseRenderer {
     const { ctx, canvas } = this;
     const W = canvas.width;
     const H = canvas.height;
-    const joints = outlineJoints(view);
     const color = status === 'ready' ? COLORS.good : (status === 'adjust' ? COLORS.warn : COLORS.idle);
     const base = Math.max(2, W / 420);
 
     ctx.save();
-    ctx.setLineDash([base * 3.2, base * 2.8]);
+    ctx.setLineDash([base * 3.4, base * 3.0]);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = color;
-    ctx.globalAlpha = status === 'ready' ? 0.9 : 0.55;
-    ctx.lineWidth = base * 1.1;
+    ctx.globalAlpha = status === 'ready' ? 0.95 : 0.6;
+    ctx.lineWidth = base * 1.3;
     ctx.shadowColor = color;
-    ctx.shadowBlur = base * 4;
+    ctx.shadowBlur = base * 5;
 
-    // 每段画成「空心胶囊」轮廓，而不是粗线，这样看起来才是人体外形
-    for (const [a, b, w] of OUTLINE_SEGMENTS) {
-      const p = outlinePoint(joints, a);
-      const q = outlinePoint(joints, b);
-      this.capsulePath(p[0] * W, p[1] * H, q[0] * W, q[1] * H, w * H);
-      ctx.stroke();
-    }
-    // 头部
-    ctx.beginPath();
-    ctx.arc(joints.nose[0] * W, joints.nose[1] * H, 0.05 * H, 0, Math.PI * 2);
+    this.closedCurvePath(outlinePath(view).map(([x, y]) => [x * W, y * H]));
     ctx.stroke();
     ctx.restore();
   }
 
-  /** 空心胶囊路径 */
-  capsulePath(x1, y1, x2, y2, width) {
+  /** 把点列连成平滑的闭合曲线（二次贝塞尔穿过相邻两点的中点） */
+  closedCurvePath(points) {
     const { ctx } = this;
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const len = Math.hypot(dx, dy);
-    const r = width / 2;
-    if (len < 1e-3 || r < 0.5) {
-      ctx.beginPath();
-      ctx.arc(x1, y1, Math.max(r, 1), 0, Math.PI * 2);
-      return;
-    }
-    const ang = Math.atan2(dy, dx);
-    const nx = (-dy / len) * r;
-    const ny = (dx / len) * r;
+    const n = points.length;
+    if (n < 3) return;
+    const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const start = mid(points[n - 1], points[0]);
     ctx.beginPath();
-    ctx.moveTo(x1 + nx, y1 + ny);
-    ctx.lineTo(x2 + nx, y2 + ny);
-    ctx.arc(x2, y2, r, ang - Math.PI / 2, ang + Math.PI / 2);
-    ctx.lineTo(x1 - nx, y1 - ny);
-    ctx.arc(x1, y1, r, ang + Math.PI / 2, ang - Math.PI / 2);
+    ctx.moveTo(start[0], start[1]);
+    for (let i = 0; i < n; i++) {
+      const cur = points[i];
+      const next = points[(i + 1) % n];
+      const m = mid(cur, next);
+      ctx.quadraticCurveTo(cur[0], cur[1], m[0], m[1]);
+    }
     ctx.closePath();
   }
 

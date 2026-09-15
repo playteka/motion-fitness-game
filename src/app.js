@@ -204,7 +204,9 @@ function toCalibration({ silent = false } = {}) {
   state.lastTick = performance.now();
   if (!silent) {
     setCueLine(t('calib.lead'));
-    setHint(t('calib.lead'), 'warn', 2000);
+    // 底部状态条在校准阶段不参与（画面上方有专门的提示条），避免同一句话出现两次
+    setHint(null);
+    audio.say(t('calib.promptIn'), { rate: 1.05, force: true });
   }
   updateButtons();
 }
@@ -662,6 +664,7 @@ function renderHistory() {
 function renderCalibration(calib) {
   const card = $('calibCard');
   if (!card) return;
+  renderCalibPrompt(calib);
   if (!calib) {
     if (!card.hidden) card.hidden = true;
     return;
@@ -686,6 +689,44 @@ function renderCalibration(calib) {
 }
 
 /**
+ * 压在人像上方的文字引导。
+ * 用户看的始终是画面，所以「站进虚线轮廓内」这句话必须出现在画面上，
+ * 而不是只在右侧面板里；第二行再补上「这一帧还差什么」。
+ */
+function renderCalibPrompt(calib) {
+  const box = $('calibPrompt');
+  if (!box) return;
+  if (!calib) {
+    if (!box.hidden) box.hidden = true;
+    return;
+  }
+  const noBody = calib.hintKey === 'calib.visible';
+  const confirmed = state.session === 'ready';
+  let mainKey = 'calib.promptIn';
+  let level = 'warn';
+  if (confirmed) {
+    mainKey = 'calib.startNow';
+    level = 'ready';
+  } else if (calib.ready) {
+    mainKey = 'calib.promptReady';
+    level = 'ready';
+  } else if (noBody) {
+    mainKey = 'calib.promptSearch';
+    level = 'bad';
+  }
+  // 具体差在哪：只在「人已识别但还没就位」时补充，避免与主提示重复
+  const sub = (!confirmed && !calib.ready && !noBody) ? t(calib.hintKey, calib.hintParams) : '';
+  const mainEl = $('calibPromptMain');
+  const subEl = $('calibPromptSub');
+  const mainText = t(mainKey);
+  if (mainEl.textContent !== mainText) mainEl.textContent = mainText;
+  if (subEl.textContent !== sub) subEl.textContent = sub;
+  const cls = `calib-prompt ${level}`;
+  if (box.className !== cls) box.className = cls;
+  box.hidden = false;
+}
+
+/**
  * 校准阶段的一帧处理：跑就位判定、必要时切到「可以开始」、刷新面板与提示。
  * 返回这一帧要画的虚线轮廓参数。
  */
@@ -701,10 +742,9 @@ function calibrationStep(frame, now) {
     updateButtons();
   }
   renderCalibration(calib);
-  if (now > state.hintUntil) {
-    const level = calib.ready ? 'good' : (frame.ok ? 'warn' : 'bad');
-    setHint(t(calib.hintKey, calib.hintParams), level, 700);
-  }
+  // 校准阶段的引导统一走画面上方的提示条：这里把底部状态条收起来，
+  // 否则同一句话会在用户眼前出现两次。
+  setHint(null);
   return {
     view: state.calibrator.view,
     status: !frame.ok ? 'search' : (calib.ready ? 'ready' : 'adjust'),
