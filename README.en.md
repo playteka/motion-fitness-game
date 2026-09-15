@@ -304,7 +304,7 @@ By default the server only listens on `127.0.0.1` (local machine only) — that 
 ## Pre-workout calibration
 
 Once you pick an exercise, a **dashed body silhouette** appears in the video: one clean outer contour line (not joint-to-joint skeleton lines) — that's your posture target;
-a line of text also appears above the video telling you straight out to “move into the dashed outline”. The calibration panel ticks off each item as it passes:
+a line of text also appears above the video telling you straight out to “move into the dashed outline”. The calibration panel ticks off each item as it passes: **The outline is only a reference — you don’t have to match it exactly**: as long as your whole body is basically in frame (head and feet not cut off), it passes and training starts automatically.
 
 | Check | Meaning |
 |---|---|
@@ -465,7 +465,7 @@ then run `npm run test:i18n` again — the test checks every entry for missing k
 
 ## Can't fit into the outline or getting no response? Four checks
 
-**① Check the version first.** The page title should show `v1.9` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
+**① Check the version first.** The page title should show `v2.0` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
 
 **② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked, do what the line under the panel tells you:
 

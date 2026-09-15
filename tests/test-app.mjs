@@ -707,11 +707,11 @@ console.log('\n[8] 运动前校准流程');
   // 站偏时给方向提示
   api.toCalibration();
   ok('重新校准后回到校准阶段', api.state.session === 'calibrating');
-  api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.3 }), t3), t3);
+  api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.45 }), t3), t3);
   ok('站偏时给出左右方向提示', /左|右/.test(elements.get('calibHint').textContent),
     elements.get('calibHint').textContent);
   ok('站偏时有人体但未就位（轮廓为调整色）',
-    api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.3 }), t3), t3).status === 'adjust');
+    api.calibrationStep(frameOf(fit(sideIdle, { dx: 0.45 }), t3), t3).status === 'adjust');
 
   // 轮廓是独立的一层：关掉“火柴人”也必须照常显示引导
   api.renderer.showSkeleton = false;
@@ -756,7 +756,7 @@ console.log('\n[8] 运动前校准流程');
 
   // 画面上的文字引导：必须始终告诉用户「站进虚线轮廓内」
   api.selectExercise('squat');
-  const early = api.calibrationStep(frameOf(fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.3 }), t3 + 10000), t3 + 10000);
+  const early = api.calibrationStep(frameOf(fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.45 }), t3 + 10000), t3 + 10000);
   ok('校准阶段画面上出现文字提示条', elements.get('calibPrompt').hidden === false);
   ok('提示条第一行是「进入虚线轮廓内」',
     elements.get('calibPromptMain').textContent.includes('进入虚线轮廓'), elements.get('calibPromptMain').textContent);
@@ -764,7 +764,7 @@ console.log('\n[8] 运动前校准流程');
     elements.get('calibPromptSub').textContent);
   // 提示条走 t()，必须跟着语言切换
   api.changeLang('en');
-  api.calibrationStep(frameOf(fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.3 }), t3 + 10200), t3 + 10200);
+  api.calibrationStep(frameOf(fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.45 }), t3 + 10200), t3 + 10200);
   ok('提示条文案跟随语言切换（英文）',
     /dashed outline/i.test(elements.get('calibPromptMain').textContent),
     elements.get('calibPromptMain').textContent);

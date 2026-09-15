@@ -9,21 +9,30 @@
  * 而不是逐点比对关节位置 —— 后者会因为手臂摆动、模型抖动而永远对不上。
  */
 
-/** 目标轮廓与判定阈值（归一化画面坐标，x/y 都是画面宽/高的比例） */
+/**
+ * 目标轮廓与判定阈值（归一化画面坐标，x/y 都是画面宽/高的比例）。
+ *
+ * 判定原则：**「全身基本都在画面里」就算过**，轮廓只是给眼睛看的参考目标。
+ * 早先的版本要求人体几乎和轮廓重合（距离 0.60~0.84、头顶误差 ≤0.14、左右误差 ≤0.16），
+ * 实际使用中极难命中 —— 用户反馈「站在那半天也识别不出来」。现在大幅放宽：
+ *   - 大小：只要求身体占画面高度的 42%~90%（原来 60%~84%）
+ *   - 位置：头顶/脚位误差放宽到 0.34/0.26（原来 0.14/0.11），左右放宽到 0.30（原来 0.16）
+ *   - 站定：允许的晃动放宽到 0.05（原来 0.028），并且单帧闪失不再清零保持进度
+ * 真正兜住「有没有完整进画」的是 framing（头顶不出画、脚不贴边）那一项。
+ */
 export const OUTLINE = {
   centerX: 0.5,
   groundY: 0.92,        // 目标脚踝高度
   bodyTopY: 0.155,      // 目标头顶位置 → 身体约占画面高度 0.765
-  // 上限特意压在「头顶刚好不出画」以内（groundY - spanMax = 0.06 > 0.04），
-  // 否则站太近时会先报「头顶出画」而不是更贴切的「往后退一点」
-  spanMin: 0.60,
-  spanMax: 0.84,
-  centerTol: 0.16,
-  topTol: 0.14,         // 头顶允许偏离目标位置多少
-  groundTol: 0.11,      // 脚踝允许偏离目标地面线多少
-  holdMs: 1100,         // 全部通过后保持这么久才算校准完成
+  spanMin: 0.42,        // 身体至少占画面高度 42%（再小就真的看不清了）
+  spanMax: 0.90,        // 超过 90% 基本会顶到画面边缘，由 framing 项给出「往后退一点」
+  centerTol: 0.30,      // 左右允许偏 30% 画面宽度
+  topTol: 0.34,         // 头顶允许偏离目标位置多少
+  groundTol: 0.26,      // 脚踝允许偏离目标地面线多少
+  holdMs: 900,          // 全部通过后保持这么久就算校准完成
   steadyWindowMs: 700,  // 「保持不动」的观察窗口
-  steadyTol: 0.028,     // 窗口内髋部最大位移（归一化）
+  steadyTol: 0.05,      // 窗口内的最大位移（归一化）
+  flickerGraceMs: 300,  // 单帧不达标不立刻清零保持进度（模型抖动、一瞬间低头很常见）
 };
 
 /**
@@ -322,12 +331,12 @@ export function outlineBounds(kind) {
  * 「高度」改成看身体上下范围的中心落在哪一带。
  */
 export const LYING = {
-  spanMin: 0.60,
-  spanMax: 0.84,
-  centerTol: 0.13,   // 身体水平中点偏离画面中线的容忍度
+  spanMin: 0.42,     // 身体长度至少占画面高度 42%（与站立同一套尺度）
+  spanMax: 0.90,
+  centerTol: 0.28,   // 身体水平中点偏离画面中线的容忍度
   // 上下位置给得很宽：摄像头放桌上时躺姿会出现在画面偏下，放地上时又接近画面中央，
   // 这条只负责挡掉「整体跑到画面上半部分 / 贴边」的离谱情况，不该逼着用户为了对齐轮廓去挪地方。
-  bandTol: 0.32,
+  bandTol: 0.40,
   edgeMargin: 0.02,  // 身体不能贴边（贴边就说明没完整进画）
 };
 
@@ -361,6 +370,7 @@ export class Calibrator {
 
   reset() {
     this.readySince = null;
+    this.notReadySince = 0;
     this.steadyBuf = [];
   }
 
@@ -381,7 +391,9 @@ export class Calibrator {
     const checks = [];
     const push = (id, ok) => checks.push({ id, ok });
 
-    const visible = !!(f && f.ok && f.bodyVisible && f.coreVis > 0.5
+    // 可见度门槛放宽到 0.5 → 0.35：侧拍时远侧肢体天然容易被挡住，
+    // 原来的门槛会让「人明明在画面里」也判成不可见，从而卡住整个校准。
+    const visible = !!(f && f.ok && f.bodyVisible && f.coreVis > 0.35
       && f.perSide[f.side] && Number.isFinite(f.perSide[f.side].knee));
     push('visible', visible);
     if (!visible) {
@@ -390,11 +402,11 @@ export class Calibrator {
     }
 
     if (!this.lying) {
-      push('framing', f.bodyTop > 0.04 && f.groundY < 0.968);
+      // framing 是真正兜住「完整进画」的一项：头顶不出画、脚不贴到最下边
+      push('framing', f.bodyTop > 0.015 && f.groundY < 0.985);
       push('distance', f.bodySpan >= OUTLINE.spanMin && f.bodySpan <= OUTLINE.spanMax);
       push('center', Math.abs(f.centerXFrac - OUTLINE.centerX) <= OUTLINE.centerTol);
-      // 「站进轮廓」的实质判断：头顶与脚位都要落在轮廓上。
-      // 只查头顶的话，会出现“人明显站在轮廓外、面板却全绿”的矛盾。
+      // 位置检查只做「别偏太远」的粗判，精确对齐交给轮廓本身引导
       push('vertical', Math.abs(f.bodyTop - OUTLINE.bodyTopY) <= OUTLINE.topTol
         && Math.abs(f.groundY - OUTLINE.groundY) <= OUTLINE.groundTol);
     } else {
@@ -441,10 +453,17 @@ export class Calibrator {
     const checks = this.evaluate(f);
     const ready = checks.length > 0 && checks.every((c) => c.ok);
 
+    // 保持进度：单帧不达标（模型抖动、一瞬间低头、远侧肢体被挡）不立刻清零，
+    // 连续不达标超过 flickerGraceMs 才算真的没站好 —— 否则永远攒不满 holdMs。
     if (ready) {
       if (this.readySince === null) this.readySince = now;
-    } else {
-      this.readySince = null;
+      this.notReadySince = 0;
+    } else if (this.readySince !== null) {
+      if (!this.notReadySince) this.notReadySince = now;
+      if (now - this.notReadySince > OUTLINE.flickerGraceMs) {
+        this.readySince = null;
+        this.notReadySince = 0;
+      }
     }
     const heldMs = this.readySince === null ? 0 : now - this.readySince;
     const done = heldMs >= OUTLINE.holdMs;

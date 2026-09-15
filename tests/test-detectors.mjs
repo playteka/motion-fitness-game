@@ -688,43 +688,45 @@ function calibOnce(cal, lm, now) {
   ok('校准完成时给出“可以开始”的提示', res.hintKey === 'calib.ready', res.hintKey);
   ok('深蹲要求的机位是正面', cal.view === 'front', cal.view);
 
-  // 2) 离得太远
+  // 2) 离得太远（放宽后：身体至少要占画面高度 42%）
   const far = new Calibrator('squat');
-  const r2 = calibOnce(far, fitToOutline(standing('front'), { k: 0.5 }), 0).res;
+  const r2 = calibOnce(far, fitToOutline(standing('front'), { k: 0.4 }), 0).res;
   ok('离太远：距离检查不通过', r2.checks.find((c) => c.id === 'distance').ok === false);
   ok('离太远：提示“往前走一点”', r2.hintKey === 'calib.tooFar', r2.hintKey);
 
-  // 3) 离得太近
+  // 3) 离得太近：放宽后只有在顶到画面边缘时才算不合格（framing 会先报「头顶出画」，
+  //    两条提示方向一致，都是让用户往后退）
   const near = new Calibrator('squat');
-  const r3 = calibOnce(near, fitToOutline(standing('front'), { k: 0.86 }), 0).res;
-  ok('离太近：距离检查不通过', r3.checks.find((c) => c.id === 'distance').ok === false);
-  ok('离太近：提示“往后退一点”', r3.hintKey === 'calib.tooClose', r3.hintKey);
+  const r3 = calibOnce(near, fitToOutline(standing('front'), { k: 1.15 }), 0).res;
+  ok('贴到画面边缘：不再是全绿', r3.checks.every((c) => c.ok) === false,
+    r3.checks.map((c) => `${c.id}:${c.ok ? '✓' : '✗'}`).join(' '));
+  ok('贴到画面边缘：提示往后退', ['calib.headCut', 'calib.tooClose'].includes(r3.hintKey), r3.hintKey);
 
   // 再近到头顶出画：提示换成“头顶出画了”，方向同样是后退
   const tooNear = new Calibrator('squat');
   const r3b = calibOnce(tooNear, fitToOutline(standing('front'), { k: 1.05 }), 0).res;
   ok('近到头顶出画：给出后退方向的提示', ['calib.headCut', 'calib.tooClose'].includes(r3b.hintKey), r3b.hintKey);
 
-  // 3.5) 大小合适但整体偏高：头顶与脚位都没落在轮廓上（修好前这里会误判为全绿）
+  // 3.5) 大小合适但整体偏得很高：位置检查不通过（放宽后仍要挡住「人在画面上半截」这种离谱情况）
   const high = new Calibrator('squat');
-  const r3c = calibOnce(high, fitToOutline(standing('front'), { k: 0.62, groundY: 0.7 }), 0).res;
-  ok('身体偏高：大小检查通过但“站进轮廓”不通过',
+  const r3c = calibOnce(high, fitToOutline(standing('front'), { k: 0.5, groundY: 0.60 }), 0).res;
+  ok('身体明显偏高：大小检查通过但位置检查不通过',
     r3c.checks.find((c) => c.id === 'distance').ok === true
     && r3c.checks.find((c) => c.id === 'vertical').ok === false,
     r3c.checks.map((c) => `${c.id}:${c.ok ? '✓' : '✗'}`).join(' '));
-  ok('身体偏高：提示往下站', r3c.hintKey === 'calib.moveDown', r3c.hintKey);
-  ok('身体偏高：不会判定校准完成', r3c.done === false);
+  ok('身体明显偏高：提示往下站', r3c.hintKey === 'calib.moveDown', r3c.hintKey);
+  ok('身体明显偏高：不会判定校准完成', r3c.done === false);
 
-  // 4) 站偏了
+  // 4) 站偏了（放宽后左右可偏 30%，再偏就该提示了）
   const off = new Calibrator('squat');
-  const r4 = calibOnce(off, fitToOutline(standing('front'), { dx: 0.26 }), 0).res;
+  const r4 = calibOnce(off, fitToOutline(standing('front'), { dx: 0.45 }), 0).res;
   ok('站偏了：左右位置检查不通过', r4.checks.find((c) => c.id === 'center').ok === false);
   // 预览默认镜像：原始画面偏右 = 用户看到自己偏左 → 应该提示「往右站」
   ok('站偏了：提示往右站（镜像预览下）', r4.hintKey === 'calib.centerRight', r4.hintKey);
 
   // 关掉镜像后，方向提示必须反过来
   const offNoMirror = new Calibrator('squat', { mirror: false });
-  const r4b = calibOnce(offNoMirror, fitToOutline(standing('front'), { dx: 0.26 }), 0).res;
+  const r4b = calibOnce(offNoMirror, fitToOutline(standing('front'), { dx: 0.45 }), 0).res;
   ok('关掉镜像后方向提示相反', r4b.hintKey === 'calib.centerLeft', r4b.hintKey);
 
   // 5) 机位不对：深蹲却侧对镜头
@@ -786,11 +788,11 @@ function calibOnce(cal, lm, now) {
   const proneForearm = pronePose({ hip: { x: 0.9, y: 0.7 }, bodyTilt: 66, elbow: 92, armDown: 4 });
   const supineLegs = supinePose({ hip: { x: 0.75, y: 0.9 }, armDown: 90 });
 
-  for (const [id, pose, label] of [
-    ['pushup', proneArm, '俯卧撑'],
-    ['plank', proneForearm, '平板支撑'],
-    ['bridge', supineLegs, '臀桥'],
-    ['bridgehold', supineLegs, '静态臀桥'],
+  for (const [id, pose, label, highY] of [
+    ['pushup', proneArm, '俯卧撑', 0.45],
+    ['plank', proneForearm, '平板支撑', 0.45],
+    ['bridge', supineLegs, '臀桥', 0.35],
+    ['bridgehold', supineLegs, '静态臀桥', 0.35],
   ]) {
     const cal = new Calibrator(id);
     let out = null;
@@ -803,14 +805,14 @@ function calibOnce(cal, lm, now) {
       out.checks.filter((c) => !c.ok).map((c) => c.id).join(','));
     ok(`${label}：机位要求是侧面`, cal.view === 'side' && cal.lying === true, `${cal.view}/${cal.posture}`);
 
-    const far = calibOnce(new Calibrator(id), lyingFit(pose, { target: 0.5 }), 0).res;
+    const far = calibOnce(new Calibrator(id), lyingFit(pose, { target: 0.33 }), 0).res;
     ok(`${label}：身体太短 → 提示靠近镜头`, far.hintKey === 'calib.tooFar', far.hintKey);
-    const near = calibOnce(new Calibrator(id), lyingFit(pose, { target: 0.9 }), 0).res;
+    const near = calibOnce(new Calibrator(id), lyingFit(pose, { target: 1.0 }), 0).res;
     ok(`${label}：身体太长 → 提示离镜头远一点`, near.hintKey === 'calib.tooClose', near.hintKey);
-    const off = calibOnce(new Calibrator(id), lyingFit(pose, { dx: 0.2 }), 0).res;
+    const off = calibOnce(new Calibrator(id), lyingFit(pose, { target: 0.6, dx: 0.3 }), 0).res;
     ok(`${label}：横着偏了 → 给出左右方向提示`,
       ['calib.centerLeft', 'calib.centerRight'].includes(off.hintKey), off.hintKey);
-    const up = calibOnce(new Calibrator(id), lyingFit(pose, { groundY: 0.45 }), 0).res;
+    const up = calibOnce(new Calibrator(id), lyingFit(pose, { groundY: highY }), 0).res;
     ok(`${label}：整体跑到画面上半部分 → 提示往下挪`, up.hintKey === 'calib.moveDown', up.hintKey);
     const cut = calibOnce(new Calibrator(id), lyingFit(pose, { dx: 0.8 }), 0).res;
     ok(`${label}：身体出画 → 提示回到画面里`, cut.hintKey === 'calib.cutOff', cut.hintKey);

@@ -308,7 +308,7 @@ Par défaut, le serveur n'écoute que sur `127.0.0.1` (accessible uniquement dep
 ## Calibrage avant la séance
 
 Une fois ton exercice choisi, une **silhouette en pointillés** apparaît dans l'image : une ligne de contour extérieur nette (et non un squelette articulé), c'est ta cible de posture ;
-une ligne de texte s'affiche aussi en haut de l'image et te dit directement « entre dans la silhouette en pointillés ». Le panneau de calibrage coche les critères un par un :
+une ligne de texte s'affiche aussi en haut de l'image et te dit directement « entre dans la silhouette en pointillés ». Le panneau de calibrage coche les critères un par un : **La silhouette n’est qu’une référence : inutile d’y coller au millimètre** ; il suffit que ton corps soit globalement dans l’image (tête et pieds non coupés) pour que le calibrage passe et que la séance démarre toute seule.
 
 | Critère | Signification |
 |---|---|
@@ -470,7 +470,7 @@ puis relance `npm run test:i18n` — le test vérifie une par une les clés manq
 
 ## Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes
 
-**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v1.9`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
+**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v2.0`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
 
 **② Regarde d'abord le panneau « Calibrage avant la séance » à droite.** Le critère qui reste décoché te dit quoi faire, juste en dessous :
 
