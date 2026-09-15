@@ -622,27 +622,50 @@ console.log('\n[8] 运动前校准流程');
   api.startSession();
   ok('未完成校准时不会进入倒计时', api.state.session !== 'countdown', api.state.session);
 
-  // 站进轮廓并保持
+  // 站进轮廓并保持 → 识别完成 → 自动进入运动状态
   const idle = fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }));
-  let outline = null;
+  const returns = [];
   let t3 = 500000;
   for (let i = 0; i < 60; i++) {
-    outline = api.calibrationStep(frameOf(idle, t3), t3);
+    returns.push(api.calibrationStep(frameOf(idle, t3), t3));
     t3 += 33.4;
   }
-  ok('站进轮廓并保持后判定校准完成', api.state.session === 'ready', api.state.session);
-  ok('校准完成时轮廓切到「已就位」配色', outline.status === 'ready', outline.status);
-  ok('校准完成后开始按钮可用', elements.get('btnStart').disabled === false);
+  ok('全身识别完成 → 自动进入倒计时（不用再点开始）', api.state.session === 'countdown', api.state.session);
+  ok('识别完成那一帧就不再画虚线框（返回 null）', returns.includes(null),
+    `返回 null 的帧数=${returns.filter((r) => r === null).length}`);
+  ok('自动进入后倒计时遮罩显示出来', elements.get('countdown').hidden === false);
   ok('校准清单逐项打勾', elements.get('calibList').innerHTML.includes('calib-item done'),
     elements.get('calibList').innerHTML.slice(0, 60));
-  ok('校准完成后给出开始提示', elements.get('cueLine').textContent.includes('开始'),
-    elements.get('cueLine').textContent);
+
+  // 一组结束后回到校准：这一轮不再自动开始，要用户自己点（否则刚练完就被拽进下一组）
+  api.stopSession('goal');
+  ok('一组结束后回到校准阶段', api.state.session === 'calibrating', api.state.session);
+  ok('一组结束后不再自动开始', api.state.autoStart === false);
+  let t3b = t3 + 100000;
+  let outlineAfterSet = null;
+  for (let i = 0; i < 60; i++) {
+    outlineAfterSet = api.calibrationStep(frameOf(idle, t3b), t3b);
+    t3b += 33.4;
+  }
+  ok('再次校准完成后停在「可以开始」而不是自动开始',
+    api.state.session === 'ready', api.state.session);
+  ok('这一轮保留绿色轮廓，等用户自己点开始',
+    outlineAfterSet && outlineAfterSet.status === 'ready', JSON.stringify(outlineAfterSet));
+  ok('这一轮提示条给出「开始训练」的话',
+    elements.get('calibPromptMain').textContent.includes('开始训练'),
+    elements.get('calibPromptMain').textContent);
+  const savedStreamLying = api.camera.stream;
+  api.camera.stream = {};
+  api.startSession();
+  ok('手动点开始训练仍然可用（进入倒计时）', api.state.session === 'countdown', api.state.session);
+  api.stopSession('user');
+  api.camera.stream = savedStreamLying;
 
   // 机位跟着动作变
   api.selectExercise('lunge');
   ok('切到箭步蹲后要求侧面机位', api.state.calibrator.view === 'side', api.state.calibrator.view);
   const sideIdle = fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'side' }));
-  const o2 = api.calibrationStep(frameOf(sideIdle, t3), t3);
+  const o2 = api.calibrationStep(frameOf(sideIdle, t3b), t3b);
   ok('箭步蹲的虚线轮廓是站姿侧面形状', o2.kind === 'side', o2.kind);
 
   // 躺姿动作：轮廓要换成俯卧 / 仰卧的形状，而且是横着的
@@ -733,20 +756,26 @@ console.log('\n[8] 运动前校准流程');
     elements.get('calibPrompt').className.includes('search'), elements.get('calibPrompt').className);
   ok('底部状态条在校准阶段让位（同一句话不重复出现）', elements.get('poseHint').hidden === true);
 
-  // 站好后就位：先进入「保持不动」，保持满 1.1 秒才算确认
+  // 站好后就位：先进入「保持不动」，保持满 1.1 秒后识别完成 → 自动进入倒计时
   let t4 = t3 + 20000;
-  let last = null;
-  for (let i = 0; i < 20; i++) { last = api.calibrationStep(frameOf(idle, t4), t4); t4 += 33.4; }
+  for (let i = 0; i < 20; i++) { api.calibrationStep(frameOf(idle, t4), t4); t4 += 33.4; }
   ok('就位后提示条变成「位置很好」',
     api.state.session === 'calibrating' && elements.get('calibPromptMain').textContent.includes('位置很好'),
     `session=${api.state.session} text=${elements.get('calibPromptMain').textContent}`);
-  for (let i = 0; i < 60; i++) { last = api.calibrationStep(frameOf(idle, t4), t4); t4 += 33.4; }
-  ok('校准确认后提示条给出开始训练的话',
-    api.state.session === 'ready' && elements.get('calibPromptMain').textContent.includes('开始训练'),
-    `session=${api.state.session} text=${elements.get('calibPromptMain').textContent}`);
-  ok('就位后轮廓切到「已就位」配色', last.status === 'ready', last.status);
-  ok('提示条的配色跟着状态切换',
+  ok('提示条在就位保持阶段转绿',
     elements.get('calibPrompt').className.includes('ready'), elements.get('calibPrompt').className);
+  // 只在校准阶段调用（真实渲染循环就是这样分流的），进入倒计时后不再调用
+  let guard = 0;
+  while (guard < 60 && api.state.session === 'calibrating') {
+    api.calibrationStep(frameOf(idle, t4), t4);
+    t4 += 33.4;
+    guard += 1;
+  }
+  ok('保持满 1.1 秒后自动进入倒计时（识别完成即开练）',
+    api.state.session === 'countdown', api.state.session);
+  api.renderCalibration(null);   // 真实循环在非校准分支里每帧都会收一次面板
+  ok('识别完成后提示条收起，画面不再被挡',
+    elements.get('calibPrompt').hidden === true);
 
   // 离开校准阶段后提示条要收起来
   api.toCalibration({ silent: true });
@@ -782,17 +811,15 @@ console.log('\n[8] 运动前校准流程');
     ]) {
       api.selectExercise(id);
       let tt = 900000;
-      for (let i = 0; i < 60; i++) { api.calibrationStep(frameOf(lyingFit(pose), tt), tt); tt += 33.4; }
+      let sawNull = false;
+      for (let i = 0; i < 60; i++) {
+        if (api.calibrationStep(frameOf(lyingFit(pose), tt), tt) === null) sawNull = true;
+        tt += 33.4;
+      }
       const failed = (api.state.calib?.checks || []).filter((c) => !c.ok).map((c) => c.id).join(',');
-      ok(`${label}：摆好躺姿后能通过校准并进入可开始状态`,
-        api.state.session === 'ready', `${api.state.session}/${failed}`);
-      // 校准通过后必须能真正开始（camera.active 依赖真实视频流，这里用桩模拟）
-      const savedStream = api.camera.stream;
-      api.camera.stream = {};
-      api.startSession();
-      ok(`${label}：校准通过后点「开始训练」能进入倒计时`, api.state.session === 'countdown', api.state.session);
+      ok(`${label}：摆好躺姿后识别完成并自动进入倒计时`,
+        api.state.session === 'countdown' && sawNull, `${api.state.session}/${failed}`);
       api.stopSession('user');
-      api.camera.stream = savedStream;
     }
     api.selectExercise('squat');
     api.toCalibration({ silent: true });

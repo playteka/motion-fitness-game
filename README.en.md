@@ -256,7 +256,8 @@ Then open this in your browser:
 
 ### 👉 <http://127.0.0.1:4174>
 
-The first time in, click “Start camera” → choose “Allow” in the browser prompt → pick an exercise → **move into the dashed body outline on screen**; once calibration passes, click “Start set” and counting begins.
+The first time in, click “Start camera” → choose “Allow” in the browser prompt → pick an exercise → **move into the dashed body outline on screen**;
+the moment your whole body is recognised (the dashed outline disappears), the 3-2-1 countdown fires automatically and counting begins.
 
 > ⚠️ **Don't just double-click `index.html`**. When you open it over `file://`, the browser blocks the camera and the wasm load,
 > so you have to go through `http://127.0.0.1:...` (localhost counts as a secure context).
@@ -320,8 +321,10 @@ push-ups a **side-on top-of-the-push-up position** (arms straight, hands on the 
 and glute bridges and static glute bridges a **side-on lying pose with bent knees** (on your back, knees bent, feet flat on the floor, hips resting on the ground).
 When you film from the side, the outline flips left to right automatically to match which way you're facing.
 
-Once all seven pass and stay that way for a moment, the outline turns green and shows “Calibrated ✓”, and only then does the “Start set” button become available.
-Click it (or press Space) → 3-2-1 countdown → counting starts.
+Once all seven pass and stay that way for a moment, the **dashed outline disappears at once** (that is the signal that your whole body has been recognised),
+and the 3-2-1 countdown then fires automatically to start counting — there is no button to click.
+When a set ends you go back to calibration: this time the outline stays green, and you start the next set yourself with “Start set” (or Space) —
+so you can rest and look at the summary first instead of being pulled straight into the next set.
 
 > If you're not in position, the text prompt above the video and the calibration panel both spell out exactly what to do (for example “move a little toward the camera”, “shift a little to the right”, “face the camera”),
 > so you're never left wondering what's wrong.
@@ -345,7 +348,8 @@ Click it (or press Space) → 3-2-1 countdown → counting starts.
 - Even lighting, a clean background, and closer-fitting clothes all make tracking more stable.
 
 **Note: detection starts the moment you pick an exercise, but standing there no longer earns you any points.**
-Counting begins only after you move into the dashed outline, pass calibration, and click “Start set”.
+**Note the flow: move into the dashed outline → your whole body is recognised (the dashed outline disappears) → automatic 3-2-1 countdown → counting starts;
+after a set ends you go back to calibration, and you click “Start set” (or press Space) to start the next set.**
 
 **Shortcuts**: `1`–`6` switch exercise · `Space` start/pause · `R` reset reps · `Esc` end set · `M` mirror · `S` skeleton · `F` fullscreen the video frame
 
@@ -460,7 +464,7 @@ then run `npm run test:i18n` again — the test checks every entry for missing k
 
 ## Can't fit into the outline or getting no response? Four checks
 
-**① Check the version first.** The page title should show `v1.5` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
+**① Check the version first.** The page title should show `v1.6` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
 
 **② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked, do what the line under the panel tells you:
 
@@ -522,7 +526,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (445 cases)
+npm test                       # run all four suites (447 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
 npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
@@ -535,7 +539,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
 | `tests/test-detectors.mjs` | 192 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-page.mjs` | 97 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
-| `tests/test-app.mjs` | 124 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
+| `tests/test-app.mjs` | 126 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
 
 ---
 

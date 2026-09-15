@@ -261,7 +261,7 @@ Ouvre ensuite cette adresse dans ton navigateur :
 ### 👉 <http://127.0.0.1:4174>
 
 À la première ouverture, clique sur « Activer la caméra » → choisis « Autoriser » dans la fenêtre du navigateur → choisis un exercice → **entre dans la silhouette en pointillés** ;
-une fois le calibrage validé, clique sur « Démarrer la séance » pour lancer le comptage.
+dès que ton corps entier est reconnu (la silhouette en pointillés disparaît), le décompte 3-2-1 se lance automatiquement et le comptage démarre.
 
 > ⚠️ **N'ouvre surtout pas `index.html` en double-cliquant dessus.** Ouverte en `file://`, la page verra le navigateur bloquer la caméra et le chargement du wasm :
 > il faut passer par `http://127.0.0.1:...` (localhost est considéré par le navigateur comme un contexte sécurisé).
@@ -325,8 +325,10 @@ la pompe une **position haute de pompe, vue de profil** (bras tendus, mains au s
 et le pont fessier comme le pont fessier statique une **position allongée de profil, jambes fléchies** (allongé sur le dos, genoux fléchis, pieds à plat au sol, bassin posé au sol).
 De profil, le contour se retourne automatiquement de gauche à droite selon ton orientation.
 
-Une fois les sept critères validés et tenus un court instant, la silhouette devient verte et le message « Calibrage terminé ✓ » s'affiche : c'est seulement à ce moment que le bouton « Démarrer la séance » devient actif.
-Clique dessus (ou appuie sur Espace) → décompte 3-2-1 → le comptage démarre.
+Une fois les sept critères validés et tenus un court instant, **la silhouette en pointillés disparaît immédiatement** (c'est le signal que ton corps entier a bien été reconnu),
+puis le décompte 3-2-1 se lance automatiquement et le comptage démarre : aucun bouton à cliquer.
+À la fin d'une série, tu reviens au calibrage : cette fois la silhouette reste verte et c'est toi qui lances la série suivante avec « Démarrer la séance » (ou Espace) —
+tu peux donc souffler et regarder le récapitulatif sans être embarqué aussitôt dans la série suivante.
 
 > Si tu n'es pas bien placé, la ligne de texte en haut de l'image et le panneau de calibrage t'indiquent tous les deux directement quoi faire (par exemple « rapproche-toi un peu de la caméra », « décale-toi vers la droite », « mets-toi face à la caméra »),
 > tu ne resteras jamais sans savoir ce qui ne va pas.
@@ -350,7 +352,8 @@ Clique dessus (ou appuie sur Espace) → décompte 3-2-1 → le comptage démarr
 - Éclairage homogène, arrière-plan pas trop chargé, et vêtements plutôt ajustés : la détection sera plus stable.
 
 **À noter : l'analyse démarre dès l'instant où tu choisis un exercice ; inutile de cliquer d'abord sur « Démarrer la séance ».**
-Le comptage, lui, ne démarre qu'une fois que tu es entré dans la silhouette et que le calibrage est validé.
+**Attention à l'ordre : tu entres dans la silhouette en pointillés → ton corps entier est reconnu (la silhouette en pointillés disparaît) → décompte 3-2-1 automatique → le comptage démarre ;
+à la fin d'une série tu reviens au calibrage et tu cliques sur « Démarrer la séance » (ou tu appuies sur Espace) pour lancer la suivante.**
 
 **Raccourcis clavier** : `1`~`6` changer d'exercice · `Espace` démarrer/pause · `R` réinitialiser le compteur · `Esc` terminer la série · `M` miroir · `S` squelette · `F` plein écran sur la vidéo
 
@@ -466,7 +469,7 @@ puis relance `npm run test:i18n` — le test vérifie une par une les clés manq
 
 ## Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes
 
-**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v1.5`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
+**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v1.6`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
 
 **② Regarde d'abord le panneau « Calibrage avant la séance » à droite.** Le critère qui reste décoché te dit quoi faire, juste en dessous :
 
@@ -528,7 +531,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les quatre suites d'un coup (445 tests)
+npm test                       # les quatre suites d'un coup (447 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources
 npm run test:detectors         # détection et logique de score (squelettes synthétiques)
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
@@ -541,7 +544,7 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
 | `tests/test-detectors.mjs` | 192 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
 | `tests/test-page.mjs` | 97 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
-| `tests/test-app.mjs` | 124 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
+| `tests/test-app.mjs` | 126 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
 
 ---
 

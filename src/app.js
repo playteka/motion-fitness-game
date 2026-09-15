@@ -56,6 +56,7 @@ const state = {
   exerciseId: 'squat',
   target: 15,
   session: 'calibrating',   // calibrating | ready | countdown | running | paused
+  autoStart: false,         // 校准识别完成后是否自动进入运动状态（选好动作后为 true）
   detector: null,
   calibrator: null,
   calib: null,
@@ -183,19 +184,27 @@ function selectExercise(id) {
   state.stepSig = '';
   state.saidSteps = new Set();
   state.lastScoreMilestone = 0;
-  toCalibration({ silent: true });
+  // 选好动作 → 校准一完成就自动开始（这是用户明确选的动作，不用再点一次）
+  toCalibration({ silent: true, autoStart: true });
   updateHud();
   renderRecords();
 }
 
-/** 进入「运动前校准」阶段：显示虚线人体轮廓，不计数 */
-function toCalibration({ silent = false } = {}) {
+/**
+ * 进入「运动前校准」阶段：显示虚线人体轮廓，不计数。
+ *
+ * autoStart=true（默认）：全身识别一完成，虚线框消失并自动进入运动状态（3-2-1 倒计时）。
+ * autoStart=false：一组结束后回到校准，摆好姿势只显示绿色轮廓，等用户自己点「开始训练」
+ * —— 否则刚练完还站在原地就会被立刻拽进下一组，休息和看小结都来不及。
+ */
+function toCalibration({ silent = false, autoStart = true } = {}) {
   clearInterval(state.countdownTimer);
   state.countdownTimer = null;
   $('countdown').hidden = true;
   $('celebrate').hidden = true;
   releaseWakeLock();
   state.session = 'calibrating';
+  state.autoStart = autoStart;
   state.calibrator?.reset();
   state.calib = null;
   state.elapsedMs = 0;
@@ -432,10 +441,18 @@ function startSession() {
   if (state.session === 'paused') { resumeSession(); return; }
   if (state.session === 'countdown') return;
 
+  beginCountdown();
+}
+
+/**
+ * 真正开始一组：3-2-1 倒计时 → 计数。
+ * 两条路径都会走到这里：校准识别完成后自动开始，以及用户手动点「开始训练」/按空格。
+ */
+function beginCountdown() {
   audio.unlock();
   const det = ensureDetector();
   // 注意：不重置计数与得分。识别从选好动作那一刻就开始反馈，
-  // 点“开始训练”只是开始计时/记一组，方便用户先站好姿势拿到要领分。
+  // 开始一组只是开始计时/记一组，方便用户先摆好姿势拿到要领分。
   state.elapsedMs = 0;
   state.goalHit = false;
   state.saidSteps = new Set();
@@ -547,8 +564,9 @@ function stopSession(reason = 'user') {
   renderHistory();
   renderRecords();
   setHint('', 'warn', 0);
-  // 一组结束后回到校准阶段：下一组开始前重新确认站位与机位
-  toCalibration({ silent: false });
+  // 一组结束后回到校准阶段：下一组开始前重新确认站位与机位，
+  // 但这一轮不再自动开始（autoStart: false），给用户留出休息和小结的时间。
+  toCalibration({ silent: false, autoStart: false });
 }
 
 function requestWakeLock() {
@@ -727,30 +745,44 @@ function renderCalibPrompt(calib) {
 }
 
 /**
- * 校准阶段的一帧处理：跑就位判定、必要时切到「可以开始」、刷新面板与提示。
- * 返回这一帧要画的虚线轮廓参数。
+ * 校准阶段的一帧处理：跑就位判定，识别完成后按设置自动进入运动状态。
+ * 返回这一帧要画的虚线轮廓参数（自动进入时返回 null → 虚线框立刻消失）。
  */
 function calibrationStep(frame, now) {
   const calib = state.calibrator.update(frame, now);
   state.calib = calib;
+  const outlineOf = (status) => ({
+    kind: state.calibrator.kind,
+    status,
+    // 侧拍时人可能朝左：轮廓跟着翻，头脚方向才不会反
+    flip: state.calibrator.facing < 0,
+  });
+
+  // 全身识别完成（七项全部达标并保持住）
   if (calib.done && state.session === 'calibrating') {
     state.session = 'ready';
     state.lastTick = now;
     audio.milestone();
-    audio.say(t('calib.doneVoice'), { rate: 1.15, force: true });
     setCueLine(t('calib.startNow'), 'good');
     updateButtons();
+    // 校准阶段的引导统一走画面上方的提示条：底部状态条收起来，避免同一句话出现两次
+    setHint(null);
+    if (state.autoStart) {
+      // 识别完成 → 虚线框消失，直接进入运动状态（3-2-1 倒计时后开始计数）。
+      // 这里不再单独念「校准完成」：紧接着的倒计时语音会把它打断。
+      renderCalibration(null);
+      beginCountdown();
+      return null;
+    }
+    // 一组结束后的再次校准：轮廓转绿留在画面上，等用户自己点「开始训练」
+    audio.say(t('calib.doneVoice'), { rate: 1.15, force: true });
+    renderCalibration(calib);
+    return outlineOf('ready');
   }
+
   renderCalibration(calib);
-  // 校准阶段的引导统一走画面上方的提示条：这里把底部状态条收起来，
-  // 否则同一句话会在用户眼前出现两次。
   setHint(null);
-  return {
-    kind: state.calibrator.kind,
-    status: !frame.ok ? 'search' : (calib.ready ? 'ready' : 'adjust'),
-    // 侧拍时人可能朝左：轮廓跟着翻，头脚方向才不会反
-    flip: state.calibrator.facing < 0,
-  };
+  return outlineOf(!frame.ok ? 'search' : (calib.ready ? 'ready' : 'adjust'));
 }
 
 /* ------------------------------------------------------------------ *

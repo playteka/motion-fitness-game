@@ -257,7 +257,7 @@ Y después abre en el navegador:
 ### 👉 <http://127.0.0.1:4174>
 
 La primera vez, pulsa «Activar la cámara» → elige «Permitir» en la ventana del navegador → elige un ejercicio → **entra dentro del contorno punteado que aparece en la imagen**;
-cuando la calibración se complete, pulsa «Empezar» y empezará el conteo.
+en cuanto se reconozca tu cuerpo entero (el contorno punteado desaparece), la cuenta atrás 3-2-1 se lanza automáticamente y empieza el conteo.
 
 > ⚠️ **No hagas doble clic directamente en `index.html`**. Si abres la página con `file://`, el navegador bloqueará la cámara y la carga del wasm,
 > así que tienes que entrar por `http://127.0.0.1:...` (localhost se considera un contexto seguro).
@@ -321,8 +321,10 @@ la flexión una **posición alta de flexión, vista de perfil** (brazos estirado
 y el puente de glúteos y el puente estático una **postura tumbada de perfil con las piernas dobladas** (boca arriba, rodillas dobladas, pies apoyados en el suelo, cadera apoyada en el suelo).
 Al grabar de perfil, el contorno se voltea automáticamente de izquierda a derecha según hacia dónde estés mirando.
 
-Cuando las siete comprobaciones están correctas y se mantienen un momento, el contorno se vuelve verde y aparece «Calibración completada ✓»; en ese momento el botón «Empezar» ya está disponible.
-Púlsalo (o la barra espaciadora) → cuenta atrás 3-2-1 → empieza el conteo.
+Cuando las siete comprobaciones están correctas y se mantienen un momento, **el contorno punteado desaparece al instante** (esa es la señal de que se ha reconocido tu cuerpo entero),
+y después se lanza automáticamente la cuenta atrás 3-2-1 que inicia el conteo: no hay que pulsar ningún botón.
+Al terminar una serie vuelves a la calibración: esta vez el contorno se queda en verde y eres tú quien empieza la serie siguiente con «Empezar» (o la barra espaciadora) —
+así puedes descansar y mirar el resumen sin que te arrastre enseguida a la serie siguiente.
 
 > Si no estás bien colocado, el texto que aparece arriba de la imagen y el panel de calibración te dicen directamente qué hacer (por ejemplo «acércate un poco a la cámara», «desplázate un poco a la derecha», «ponte de frente a la cámara»),
 > así que nunca te quedas sin saber qué falla.
@@ -346,7 +348,8 @@ Púlsalo (o la barra espaciadora) → cuenta atrás 3-2-1 → empieza el conteo.
 - Con una luz uniforme y un fondo no demasiado recargado; la ropa ajustada hace que el reconocimiento sea más estable.
 
 **Ojo: el reconocimiento empieza en cuanto eliges el ejercicio, no hace falta pulsar «Empezar» antes.**
-El conteo arranca solo después de que entres dentro del contorno punteado y pases la calibración.
+**Fíjate en el orden: entras en el contorno punteado → se reconoce tu cuerpo entero (el contorno punteado desaparece) → cuenta atrás 3-2-1 automática → empieza el conteo;
+al terminar una serie vuelves a la calibración y pulsas «Empezar» (o la barra espaciadora) para la serie siguiente.**
 
 **Atajos de teclado**: `1`–`6` cambiar de ejercicio · `Espacio` iniciar/pausar · `R` reiniciar el conteo · `Esc` terminar la serie · `M` espejo · `S` esqueleto · `F` pantalla completa del vídeo
 
@@ -461,7 +464,7 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 ## Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico
 
-**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.5`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
+**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v1.6`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
 
 **② Mira primero el panel «Calibración previa» de la derecha.** De las siete comprobaciones, la que no esté marcada te dice lo que tienes que hacer, siguiendo la frase que aparece debajo del panel:
 
@@ -523,7 +526,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (445 pruebas)
+npm test                       # las cuatro suites juntas (447 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -536,7 +539,7 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
 | `tests/test-detectors.mjs` | 192 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-page.mjs` | 97 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
-| `tests/test-app.mjs` | 124 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
+| `tests/test-app.mjs` | 126 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
 
 ---
 
