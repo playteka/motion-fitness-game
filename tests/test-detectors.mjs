@@ -180,13 +180,14 @@ function lungeMix(depth = 1) {
 
 const pushupTop = { hip: { x: 1.0, y: 0.68 }, bodyTilt: 63, elbow: 172, armDown: 0, sag: 0 };
 const pushupBottom = { hip: { x: 1.0, y: 0.80 }, bodyTilt: 80, elbow: 85, armDown: -30, sag: 0 };
-function pushupMix(sagFn = () => 0) {
+function pushupMix(sagFn = () => 0, opts = {}) {
+  const botElbow = opts.botElbow ?? pushupBottom.elbow;   // 抬高点 = 只放一半
   return (p) => {
     const s = Math.sin(Math.PI * p);
     return pronePose({
       hip: { x: lerp(pushupTop.hip.x, pushupBottom.hip.x, s), y: lerp(pushupTop.hip.y, pushupBottom.hip.y, s) },
       bodyTilt: lerp(pushupTop.bodyTilt, pushupBottom.bodyTilt, s),
-      elbow: lerp(pushupTop.elbow, pushupBottom.elbow, s),
+      elbow: lerp(pushupTop.elbow, botElbow, s),
       armDown: lerp(pushupTop.armDown, pushupBottom.armDown, s),
       sag: sagFn(p),
     });
@@ -348,12 +349,46 @@ console.log('\n[2] 箭步蹲计数');
   ok('提示左右交替', r.cues.some((c) => c.code === 'alternate'));
 }
 {
+  // 默认宽松（跟界面默认一致）：浅一点的箭步蹲也算一次——大体做到了就计次数
   const det = fresh('lunge');
   const r = makeRunner(det);
   r.run(repeat(lungeMix(0.55), 1800, 5));
-  ok('浅箭步蹲不计有效次数', det.validReps === 0, `实际 ${det.validReps}`);
-  atLeast('浅箭步蹲被记为半程', det.partialReps, 4);
-  ok('提示下沉不够', r.cues.some((c) => c.code === 'lungeDepth' || c.code === 'backknee'));
+  atLeast('浅一点的箭步蹲也计数（默认宽松）', det.validReps, 4);
+  ok('仍然提示后膝/下沉', r.cues.some((c) => c.code === 'lungeDepth' || c.code === 'backknee'));
+}
+{
+  // 严格模式（界面上的“严格”开关）：必须沉到位才算有效次数
+  const det = fresh('lunge', { strict: true });
+  const r = makeRunner(det);
+  r.run(repeat(lungeMix(0.55), 1800, 5));
+  ok('严格模式：浅箭步蹲不计有效次数', det.validReps === 0, `实际 ${det.validReps}`);
+  atLeast('严格模式：浅箭步蹲被记为半程', det.partialReps, 4);
+  ok('严格模式：提示下沉不够', r.cues.some((c) => c.code === 'lungeDepth'));
+}
+{
+  // 抖动宽容：站姿/踏步时的轻微晃动不能变成“半程 + 下沉不够”的碎碎念
+  const det = fresh('lunge');
+  const r = makeRunner(det);
+  r.run(repeat(lungeMix(0.35), 1800, 4));
+  ok('轻微晃动不计数、也不记半程', det.validReps === 0 && det.partialReps === 0,
+    `有效 ${det.validReps} / 半程 ${det.partialReps}`);
+  ok('轻微晃动不反复提示', r.cues.filter((c) => c.code === 'lungeDepth').length === 0);
+}
+{
+  // 下沉深度扫描：只要真的蹲下去了（> 站姿晃动），要么计进次数，要么给出纠正提示——不留“无声空档”
+  const rows = [0.4, 0.45, 0.5, 0.55, 0.6].map((d) => {
+    const det = fresh('lunge');
+    const r = makeRunner(det);
+    r.run(repeat(lungeMix(d), 1800, 2));
+    return {
+      d,
+      valid: det.validReps,
+      partial: det.partialReps,
+      hint: r.cues.some((c) => c.code === 'lungeDepth' || c.code === 'backknee' || c.code === 'alternate'),
+    };
+  });
+  ok('下沉扫描：没有“既不计次数也不提示”的空档', rows.every((row) => row.valid > 0 || row.hint),
+    rows.map((row) => `${row.d}:${row.valid}/${row.partial}${row.hint ? '' : '✗无提示'}`).join(' '));
 }
 
 /* ------------------------------------------------------------------ *
@@ -369,11 +404,12 @@ console.log('\n[3] 俯卧撑计数');
   ok('无半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
 }
 {
+  // 政策：识别与计数都放宽——塌腰也照样算一次（大体做到了就计次数），
+  // 但必须用语音/文字把“塌腰”纠正出来，而且拿不到整轮满分奖励（分数仍然体现质量）。
   const det = fresh('pushup');
   const r = makeRunner(det);
   r.run(repeat(pushupMix(() => 0.15), 1400, 4));
-  ok('塌腰俯卧撑不计数', det.validReps === 0, `实际 ${det.validReps}`);
-  atLeast('塌腰被记为半程', det.partialReps, 3);
+  atLeast('塌腰俯卧撑也计数（放宽后）', det.validReps, 3);
   ok('提示塌腰', r.cues.some((c) => c.code === 'sag' || c.code === 'pike'));
 }
 {
@@ -390,6 +426,27 @@ console.log('\n[3] 俯卧撑计数');
   r.run([{ pose: standingIdle, ms: 800 }]);
   ok('俯卧撑后立刻站起不再计数', det.validReps === 3 && det.active === false,
     `有效 ${det.validReps}, active=${det.active}`);
+}
+{
+  // 只放到一半（肘 130° 左右）：宽松线（124°）之外，仍然记为半程并提示，但不吃成有效次数
+  const det = fresh('pushup');
+  const r = makeRunner(det);
+  r.run(repeat(pushupMix(() => 0, { botElbow: 130 }), 1400, 4));
+  ok('半程俯卧撑不计有效次数', det.validReps === 0, `实际 ${det.validReps}`);
+  atLeast('半程俯卧撑记为半程', det.partialReps, 3);
+  ok('半程俯卧撑提示再低一点', r.cues.some((c) => c.code === 'depth' || c.code === 'body'));
+}
+{
+  // 默认宽松 / 可选严格：面板上的“严格”开关必须真的改变判据
+  ok('默认宽松（跟界面默认一致）', fresh('squat').strict === false && fresh('lunge').strict === false);
+  ok('传 strict: true 才严格', fresh('squat', { strict: true }).strict === true);
+  const loose = fresh('pushup');
+  const strict = fresh('pushup', { strict: true });
+  const shallow = repeat(pushupMix(() => 0, { botElbow: 116 }), 1400, 3);
+  makeRunner(loose).run(shallow);
+  makeRunner(strict).run(shallow);
+  ok('放一半多：宽松计次、严格不计次', loose.validReps === 3 && strict.validReps === 0,
+    `宽松 ${loose.validReps} / 严格 ${strict.validReps}`);
 }
 
 /* ------------------------------------------------------------------ *
@@ -419,7 +476,7 @@ console.log('\n[4] 臀桥计数');
   ok('提示需要躺下', r.cues.some((c) => c.code === 'notSupine'));
 }
 {
-  // 顶到一半就落下：不给有效次数
+  // 顶到一半就落下：放宽后照样计次（大体做了就算），但仍然要提示“顶高一点”
   const det = fresh('bridge');
   const r = makeRunner(det);
   const half = (p) => {
@@ -433,8 +490,24 @@ console.log('\n[4] 臀桥计数');
     });
   };
   r.run(repeat(half, 1800, 4));
-  ok('半程臀桥不计数', det.validReps === 0, `实际 ${det.validReps}`);
+  atLeast('半程臀桥也计数（放宽后）', det.validReps, 3);
   ok('提示顶高一点', r.cues.some((c) => c.code === 'riseMore'));
+}
+{
+  // 第一次顶起没有“上一次顶点”可比较，不能因为缺计时数据就吃掉用户的第一下
+  const det = fresh('bridge');
+  const r = makeRunner(det);
+  r.run(repeat((p) => bridgePose(p), 1800, 1));
+  ok('第一次顶起就算一次', det.validReps === 1, `实际 ${det.validReps}`);
+  ok('第一次顶起不记为半程“太快”', det.partialReps === 0, `实际 ${det.partialReps}`);
+}
+{
+  // 上下快速抖动（整轮 0.3 秒，远快于人类）：只提示太快，不刷次数
+  const det = fresh('bridge');
+  const r = makeRunner(det);
+  r.run(repeat((p) => bridgePose(p), 300, 8));
+  ok('臀桥快速抖动不刷次数', det.validReps <= 1, `实际 ${det.validReps}`);
+  ok('臀桥快速抖动提示太快', r.cues.some((c) => c.code === 'tempo'));
 }
 
 /* ------------------------------------------------------------------ *

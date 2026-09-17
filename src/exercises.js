@@ -60,7 +60,9 @@ export function localizedExercises() {
 class DetectorBase {
   constructor(meta, opts = {}) {
     this.meta = meta;
-    this.strict = opts.strict !== false;
+    // 默认「宽松」：跟界面默认一致——大体做到了就计次数，动作不标准只用语音纠正。
+    // 想严格（必须沉到位才算一次）时由 App 传 { strict: true }。
+    this.strict = opts.strict === true;
     this.plan = getStepPlan(meta.id);
     this.reps = 0;
     this.validReps = 0;
@@ -315,7 +317,8 @@ class SquatDetector extends DetectorBase {
     if (f.trunkLean > 20 && r < 0.75) {
       this.cue('lateral', null, 'warn', now);
     }
-    if (this.stage !== 'up' && r > 0.30 && r <= SQUAT.enterRatio) {
+    // 纠正提示提前给：要求放宽了，但提醒要更积极（还没到位就先提示怎么蹲）
+    if (this.stage !== 'up' && r > 0.48 && r <= SQUAT.enterRatio) {
       this.cue('depth', null, 'warn', now, 3000);
     }
 
@@ -396,18 +399,28 @@ class SquatDetector extends DetectorBase {
  * ------------------------------------------------------------------ */
 
 const LUNGE = {
-  standKnee: 152,
-  enterKnee: 140,
-  downKnee: 115,
-  bothBentMax: 150,   // 两条腿都要弯，才算箭步蹲
-  backKneeDrop: 0.35, // 后膝离地高度 / 小腿长（越小越接近地面）
-  minRepMs: 750,
+  // 判据整体放宽：看得出是箭步蹲就算一次，动作不标准交给语音提示。
+  // 三档膝角：enter 开始算这一轮 → loose 宽松计数线 → down 拿标准深度分。
+  standKnee: 142,     // 「回到站姿」的门槛（原来 152：跟踪噪声下很难稳定回到站直，一卡就整轮作废）
+  enterKnee: 146,     // 下蹲到 146° 以内才算「开始这一轮」（比站姿晃动深，避免碎碎念）
+  downKnee: 128,      // 「沉到底」阶段（拿整轮满分奖励 / 严格模式的深度）
+  looseKnee: 142,     // 宽松模式：前膝弯到 142° 以内就算一次（原来靠 140，但被 aborted 拦掉了）
+  // 抖动宽容：膝角必须在门槛内「持续」住才算真的开始/结束一次，
+  // 否则跟踪噪声在门槛附近来回跳会造出一堆假的“半程 + 下沉不够”提醒。
+  enterHoldMs: 200,
+  exitHoldMs: 100,
+  bothBentMax: 162,   // 两条腿都算「弯」的门槛放宽（原来 150）
+  backKneeCue: 0.66,  // 后膝太高 → 提示（后膝离地高度 / 小腿长）
+  backKneeDrop: 0.66, // 深度达标要求（原来 0.58，要求后膝几乎贴地太严）
+  minRepMs: 450,      // 一次有效箭步蹲的最短用时（原来 750/520）
 };
 
 class LungeDetector extends DetectorBase {
   onReset() {
     this.stage = 'up';
     this.repStartAt = 0;
+    this.bendSince = 0;
+    this.upSince = 0;
     this.minFront = 180;
     this.minBackDrop = 9;
     this.depthOk = false;
@@ -415,7 +428,12 @@ class LungeDetector extends DetectorBase {
     this.sameSideStreak = 0;
     this.cycleSunk = false;
   }
-  onLost() { this.stage = 'up'; this.repStartAt = 0; }
+  onLost() {
+    this.stage = 'up';
+    this.repStartAt = 0;
+    this.bendSince = 0;
+    this.upSince = 0;
+  }
   onNewCycle() { this.cycleSunk = false; }
 
   sideInfo(f, s) {
@@ -447,52 +465,72 @@ class LungeDetector extends DetectorBase {
     this.standby = '';
     if (bent <= 130) this.cycleSunk = true;
 
-    if (this.stage !== 'up' && back.drop > 0.75 && bent < 130) {
+    if (this.stage !== 'up' && back.drop > LUNGE.backKneeCue && bent < 140) {
       this.cue('backknee', null, 'warn', now);
     }
-    if (f.trunkLean > 45 && bent < 140) {
+    if (f.trunkLean > 38 && bent < 146) {
       this.cue('lean', null, 'warn', now);
     }
 
+    const standing = bent >= LUNGE.standKnee && bothBent >= LUNGE.standKnee - 8;
+
     switch (this.stage) {
       case 'up':
+        // 下蹲要“持续”住才算这一轮开始（滤掉单帧抖动）
         if (bent <= LUNGE.enterKnee) {
-          this.stage = 'descending';
-          this.repStartAt = now;
-          this.minFront = bent;
-          this.minBackDrop = back.drop;
-          this.depthOk = false;
-          this.frontSide = front.s;
+          if (!this.bendSince) this.bendSince = now;
+          if (now - this.bendSince >= LUNGE.enterHoldMs) {
+            this.stage = 'descending';
+            this.repStartAt = this.bendSince;
+            this.minFront = bent;
+            this.minBackDrop = back.drop;
+            this.depthOk = false;
+            this.frontSide = front.s;
+            this.upSince = 0;
+          }
+        } else {
+          this.bendSince = 0;
         }
         break;
 
-      case 'descending': {
+      case 'descending':
+      case 'bottom': {
         this.minFront = Math.min(this.minFront, bent);
         if (front.s === this.frontSide) this.minBackDrop = Math.min(this.minBackDrop, back.drop);
         if (bothBent <= LUNGE.bothBentMax && back.drop <= LUNGE.backKneeDrop) this.depthOk = true;
-        if (bent <= LUNGE.downKnee && bothBent <= LUNGE.bothBentMax) this.stage = 'bottom';
-        if (bent >= LUNGE.standKnee && bothBent >= LUNGE.standKnee - 8) this.finish(f, now, true);
+        if (this.stage === 'descending' && bent <= LUNGE.downKnee && bothBent <= LUNGE.bothBentMax) {
+          this.stage = 'bottom';
+          this.phase = 'bottom';
+          this.emit({ type: 'phase', phase: 'bottom' });
+        }
+        // 回到站姿也要“持续”住才算这一轮结束
+        if (standing) {
+          if (!this.upSince) this.upSince = now;
+          if (now - this.upSince >= LUNGE.exitHoldMs) this.finish(f, now);
+        } else {
+          this.upSince = 0;
+        }
         break;
       }
-
-      case 'bottom':
-        if (bothBent <= LUNGE.bothBentMax && back.drop <= LUNGE.backKneeDrop) this.depthOk = true;
-        if (bent >= LUNGE.standKnee && bothBent >= LUNGE.standKnee - 8) this.finish(f, now, false);
-        break;
       default:
         break;
     }
   }
 
-  finish(f, now, aborted) {
+  finish(f, now) {
     const dur = now - this.repStartAt;
     this.stage = 'up';
     this.phase = 'up';
     this.repStartAt = 0;
-    if (aborted && this.minFront > 132) return;
+    this.bendSince = 0;
+    this.upSince = 0;
 
-    const deepEnough = this.depthOk || (!this.strict && this.minFront <= 122);
-    if (aborted || !deepEnough) {
+    // 宽松模式：前膝弯进 looseKnee 就算一次——不再要求“必须沉到底才作数”。
+    // 沉得不够的，只提示“下沉不够 / 后膝再低一点”，不再把次数吃掉。
+    // 严格模式：既要深度达标，又要真的沉到 downKnee 以内。
+    const deepEnough = (!this.strict && this.minFront <= LUNGE.looseKnee)
+      || (this.depthOk && (!this.strict || this.minFront <= LUNGE.downKnee));
+    if (!deepEnough) {
       this.partialReps += 1;
       this.cue('lungeDepth', null, 'warn', now, 3000);
       this.emit({ type: 'rep', valid: false, reason: 'depth' });
@@ -506,6 +544,8 @@ class LungeDetector extends DetectorBase {
       this.nextCycle(now);
       return;
     }
+    // 计数放宽了，但深度不够还是要出声纠正（分数也已经按深度打了折扣）
+    if (!this.depthOk) this.cue('lungeDepth', null, 'warn', now, 4000);
 
     // 左右腿交替检查
     if (this.lastFrontSide && this.lastFrontSide === this.frontSide) {
@@ -521,7 +561,11 @@ class LungeDetector extends DetectorBase {
     this.validReps += 1;
     this.reps = this.validReps;
     this.cycleHadValidRep = true;
-    const quality = clamp(Math.round(60 + (this.minFront <= 100 ? 30 : 15) + (this.minBackDrop < 0.35 ? 10 : 5)), 0, 100);
+    // 深度分：沉到底 30 分，浅一点递减（次数放宽了，分数仍然区分质量）
+    const depthGain = this.minFront <= 100 ? 30
+      : this.minFront <= 118 ? 24
+        : this.minFront <= 130 ? 18 : 10;
+    const quality = clamp(Math.round(60 + depthGain + (this.minBackDrop < 0.35 ? 10 : 5)), 0, 100);
     this.emit({ type: 'rep', valid: true, index: this.validReps, quality, duration: dur, side: this.frontSide });
     this.nextCycle(now);
   }
@@ -532,14 +576,15 @@ class LungeDetector extends DetectorBase {
  * ------------------------------------------------------------------ */
 
 const PUSHUP = {
-  activeTorso: 35,
-  activeShoulderClear: 0.15,
-  activeHandOnFloor: 0.55,
-  elbowUp: 150,
-  elbowDown: 104,
-  elbowFull: 92,
-  minRepMs: 420,
-  bodyStraightMin: 146,
+  activeTorso: 32,
+  activeShoulderClear: 0.12,
+  activeHandOnFloor: 0.62,
+  elbowUp: 152,
+  elbowDown: 118,     // 下放到这里就算「下去了」（原来 104）
+  elbowFull: 106,     // 满分要求也放宽（原来 92，要压到胸口贴地）
+  looseElbow: 124,    // 宽松模式：肘弯到 124° 以内就算一次（原来必须 120 且身体够直）
+  minRepMs: 340,      // 原来 420
+  bodyStraightMin: 138, // 身体不够直只提示，不再吃次数（原来 146，直接判半程）
 };
 
 class PushupDetector extends DetectorBase {
@@ -613,9 +658,11 @@ class PushupDetector extends DetectorBase {
     this.repStartAt = 0;
     if (aborted && this.minElbow > 150) return; // 还没开始下放就走了，不算一次尝试
     const full = this.minElbow <= PUSHUP.elbowFull;
-    const okDepth = full || (!this.strict && this.minElbow <= 120);
+    const bodyOk = this.minBody >= PUSHUP.bodyStraightMin;
+    const okDepth = full || (!this.strict && this.minElbow <= PUSHUP.looseElbow);
 
-    if (this.minBody < PUSHUP.bodyStraightMin) {
+    // 计数放宽：身体不够直也照样算一次，只是要出声纠正、分数打折（严格模式才拦）
+    if (this.strict && !bodyOk) {
       this.partialReps += 1;
       this.cue('body', null, 'warn', now, 3000);
       this.emit({ type: 'rep', valid: false, reason: 'body' });
@@ -636,10 +683,11 @@ class PushupDetector extends DetectorBase {
       this.nextCycle(now);
       return;
     }
+    if (!bodyOk) this.cue('body', null, 'warn', now, 3000);
     this.validReps += 1;
     this.reps = this.validReps;
     this.cycleHadValidRep = true;
-    const quality = clamp(Math.round(60 + (full ? 30 : 15) + (this.minBody > 165 ? 10 : 5)), 0, 100);
+    const quality = clamp(Math.round(60 + (full ? 30 : 15) + (this.minBody > 165 ? 10 : bodyOk ? 5 : 0)), 0, 100);
     this.emit({ type: 'rep', valid: true, index: this.validReps, quality, duration: dur });
     this.nextCycle(now);
   }
@@ -650,19 +698,21 @@ class PushupDetector extends DetectorBase {
  * ------------------------------------------------------------------ */
 
 const BRIDGE = {
-  supineTorso: 40,
+  supineTorso: 36,
   kneeMin: 30,
-  kneeMax: 142,
-  shoulderClearMax: 0.40,
-  kneeClearMin: 0.32,
-  downRise: 0.15,
-  upRise: 0.35,
-  minRepMs: 320,
+  kneeMax: 148,
+  shoulderClearMax: 0.46,
+  kneeClearMin: 0.20,
+  downRise: 0.12,
+  upRise: 0.22,   // 顶起幅度要求（原来 0.35，要顶很高才算）
+  // 整轮时长下限（上一个顶点 → 这个顶点）：比人体能做出的最快一次臀桥还短，
+  // 所以只会滤掉“上下抖一下”，不会吃掉真做的次数。第一次顶起不参与这个判断。
+  minRepMs: 700,
 };
 
 class GluteBridgeDetector extends DetectorBase {
-  onReset() { this.stage = 'down'; this.repStartAt = 0; this.maxRise = -9; this.wasAtTop = false; }
-  onLost() { this.stage = 'down'; this.repStartAt = 0; }
+  onReset() { this.stage = 'down'; this.lastTopAt = 0; this.maxRise = -9; this.wasAtTop = false; }
+  onLost() { this.stage = 'down'; this.lastTopAt = 0; }
   onNewCycle() { this.wasAtTop = false; }
 
   /** 仰卧判据：躯干接近水平 + 屈膝 + 肩贴地 + 膝离地 */
@@ -692,8 +742,10 @@ class GluteBridgeDetector extends DetectorBase {
 
     if (this.stage === 'down') {
       if (atTop) {
-        const dur = this.repStartAt ? now - this.repStartAt : 0;
-        this.repStartAt = 0;
+        // 一次计数的时长 = 上一个顶点 → 这个顶点（整轮时长），只用来滤掉“快速上下抖”。
+        // 第一次顶起没有上一个顶点作参照，直接算有效，不要因为“计时数据不足”吃掉用户的第一下。
+        const dur = this.lastTopAt ? now - this.lastTopAt : 0;
+        this.lastTopAt = now;
         this.stage = 'up';
         this.maxRise = rise;
         this.wasAtTop = true;
@@ -711,15 +763,12 @@ class GluteBridgeDetector extends DetectorBase {
         }
       } else if (rise > BRIDGE.downRise) {
         this.cue('riseMore', null, 'warn', now, 3500);
-      } else if (!this.repStartAt) {
-        this.repStartAt = now;
       }
     } else {
       this.maxRise = Math.max(this.maxRise, rise);
       if (atBottom) {
         this.stage = 'down';
         this.phase = 'down';
-        this.repStartAt = now;
         // 回到起点才算一轮结束：此时结算“整轮要领满分”，并重置要领清单
         this.nextCycle(now);
       }
@@ -814,11 +863,11 @@ class HoldDetector extends DetectorBase {
  * ------------------------------------------------------------------ */
 
 const PLANK = {
-  torsoIncl: 45,
-  bodyStraight: 158,
-  shoulderClearMin: 0.22,
-  handOnFloorMax: 0.32,
-  kneeClearMin: 0.06,
+  torsoIncl: 42,
+  bodyStraight: 142,   // 身体成线（原来 158/146，稍微塌一点就不算）
+  shoulderClearMin: 0.14,
+  handOnFloorMax: 0.45,
+  kneeClearMin: 0.03,
   elbowBentMax: 122,
   elbowStraightMin: 148,
 };
@@ -861,12 +910,12 @@ class PlankDetector extends HoldDetector {
  * ------------------------------------------------------------------ */
 
 const BRIDGE_HOLD = {
-  supineTorso: 40,
+  supineTorso: 36,
   kneeMin: 30,
-  kneeMax: 142,
-  shoulderClearMax: 0.40,
-  kneeClearMin: 0.30,
-  holdRise: 0.32,
+  kneeMax: 148,
+  shoulderClearMax: 0.46,
+  kneeClearMin: 0.20,
+  holdRise: 0.20,   // 原来 0.32
 };
 
 class BridgeHoldDetector extends HoldDetector {

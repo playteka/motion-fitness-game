@@ -47,8 +47,10 @@ Tout est côté client : le modèle de posture MediaPipe et le wasm sont stocké
 - **Un score attribué étape par étape selon les étapes techniques** : chaque exercice est découpé en 4 à 6 étapes vérifiables ; chaque étape réussie
   rapporte aussitôt des points, déclenche un bip et coche la ligne ; valider toutes les étapes d'une série donne droit à un bonus de série parfaite ;
   pour les exercices chronométrés, **chaque seconde tenue rapporte +1 point**.
-- **Un comptage qui ne retient que le travail valide** : une répétition partielle, trop rapide, avec le bas du dos qui s'affaisse ou les fesses relevées
-  n'est pas comptée comme valide ; elle est comptabilisée à part et assortie d'un conseil de correction.
+- **Un comptage des répétitions valides (permissif par défaut)** : **si tu fais le mouvement dans les grandes lignes, ça compte** — les squats et les fentes moins profonds, les pompes qui ne descendent qu'en partie
+  et les ponts fessiers qui ne montent pas très haut comptent aussi, pendant que la voix corrige « descends plus bas / descends encore un peu / monte plus les hanches / ne creuse pas le bas du dos »
+  et que le score est réduit selon la qualité ; active l'interrupteur **Mode strict** du panneau si tu veux que « seule une répétition complète compte ».
+  Ce que tu n'as pas vraiment fait (un simple balancement) n'est pas compté et ne déclenche pas de rappels insistants.
 - **Un retour d'état en temps réel** : sous l'image, tu vois en permanence « dans quel état tu es, à quelle étape tu bloques et combien de degrés il te reste ».
 - **🐞 Panneau « Métriques »** : affiche d'un clic tous les chiffres bruts que voit le détecteur (vue, visibilité, angles des articulations) — un problème de cadrage se repère au premier coup d'œil.
 - **Annonce vocale en chinois + effets sonores** : chaque étape validée est saluée par une gamme montante, la première réussite d'une étape est annoncée à voix haute, et le score est annoncé tous les 50 points.
@@ -475,7 +477,7 @@ puis relance `npm run test:i18n` — le test vérifie une par une les clés manq
 
 ## Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes
 
-**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v2.3`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
+**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v2.4`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
 
 **② Regarde d'abord le panneau « Calibrage avant la séance » à droite.** Le critère qui reste décoché te dit quoi faire, juste en dessous :
 
@@ -537,7 +539,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les quatre suites d'un coup (499 tests)
+npm test                       # les quatre suites d'un coup (513 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources
 npm run test:detectors         # détection et logique de score (squelettes synthétiques)
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
@@ -548,7 +550,7 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | Fichier de test | Nombre de tests | Contenu couvert |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
-| `tests/test-detectors.mjs` | 198 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
+| `tests/test-detectors.mjs` | 212 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
 | `tests/test-page.mjs` | 97 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
 | `tests/test-app.mjs` | 172 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
 
@@ -584,13 +586,16 @@ motion-fitness-game/
 - **Modifier les points ou le texte des étapes** : édite `src/steps.js` (structure et points) et `src/locales/*.js` (textes).
   Chaque étape est un objet `{ id, labelKey, points, check, hint }` ; quand `check(frame, det)` renvoie `true`, l'étape est considérée comme validée.
 - **Modifier les seuils de validation** : édite les constantes en haut de chaque exercice dans `src/exercises.js` — elles sont toutes commentées en chinois :
-  - `SQUAT_FRONT` (dans `src/steps.js`) : les seuils de profondeur du squat filmé de face — `standRatio` 0,86 / `enterRatio` 0,72 /
-  `bottomRatio` 0,25 (plus la valeur est petite, plus c'est strict) / `looseRatio` 0,45 ; l'unité est « écart de hauteur hanches-genoux ÷ longueur du tibia », debout ≈ 1,0 ;
-  - `LUNGE.backKneeDrop` : hauteur du genou arrière au-dessus du sol / longueur du tibia (0,35 par défaut, plus la valeur est petite, plus c'est strict) ;
-  - `PUSHUP.elbowFull` : angle du coude en bas de la pompe (92° par défaut) ;
-  - `BRIDGE.upRise` / `BRIDGE_HOLD.holdRise` : hauteur d'élévation des hanches pour le pont fessier (en unités de longueur de tronc) ;
-  - `PLANK.bodyStraight` : angle minimum d'alignement du corps pour la planche (158° par défaut) ;
+  - `SQUAT_FRONT` (dans `src/steps.js`) : les seuils de profondeur du squat filmé de face — `standRatio` 0,86 / `enterRatio` 0,78 /
+  `bottomRatio` 0,40 (plus la valeur est petite, plus c'est strict) / `looseRatio` 0,62 (la ligne de comptage en mode souple) ; l'unité est « écart de hauteur hanches-genoux ÷ longueur du tibia », debout ≈ 1,0 ;
+  - `LUNGE` : les trois paliers d'angle de genou de la fente — `enterKnee` 146 (à partir de quel angle la répétition commence à compter) / `looseKnee` 142 (la ligne de comptage souple) /
+  `downKnee` 128 (mode strict et points de profondeur) ; `backKneeDrop` 0,66 est la hauteur du genou arrière au-dessus du sol ÷ longueur du tibia ; `enterHoldMs` / `exitHoldMs` sont les tolérances au tremblement ;
+  - `PUSHUP.elbowFull` 106 (profondeur pour le score complet) / `PUSHUP.looseElbow` 124 (la ligne de comptage souple) ;
+  - `BRIDGE.upRise` 0,22 / `BRIDGE_HOLD.holdRise` 0,20 : hauteur d'élévation des hanches pour le pont fessier (en unités de longueur de tronc) ; `BRIDGE.minRepMs` 700 est la durée minimale d'un cycle complet (filtre anti-tremblement) ;
+  - `PLANK.bodyStraight` : angle minimum d'alignement du corps pour la planche (142° par défaut) ;
   - `HoldDetector.graceMs` : délai de tolérance des exercices chronométrés (1200 ms par défaut).
+  - **Souple ou strict** : `DetectorBase.strict` vaut `false` par défaut (si tu fais le mouvement dans les grandes lignes, ça compte ; une mauvaise forme ne déclenche qu'une correction vocale et une réduction du score) ;
+    l'interrupteur **✅ Mode strict** de l'interface passe le critère à « seule une répétition complète compte ».
 
 Après tes modifications, lance `npm test` : les tests connaissent déjà l'amplitude standard de ces mouvements et te diront tout de suite si tu es allé trop loin.
 

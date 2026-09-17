@@ -44,7 +44,7 @@ Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la car
   la distancia, el centrado, la altura, el ángulo y la quietud son solo recomendaciones (marcadas con «·» en el panel) y ya no bloquean el inicio.
 - **Puntuación progresiva según la técnica**: cada ejercicio se divide en 4-6 pasos que se pueden evaluar; cada paso correcto suma puntos al instante, suena un aviso y se marca una casilla;
   si completas todos los pasos de la ronda, te llevas una bonificación de puntuación perfecta; en los ejercicios de cronómetro, **cada segundo aguantado suma +1 punto**.
-- **Conteo con criterio**: las repeticiones a medias, demasiado rápidas, con la lumbar hundida o el trasero alto no cuentan como válidas: se cuentan aparte y te dan un aviso para corregir.
+- **Detección de repeticiones válidas (permisiva por defecto)**: **si haces el movimiento a grandes rasgos, cuenta** — las sentadillas y zancadas menos profundas, las flexiones que bajan solo una parte del recorrido y los puentes de glúteo que no suben mucho también cuentan, mientras la voz corrige «baja más / baja un poco más / sube más las caderas / no hundas la lumbar» y la puntuación se ajusta según la calidad; activa el interruptor **Modo estricto** del panel si quieres que «solo cuente una repetición completa». Lo que no has hecho de verdad (un simple balanceo) no se cuenta ni genera avisos insistentes.
 - **Estado en tiempo real**: debajo de la imagen siempre ves «en qué estado estás, en qué paso te has quedado y cuántos grados te faltan».
 - **🐞 Métricas**: muestra con un clic todos los números en bruto que ve el detector (vista, visibilidad, ángulos de cada articulación), así localizas de un vistazo cualquier problema de colocación.
 - **Voz con conteo + sonidos**: cada paso cumplido suena con un aviso ascendente; la primera vez que lo cumples, la voz lo anuncia, y cada 50 puntos te canta la puntuación.
@@ -470,7 +470,7 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 ## Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico
 
-**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v2.3`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
+**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v2.4`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
 
 **② Mira primero el panel «Calibración previa» de la derecha.** De las siete comprobaciones, la que no esté marcada te dice lo que tienes que hacer, siguiendo la frase que aparece debajo del panel:
 
@@ -532,7 +532,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (499 pruebas)
+npm test                       # las cuatro suites juntas (513 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -543,7 +543,7 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | Archivo de prueba | N.º de pruebas | Cobertura |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
-| `tests/test-detectors.mjs` | 198 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
+| `tests/test-detectors.mjs` | 212 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-page.mjs` | 97 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
 | `tests/test-app.mjs` | 172 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
 
@@ -579,13 +579,16 @@ motion-fitness-game/
 - **Cambiar los puntos o el texto de un paso**: edita `src/steps.js` (estructura y puntos) y `src/locales/*.js` (textos).
   Cada paso es un objeto `{ id, labelKey, points, check, hint }`; si `check(frame, det)` devuelve `true`, ese paso cuenta como cumplido.
 - **Cambiar los umbrales de decisión**: edita las constantes que hay al principio de cada ejercicio en `src/exercises.js`; todas llevan comentarios en chino:
-  - `SQUAT_FRONT` (en `src/steps.js`): umbrales de profundidad de la sentadilla en vista frontal — `standRatio` 0.86 / `enterRatio` 0.72 /
-  `bottomRatio` 0.25 (cuanto menor, más estricto) / `looseRatio` 0.45; la unidad es «cuánto más alta está la cadera que la rodilla ÷ longitud de la pantorrilla»; de pie ≈ 1.0;
-  - `LUNGE.backKneeDrop`: altura de la rodilla de atrás respecto al suelo / longitud de la pantorrilla (por defecto 0.35; cuanto menor, más estricto);
-  - `PUSHUP.elbowFull`: ángulo del codo en la parte baja de la flexión (por defecto 92°);
-  - `BRIDGE.upRise` / `BRIDGE_HOLD.holdRise`: altura a la que se sube la cadera en el puente de glúteos (en unidades de longitud del torso);
-  - `PLANK.bodyStraight`: ángulo mínimo para considerar que el cuerpo está en línea recta en la plancha (por defecto 158°);
+  - `SQUAT_FRONT` (en `src/steps.js`): umbrales de profundidad de la sentadilla en vista frontal — `standRatio` 0.86 / `enterRatio` 0.78 /
+  `bottomRatio` 0.40 (cuanto menor, más estricto) / `looseRatio` 0.62 (la línea de conteo en modo flexible); la unidad es «cuánto más alta está la cadera que la rodilla ÷ longitud de la pantorrilla»; de pie ≈ 1.0;
+  - `LUNGE`: los tres niveles de ángulo de rodilla de la zancada — `enterKnee` 146 (cuánto hay que doblar para que la ronda empiece a contar) / `looseKnee` 142 (la línea de conteo flexible) /
+  `downKnee` 128 (modo estricto y puntuación por profundidad); `backKneeDrop` 0.66 es la altura de la rodilla de atrás respecto al suelo ÷ longitud de la pantorrilla; `enterHoldMs` / `exitHoldMs` son las tolerancias al temblor;
+  - `PUSHUP.elbowFull` 106 (profundidad de puntuación completa) / `PUSHUP.looseElbow` 124 (la línea de conteo flexible);
+  - `BRIDGE.upRise` 0.22 / `BRIDGE_HOLD.holdRise` 0.20: altura a la que se sube la cadera en el puente de glúteos (en unidades de longitud del torso); `BRIDGE.minRepMs` 700 es la duración mínima de un ciclo completo (filtro de temblor);
+  - `PLANK.bodyStraight`: ángulo mínimo para considerar que el cuerpo está en línea recta en la plancha (por defecto 142°);
   - `HoldDetector.graceMs`: margen de tolerancia de los ejercicios de cronómetro (por defecto 1200ms).
+  - **Flexible vs estricto**: `DetectorBase.strict` es `false` por defecto (si haces el movimiento a grandes rasgos, cuenta; la mala forma solo provoca una corrección hablada y un descuento de calidad);
+    el interruptor **✅ Modo estricto** de la interfaz cambia el criterio a «solo cuenta una repetición completa».
 
 Cuando termines, ejecuta `npm test`: las pruebas ya incluyen la amplitud estándar de estos ejercicios, así que te dirán al momento si te has pasado.
 

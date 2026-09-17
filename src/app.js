@@ -30,7 +30,7 @@ const DEFAULT_SETTINGS = {
   voice: true,
   sfx: true,
   music: true,
-  strict: true,
+  strict: false,   // 默认宽松：大体做到就算次数（想严格可以自己开）
   showAngles: true,
   showSkeleton: true,
   debug: false,

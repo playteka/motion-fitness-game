@@ -181,13 +181,14 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
 
   // 全身是否入镜：至少一侧“髋-膝-踝-肩-肘-腕”链条清楚可见；
   // 真机侧拍时远侧肢体可见度天然偏低，所以门槛放宽，并允许用核心关节平均可见度兜底
-  const bodyVisible = best.w > 0.4 || coreVis > 0.5;
+  // 可见度门槛整体放宽（用户反馈识别太严）：只要核心关节大致看得见就算「识别到人」
+  const bodyVisible = best.w > 0.28 || coreVis > 0.38;
   const legVisL = Math.min(P(LM.L_HIP).v, P(LM.L_KNEE).v, P(LM.L_ANKLE).v);
   const legVisR = Math.min(P(LM.R_HIP).v, P(LM.R_KNEE).v, P(LM.R_ANKLE).v);
-  const legsVisible = legVisL > 0.25 && legVisR > 0.25;
+  const legsVisible = legVisL > 0.16 && legVisR > 0.16;
 
   return {
-    ok: coreVis > 0.25 && visMin > 0.05,
+    ok: coreVis > 0.16 && visMin > 0.03,
     t: now,
     side: best.s,
     perSide,

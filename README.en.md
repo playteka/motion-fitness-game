@@ -44,7 +44,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   distance, centering, height, camera angle and holding still are only recommendations (marked with “·” in the panel) and no longer block the start.
 - **Form steps scored one at a time**: each exercise is broken into 4–6 judgeable steps — hit one and you immediately get points, a chime, and a checkmark;
   finishing every step in a round earns a perfect-round bonus, and hold exercises give **+1 point for every second you hold**.
-- **Valid rep detection**: half reps, reps that are too fast, a sagging lower back, a piked hip and so on don't count as valid reps — they're tracked separately and you get a correction cue.
+- **Valid rep detection (lenient by default)**: **if you roughly did the movement, it counts** — shallower squats and lunges, push-ups that only go part of the way down and glute bridges that don't rise very high all count, while the voice coach corrects “go lower / down a little more / lift your hips higher / don't let your lower back sag” and the score is discounted for quality; turn on the **Strict mode** switch in the panel if you want “only a full-depth rep counts”. Movements you didn't really do (a mere wobble) aren't counted and won't trigger nagging.
 - **Live status feedback**: the area below the video always shows what state you're in, which step you're stuck on, and how many degrees you still need.
 - **🐞 Metrics panel**: one click shows every raw number the detector sees (view, visibility, each joint angle), so camera-position problems are obvious at a glance.
 - **Spoken counting in your language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
@@ -470,7 +470,7 @@ then run `npm run test:i18n` again — the test checks every entry for missing k
 
 ## Can't fit into the outline or getting no response? Four checks
 
-**① Check the version first.** The page title should show `v2.3` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
+**① Check the version first.** The page title should show `v2.4` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
 
 **② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked, do what the line under the panel tells you:
 
@@ -532,7 +532,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (499 cases)
+npm test                       # run all four suites (513 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
 npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
@@ -543,7 +543,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
-| `tests/test-detectors.mjs` | 198 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
+| `tests/test-detectors.mjs` | 212 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-page.mjs` | 97 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
 | `tests/test-app.mjs` | 172 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
 
@@ -579,13 +579,16 @@ motion-fitness-game/
 - **Change point values or form-step wording**: edit `src/steps.js` (structure and points) and `src/locales/*.js` (wording).
   Each step is one `{ id, labelKey, points, check, hint }`; when `check(frame, det)` returns `true`, that step counts as hit.
 - **Change the judging thresholds**: edit the constants at the top of each exercise in `src/exercises.js` — they all have Chinese comments:
-  - `SQUAT_FRONT` (in `src/steps.js`): the squat's front-on depth thresholds — `standRatio` 0.86 / `enterRatio` 0.72 /
-  `bottomRatio` 0.25 (lower is stricter) / `looseRatio` 0.45; measured as “how much higher your hips are than your knees ÷ shin length”, standing tall ≈ 1.0;
-  - `LUNGE.backKneeDrop`: back-knee height off the floor / shin length (default 0.35, lower is stricter);
-  - `PUSHUP.elbowFull`: elbow angle at the bottom of a push-up (default 92°);
-  - `BRIDGE.upRise` / `BRIDGE_HOLD.holdRise`: glute bridge hip-lift height (in units of torso length);
-  - `PLANK.bodyStraight`: the minimum angle for “body in one straight line” in a plank (default 158°);
+  - `SQUAT_FRONT` (in `src/steps.js`): the squat's front-on depth thresholds — `standRatio` 0.86 / `enterRatio` 0.78 /
+  `bottomRatio` 0.40 (lower is stricter) / `looseRatio` 0.62 (the counting line in relaxed mode); measured as “how much higher your hips are than your knees ÷ shin length”, standing tall ≈ 1.0;
+  - `LUNGE`: the lunge's three knee-angle levels — `enterKnee` 146 (how far you must bend for a round to count as started) / `looseKnee` 142 (the relaxed counting line) /
+  `downKnee` 128 (strict mode and the depth score); `backKneeDrop` 0.66 is back-knee height off the floor ÷ shin length; `enterHoldMs` / `exitHoldMs` are the jitter tolerances;
+  - `PUSHUP.elbowFull` 106 (full-depth score) / `PUSHUP.looseElbow` 124 (the relaxed counting line);
+  - `BRIDGE.upRise` 0.22 / `BRIDGE_HOLD.holdRise` 0.20: glute bridge hip-lift height (in units of torso length); `BRIDGE.minRepMs` 700 is the minimum whole-cycle time (jitter filter);
+  - `PLANK.bodyStraight`: the minimum angle for “body in one straight line” in a plank (default 142°);
   - `HoldDetector.graceMs`: the grace period for timed exercises (default 1200ms).
+  - **Relaxed vs strict**: `DetectorBase.strict` defaults to `false` (roughly doing the movement counts; poor form only triggers a spoken correction plus a quality discount);
+    the **✅ Strict mode** switch in the UI changes the criteria to “only a full-depth rep counts”.
 
 After changing anything, run `npm test` — the tests have the standard range of motion for these exercises baked in, so they'll tell you right away if you've tightened things too far.
 

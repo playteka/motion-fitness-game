@@ -363,7 +363,7 @@ export const LYING = {
   // 上下位置给得很宽：摄像头放桌上时躺姿会出现在画面偏下，放地上时又接近画面中央，
   // 这条只负责挡掉「整体跑到画面上半部分 / 贴边」的离谱情况，不该逼着用户为了对齐轮廓去挪地方。
   bandTol: 0.40,
-  edgeMargin: 0.02,  // 身体不能贴边（贴边就说明没完整进画）
+  edgeMargin: 0.01,  // 身体不能贴边（贴边就说明没完整进画）——放宽到 1%，别把「脚刚好压在边上」当成没进画
 };
 
 /**
@@ -419,7 +419,7 @@ export class Calibrator {
 
     // 可见度门槛放宽到 0.3：侧拍时远侧肢体天然容易被挡住，
     // 原来的门槛会让「人明明在画面里」也判成不可见，从而卡住整个校准。
-    const visible = !!(f && f.ok && f.bodyVisible && f.coreVis > 0.3
+    const visible = !!(f && f.ok && f.bodyVisible && f.coreVis > 0.2
       && f.perSide[f.side] && Number.isFinite(f.perSide[f.side].knee));
     push('visible', visible);
     if (!visible) {
