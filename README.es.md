@@ -2,10 +2,11 @@
 
 [中文](README.md) · [English](README.en.md) · [Español](README.es.md) · [Français](README.fr.md)
 
-Un minijuego de fitness que reconoce tus movimientos con una cámara normal: **conteo automático de sentadilla / zancada / flexión / puente de glúteos**, **cronómetro automático de plancha / puente estático**
-y **puntuación paso a paso según la técnica**: cada paso que cumples suma puntos al instante, suena un aviso y la voz lo anuncia en alto.
+Un minijuego de fitness que reconoce tus movimientos con una cámara normal: **22 ejercicios** repartidos en cinco categorías — **tren superior / tren inferior / core / cuerpo completo / estiramientos** —;
+en la página de inicio eliges el ejercicio por categoría y entras a entrenar directamente; **los de repeticiones cuentan solos y los de cronómetro cronometran solos**,
+y además **puntúan paso a paso según «la técnica del ejercicio»**: cada paso que cumples suma puntos al instante, suena un aviso y la voz lo anuncia en alto.
 
-La interfaz está disponible en **中文 / English / Español / Français**; puedes cambiar de idioma cuando quieras desde la esquina superior derecha de la página.
+La interfaz está disponible en **中文 / English / Español / Français**; puedes cambiar de idioma cuando quieras desde el **⚙️ Ajustes** de la esquina superior derecha (el idioma, el modelo de detección, los efectos de sonido y la música de fondo están todos ahí).
 
 Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la carpeta local `vendor/`, así que **no se conecta a internet y la imagen no se sube a ningún servidor**.
 
@@ -24,33 +25,43 @@ Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la car
   - [Sin Node.js: también puedes usar Python](#sin-nodejs-también-puedes-usar-python)
 - [Iniciar y acceder](#iniciar-y-acceder)
 - [Permisos de cámara](#permisos-de-cámara)
+- [Página de inicio y página del ejercicio](#página-de-inicio-y-página-del-ejercicio)
+- [Ventana de ajustes (idioma / modelo / sonido)](#ventana-de-ajustes-idioma--modelo--sonido)
 - [Calibración previa](#calibración-previa)
 - [Cómo usarlo: la posición de la cámara es clave](#cómo-usarlo-la-posición-de-la-cámara-es-clave)
+- [Catálogo de ejercicios (22 ejercicios)](#catálogo-de-ejercicios-22-ejercicios)
 - [Reglas de puntuación](#reglas-de-puntuación)
 - [Idiomas](#idiomas)
 - [Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico](#si-no-entras-en-el-contorno-o-no-pasa-nada-cuatro-pasos-de-diagnóstico)
 - [Preguntas frecuentes](#preguntas-frecuentes)
 - [Pruebas](#pruebas)
 - [Estructura del proyecto](#estructura-del-proyecto)
-- [Ajustar los puntos o los umbrales por tu cuenta](#ajustar-los-puntos-o-los-umbrales-por-tu-cuenta)
+- [Añadir ejercicios / ajustar puntos / cambiar umbrales](#añadir-ejercicios--ajustar-puntos--cambiar-umbrales)
 - [Privacidad y licencia](#privacidad-y-licencia)
 
 ---
 
 ## Puntos destacados
 
+- **Página de inicio (cinco categorías)**: al entrar lo primero que ves es un muro de ejercicios por categorías — tren superior (3) · tren inferior (7) · core (6) · cuerpo completo (5) · estiramientos (2) —,
+  cada ejercicio con su tarjeta (icono + nombre + repeticiones/cronómetro + objetivo + criterio de detección) y, arriba, un buscador. Pulsa una tarjeta para entrar en la página del ejercicio y con «Volver al inicio», arriba a la izquierda, vuelves cuando quieras.
+  Ejercicios como «sentadilla con salto» y «zancada con salto» aparecen a la vez en dos categorías (al pulsarlos es el mismo ejercicio).
+- **Página del ejercicio + ventana de ajustes**: arriba a la derecha de la página del ejercicio está ⚙️ Ajustes, y la ventana reúne el **idioma, el modelo de detección, los efectos de sonido, la voz y la música de fondo**,
+  además de los interruptores de espejo, modo estricto, esqueleto, ángulos y métricas — ya no tienes que buscar botones por toda la pantalla.
 - **Calibración previa**: antes de empezar, en la imagen aparece una **silueta punteada del cuerpo** (solo el contorno exterior, sin alinear ningún esqueleto) y arriba aparece un texto que te indica
   «entra dentro del contorno punteado»; **basta con que se detecte el cuerpo y que todo el cuerpo esté dentro del encuadre para poder empezar** (unos 0,6 segundos), mientras que
   la distancia, el centrado, la altura, el ángulo y la quietud son solo recomendaciones (marcadas con «·» en el panel) y ya no bloquean el inicio.
 - **Puntuación progresiva según la técnica**: cada ejercicio se divide en 4-6 pasos que se pueden evaluar; cada paso correcto suma puntos al instante, suena un aviso y se marca una casilla;
   si completas todos los pasos de la ronda, te llevas una bonificación de puntuación perfecta; en los ejercicios de cronómetro, **cada segundo aguantado suma +1 punto**.
-- **Detección de repeticiones válidas (permisiva por defecto)**: **si haces el movimiento a grandes rasgos, cuenta** — las sentadillas y zancadas menos profundas, las flexiones que bajan solo una parte del recorrido y los puentes de glúteo que no suben mucho también cuentan, mientras la voz corrige «baja más / baja un poco más / sube más las caderas / no hundas la lumbar» y la puntuación se ajusta según la calidad; activa el interruptor **Modo estricto** del panel si quieres que «solo cuente una repetición completa». Lo que no has hecho de verdad (un simple balanceo) no se cuenta ni genera avisos insistentes.
+- **Detección de repeticiones válidas (permisiva por defecto)**: **si haces el movimiento a grandes rasgos, cuenta** — las sentadillas y zancadas menos profundas, las flexiones que bajan solo una parte del recorrido y los puentes de glúteo que no suben mucho también cuentan, mientras la voz corrige «baja más / baja un poco más / sube más las caderas / no hundas la lumbar» y la puntuación se ajusta según la calidad; si quieres que «solo cuente si bajas hasta el fondo», activa el **modo estricto** en ⚙️ Ajustes. Lo que no has hecho de verdad (un simple balanceo) no se cuenta ni genera avisos insistentes.
+- **Todos los ejercicios indican su «criterio de detección»**: la tarjeta y la página del ejercicio señalan por lo que se evalúa ese movimiento (flexión de codo / flexión de rodilla /
+  altura de la cadera / pies en el aire / corrección de la postura …), y los que la cámara no puede medir con precisión se marcan además como **detección aproximada**.
 - **Estado en tiempo real**: debajo de la imagen siempre ves «en qué estado estás, en qué paso te has quedado y cuántos grados te faltan».
 - **🐞 Métricas**: muestra con un clic todos los números en bruto que ve el detector (vista, visibilidad, ángulos de cada articulación), así localizas de un vistazo cualquier problema de colocación.
 - **Voz con conteo + sonidos**: cada paso cumplido suena con un aviso ascendente; la primera vez que lo cumples, la voz lo anuncia, y cada 50 puntos te canta la puntuación.
 - **La voz ante todo**: si no te encuentra te llama, dice en voz alta qué paso del movimiento toca y cuánto te falta, y corrige al instante cuando la postura no es correcta,
   y los pasos cumplidos, el conteo, la puntuación y el resumen de la serie también se dicen en voz alta: casi no hace falta mirar la pantalla.
-- **🎶 Música de fondo alegre**: una BGM en bucle integrada (sintetizada en vivo: no ocupa espacio ni necesita internet) y el interruptor «🎶 Música de fondo» en la esquina superior derecha para activarla o desactivarla cuando quieras;
+- **🎶 Música de fondo alegre**: una BGM en bucle integrada (sintetizada en vivo: no ocupa espacio ni necesita internet), y en ⚙️ Ajustes tienes el interruptor «🎶 Música de fondo» para activarla o desactivarla cuando quieras;
   al anunciar un consejo en voz alta, la música baja automáticamente para no tapar la voz.
 - **🦴 Esqueleto**: puedes ocultarlo y dejar solo la imagen de la cámara; las anotaciones de ángulos se activan por separado.
 - **Anillo de progreso del objetivo, mejor marca e historial de entrenamientos** (se guardan en el navegador).
@@ -321,12 +332,13 @@ las otras cinco se marcan con «·» y son solo **recomendaciones**: seguirlas h
 | Ángulo correcto (recomendado) | En la sentadilla hay que **ponerse de frente** a la cámara; en el resto de ejercicios, **de perfil** |
 | Sin moverte (recomendado) | Estar quieto hace que el reconocimiento sea más estable (también puedes empezar sin quedarte quieto) |
 
-**Cada uno de los seis ejercicios tiene su propia silueta**, así que solo tienes que colocarte y encajar con el contorno: la sentadilla es una postura de pie de frente, la zancada una postura de pie de perfil,
-la flexión una **posición alta de flexión, vista de perfil** (brazos estirados apoyados en el suelo), la plancha una **posición tumbada de perfil apoyada en los antebrazos** (sobre los antebrazos, cuerpo bajo),
-y el puente de glúteos y el puente estático una **postura tumbada de perfil con las piernas dobladas** (boca arriba, rodillas dobladas, pies apoyados en el suelo, cadera apoyada en el suelo).
+**Cada ejercicio tiene su propia silueta** (se elige automáticamente según el ángulo de cámara y la postura del ejercicio), así que solo tienes que colocarte y encajar con el contorno:
+los ejercicios de frente (sentadilla con peso corporal / sentadilla sumo / sentadilla con salto / salto al cajón / burpee) usan una silueta de pie de frente; los ejercicios de pie, una silueta de pie de perfil;
+los de flexión (incluido el escalador) usan una **posición alta de flexión, vista de perfil** (brazos estirados apoyados en el suelo); la plancha y la plancha lateral, una **posición tumbada de perfil apoyada en los antebrazos** (cuerpo bajo, sobre los antebrazos);
+y los ejercicios tumbados como el puente de glúteos / los encogimientos / la elevación de piernas tumbado / el bicho muerto usan una **postura tumbada boca arriba de perfil con las piernas dobladas** (boca arriba, rodillas dobladas, pies apoyados en el suelo).
 Al grabar de perfil, el contorno se voltea automáticamente de izquierda a derecha según hacia dónde estés mirando.
 
-Cuando las siete comprobaciones están correctas y se mantienen un momento, **el contorno punteado desaparece al instante** (esa es la señal de que se ha reconocido tu cuerpo entero),
+Cuando las dos comprobaciones obligatorias están correctas y se mantienen unos 0,6 s, **el contorno punteado desaparece al instante** (esa es la señal de que se ha reconocido tu cuerpo entero),
 y después se lanza automáticamente la cuenta atrás 3-2-1 que inicia el conteo: no hay que pulsar ningún botón.
 Al terminar una serie vuelves a la calibración: esta vez el contorno se queda en verde y eres tú quien empieza la serie siguiente con «Empezar» (o la barra espaciadora) —
 así puedes descansar y mirar el resumen sin que te arrastre enseguida a la serie siguiente.
@@ -338,26 +350,86 @@ así puedes descansar y mirar el resumen sin que te arrastre enseguida a la seri
 
 ---
 
+## Página de inicio y página del ejercicio
+
+**Página de inicio**: al entrar lo primero que ves es un muro de ejercicios por categorías, dividido en cinco bloques — **tren superior / tren inferior / core / cuerpo completo / estiramientos** —,
+y dentro de cada bloque cada ejercicio tiene su tarjeta: icono, nombre, si cuenta repeticiones o cronometra, el objetivo por defecto y el **criterio de detección** (por lo que se evalúa ese ejercicio).
+Con el buscador de arriba puedes encontrar un ejercicio directamente por su nombre (por ejemplo, escribe «flexión» o «push»).
+
+- Pulsa cualquier tarjeta → entras en la **página del ejercicio** (cámara + lista de pasos de la técnica + puntuación + ajuste del objetivo + registros).
+- Con «Volver al inicio», arriba a la izquierda de la página del ejercicio, vuelves al muro de ejercicios; arriba a la derecha está ⚙️ **Ajustes**.
+- Los ejercicios que pertenecen a dos categorías a la vez (sentadilla con salto, zancada con salto, escaladores) aparecen en los dos bloques, pero al entrar es el mismo ejercicio.
+
+## Ventana de ajustes (idioma / modelo / sonido)
+
+Pulsa ⚙️ arriba a la derecha de la página del ejercicio y se abre la ventana de ajustes, que reúne todos los interruptores:
+
+| Grupo | Opciones |
+|---|---|
+| Idioma | 中文 / English / Español / Français (se aplica al instante: cambian a la vez los nombres de los ejercicios y los pasos de la técnica) |
+| Modelo de detección | Ligero (fluido, por defecto) / Completo (más preciso; la primera vez que cambias hay que descargar un modelo adicional y a partir de ahí funciona sin conexión) |
+| Sonido | 🔊 Voz · 🎵 Efectos · 🎶 Música de fondo |
+| Imagen y detección | 🪞 Espejo · ✅ Modo estricto · 🦴 Esqueleto · 📐 Ángulos · 🐞 Métricas |
+
+Puedes cerrarla pulsando fuera de la ventana o con `Esc` y `G`.
+
+---
+
 ## Cómo usarlo: la posición de la cámara es clave
 
-**En la sentadilla hay que ponerse de frente a la cámara; en los otros cinco ejercicios, de perfil**:
+**Cámara de frente: sentadilla con peso corporal, sentadilla sumo, sentadilla con salto, salto al cajón y burpee; el resto de ejercicios se hacen de perfil a la cámara.**
+La primera línea de «la técnica del ejercicio», dentro de la página del ejercicio, te dice cómo colocarte (cada tarjeta indica además su criterio de detección).
 
-- **Sentadilla**: de frente a la cámara. En la sentadilla, la flexión de rodilla ocurre en el eje «de delante hacia atrás» y, al grabar de lado, ese eje cae justo sobre el eje horizontal de la imagen,
-  donde se mide mejor; pero **solo de frente a la cámara se ve si las rodillas se meten hacia dentro** y si los dos lados son simétricos, así que la sentadilla se hace de frente.
-  La profundidad se mide ahora con «cuánto más alta está la cadera que la rodilla», un valor que en vista frontal no se comprime y que resulta incluso más directo que el ángulo de rodilla.
+- **Ejercicios de frente** (sentadilla con peso corporal / sentadilla sumo / sentadilla con salto / salto al cajón / burpee): de frente a la cámara. La profundidad se mide con «cuánto más alta está la cadera que la rodilla»,
+  un valor que en vista frontal no se comprime; y además **solo de frente a la cámara se ve si las rodillas se meten hacia dentro** y si los dos lados son simétricos.
 
 - A **2-3 m** de la cámara, con **el cuerpo entero dentro del encuadre** (de la cabeza a los pies);
-- **Zancada**: de pie y de perfil a la cámara, de forma que en el encuadre se vean a la vez tobillos, rodillas, cadera y hombros;
-- **Flexión / plancha**: túmbate o apóyate en perpendicular a la cámara, con las manos y los pies dentro del encuadre;
-- **Puente de glúteos / puente estático**: tumbado de lado, de forma que se vean a la vez hombros, cadera, rodillas y tobillos;
+- **Zancada al frente / sentadilla búlgara**: de pie y de perfil a la cámara, de forma que en el encuadre se vean a la vez tobillos, rodillas, cadera y hombros;
+- **Flexión / plancha / escaladores**: el cuerpo en perpendicular a la cámara, con las manos y los pies dentro del encuadre;
+- **Puente de glúteos / encogimientos / elevación de piernas tumbado / bicho muerto / plancha lateral**: tumbado de lado, de forma que se vean a la vez hombros, cadera, rodillas y tobillos;
+- **Estiramientos**: en la flexión de pie, de pie y de perfil a la cámara; en la flexión sentado, sentado en el suelo y de perfil;
 - Con una luz uniforme y un fondo no demasiado recargado; la ropa ajustada hace que el reconocimiento sea más estable.
-- **¿Sin sonido?** ① comprueba que la pestaña no esté silenciada (icono del altavoz) ② pulsa una vez el interruptor «🔊 Voz»: reproduce una frase de prueba al instante ③ abre «🐞 Métricas»: la última línea muestra «Sonido» como `running` y un número de voces mayor que 0.
+- **¿Sin sonido?** ① comprueba que la pestaña no esté silenciada (icono del altavoz) ② abre ⚙️ Ajustes y pulsa una vez «🔊 Voz»: reproduce una frase de prueba al instante ③ abre «🐞 Métricas»: la última línea muestra «Sonido» como `running` y un número de voces mayor que 0.
 
-**Ojo: el reconocimiento empieza en cuanto eliges el ejercicio, no hace falta pulsar «Empezar» antes.**
-**Fíjate en el orden: entras en el contorno punteado → se reconoce tu cuerpo entero (el contorno punteado desaparece) → cuenta atrás 3-2-1 automática → empieza el conteo;
+**Fíjate en el orden: eliges el ejercicio → entras en el contorno punteado → se reconoce tu cuerpo entero (el contorno punteado desaparece) → cuenta atrás 3-2-1 automática → empieza el conteo;
 al terminar una serie vuelves a la calibración y pulsas «Empezar» (o la barra espaciadora) para la serie siguiente.**
+La fase de calibración solo comprueba la colocación: no cuenta repeticiones ni da puntos.
 
-**Atajos de teclado**: `1`–`6` cambiar de ejercicio · `Espacio` iniciar/pausar · `R` reiniciar el conteo · `Esc` terminar la serie · `M` espejo · `S` esqueleto · `F` pantalla completa del vídeo
+**Atajos de teclado**: `1`–`9` cambiar de ejercicio · `H` inicio · `G` ajustes · `Espacio` iniciar/pausar · `R` reiniciar el conteo · `Esc` terminar la serie · `M` espejo · `S` esqueleto · `F` pantalla completa del vídeo
+
+---
+
+## Catálogo de ejercicios (22 ejercicios)
+
+| Categoría | Ejercicio (icono) | Tipo | Criterio de detección | Objetivo por defecto |
+|---|---|---|---|---|
+| 💪 Tren superior | Flexión estándar 💪 | Repeticiones | Flexión de codo | 12 reps |
+| 💪 Tren superior | Flexiones abiertas ↔️ | Repeticiones | Flexión de codo | 12 reps |
+| 💪 Tren superior | Flexiones diamante 💎 | Repeticiones | Flexión de codo | 10 reps |
+| 🦵 Tren inferior | Sentadilla con peso corporal 🏋️ | Repeticiones | Flexión de rodilla (profundidad en vista frontal) | 15 reps |
+| 🦵 Tren inferior | Sentadilla sumo 🤼 | Repeticiones | Flexión de rodilla | 15 reps |
+| 🦵 Tren inferior | Sentadilla búlgara 🦵 | Repeticiones | Flexión de rodilla | 12 reps |
+| 🦵 Tren inferior | Zancada al frente 🚶 | Repeticiones | Ángulo de la rodilla delantera + altura de la rodilla trasera | 16 reps |
+| 🦵 Tren inferior | Zancada atrás ↩️ | Repeticiones | Flexión de rodilla | 16 reps |
+| 🦵 Tren inferior | Puente de glúteos 🌉 | Repeticiones | Altura de la cadera | 15 reps |
+| 🦵 Tren inferior | Sentadilla con salto 🚀 | Repeticiones | Flexión de rodilla + pies en el aire | 12 reps |
+| 🔥 Core | Plancha 🧘 | Cronómetro | Tiempo aguantando la postura | 45 s |
+| 🔥 Core | Plancha lateral 🧎 | Cronómetro | Corrección de la postura (detección aproximada) | 30 s |
+| 🔥 Core | Bicho muerto 🐞 | Repeticiones | Alternancia de piernas | 16 reps |
+| 🔥 Core | Encogimientos 🌀 | Repeticiones | Altura de los hombros respecto al suelo | 20 reps |
+| 🔥 Core | Encogimientos inversos 🔃 | Repeticiones | Plegado de cadera | 15 reps |
+| 🔥 Core | Elevación de piernas tumbado 🦿 | Repeticiones | Plegado de cadera | 15 reps |
+| 🤸 Cuerpo completo | Burpee 💥 | Repeticiones | Orden de la secuencia (sentadilla → apoyo → salto) | 10 reps |
+| 🤸 Cuerpo completo | Escaladores ⛰️ | Repeticiones | Alternancia de piernas | 24 reps |
+| 🤸 Cuerpo completo | Salto al cajón 🦘 | Repeticiones | Flexión de rodilla + pies en el aire (detección aproximada) | 10 reps |
+| 🤸 Cuerpo completo | Sentadilla con salto 🚀 | Repeticiones | Flexión de rodilla + pies en el aire | 12 reps |
+| 🤸 Cuerpo completo | Zancada con salto ⤴️ | Repeticiones | Flexión de rodilla + pies en el aire | 14 reps |
+| 🧘 Estiramientos | Flexión de pie 🙇 | Cronómetro | Corrección de la postura | 30 s |
+| 🧘 Estiramientos | Flexión sentado 🧎‍♂️ | Cronómetro | Corrección de la postura | 30 s |
+
+> La «sentadilla con salto» pertenece a la vez a tren inferior y a cuerpo completo, y la «zancada con salto» a cuerpo completo: un mismo ejercicio puede aparecer en varias categorías.
+> El criterio de detección es **lo que la cámara mide de verdad**; los ejercicios marcados como **detección aproximada** (plancha lateral, salto al cajón, etc.) solo pueden comprobar que «la postura está más o menos bien»:
+> la puntuación y el cronómetro funcionan igual, pero no lo tomes como un árbitro estricto de la postura.
 
 ---
 
@@ -422,16 +494,28 @@ En la sentadilla se usa la **vista frontal** y la profundidad se mide con «cuá
 | ⑤ Aguanta 30 segundos sin moverte | Mantener 30 segundos completos | +25 |
 | ⏱ Cada segundo que aguantas | Mientras la postura sea válida | +1/s |
 
-### Puente estático (63 puntos por ronda + 1 punto por segundo)
+### Sobre los ejercicios que no están en la lista
 
-| Paso | Condición | Puntos |
+> Esta versión del catálogo se ha ajustado a la lista de 22 ejercicios indicada por el usuario, y el puente estático no está entre ellos; si lo quieres,
+> duplica en `src/catalog.js` una entrada `bridge`, cambia el `kind` a `'hold'` y vuelve a ejecutar `npm test` para recuperarlo
+> (tanto el motor de reconocimiento como el plan de puntuación ya están hechos; mira [añadir ejercicios](#añadir-ejercicios--ajustar-puntos--cambiar-umbrales)).
+
+### Familias genéricas de puntuación
+
+Además de los 5 planes escritos a mano de arriba, el resto de ejercicios comparten 8 **planes de familia** (los ejercicios de una misma familia se evalúan con la misma lógica, solo cambian los umbrales):
+
+| Plan de familia | En qué ejercicios se usa | Pasos |
 |---|---|---|
-| ① Túmbate boca arriba con las rodillas flexionadas y los pies bien apoyados a la anchura de la cadera | Postura tumbado boca arriba con las rodillas flexionadas | +6 |
-| ② Sube la cadera al punto más alto | Elevación de cadera > 0.32 veces la longitud del torso | +12 |
-| ③ Aprieta los glúteos y aguanta 3 segundos | Mantener 3 segundos completos | +10 |
-| ④ Aguanta 10 segundos | Mantener 10 segundos completos | +15 |
-| ⑤ Aguanta 20 segundos | Mantener 20 segundos completos | +20 |
-| ⏱ Cada segundo que aguantas | Mientras la postura sea válida | +1/s |
+| Flexión-extensión de pie | Sentadilla sumo, sentadilla búlgara, zancada atrás | Colócate de pie → flexiona las rodillas y baja → llega a la amplitud objetivo → empuja con los pies y vuelve |
+| Flexión-extensión en apoyo boca abajo | Flexiones abiertas / diamante | Apóyate en línea recta → flexiona los codos y baja → hasta la profundidad objetivo → empuja y vuelve arriba |
+| Elevación tumbado boca arriba | Encogimientos, encogimientos inversos, elevación de piernas tumbado | Túmbate → inicia el impulso → sube hasta el punto → baja con control |
+| Alternancia izquierda-derecha | Bicho muerto, escaladores | Colócate → primer recogida / extensión → cambia al otro lado → mantén el ritmo |
+| Movimiento por fases | Burpee | Ponte de pie → agáchate y apoya las manos en el suelo → completa la fase intermedia → levántate y cierra |
+| Saltos | Sentadilla con salto, zancada con salto, salto al cajón | Ponte de pie → flexiona las rodillas para cargar → **los pies en el aire** → flexiona las rodillas al aterrizar |
+| Cronómetro (postura) | Plancha lateral | Colócate → cuerpo en línea recta → aguanta 3 / 10 / 30 s |
+| Cronómetro (estiramientos) | Flexión de pie, flexión sentado | Entra en la postura de estiramiento → relájate y respira → mantén 10 / 20 s |
+
+En los planes de familia de cronómetro también **sumas +1 punto por cada segundo que aguantas**; si la postura se viene abajo más de 1,2 segundos, el cronómetro se pausa y la voz te avisa.
 
 ### Sonidos y avisos de voz
 
@@ -446,13 +530,13 @@ En la sentadilla se usa la **vista frontal** y la profundidad se mide con «cuá
 | Mientras aguantas en un ejercicio de cronómetro | Un toque suave cada segundo + los puntos suben sin parar |
 | Objetivo cumplido / fin de la serie | Acorde de celebración + texto flotante del objetivo + panel de resumen (con los puntos y los pasos que te han faltado) |
 
-Tanto los sonidos como la voz se pueden desactivar con un solo clic desde la barra superior.
+Tanto los sonidos como la voz se pueden desactivar con un solo clic desde la ventana de ⚙️ Ajustes.
 
 ---
 
 ## Idiomas
 
-La interfaz incluye cuatro idiomas; cambia cuando quieras desde el desplegable **Idioma** de la esquina superior derecha y tu elección se recordará:
+La interfaz incluye cuatro idiomas; cambia cuando quieras desde el desplegable **Idioma** de ⚙️ Ajustes y tu elección se recordará:
 
 | Idioma | Código | Archivo de textos |
 |---|---|---|
@@ -470,7 +554,7 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 ## Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico
 
-**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v2.4`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
+**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v3.0`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
 
 **② Mira primero el panel «Calibración previa» de la derecha.** De las siete comprobaciones, la que no esté marcada te dice lo que tienes que hacer, siguiendo la frase que aparece debajo del panel:
 
@@ -485,7 +569,7 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 **③ Después, mira la barra de estado que hay debajo de la imagen**: muestra la misma frase; cuando ya has empezado a entrenar, indica «qué toca hacer ahora y cuánto te falta».
 
-**④ Activa «🐞 Métricas» en la esquina superior derecha** (funciona tanto en la calibración como durante el entrenamiento). Debajo de la imagen verás en tiempo real los números que ve el detector, por ejemplo:
+**④ Activa «🐞 Métricas» desde ⚙️ Ajustes (arriba a la derecha)** (funciona tanto en la calibración como durante el entrenamiento). Debajo de la imagen verás en tiempo real los números que ve el detector, por ejemplo:
 
 ```
 Vista Lateral ✓(0.18) · Cuerpo entero ✓ · Piernas visibles ✓ · Inclinación del torso 6° · Rodilla 176° · Codo 172° ·
@@ -518,7 +602,7 @@ Lo más probable es que el MIME del `.wasm` no sea el correcto. Lo más fiable e
 Comprueba además que la carpeta `vendor/` esté completa (al descargar el ZIP de GitHub es muy fácil olvidarse de descomprimir la carpeta entera).
 
 **P: ¿La imagen va a tirones o con pocos FPS?**
-Cambia el **Modelo** de la barra superior a **Ligero**; desactiva «📐 Ángulos»; o usa un equipo con más potencia. El reconocimiento sigue siendo útil a 10-15 FPS.
+Cambia el **Modelo de detección** de ⚙️ Ajustes a **Ligero**; desactiva «📐 Ángulos»; o usa un equipo con más potencia. El reconocimiento sigue siendo útil a 10-15 FPS.
 
 **P: ¿Funciona en el móvil?**
 Sí. Abre la misma dirección en el navegador del móvil (el móvil y el ordenador tienen que estar en la misma red local, y el servidor debe escuchar en `0.0.0.0`:
@@ -532,20 +616,22 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (513 pruebas)
-npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
-npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
+npm test                       # las cinco suites juntas (871 pruebas)
+npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino escrito a fuego en el código / estructura de los cuatro README
+npm run test:detectors         # lógica de detección y puntuación de los cinco detectores escritos a mano (con esqueletos sintéticos)
+npm run test:engines           # motores de reconocimiento genéricos (flexión-extensión / alternancia / giro / movimiento por fases / cronómetro + control de postura)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
-npm run test:page              # autochequeo del cableado de la página (ids del DOM / imports / recursos estáticos)
+npm run test:page              # autochequeo del cableado de la página (ids del DOM / imports / recursos estáticos / catálogo de 22 ejercicios y lista de categorías)
 npm run test:app               # prueba de integración: app.js real cargado sobre un DOM mínimo de prueba
 ```
 
 | Archivo de prueba | N.º de pruebas | Cobertura |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
-| `tests/test-detectors.mjs` | 212 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
-| `tests/test-page.mjs` | 97 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
-| `tests/test-app.mjs` | 172 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
+| `tests/test-detectors.mjs` | 217 | Conteo, cronómetro, puntos por paso y orden de puntuación de los cinco detectores escritos a mano, tanto con el ejercicio bien hecho como con todo tipo de errores, además de las comprobaciones de la calibración previa |
+| `tests/test-engines.mjs` | 134 | Motores genéricos: un ciclo y una repetición, permisivo frente a estricto, los límites del balanceo y de la velocidad excesiva, control de postura, despegue del suelo en los saltos, alternancia de lados, secuencia completa y pausa y reanudación del cronómetro |
+| `tests/test-page.mjs` | 308 | Cableado del DOM, importación y exportación de módulos, recursos estáticos, lista de categorías de los 22 ejercicios e integridad de los planes de puntuación |
+| `tests/test-app.mjs` | 180 | Arranque del `app.js` real, renderizado de la página de inicio, ventana de ajustes, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
 
 ---
 
@@ -559,36 +645,50 @@ motion-fitness-game/
 ├─ src/
 │  ├─ i18n.js            ★ Núcleo de idiomas (t / setLang / applyI18n)
 │  ├─ locales/           ★ Los cuatro archivos de textos: zh.js / en.js / es.js / fr.js
+│  ├─ catalog.js         ★ Catálogo de ejercicios: las cinco categorías + los 22 ejercicios (icono, tipo, motor, umbrales, criterio de detección)
 │  ├─ geometry.js        Geometría y tratamiento de señal (ángulos, suavizado One Euro)
-│  ├─ metrics.js         Métricas del ejercicio en cada fotograma (ángulos de las articulaciones, elevación de cadera, alineación del cuerpo…)
+│  ├─ metrics.js         Métricas del ejercicio en cada fotograma (ángulos de las articulaciones, elevación de cadera, altura respecto al suelo, alineación del cuerpo…)
 │  ├─ steps.js           ★ «Pasos de puntuación de la técnica» de cada ejercicio (condición + puntos + clave del aviso)
 │  ├─ calibration.js     ★ Calibración previa: contorno de la silueta punteada del cuerpo + las siete comprobaciones de colocación
-│  ├─ exercises.js       ★ Máquina de estados del reconocimiento de los seis ejercicios + motor de puntuación
+│  ├─ detector-base.js   Clase base de los detectores (puntuación por pasos, limitación de avisos, gestión de fotogramas perdidos)
+│  ├─ engines.js         ★ Motores de reconocimiento genéricos (flexión-extensión / alternancia / giro / movimiento por fases / cronómetro + control de postura)
+│  ├─ exercises.js       ★ Los cinco detectores escritos a mano (sentadilla con peso corporal / zancada al frente / flexión / puente de glúteos / plancha) + fábrica
 │  ├─ pose-engine.js     Envoltorio de MediaPipe PoseLandmarker + gestión de la cámara
 │  ├─ render.js          Dibujo del esqueleto
 │  ├─ audio.js           Sonidos + avisos de voz (según el idioma)
-│  └─ app.js             Interfaz, flujo de entrenamiento, lista de pasos, registros y bucle principal
-├─ tests/                Las cuatro suites de pruebas automatizadas
+│  └─ app.js             Interfaz, página de inicio, ventana de ajustes, flujo de entrenamiento, lista de pasos, registros y bucle principal
+├─ tests/                Las cinco suites de pruebas automatizadas
 └─ vendor/               MediaPipe tasks-vision (wasm) y modelo de postura (offline)
 ```
 
 ---
 
-## Ajustar los puntos o los umbrales por tu cuenta
+## Añadir ejercicios / ajustar puntos / cambiar umbrales
+
+**Para añadir un ejercicio basta con añadir una entrada al catálogo** (no hay que escribir código de reconocimiento):
+
+1. Añade una línea dentro de `EXERCISES`, en `src/catalog.js`, por ejemplo
+   `e('myMove', '🔧', ['core'], { plan: 'repSupine', posture: 'supine', judge: 'clear', target: 15, params: bend({ metric: 'kneeClear', gate: 'supineLow', up: 0.15, down: 0.85 }) })`;
+2. Añade `myMove: { name, cameraHint, goal }` en el apartado `ex` de los cuatro archivos `src/locales/*.js`
+   (los pasos de la técnica y los consejos toman automáticamente la plantilla de la «familia» a la que pertenece; si los quieres escribir tú, añade `howto` / `tips`);
+3. Ejecuta `npm test`: las pruebas comprueban que estén completas las cinco listas por categoría, los textos de los cuatro idiomas y el detector y el plan de puntuación de cada ejercicio.
 
 - **Cambiar los puntos o el texto de un paso**: edita `src/steps.js` (estructura y puntos) y `src/locales/*.js` (textos).
   Cada paso es un objeto `{ id, labelKey, points, check, hint }`; si `check(frame, det)` devuelve `true`, ese paso cuenta como cumplido.
-- **Cambiar los umbrales de decisión**: edita las constantes que hay al principio de cada ejercicio en `src/exercises.js`; todas llevan comentarios en chino:
-  - `SQUAT_FRONT` (en `src/steps.js`): umbrales de profundidad de la sentadilla en vista frontal — `standRatio` 0.86 / `enterRatio` 0.78 /
-  `bottomRatio` 0.40 (cuanto menor, más estricto) / `looseRatio` 0.62 (la línea de conteo en modo flexible); la unidad es «cuánto más alta está la cadera que la rodilla ÷ longitud de la pantorrilla»; de pie ≈ 1.0;
-  - `LUNGE`: los tres niveles de ángulo de rodilla de la zancada — `enterKnee` 146 (cuánto hay que doblar para que la ronda empiece a contar) / `looseKnee` 142 (la línea de conteo flexible) /
-  `downKnee` 128 (modo estricto y puntuación por profundidad); `backKneeDrop` 0.66 es la altura de la rodilla de atrás respecto al suelo ÷ longitud de la pantorrilla; `enterHoldMs` / `exitHoldMs` son las tolerancias al temblor;
-  - `PUSHUP.elbowFull` 106 (profundidad de puntuación completa) / `PUSHUP.looseElbow` 124 (la línea de conteo flexible);
-  - `BRIDGE.upRise` 0.22 / `BRIDGE_HOLD.holdRise` 0.20: altura a la que se sube la cadera en el puente de glúteos (en unidades de longitud del torso); `BRIDGE.minRepMs` 700 es la duración mínima de un ciclo completo (filtro de temblor);
-  - `PLANK.bodyStraight`: ángulo mínimo para considerar que el cuerpo está en línea recta en la plancha (por defecto 142°);
-  - `HoldDetector.graceMs`: margen de tolerancia de los ejercicios de cronómetro (por defecto 1200ms).
-  - **Flexible vs estricto**: `DetectorBase.strict` es `false` por defecto (si haces el movimiento a grandes rasgos, cuenta; la mala forma solo provoca una corrección hablada y un descuento de calidad);
-    el interruptor **✅ Modo estricto** de la interfaz cambia el criterio a «solo cuenta una repetición completa».
+- **Cambiar los umbrales de decisión**:
+  - **Ejercicios con motor genérico** (la gran mayoría del catálogo): cambia los `params` de ese ejercicio en `src/catalog.js` —
+    `metric` qué valor se usa (`kneeBent` / `elbow` / `hipRise` / `kneeClear` / `shoulderClear` …),
+    `gate` qué postura se exige (`stand` / `prone` / `supine` / `seated` / `sideLying` …),
+    `up` valor inicial, `down` valor de llegada, `looseP` línea de conteo permisiva, `minRepMs` tiempo mínimo de una repetición, `flight` si se exige despegar los pies del suelo;
+  - **Los cinco detectores escritos a mano**: cambia las constantes correspondientes de `src/exercises.js` (todas llevan comentarios en chino) —
+    `SQUAT_FRONT` (en `src/steps.js`): `standRatio` 0.86 / `enterRatio` 0.78 / `bottomRatio` 0.40 /
+    `looseRatio` 0.62, la unidad es «cuánto más alta está la cadera que la rodilla ÷ longitud de la pantorrilla», de pie ≈ 1.0;
+    `LUNGE`: los tres niveles de ángulo de rodilla `enterKnee` 146 / `looseKnee` 142 / `downKnee` 128, y `backKneeDrop` 0.66,
+    mientras que `enterHoldMs` / `exitHoldMs` son el margen de tolerancia al temblor; `PUSHUP.elbowFull` 106 / `looseElbow` 124;
+    `BRIDGE.upRise` 0.22, `minRepMs` 700; `PLANK.bodyStraight` 142;
+  - `HoldDetector.graceMs`: margen de gracia de los ejercicios de cronómetro (1200 ms por defecto).
+  - **Permisivo / estricto**: `DetectorBase.strict` es `false` por defecto (si haces el movimiento a grandes rasgos, cuenta; la mala forma solo provoca una corrección hablada y un descuento de calidad);
+    el interruptor «✅ Modo estricto» de la ventana de ajustes cambia el criterio a «solo cuenta si bajas hasta el fondo».
 
 Cuando termines, ejecuta `npm test`: las pruebas ya incluyen la amplitud estándar de estos ejercicios, así que te dirán al momento si te has pasado.
 

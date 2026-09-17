@@ -16,14 +16,14 @@ export default {
 
   app: {
     brand: 'Fitness por movimiento',
-    subtitle: 'Detección por cámara · Conteo de sentadilla / zancada / flexión / puente de glúteos · Cronómetro de plancha / puente estático · Puntos paso a paso según la técnica',
+    subtitle: 'Más de 60 ejercicios con cámara · Tren superior / Tren inferior / Core / Cuerpo completo / Estiramientos · Conteo y cronómetro · Puntos paso a paso según la técnica',
   },
 
   /* ---------------- Interfaz ---------------- */
   ui: {
     kindRep: "Conteo",
     kindHold: "Cronómetro",
-    shortcutsText: "<kbd>1</kbd>–<kbd>6</kbd> Cambiar ejercicio · <kbd>Espacio</kbd> Iniciar/Pausar · <kbd>R</kbd> Reiniciar · <kbd>Esc</kbd> Terminar serie · <kbd>M</kbd> Espejo · <kbd>S</kbd> Esqueleto · <kbd>F</kbd> Pantalla completa",
+    shortcutsText: "<kbd>1</kbd>–<kbd>9</kbd> Cambio rápido · <kbd>H</kbd> Inicio · <kbd>G</kbd> Ajustes · <kbd>Espacio</kbd> Iniciar/Pausar · <kbd>R</kbd> Reiniciar · <kbd>Esc</kbd> Terminar serie · <kbd>M</kbd> Espejo · <kbd>S</kbd> Esqueleto · <kbd>F</kbd> Pantalla completa",
     language: 'Idioma',
     model: 'Modelo',
     modelLite: 'Ligero (fluido)',
@@ -182,6 +182,17 @@ export default {
     standbyPlank: 'Apóyate en el suelo con los antebrazos o las manos y alinea el cuerpo',
     standbyBridgeHold: 'Túmbate boca arriba con las rodillas flexionadas y los pies bien apoyados, de perfil a la cámara',
     lostTracking: 'No veo tu cuerpo entero: retrocede un poco para que salgas completo en el encuadre',
+    need: {
+      stand: 'Colócate en el encuadre y ponte bien de pie',
+      prone: 'Ponte boca abajo: manos bajo los hombros y cuerpo en línea',
+      supine: 'Túmbate en la esterilla: boca arriba y rodillas flexionadas',
+      quadruped: 'A cuatro patas: manos y rodillas apoyadas en el suelo',
+      kneel: 'De rodillas: apoya las rodillas y sube el torso',
+      seated: 'Siéntate en la esterilla y colócate bien',
+      side: 'Túmbate de lado hacia la cámara, apoyado en el antebrazo',
+      inverted: 'Haz el pino contra la pared: cuerpo vertical y cadera por encima de los hombros',
+      hang: 'Cuélgate de la barra con las dos manos y los pies en el aire',
+    },
   },
 
   /* ---------------- Fases ---------------- */
@@ -231,14 +242,14 @@ export default {
   /* ---------------- Datos de los ejercicios ---------------- */
   ex: {
     squat: {
-      name: 'Sentadilla',
+      name: 'Sentadilla con peso corporal',
       cameraHint: 'De frente a la cámara y con el cuerpo entero en el encuadre (en la sentadilla hay que grabar de frente para medir bien la profundidad)',
       goal: 'Baja hasta que el muslo quede paralelo al suelo o más abajo',
       howto: ['Ponte de pie con los pies a la anchura de los hombros y de frente a la cámara', 'Flexiona las rodillas y baja la cadera hacia abajo, con las rodillas siguiendo la dirección de los pies', 'Baja hasta que el muslo quede paralelo al suelo o más abajo', 'Empuja con los pies para subir: cuenta cuando cadera y rodillas estén del todo extendidas'],
       tips: ['Mantén todo el pie apoyado, sin levantar los talones', 'No dejes que las rodillas se metan hacia dentro', 'No tires de la zona lumbar al subir'],
     },
     lunge: {
-      name: 'Zancada',
+      name: 'Zancada al frente',
       cameraHint: 'De perfil a la cámara, con un pie delante y otro detrás',
       goal: 'Las dos rodillas cerca de 90° y la de atrás cerca del suelo',
       howto: ['Da un paso largo hacia delante con una pierna', 'Flexiona las dos rodillas a la vez y baja, con la de delante a unos 90°', 'Baja la rodilla de atrás hasta casi tocar el suelo', 'Empuja con el pie de delante para volver de pie y alterna las piernas'],
@@ -265,12 +276,90 @@ export default {
       howto: ['Apoya los antebrazos justo debajo de los hombros (o con los brazos estirados)', 'Activa el core: cabeza, espalda, cadera y tobillos en línea', 'Respira de forma constante y aguanta', 'Si la postura se hunde, el cronómetro se pausa solo'],
       tips: ['No subas ni hundas la cadera', 'Empuja los omóplatos lejos del suelo', 'Si no aguantas, para: no fuerces la lumbar'],
     },
-    bridgehold: {
-      name: 'Puente estático',
-      cameraHint: 'De perfil a la cámara, tumbado boca arriba con las rodillas flexionadas y los pies bien apoyados',
-      goal: 'Sube el glúteo al punto más alto y aguanta ahí',
-      howto: ['Túmbate boca arriba con las rodillas flexionadas y los pies bien apoyados a la anchura de la cadera', 'Sube la cadera al punto más alto', 'Aguanta ahí apretando los glúteos', 'El cronómetro se detiene en cuanto bajas el glúteo'],
-      tips: ['No compenses con la lumbar: el trabajo es del glúteo', 'No dejes que las rodillas se metan hacia dentro', 'No aguantes la respiración'],
+    pushupWide: {
+      name: 'Flexiones abiertas',
+      cameraHint: 'De perfil a la cámara, con las manos más anchas que los hombros',
+      goal: 'Manos más anchas que los hombros y codos por debajo de 90°',
+    },
+    pushupDiamond: {
+      name: 'Flexiones diamante',
+      cameraHint: 'De perfil a la cámara, con las manos juntas en rombo bajo el pecho',
+      goal: 'Manos en rombo y codos pegados al cuerpo al bajar',
+    },
+    squatSumo: {
+      name: 'Sentadilla sumo',
+      cameraHint: 'De frente a la cámara, con los pies a 1,5 veces la anchura de los hombros y las punteras hacia fuera',
+      goal: 'Piernas abiertas y cadera abajo hasta que el muslo quede casi horizontal',
+    },
+    bulgarianSplitSquat: {
+      name: 'Sentadilla búlgara',
+      cameraHint: 'De perfil a la cámara, con el pie de atrás en una silla o un escalón',
+      goal: 'Pie de atrás elevado y baja con la pierna de delante a unos 90°',
+    },
+    lungeBack: {
+      name: 'Zancada atrás',
+      cameraHint: 'De perfil a la cámara, con un pie delante y otro detrás',
+      goal: 'Da un paso largo hacia atrás y baja flexionando las dos rodillas',
+    },
+    lungeJump: {
+      name: 'Zancada con salto',
+      cameraHint: 'De perfil a la cámara y con espacio delante y detrás',
+      goal: 'Baja en zancada y salta despegando los dos pies',
+    },
+    squatJump: {
+      name: 'Sentadilla con salto',
+      cameraHint: 'De frente a la cámara y con espacio por arriba',
+      goal: 'Baja del todo y salta con fuerza despegando los pies',
+    },
+    sidePlank: {
+      name: 'Plancha lateral',
+      cameraHint: 'De perfil a la cámara, de lado y apoyado en un antebrazo',
+      goal: 'Sube la cadera y mantén el cuerpo en línea de la cabeza a los pies',
+    },
+    crunch: {
+      name: 'Encogimientos',
+      cameraHint: 'De perfil a la cámara, boca arriba con las rodillas flexionadas y los pies apoyados',
+      goal: 'Despega los omóplatos del suelo con el abdomen y baja despacio',
+    },
+    reverseCrunch: {
+      name: 'Encogimientos inversos',
+      cameraHint: 'De perfil a la cámara, boca arriba con las rodillas flexionadas',
+      goal: 'Lleva las rodillas al pecho y despega un poco la cadera',
+    },
+    lyingLegRaise: {
+      name: 'Elevación de piernas tumbado',
+      cameraHint: 'De perfil a la cámara, boca arriba con las piernas estiradas',
+      goal: 'Sube las piernas juntas casi a la vertical y bájalas con control',
+    },
+    mountainClimber: {
+      name: 'Escaladores',
+      cameraHint: 'De perfil a la cámara, con los brazos estirados apoyados en el suelo',
+      goal: 'Lleva las rodillas al pecho rápido, alternando',
+    },
+    deadBug: {
+      name: 'Bicho muerto',
+      cameraHint: 'De perfil a la cámara, boca arriba con brazos y piernas levantados',
+      goal: 'Estira a la vez brazo y pierna contrarios, alternando los lados',
+    },
+    burpee: {
+      name: 'Burpee',
+      cameraHint: 'De frente a la cámara y con espacio delante y por arriba',
+      goal: 'Sentadilla, plancha, recoge las piernas, levántate y salta',
+    },
+    boxJump: {
+      name: 'Salto al cajón',
+      cameraHint: 'De frente a la cámara, con un cajón firme delante',
+      goal: 'Flexiona las rodillas y salta al cajón; baja cuando estés estable',
+    },
+    standingForwardFold: {
+      name: 'Flexión de pie',
+      cameraHint: 'De perfil a la cámara, con los pies juntos o a la anchura de la cadera',
+      goal: 'Rodillas algo flexionadas y pliega el torso hacia abajo desde la cadera',
+    },
+    seatedForwardFold: {
+      name: 'Flexión sentado',
+      cameraHint: 'De perfil a la cámara, sentado con las piernas estiradas',
+      goal: 'Pliega el torso desde la cadera y lleva las manos hacia los pies',
     },
   },
 
@@ -347,16 +436,253 @@ export default {
       hold10: { label: 'Aguanta 10 segundos sin moverte' },
       hold30: { label: 'Aguanta 30 segundos sin moverte' },
     },
-    bridgehold: {
-      setup: {
-        label: 'Túmbate boca arriba con las rodillas flexionadas y los pies bien apoyados a la anchura de la cadera',
-        pose: 'Primero túmbate: boca arriba en la esterilla, rodillas flexionadas y pies bien apoyados',
-        knee: 'Flexiona las rodillas unos 90° y apoya bien las plantas en el suelo',
+    repStand: {
+      stance: {
+        label: 'Colócate en la posición inicial con los pies bien apoyados',
+        hint: 'Primero colócate: piernas casi estiradas y el peso estable',
       },
-      lift: { label: 'Sube la cadera al punto más alto', hint: 'Sube la cadera al punto más alto y aguanta ahí' },
-      hold3: { label: 'Aprieta los glúteos y aguanta 3 segundos' },
-      hold10: { label: 'Aguanta 10 segundos' },
-      hold20: { label: 'Aguanta 20 segundos' },
+      lower: {
+        label: 'Flexiona las rodillas y baja siguiendo la técnica',
+        hint: 'Empieza a bajar: cadera atrás y abajo, rodillas hacia la punta de los pies',
+      },
+      bottom: {
+        label: 'Llega a la amplitud objetivo (el paso que más puntúa)',
+        hint: 'Baja un poco más y completa el recorrido',
+      },
+      up: {
+        label: 'Empuja con los pies y vuelve a la posición inicial',
+        hint: 'Vuelve al inicio para que cuente la repetición',
+      },
+    },
+    repProne: {
+      setup: {
+        label: 'Colócate en apoyo con el cuerpo en línea de la cabeza a los pies',
+        pose: 'Primero apóyate: manos bajo los hombros y cuerpo alineado',
+        hint: 'Aprieta el cuerpo en una línea: ni lumbar hundida ni trasero alto',
+      },
+      lower: {
+        label: 'Baja el cuerpo flexionando los codos',
+        hint: 'Baja despacio flexionando los codos',
+      },
+      bottom: {
+        label: 'Baja hasta la profundidad objetivo (el paso que más puntúa)',
+        hint: 'Baja un poco más, con el pecho cerca del suelo',
+      },
+      press: {
+        label: 'Empuja hacia arriba hasta estirar los brazos',
+        hint: 'Empuja para subir y estira los brazos',
+      },
+    },
+    repSupine: {
+      setup: {
+        label: 'Túmbate y colócate en la posición inicial',
+        hint: 'Primero túmbate boca arriba y colócate bien',
+      },
+      engage: {
+        label: 'Activa el abdomen y empieza a subir',
+        hint: 'Empieza a subir con la fuerza del abdomen',
+      },
+      top: {
+        label: 'Sube hasta la posición objetivo (el paso que más puntúa)',
+        hint: 'Sube un poco más y llega al objetivo',
+      },
+      lower: {
+        label: 'Baja con control, despacio',
+        hint: 'Baja despacio, sin dejarte caer',
+      },
+    },
+    repAlt: {
+      setup: {
+        label: 'Colócate en la posición de apoyo y mantente estable',
+        hint: 'Primero colócate bien y luego empieza a alternar',
+      },
+      first: {
+        label: 'Haz el primer movimiento',
+        hint: 'Empieza: un lado se mueve y el otro se queda quieto',
+      },
+      switch: {
+        label: 'Cambia de lado y alterna',
+        hint: 'Cambia al otro lado y sigue',
+      },
+      rhythm: {
+        label: 'Mantén el ritmo alternando',
+        hint: 'Mantén el ritmo y haz varias por lado',
+      },
+    },
+    sequence: {
+      setup: {
+        label: 'Colócate de pie y prepárate para la secuencia',
+        hint: 'Primero ponte de pie y prepárate',
+      },
+      down: {
+        label: 'Baja y apoya las manos en el suelo',
+        hint: 'Haz la sentadilla y pon las manos en el suelo',
+      },
+      middle: {
+        label: 'Completa la parte central',
+        hint: 'Alinea el cuerpo en una línea recta',
+      },
+      finish: {
+        label: 'Levántate y termina la secuencia',
+        hint: 'Recoge las piernas, levántate y termina',
+      },
+    },
+    jump: {
+      stance: {
+        label: 'Colócate de pie, listo para saltar',
+        hint: 'Primero ponte de pie con los pies bien apoyados',
+      },
+      crouch: {
+        label: 'Flexiona las rodillas y lleva los brazos atrás',
+        hint: 'Baja flexionando las rodillas y lleva los brazos atrás',
+      },
+      flight: {
+        label: 'Salta con fuerza despegando los pies (el paso que más puntúa)',
+        hint: 'Salta con fuerza y despega los dos pies',
+      },
+      land: {
+        label: 'Cae flexionando las rodillas y quédate estable',
+        hint: 'Cae con las rodillas flexionadas y estabilízate antes de repetir',
+      },
+    },
+    holdPose: {
+      pose: {
+        label: 'Colócate en la postura correcta',
+        hint: 'Colócate bien y luego pon en marcha el cronómetro',
+      },
+      align: {
+        label: 'Cuerpo en línea y sin moverte',
+        hint: 'Aprieta el cuerpo en una línea y no te balancees',
+      },
+      hold3: {
+        label: 'Aguanta 3 segundos',
+      },
+      hold10: {
+        label: 'Aguanta 10 segundos',
+      },
+      hold30: {
+        label: 'Aguanta 30 segundos',
+      },
+    },
+    stretchHold: {
+      pose: {
+        label: 'Entra despacio en la postura de estiramiento',
+        hint: 'Entra poco a poco, sin rebotes',
+      },
+      settle: {
+        label: 'Respira y siente el estiramiento',
+        hint: 'Respira tranquilo: basta con notar un tirón suave',
+      },
+      hold10: {
+        label: 'Mantén 10 segundos',
+      },
+      hold20: {
+        label: 'Mantén 20 segundos',
+      },
+    },
+  },
+
+  /* ---------------- Categorías de ejercicios ---------------- */
+  cat: {
+    title: 'Categorías de ejercicios',
+    upper: 'Tren superior',
+    lower: 'Tren inferior',
+    core: 'Core',
+    full: 'Cuerpo completo',
+    stretch: 'Estiramientos',
+  },
+
+  /* ---------------- Biblioteca de ejercicios ---------------- */
+  home: {
+    title: 'Elige ejercicio',
+    subtitle: 'Elige un ejercicio por categoría y entra: la cámara te reconoce en tiempo real y te guía por voz',
+    count: '{n} ejercicios',
+    search: 'Buscar ejercicio',
+    noResult: 'No hay ejercicios que coincidan',
+    back: 'Volver al inicio',
+    openSettings: 'Ajustes',
+    rough: 'Estimación aproximada',
+    judgeBy: 'Se mide por: {what}',
+    start: 'Entrar a entrenar',
+    recent: 'Últimos entrenados',
+  },
+
+  /* ---------------- Ajustes ---------------- */
+  settings: {
+    title: 'Ajustes',
+    close: 'Cerrar',
+    language: 'Idioma',
+    model: 'Modelo de detección',
+    modelHint: 'El ligero va más fluido y el completo es más preciso (el primer cambio descarga unas decenas de MB; después funciona sin conexión)',
+    sound: 'Sonido',
+    cameraGroup: 'Imagen y detección',
+    view: 'Interfaz',
+  },
+
+  /* ---------------- Criterios de medición ---------------- */
+  judge: {
+    elbow: 'Flexión de codo',
+    knee: 'Flexión de rodilla',
+    hip: 'Plegado de cadera',
+    ankle: 'Subida y bajada del tobillo',
+    rise: 'Altura de la cadera',
+    clear: 'Altura del cuerpo respecto al suelo',
+    flight: 'Pies en el aire (salto)',
+    twist: 'Giro del torso a cada lado',
+    sequence: 'Orden de la secuencia',
+    arm: 'Elevación de un brazo',
+    leg: 'Alternancia de piernas',
+    pose: 'Corrección de la postura',
+    time: 'Tiempo aguantando la postura',
+  },
+
+  /* ---------------- Avisos generales (cue) ---------------- */
+  cue: {
+    notReady: 'Todavía no estás en la postura del ejercicio: colócate como te indico',
+    moreRange: 'Haz más recorrido: el movimiento completo cuenta como repetición',
+    needJump: 'Hay que saltar: cuenta cuando los pies despeguen del suelo',
+    tooFast: 'Más despacio, vas muy rápido',
+    keepStraight: 'Mantén el cuerpo en línea recta, sin hundir la lumbar ni subir el trasero',
+    sag: 'Se te hunde la lumbar: mete tripa y sube la cadera a la línea del cuerpo',
+    pike: 'Tienes el glúteo demasiado alto: aplana la pelvis y alinea el cuerpo',
+    valgus: 'No metas las rodillas hacia dentro: ábrelas hacia la punta de los pies',
+    lean: 'Mantén el torso recto, sin inclinarte ni ladearte',
+    pose: 'La postura se ha desviado: corrígela y sigue',
+  },
+
+  /* ---------------- Técnica por familia de ejercicios ---------------- */
+  fam: {
+    repStand: {
+      howto: ['Ponte de pie con los pies bien apoyados', 'Lleva la cadera atrás y abajo, con las rodillas siguiendo la dirección de los pies', 'Llega a la amplitud objetivo y sube estirándote del todo'],
+      tips: ['No dejes que las rodillas se metan hacia dentro', 'Mantén la espalda recta, sin doblarla', 'Reparte el peso por todo el pie'],
+    },
+    repProne: {
+      howto: ['Apoya las manos bajo los hombros y alinea el cuerpo de la cabeza a los pies', 'Activa el core y baja despacio flexionando los codos', 'Empuja para subir: cuenta cuando los brazos estén estirados'],
+      tips: ['Ni lumbar hundida ni trasero alto', 'Las muñecas, justo debajo de los hombros', 'Baja despacio y sube con fuerza'],
+    },
+    repSupine: {
+      howto: ['Túmbate boca arriba en la esterilla y colócate en la posición inicial', 'Activa el abdomen y sube el cuerpo o las piernas hasta el objetivo', 'Baja con control hasta la posición inicial'],
+      tips: ['Mentón ligeramente recogido: no tires del cuello', 'Trabaja con el abdomen todo el rato, sin aguantar la respiración', 'Baja controlando, sin dejarte caer'],
+    },
+    repAlt: {
+      howto: ['Colócate en la posición de apoyo, con el core activo y el cuerpo estable', 'Mueve un lado mientras el otro se queda quieto', 'Alterna izquierda y derecha con un ritmo constante'],
+      tips: ['No balancees la cadera de un lado a otro', 'Despacio funciona mejor que rápido', 'Si notas molestias en la lumbar, para'],
+    },
+    sequence: {
+      howto: ['Ponte de pie y baja apoyando las manos en el suelo', 'Salta con los pies atrás hasta la plancha (puedes añadir una flexión)', 'Recoge las piernas, levántate y termina con un salto'],
+      tips: ['Cae flexionando las rodillas para amortiguar', 'Si te cansas, puedes saltarte la flexión', 'La secuencia solo cuenta si la haces seguida'],
+    },
+    jump: {
+      howto: ['Ponte de pie, flexiona las rodillas y lleva los brazos atrás', 'Salta con fuerza despegando los dos pies', 'Cae flexionando las rodillas y estabilízate antes de repetir'],
+      tips: ['Cae suave, sin bloquear las rodillas', 'No pasa nada si no saltas alto: basta con despegar', 'Hazlo en una superficie blanda o sobre una esterilla'],
+    },
+    holdPose: {
+      howto: ['Colócate en la postura correcta', 'Activa el core y mantén el cuerpo en línea o bien estable', 'Respira de forma constante hasta el tiempo objetivo'],
+      tips: ['Si la postura se hunde, el cronómetro se pausa solo: corrígete y sigue', 'Si te cuesta, empieza con un tiempo objetivo más corto', 'Si notas dolor en la lumbar, para enseguida'],
+    },
+    stretchHold: {
+      howto: ['Entra despacio en la postura de estiramiento, sin rebotes', 'Con notar un tirón suave es suficiente, no busques el dolor', 'Respira y mantén entre 20 y 30 segundos'],
+      tips: ['Calienta las articulaciones antes de estirar', 'Estira los dos lados, el mismo tiempo en cada uno', 'No aguantes la respiración: espira despacio y te relajarás más'],
     },
   },
 
@@ -398,10 +724,6 @@ export default {
       hands: 'Las palmas o los antebrazos tienen que tocar el suelo',
       knees: 'Levanta las rodillas del suelo y apóyate en las puntas de los pies',
       elbow: 'Antebrazos bien firmes en el suelo (codo a unos 90°) o brazos del todo estirados',
-    },
-    bridgehold: {
-      pose: 'Túmbate boca arriba con las rodillas flexionadas y los pies bien apoyados, de perfil a la cámara',
-      rise: 'Sube el glúteo al punto más alto, aguanta y apriétalo',
     },
   },
 

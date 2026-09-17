@@ -11,6 +11,7 @@
 import { toMetric, LandmarkSmoother, LM } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
 import { createDetector } from '../src/exercises.js';
+import { EXERCISES } from '../src/catalog.js';
 import {
   Calibrator, OUTLINE, LYING, outlinePath, outlineBounds, outlineKind,
 } from '../src/calibration.js';
@@ -549,33 +550,42 @@ console.log('\n[5] 平板支撑计时');
 }
 
 /* ------------------------------------------------------------------ *
- * 静态臀桥（计时）
+ * 计时类（通用 hold 引擎）：站立体前屈 / 侧平板
  * ------------------------------------------------------------------ */
 
-console.log('\n[6] 静态臀桥计时');
+/** 站立体前屈的合成姿势：躯干往前折（lean 越大越折） */
+const foldPose = (lean = 80) => standingPose({ knee: 176, lean, armDown: 90, ankleX: 1.0, view: 'side' });
+
+console.log('\n[6] 计时类动作（通用 hold 引擎）');
 {
-  const det = fresh('bridgehold');
+  const det = fresh('standingForwardFold');
   const r = makeRunner(det);
-  const holdTop = supinePose({
-    hip: { x: 0.80, y: BRIDGE_TOP.hipY }, thighUp: BRIDGE_TOP.thighUp,
-    knee: BRIDGE_TOP.knee, torsoUp: BRIDGE_TOP.torsoUp, armDown: -90, elbow: 178,
-  });
-  r.run([{ pose: holdTop, ms: 6000 }]);
-  near('顶住 6 秒 ≈ 计时 6 秒', det.holdMs / 1000, 6, 0.45);
+  r.run([{ pose: () => foldPose(80), ms: 6000 }]);
+  near('保持 6 秒 ≈ 计时 6 秒', det.holdMs / 1000, 6, 0.45);
+  ok('拉伸：进入姿势得分', r.steps.some((s) => s.id === 'pose'), r.stepIds().join(','));
+  ok('拉伸：保持 1.5 秒后得分', r.steps.some((s) => s.id === 'settle'));
+  ok('拉伸：保持期间每秒加分', r.points.length >= 4, `每秒得分 ${r.points.length} 次`);
 }
 {
-  const det = fresh('bridgehold');
-  const r = makeRunner(det);
-  // 躺平不顶起来 → 不计时
-  r.run([{ pose: bridgeFlatPose, ms: 3000 }]);
-  ok('躺着不顶不计时', det.holdMs === 0, `实际 ${(det.holdMs / 1000).toFixed(2)}`);
-  ok('提示顶起来', r.cues.some((c) => c.code === 'rise'));
-}
-{
-  const det = fresh('bridgehold');
+  // 站着没折下去 → 不计时，并提示「进入拉伸姿势」
+  const det = fresh('standingForwardFold');
   const r = makeRunner(det);
   r.run([{ pose: standingIdle, ms: 3000 }]);
-  ok('站姿不计时', det.holdMs === 0 && det.active === false);
+  ok('没进入拉伸姿势不计时', det.holdMs === 0 && det.active === false,
+    `holdMs=${det.holdMs} active=${det.active}`);
+  ok('给出了「该怎么做」的提示', typeof det.standby === 'string' && det.standby.length > 0, det.standby);
+}
+{
+  // 姿势垮掉超过宽限期 → 暂停计时；摆回去 → 继续累计
+  const det = fresh('standingForwardFold');
+  const r = makeRunner(det);
+  r.run([{ pose: () => foldPose(80), ms: 3000 }]);
+  const first = det.holdMs;
+  r.run([{ pose: standingIdle, ms: 2500 }]);
+  ok('姿势垮掉后暂停计时', det.holdMs <= first + 400 && det.active === false,
+    `垮掉前 ${(first / 1000).toFixed(2)}s → 垮掉后 ${(det.holdMs / 1000).toFixed(2)}s`);
+  r.run([{ pose: () => foldPose(80), ms: 2000 }]);
+  ok('摆回姿势后继续累计', det.holdMs > first + 1500, `实际 ${(det.holdMs / 1000).toFixed(2)}s`);
 }
 
 /* ------------------------------------------------------------------ *
@@ -676,18 +686,25 @@ console.log('\n[7] 按动作要领计分');
   ok('平板支撑：总分含每秒得分', det.score >= 8 + 12 + 10 + 4, `得分 ${det.score}`);
 }
 {
-  const det = fresh('bridgehold');
+  // 通用计时方案（holdPose）：侧平板这类动作「姿势到位 + 保持」就持续加分
+  const det = fresh('sidePlank');
   const r = makeRunner(det);
-  const holdTop = supinePose({
-    hip: { x: 0.80, y: BRIDGE_TOP.hipY }, thighUp: BRIDGE_TOP.thighUp,
-    knee: BRIDGE_TOP.knee, torsoUp: BRIDGE_TOP.torsoUp, armDown: -90, elbow: 178,
+  const sidePlankPose = supinePose({
+    hip: { x: 0.85, y: 0.80 }, thighUp: 95, knee: 178, torsoUp: 275, armDown: -90, elbow: 90,
   });
-  r.run([{ pose: holdTop, ms: 6000 }]);
-  ok('静态臀桥：就位与顶到最高点得分',
-    r.steps.some((s) => s.id === 'setup') && r.steps.some((s) => s.id === 'lift'));
-  ok('静态臀桥：保持 6 秒 ≈ 6 次每秒得分', r.points.length >= 5 && r.points.length <= 7,
-    `实际 ${r.points.length}`);
-  ok('静态臀桥：总分 = 要领分 + 每秒分', det.score >= 6 + 12 + 10 + 5, `得分 ${det.score}`);
+  r.run([{ pose: sidePlankPose, ms: 6000 }]);
+  near('侧平板：保持 6 秒 ≈ 计时 6 秒', det.holdMs / 1000, 6, 0.5);
+  ok('侧平板：姿势到位得分', r.steps.some((s) => s.id === 'pose'), r.stepIds().join(','));
+  ok('侧平板：保持 3 秒拿到里程碑', r.steps.some((s) => s.id === 'hold3'));
+  ok('侧平板：满分里程碑还拿不到', !r.steps.some((s) => s.id === 'hold30'));
+  ok('侧平板：总分含每秒得分', det.score >= 8 + 10 + 4, `得分 ${det.score}`);
+}
+{
+  // 站着不躺下 → 侧平板不计时
+  const det = fresh('sidePlank');
+  const r = makeRunner(det);
+  r.run([{ pose: standingIdle, ms: 3000 }]);
+  ok('侧平板：站姿不计时', det.holdMs === 0 && det.active === false);
 }
 {
   // 站着不动只能拿到“站姿”这一步的分，不能反复刷分
@@ -760,6 +777,37 @@ function calibOnce(cal, lm, now) {
   ok('站进轮廓里：保持一小会儿后判定校准完成', res.done === true, `progress=${res.progress.toFixed(2)}`);
   ok('校准完成时给出“可以开始”的提示', res.hintKey === 'calib.ready', res.hintKey);
   ok('深蹲要求的机位是正面', cal.view === 'front', cal.view);
+
+  // 1.2) 校准阶段会顺手记下「地面线」：抬腿 / 跳跃类动作要靠它算离地高度
+  {
+    const frames = [];
+    for (let i = 0; i < 30; i++) frames.push(calibOnce(cal, idleFront, 2000 + i * 33.4).f);
+    ok('校准过程中记录了地面线', Number.isFinite(cal.groundRef) && cal.groundRef > 0.5 && cal.groundRef < 1,
+      String(cal.groundRef));
+    const observed = frames.map((f) => f.groundY);
+    const avg = observed.reduce((a, b) => a + b, 0) / observed.length;
+    ok('记录的地面线与实际脚位一致', Math.abs(cal.groundRef - avg) < 0.02,
+      `groundRef=${cal.groundRef?.toFixed(3)} 实测均值=${avg.toFixed(3)}`);
+
+    // 地面线是「所有离地高度」的基准：把地面线整体下移 0.2，各离地高度应整体 +0.2/躯干长
+    // （这正是抬腿 / 跳起来时脚踝不能当地面用的原因）
+    const legUp = supinePose({
+      hip: { x: 0.75, y: 0.89 }, thighUp: 170, knee: 176, torsoUp: 270, armDown: -90, elbow: 178,
+    });
+    const metric = toMetric(legUp.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT);
+    const f0 = computeFrame(metric, null, 0, false, null);
+    const down = computeFrame(metric, { groundY: f0.groundY + 0.2 }, 0, false, null);
+    const expect = 0.2 / f0.torsoLen;
+    ok('地面线是离地高度的统一基准（下移 0.2 → 膝离地 +0.2/躯干长）',
+      Math.abs((down.kneeClear - f0.kneeClear) - expect) < 0.03,
+      `Δ=${(down.kneeClear - f0.kneeClear).toFixed(2)} 期望 ${expect.toFixed(2)}`);
+    ok('肩 / 手 / 髋离地高度同理',
+      Math.abs((down.shoulderClear - f0.shoulderClear) - expect) < 0.03
+      && Math.abs((down.wristClear - f0.wristClear) - expect) < 0.03
+      && Math.abs((down.hipClear - f0.hipClear) - expect) < 0.03);
+    ok('地面线在上（脚离地）时会得出正的「脚离地高度」',
+      down.ankleClear > 0.4, `ankleClear=${down.ankleClear.toFixed(2)}`);
+  }
 
   // 1.5) 只有「识别到人体 + 全身在画面里」是必须项，其余都是建议项
   {
@@ -900,7 +948,7 @@ function calibOnce(cal, lm, now) {
     ['pushup', proneArm, '俯卧撑', 0.45],
     ['plank', proneForearm, '平板支撑', 0.45],
     ['bridge', supineLegs, '臀桥', 0.35],
-    ['bridgehold', supineLegs, '静态臀桥', 0.35],
+    
   ]) {
     const cal = new Calibrator(id);
     let out = null;
@@ -1003,23 +1051,48 @@ function calibOnce(cal, lm, now) {
     ok('臀桥的头部贴近地面（不是抬着头的姿势）',
       headEndYs.every((y) => y > 0.72) && headEndYs.length > 0,
       `头端 y=${headEndYs.map((y) => y.toFixed(2)).join(',')}`);
-    // 静态臀桥与臀桥共用同一个剪影
-    ok('静态臀桥与臀桥共用同一剪影',
-      outlineKind('bridgehold') === outlineKind('bridge')
-      && JSON.stringify(outlinePath(outlineKind('bridgehold')))
-        === JSON.stringify(outlinePath(outlineKind('bridge'))));
+    // 躺姿动作共用同一个「横躺」剪影（臀桥 / 侧平板这类）
+    ok('臀桥剪影是横躺形状（与站姿不同）',
+      outlineKind('bridge') === 'bridge' && outlineKind('bridge') !== outlineKind('squat')
+      && JSON.stringify(outlinePath(outlineKind('bridge')))
+        !== JSON.stringify(outlinePath(outlineKind('squat'))));
   }
   {
     // 俯卧撑与平板支撑是两种不同形状，用户一眼能分辨
     ok('俯卧撑与平板支撑的剪影不是同一条曲线',
       JSON.stringify(outlinePath('pushup')) !== JSON.stringify(outlinePath('plank')));
-    // 每个动作都能查到自己的剪影种类
+    // 每个动作都能查到自己的剪影种类（由动作库的 view/posture/kind 推导）
     const expected = {
-      squat: 'front', lunge: 'side', pushup: 'pushup', plank: 'plank', bridge: 'bridge', bridgehold: 'bridge',
+      squat: 'front',
+      squatSumo: 'front',
+      squatJump: 'front',
+      burpee: 'front',
+      boxJump: 'front',
+      lunge: 'side',
+      lungeBack: 'side',
+      lungeJump: 'side',
+      bulgarianSplitSquat: 'side',
+      standingForwardFold: 'side',
+      pushup: 'pushup',
+      pushupWide: 'pushup',
+      pushupDiamond: 'pushup',
+      mountainClimber: 'pushup',
+      plank: 'plank',
+      sidePlank: 'plank',
+      bridge: 'bridge',
+      deadBug: 'bridge',
+      crunch: 'bridge',
+      reverseCrunch: 'bridge',
+      lyingLegRaise: 'bridge',
+      seatedForwardFold: 'bridge',
     };
-    ok('六个动作都能查到对应的剪影种类',
+    ok('所有动作都能查到对应的剪影种类',
       Object.entries(expected).every(([id, kind]) => outlineKind(id) === kind),
       Object.entries(expected).map(([id, kind]) => `${id}:${outlineKind(id)}≠${kind}`).join(' '));
+    ok('动作库里的动作都有剪影（不会掉回默认）',
+      EXERCISES.every((x) => ['front', 'side', 'pushup', 'plank', 'bridge'].includes(outlineKind(x.id))),
+      EXERCISES.filter((x) => !['front', 'side', 'pushup', 'plank', 'bridge'].includes(outlineKind(x.id)))
+        .map((x) => x.id).join(','));
     // 手写点列最容易出的错是「点序写乱」：相邻两点之间跨越大半张画面，画出来会有一条怪线
     const jumps = {};
     for (const kind of ['front', 'side', 'pushup', 'plank', 'bridge']) {

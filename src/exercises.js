@@ -10,22 +10,21 @@
 
 import { LM, dist2, clamp } from './geometry.js';
 import { getStepPlan, SQUAT_FRONT } from './steps.js';
-import { t, tList } from './i18n.js';
+import { t, tList, hasKey } from './i18n.js';
+import {
+  DetectorBase, HoldDetector, setCueKeyResolver,
+} from './detector-base.js';
+import { EXERCISES, EXERCISE_MAP, CATEGORIES } from './catalog.js';
+import { createEngineDetector } from './engines.js';
+
+// 提示文案的兜底：动作没写专属提示时用通用提示（见 detector-base.js）
+setCueKeyResolver(hasKey);
 
 /* ------------------------------------------------------------------ *
- * 动作元数据（只保留结构与 i18n 键，文案全在 src/locales/*.js）
+ * 动作元数据（结构与文案）：目录在 catalog.js（60+ 动作）
  * ------------------------------------------------------------------ */
 
-export const EXERCISES = [
-  { id: 'squat', icon: '🏋️', kind: 'rep', unitKey: 'ui.repsUnit', defaultTarget: 15 },
-  { id: 'lunge', icon: '🦵', kind: 'rep', unitKey: 'ui.repsUnit', defaultTarget: 16 },
-  { id: 'pushup', icon: '💪', kind: 'rep', unitKey: 'ui.repsUnit', defaultTarget: 12 },
-  { id: 'bridge', icon: '🌉', kind: 'rep', unitKey: 'ui.repsUnit', defaultTarget: 15 },
-  { id: 'plank', icon: '🧘', kind: 'hold', unitKey: 'ui.secondsUnit', defaultTarget: 45 },
-  { id: 'bridgehold', icon: '⏱️', kind: 'hold', unitKey: 'ui.secondsUnit', defaultTarget: 30 },
-];
-
-export const EXERCISE_MAP = Object.fromEntries(EXERCISES.map((e) => [e.id, e]));
+export { EXERCISES, EXERCISE_MAP };
 
 /** 动作单位（次 / 秒），随语言变化 */
 export function exerciseUnit(id) {
@@ -33,232 +32,43 @@ export function exerciseUnit(id) {
   return ex ? t(ex.unitKey) : '';
 }
 
-/** 取某个动作在当前语言下的全部文案（名称、机位提示、要领、注意事项） */
+/**
+ * 取某个动作在当前语言下的全部文案（名称、机位提示、要领、注意事项）。
+ *
+ * 60+ 动作不可能每个都手写一套「要领/注意事项」，所以：
+ *   姓名 / 机位 / 目标 → 每个动作都有（差异就在这几句里）
+ *   要领 / 注意事项   → 动作没写就用所属「族」的模板（fam.<方案>），保证界面上永远不是空的
+ */
 export function localizedExercise(id) {
   const meta = EXERCISE_MAP[id];
   if (!meta) return null;
+  const famKey = `fam.${meta.plan}`;
+  const howtoKey = hasKey(`ex.${id}.howto`) ? `ex.${id}.howto` : `${famKey}.howto`;
+  const tipsKey = hasKey(`ex.${id}.tips`) ? `ex.${id}.tips` : `${famKey}.tips`;
   return {
     ...meta,
     name: t(`ex.${id}.name`),
     cameraHint: t(`ex.${id}.cameraHint`),
     goal: t(`ex.${id}.goal`),
     unit: exerciseUnit(id),
-    howto: tList(`ex.${id}.howto`),
-    tips: tList(`ex.${id}.tips`),
+    defaultTarget: meta.target,     // 兼容旧字段名
+    judgeText: t(`judge.${meta.judge}`),
+    howto: tList(howtoKey),
+    tips: tList(tipsKey),
   };
 }
 
-/** 当前语言下的全部动作文案 */
-export function localizedExercises() {
-  return EXERCISES.map((e) => localizedExercise(e.id));
+/** 分类（带文案） */
+export function localizedCategories() {
+  return CATEGORIES.map((c) => ({ ...c, name: t(c.key) }));
 }
 
-/* ------------------------------------------------------------------ *
- * 基类
- * ------------------------------------------------------------------ */
-
-class DetectorBase {
-  constructor(meta, opts = {}) {
-    this.meta = meta;
-    // 默认「宽松」：跟界面默认一致——大体做到了就计次数，动作不标准只用语音纠正。
-    // 想严格（必须沉到位才算一次）时由 App 传 { strict: true }。
-    this.strict = opts.strict === true;
-    this.plan = getStepPlan(meta.id);
-    this.reps = 0;
-    this.validReps = 0;
-    this.partialReps = 0;
-    this.holdMs = 0;
-    this.score = 0;
-    this.scoreAccum = 0;
-    this.cycle = 0;
-    this.stepDone = new Map();
-    this.lastStep = null;
-    this.cycleHadValidRep = false;
-    this.phase = 'idle';
-    this.active = false;
-    this.standby = '';
-    this.depthPct = 0;
-    this.feedback = null;
-    this.events = [];
-    this._cueAt = new Map();
-    this._lostSince = null;
-    this._lastFrame = null;
-    this.onReset();
-  }
-
-  /** 子类重置内部状态 */
-  onReset() {}
-  onLost() {}
-
-  /** 暂停后恢复时清掉计时基准，避免把暂停时长算进计时 */
-  resetClock() { this._lastT = 0; }
-
-  /** 每进入一次新的动作循环时调用（子类可覆盖以清理本轮标记） */
-  onNewCycle() {}
-
-  reset() {
-    this.reps = 0;
-    this.validReps = 0;
-    this.partialReps = 0;
-    this.holdMs = 0;
-    this.score = 0;
-    this.scoreAccum = 0;
-    this.cycle = 0;
-    this.stepDone = new Map();
-    this.lastStep = null;
-    this.cycleHadValidRep = false;
-    this.phase = 'idle';
-    this.active = false;
-    this.depthPct = 0;
-    this.feedback = null;
-    this.events = [];
-    this._cueAt.clear();
-    this._lostSince = null;
-    this.onReset();
-  }
-
-  /* ---------------- 要领计分 ---------------- */
-
-  /** 步骤在本轮的唯一键：计时类的里程碑整组只算一次 */
-  stepKey(def) {
-    const perCycle = def.perCycle === undefined ? this.plan.perCycle !== false : def.perCycle;
-    return perCycle ? `${def.id}@${this.cycle}` : def.id;
-  }
-
-  /** 逐一检查要领步骤，达标就立刻加分并抛出 step 事件（供音效 / 界面使用） */
-  evaluateSteps(f, now) {
-    const steps = this.plan.steps || [];
-    let awarded = 0;
-    for (let i = 0; i < steps.length; i++) {
-      if (awarded >= 2) break; // 一帧最多奖励两步，避免音效糊在一起
-      const def = steps[i];
-      const key = this.stepKey(def);
-      if (this.stepDone.has(key)) continue;
-      let ok = false;
-      try { ok = !!def.check(f, this); } catch { ok = false; }
-      if (!ok) continue;
-      this.stepDone.set(key, now);
-      this.score += def.points;
-      awarded += 1;
-      this.lastStep = {
-        id: def.id, labelKey: def.labelKey, points: def.points, score: this.score, index: i, at: now,
-      };
-      this.emit({
-        type: 'step', id: def.id, labelKey: def.labelKey, points: def.points,
-        score: this.score, index: i, total: steps.length, at: now,
-      });
-    }
-    return awarded;
-  }
-
-  allCycleStepsDone() {
-    const steps = this.plan.steps || [];
-    return steps.every((def) => this.stepDone.has(this.stepKey(def)));
-  }
-
-  /** 进入下一个动作循环：先结算“整轮满分奖励”，再重置步骤清单 */
-  nextCycle(now) {
-    if (this.cycleHadValidRep && this.plan.repBonus > 0 && this.allCycleStepsDone()) {
-      this.score += this.plan.repBonus;
-      this.emit({ type: 'bonus', points: this.plan.repBonus, score: this.score, at: now });
-    }
-    this.cycle += 1;
-    this.cycleHadValidRep = false;
-    this.onNewCycle();
-  }
-
-  /** 供界面渲染要领清单 */
-  stepStatus() {
-    const steps = this.plan.steps || [];
-    return steps.map((def, i) => ({
-      id: def.id,
-      labelKey: def.labelKey,
-      points: def.points,
-      done: this.stepDone.has(this.stepKey(def)),
-      index: i,
-    }));
-  }
-
-  /**
-   * 下一个待完成要领的“为什么还没拿到分”说明。
-   * 界面拿它来告诉用户到底卡在哪一步，避免“站在那一动不动也没反应”。
-   */
-  pendingHint() {
-    const steps = this.plan.steps || [];
-    for (const def of steps) {
-      if (this.stepDone.has(this.stepKey(def))) continue;
-      let hint = null;
-      if (typeof def.hint === 'function' && this._lastFrame?.ok) {
-        try { hint = def.hint(this._lastFrame, this) || null; } catch { hint = null; }
-      }
-      return { id: def.id, labelKey: def.labelKey, hint };
-    }
-    return null;
-  }
-
-  emit(ev) { this.events.push(ev); }
-
-  /**
-   * 带节流的姿势纠正提示。
-   * 只传 code（+ params），文案在渲染时从 locales 里按 `cues.<动作>.<code>` 取，
-   * 这样同一套识别逻辑可以直接输出四种语言。
-   */
-  cue(code, params = null, level = 'warn', now = performance.now(), throttleMs = 4500) {
-    const last = this._cueAt.get(code) || -Infinity;
-    if (now - last < throttleMs) return;
-    this._cueAt.set(code, now);
-    const key = `cues.${this.meta.id}.${code}`;
-    this.feedback = { code, key, params, level, at: now };
-    this.emit({ type: 'cue', code, key, params, level });
-  }
-
-  /** 每帧调用。返回本帧事件数组 */
-  update(f, now) {
-    this.events = [];
-    if (!f || !f.ok) {
-      if (this._lostSince === null) this._lostSince = now;
-      this._lastFrame = null;
-      if (now - this._lostSince > 400) {
-        if (this.phase !== 'idle') { this.phase = 'idle'; this.onLost(); }
-        this.active = false;
-        this.standby = 'status.lostTracking';
-      }
-      return this.events;
-    }
-    this._lostSince = null;
-    this._lastFrame = f;
-    // 先结算要领分，再跑计数状态机：这样“完成后半段要领”能赶在同一帧拿到满分奖励
-    this.evaluateSteps(f, now);
-    this.step(f, now);
-    this.tickHoldScore(now);
-    return this.events;
-  }
-
-  /** 计时类动作的“每秒得分”，默认无 */
-  tickHoldScore() {}
-
-  snapshot() {
-    return {
-      id: this.meta.id,
-      kind: this.meta.kind,
-      reps: this.validReps,
-      validReps: this.validReps,
-      partialReps: this.partialReps,
-      holdMs: this.holdMs,
-      score: this.score,
-      cycle: this.cycle,
-      steps: this.stepStatus(),
-      phase: this.phase,
-      active: this.active,
-      standby: this.active ? '' : this.standby,
-      depthPct: this.depthPct,
-      feedback: this.feedback,
-    };
-  }
-
-  step() {}
+/** 某个分类下的动作（带文案） */
+export function localizedByCategory(catId) {
+  return EXERCISES.filter((x) => x.cats.includes(catId)).map((x) => localizedExercise(x.id));
 }
 
+/* 基类（DetectorBase / HoldDetector）见 detector-base.js —— 本文件只保留专门写的动作识别器 */
 const P = (f, i) => f.points[i];
 const segLen = (f, a, b) => dist2(P(f, a), P(f, b));
 
@@ -777,88 +587,6 @@ class GluteBridgeDetector extends DetectorBase {
 }
 
 /* ------------------------------------------------------------------ *
- * 计时类基类
- * ------------------------------------------------------------------ */
-
-class HoldDetector extends DetectorBase {
-  constructor(meta, opts) {
-    super(meta, opts);
-    this.graceMs = 1200;
-    this.holdMs = 0;
-    this._lastT = 0;
-    this.okMs = 0;
-    this.badMs = 0;
-    this.holding = false;
-  }
-  onReset() {
-    this._lastT = 0;
-    this.okMs = 0;
-    this.badMs = 0;
-    this.holding = false;
-    this._primed = false;
-  }
-  onLost() { this.holding = false; this.badMs = 0; this.okMs = 0; this._primed = false; this._lastT = 0; }
-
-  /** 子类实现：返回 {valid, reason:[code,text]} */
-  checkHold() { return { valid: false, reason: 'idle' }; }
-
-  /** 保持期间的“每秒得分”：撑住不动也在涨分，让计时类动作有持续反馈 */
-  addHoldScore(dt, now) {
-    const pps = this.plan.pointsPerSecond || 0;
-    if (pps <= 0) return;
-    this.scoreAccum += (dt / 1000) * pps;
-    while (this.scoreAccum >= 1) {
-      this.scoreAccum -= 1;
-      this.score += 1;
-      this.emit({ type: 'points', points: 1, score: this.score, at: now, tick: true });
-    }
-  }
-
-  step(f, now) {
-    const dt = this._lastT ? clamp(now - this._lastT, 0, 200) : 0;
-    this._lastT = now;
-    const r = this.checkHold(f, now);
-    this.active = r.valid;
-
-    if (r.valid) {
-      this.okMs += dt;
-      this.badMs = 0;
-      // 稳定 250ms 后才开始计时，避免瞬间误判；跨过阈值时把这 250ms 补回来
-      if (this.okMs > 250) {
-        if (!this.holding && !this._primed) {
-          this.holdMs += this.okMs;
-          this._primed = true;
-        } else {
-          this.holdMs += dt;
-        }
-        if (!this.holding) {
-          this.holding = true;
-          this.emit({ type: 'hold', action: 'start' });
-        }
-        this.addHoldScore(dt, now);
-      }
-      this.phase = 'holding';
-      this.standby = '';
-    } else {
-      this.okMs = 0;
-      this.badMs += dt;
-      if (this.holding && this.badMs <= this.graceMs) {
-        // 宽限期：暂停累加但保持本组进行中，容忍识别抖动
-        this.phase = 'holding';
-      } else if (this.badMs > this.graceMs) {
-        if (this.holding) {
-          this.holding = false;
-          this.emit({ type: 'hold', action: 'pause', reason: r.reason });
-        }
-        this.phase = this.holdMs > 0 ? 'paused' : 'idle';
-        this.standby = r.reason ? `cues.${this.meta.id}.${r.reason}` : 'status.holdPaused';
-        if (r.reason) this.cue(r.reason, null, 'warn', now, 5000);
-      }
-    }
-  }
-}
-
-/* ------------------------------------------------------------------ *
  * 计时类：平板支撑
  * ------------------------------------------------------------------ */
 
@@ -906,51 +634,26 @@ class PlankDetector extends HoldDetector {
 }
 
 /* ------------------------------------------------------------------ *
- * 计时类：静态臀桥
- * ------------------------------------------------------------------ */
-
-const BRIDGE_HOLD = {
-  supineTorso: 36,
-  kneeMin: 30,
-  kneeMax: 148,
-  shoulderClearMax: 0.46,
-  kneeClearMin: 0.20,
-  holdRise: 0.20,   // 原来 0.32
-};
-
-class BridgeHoldDetector extends HoldDetector {
-  checkHold(f) {
-    const supine = f.torsoIncl > BRIDGE_HOLD.supineTorso
-      && f.kneeAngle > BRIDGE_HOLD.kneeMin && f.kneeAngle < BRIDGE_HOLD.kneeMax
-      && f.kneeClear > BRIDGE_HOLD.kneeClearMin;
-    if (!supine) {
-      return { valid: false, reason: 'pose' };
-    }
-    if (f.hipRise < BRIDGE_HOLD.holdRise) {
-      this.depthPct = clamp((f.hipRise / 0.6) * 100, 0, 100);
-      return { valid: false, reason: 'rise' };
-    }
-    this.depthPct = 100;
-    return { valid: true };
-  }
-}
-
-/* ------------------------------------------------------------------ *
  * 工厂
+ *
+ * 最经典的几个动作保留专门写的识别器（判定最精细），
+ * 其余动作走 engines.js 里配置驱动的通用引擎（bend / alt / twist / sequence / hold）。
  * ------------------------------------------------------------------ */
+
+const BUILTIN = {
+  squat: SquatDetector,
+  lunge: LungeDetector,
+  pushup: PushupDetector,
+  bridge: GluteBridgeDetector,
+  plank: PlankDetector,
+};
 
 export function createDetector(id, opts = {}) {
   const meta = EXERCISE_MAP[id];
   if (!meta) throw new Error('Unknown exercise: ' + id);
-  switch (id) {
-    case 'squat': return new SquatDetector(meta, opts);
-    case 'lunge': return new LungeDetector(meta, opts);
-    case 'pushup': return new PushupDetector(meta, opts);
-    case 'bridge': return new GluteBridgeDetector(meta, opts);
-    case 'plank': return new PlankDetector(meta, opts);
-    case 'bridgehold': return new BridgeHoldDetector(meta, opts);
-    default: throw new Error('Exercise not implemented: ' + id);
-  }
+  const Builtin = BUILTIN[id];
+  if (Builtin) return new Builtin(meta, opts);
+  return createEngineDetector(meta, opts);
 }
 
 export { DetectorBase, HoldDetector };

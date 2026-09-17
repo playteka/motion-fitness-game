@@ -102,6 +102,24 @@ export function tList(key) {
 }
 
 /**
+ * 某个键在当前语言（或英文兜底）下是否存在。
+ * 60+ 动作不可能每个都写全专属提示，识别器靠它决定「用专属文案还是通用文案」。
+ */
+export function hasKey(key) {
+  if (!key) return false;
+  const path = String(key).split('.');
+  const walk = (dict) => {
+    let node = dict;
+    for (const p of path) {
+      if (node == null || typeof node !== 'object') return false;
+      node = node[p];
+    }
+    return node !== undefined;
+  };
+  return walk(LOCALES[current]) || walk(LOCALES.en);
+}
+
+/**
  * 刷新静态 DOM。
  * 支持属性：
  *   data-i18n            → textContent

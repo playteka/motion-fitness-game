@@ -9,6 +9,9 @@
  * 而不是逐点比对关节位置 —— 后者会因为手臂摆动、模型抖动而永远对不上。
  */
 
+import { EXERCISE_MAP as CATALOG_MAP } from './catalog.js';
+import { median } from './geometry.js';
+
 /**
  * 目标轮廓与判定阈值（归一化画面坐标，x/y 都是画面宽/高的比例）。
  *
@@ -265,22 +268,45 @@ const SILHOUETTE_BRIDGE = [
   [0.200, 0.848],
 ];
 
-/** 动作 → 机位 + 姿态。机位决定「机位正确」怎么判，姿态决定画哪种轮廓、怎么量距离和高度。 */
-export const EXERCISE_POSE = {
-  squat: { view: 'front', kind: 'front', posture: 'stand' },
-  lunge: { view: 'side', kind: 'side', posture: 'stand' },
-  pushup: { view: 'side', kind: 'pushup', posture: 'prone' },
-  plank: { view: 'side', kind: 'plank', posture: 'prone' },
-  bridge: { view: 'side', kind: 'bridge', posture: 'supine' },
-  bridgehold: { view: 'side', kind: 'bridge', posture: 'supine' },
+/**
+ * 动作 → 机位 + 姿态。
+ *
+ * 直接由动作库（src/catalog.js）推出来，不再逐个人工登记：
+ *   机位（view）  = 动作配置里的 view（深蹲/相扑/深蹲跳要正面，其余侧面）
+ *   剪影（kind）  = 站立动作按机位选正面/侧面轮廓；俯卧计数用俯卧撑轮廓、
+ *                  俯卧计时用平板轮廓；躺/侧躺/坐姿都用「横躺」轮廓
+ *   posture       = 站立用站立轮廓，其余用横躺轮廓（躺、侧躺、坐姿的身体都是横着的，
+ *                  距离和高度必须按水平方向量，否则永远过不了校准）
+ */
+const KIND_BY_POSTURE = {
+  prone: { rep: 'pushup', hold: 'plank' },
+  supine: { rep: 'bridge', hold: 'bridge' },
+  side: { rep: 'plank', hold: 'plank' },
+  seated: { rep: 'bridge', hold: 'bridge' },
+  quadruped: { rep: 'plank', hold: 'plank' },
 };
 
-const DEFAULT_POSE = EXERCISE_POSE.lunge;
-
-/** 取某个动作的机位与姿态 */
+/** 动作 → 机位 + 姿态（由动作库推导，见上） */
 export function exercisePose(exerciseId) {
-  return EXERCISE_POSE[exerciseId] || DEFAULT_POSE;
+  const meta = CATALOG_MAP[exerciseId];
+  if (!meta) return DEFAULT_POSE;
+  const posture = meta.posture || 'stand';
+  if (posture === 'stand') {
+    return {
+      view: meta.view === 'front' ? 'front' : 'side',
+      kind: meta.view === 'front' ? 'front' : 'side',
+      posture: 'stand',
+    };
+  }
+  const kind = (KIND_BY_POSTURE[posture] || KIND_BY_POSTURE.prone)[meta.kind === 'hold' ? 'hold' : 'rep'];
+  return {
+    view: meta.view === 'front' ? 'front' : 'side',
+    kind,
+    posture,
+  };
 }
+
+const DEFAULT_POSE = exercisePose('lunge');
 
 /** 每个动作要求的机位：深蹲要正面，其余要侧面 */
 export function requiredView(exerciseId) {
@@ -389,6 +415,10 @@ export class Calibrator {
     this.mirror = opts.mirror !== false;
     // 侧拍时人可能朝左也可能朝右：轮廓要跟着翻过来，否则头脚方向是反的
     this.facing = 1;
+    // 校准阶段观测到的「地面线」（脚踩在哪里），取滑动中位数：
+    // 后面所有「离地高度」都以它为基准 —— 抬腿、跳跃时脚踝会跟着身体动，不能再拿脚踝当地面。
+    this.groundY = null;
+    this._ground = [];
     this.reset();
   }
 
@@ -398,6 +428,18 @@ export class Calibrator {
     this.readySince = null;
     this.notReadySince = 0;
     this.steadyBuf = [];
+  }
+
+  /** 观测到的地面线（没观测到时返回 null，调用方退回默认） */
+  get groundRef() { return this.groundY; }
+
+  /** 累计几帧地面位置后给出稳定的中位数，避免单帧抖动把地面线带偏 */
+  observeGround(f) {
+    if (!f || !f.ok || !Number.isFinite(f.groundY)) return;
+    if (f.coreVis < 0.2) return;
+    this._ground.push(f.groundY);
+    if (this._ground.length > 90) this._ground.shift();
+    if (this._ground.length >= 12) this.groundY = median(this._ground);
   }
 
   setExercise(exerciseId) {
@@ -453,6 +495,8 @@ export class Calibrator {
 
   /** 每帧调用；返回校准状态 */
   update(f, now) {
+    // 顺手记下地面线（后面判定「离地高度」要用）
+    this.observeGround(f);
     // 先更新「保持不动」的观察窗口。
     // 站立时盯住「躯干中点 + 头顶」，躺姿时盯住「身体水平中点 + 上下中心」，
     // 后者对躺着的身体更灵敏（躺姿的头顶高度几乎不变）。

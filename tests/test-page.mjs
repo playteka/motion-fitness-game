@@ -175,9 +175,33 @@ console.log('\n[3] 静态资源与模型文件');
 }
 
 /* ---------- 4. 动作与界面按钮一一对应 ---------- */
-console.log('\n[4] 六个动作与界面一致性');
+console.log('\n[4] 动作库与界面一致性');
 {
-  ok('恰好 6 个动作', EXERCISES.length === 6, `实际 ${EXERCISES.length}`);
+  const { CATEGORIES } = await import('../src/catalog.js');
+  // 动作库就是约定的 22 个动作（用户明确给定清单，多一个少一个都算回归）
+  const EXPECT = {
+    upper: ['pushup', 'pushupWide', 'pushupDiamond'],
+    lower: ['squat', 'squatSumo', 'bulgarianSplitSquat', 'lunge', 'lungeBack', 'bridge', 'squatJump'],
+    core: ['plank', 'sidePlank', 'deadBug', 'crunch', 'reverseCrunch', 'lyingLegRaise'],
+    full: ['burpee', 'mountainClimber', 'boxJump', 'squatJump', 'lungeJump'],
+    stretch: ['standingForwardFold', 'seatedForwardFold'],
+  };
+  const expectIds = [...new Set(Object.values(EXPECT).flat())];
+  ok('动作库就是约定的 22 个动作',
+    EXERCISES.map((x) => x.id).sort().join(',') === expectIds.sort().join(','),
+    `实际 ${EXERCISES.length} 个：${EXERCISES.map((x) => x.id).join(',')}`);
+  for (const [cat, ids] of Object.entries(EXPECT)) {
+    const got = EXERCISES.filter((x) => x.cats.includes(cat)).map((x) => x.id);
+    ok(`分类 ${cat} 的动作清单与约定一致`, got.sort().join(',') === [...ids].sort().join(','), got.join(','));
+  }
+  ok('五个一级分类齐全', CATEGORIES.map((c) => c.id).join(',') === 'upper,lower,core,full,stretch',
+    CATEGORIES.map((c) => c.id).join(','));
+  ok('每个分类都有动作', CATEGORIES.every((c) => EXERCISES.some((x) => x.cats.includes(c.id))),
+    CATEGORIES.map((c) => `${c.id}:${EXERCISES.filter((x) => x.cats.includes(c.id)).length}`).join(' '));
+  ok('动作 id 唯一', new Set(EXERCISES.map((x) => x.id)).size === EXERCISES.length);
+  ok('每个动作都有图标', EXERCISES.every((x) => !!x.icon));
+  ok('每个动作都归属至少一个分类', EXERCISES.every((x) => x.cats.length >= 1));
+  ok('计时类动作都写了秒数单位', EXERCISES.filter((x) => x.kind === 'hold').every((x) => x.unitKey === 'ui.secondsUnit'));
   ok('四种语言都已注册', LANG_ORDER.length === 4 && LANG_ORDER.every((l) => !!LOCALES[l]),
     LANG_ORDER.join(','));
   for (const meta of EXERCISES) {
@@ -188,13 +212,18 @@ console.log('\n[4] 六个动作与界面一致性');
     if (det) {
       const snap = det.snapshot();
       ok(`${ex.name} 具备计数/计时字段`, typeof snap.validReps === 'number' && typeof snap.holdMs === 'number');
-      ok(`${ex.name} 有动作要领文案（4 条要领 + 3 条提示）`, ex.howto.length === 4 && ex.tips.length === 3,
+      ok(`${ex.name} 有动作要领文案（≥3 条要领 + ≥2 条提示）`, ex.howto.length >= 3 && ex.tips.length >= 2,
         `${ex.howto.length}/${ex.tips.length}`);
       ok(`${ex.name} 有名称、机位提示与单位`, !!ex.name && !!ex.cameraHint && !!ex.unit);
+      ok(`${ex.name} 动作名称不是键名（四种语言都有文案）`, LANG_ORDER.every((l) => {
+        setLang(l, { persist: false });
+        const n = localizedExercise(ex.id).name;
+        return !!n && n !== `ex.${ex.id}.name`;
+      }));
+      // 判定依据与粗略标记要在界面上说清楚
+      ok(`${ex.name} 有判定依据文案`, !!ex.judgeText && ex.judgeText !== `judge.${meta.judge}`);
     }
-    // 界面按钮由 EXERCISES 生成，编号提示应与数组顺序一致
-    const idx = EXERCISES.indexOf(meta) + 1;
-    ok(`${ex.name} 快捷键 ${idx} 在范围内`, idx >= 1 && idx <= 6);
+    setLang('zh', { persist: false });
   }
   ok('每个动作都有对应识别器分支（无默认抛错）', true);
   ok('动作文案随语言切换而改变', (() => {

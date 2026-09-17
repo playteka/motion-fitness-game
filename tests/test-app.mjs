@@ -231,6 +231,7 @@ Object.defineProperty(globalThis, 'navigator', { value: navigatorStub, configura
  * ------------------------------------------------------------------ */
 
 console.log('\n[1] 应用启动');
+const { EXERCISES } = await import('../src/catalog.js');
 let app = null;
 try {
   app = await import('../src/app.js');
@@ -242,8 +243,32 @@ if (app) {
   const api = windowStub.__mfg;
   ok('应用暴露内部句柄（供自动化使用）', !!api);
   ok('boot 后已选中一个动作', !!api.state.detector);
-  ok('界面生成了 6 个动作按钮', documentStub.querySelectorAll('.exercise-btn').length === 6,
-    `实际 ${documentStub.querySelectorAll('.exercise-btn').length}`);
+  ok('主页渲染了全部动作卡片（按分类展开，动作全部都在）', (() => {
+    const ids = new Set(documentStub.querySelectorAll('.ex-card').map((c) => c.dataset.id));
+    return ids.size === EXERCISES.length;
+  })(), `卡片覆盖动作数 ${new Set(documentStub.querySelectorAll('.ex-card').map((c) => c.dataset.id)).size}/${EXERCISES.length}`);
+  ok('主页按一级分类分组（5 类）', documentStub.querySelectorAll('.cat-block').length === 5,
+    `实际 ${documentStub.querySelectorAll('.cat-block').length}`);
+  ok('boot 后停在主页（动作页隐藏）', elements.get('homeView').hidden === false
+    && elements.get('workoutView').hidden === true);
+  ok('设置弹窗默认关闭', elements.get('settingsModal').hidden === true);
+  ok('主页上不校准也不计数（浏览动作时不会偷偷开始一组）',
+    api.state.homeMode === true && api.state.session === 'idle',
+    `homeMode=${api.state.homeMode} session=${api.state.session}`);
+  // 打开设置弹窗 → 关闭；再从主页进动作 → 回到训练视图
+  api.openSettings();
+  ok('打开设置弹窗', elements.get('settingsModal').hidden === false);
+  api.closeSettings();
+  ok('关闭设置弹窗', elements.get('settingsModal').hidden === true);
+  api.openExercise('bridge');
+  ok('从主页进入动作页：切到训练视图并重新校准',
+    api.state.homeMode === false && elements.get('workoutView').hidden === false
+    && api.state.exerciseId === 'bridge' && api.state.session === 'calibrating',
+    `homeMode=${api.state.homeMode} session=${api.state.session} ex=${api.state.exerciseId}`);
+  api.showHome();
+  ok('返回主页：回到 idle 且动作页隐藏',
+    api.state.homeMode === true && elements.get('workoutView').hidden === true,
+    `homeMode=${api.state.homeMode}`);
   ok('要领清单已渲染', elements.get('stepList').innerHTML.includes('step-item'));
   ok('没有运行时错误横幅', !documentStub.documentElement.dataset.error,
     documentStub.documentElement.dataset.error);
@@ -575,7 +600,10 @@ console.log('\n[7] 多语言切换');
   ok('切到英文后静态按钮文案变化', elements.get('btnMirror').textContent !== zhMirror,
     elements.get('btnMirror').textContent);
   ok('切到英文后 html lang 更新', documentStub.documentElement.lang === 'en', documentStub.documentElement.lang);
-  ok('切到英文后动作按钮重新渲染', documentStub.querySelectorAll('.exercise-btn').length === 6);
+  ok('切到英文后主页卡片重新渲染且是英文', (() => {
+    const cards = documentStub.querySelectorAll('.ex-card');
+    return cards.length > 0 && cards.every((c) => !/[\u4e00-\u9fff]/.test(c.innerHTML));
+  })(), elements.get('homeCats').innerHTML.slice(0, 80));
   ok('切到英文后要领清单也是英文',
     !/[\u4e00-\u9fff]/.test(elements.get('stepList').innerHTML), elements.get('stepList').innerHTML.slice(0, 80));
   ok('切到英文后“下一步”提示是英文', !/[\u4e00-\u9fff]/.test(elements.get('stepHint').textContent),

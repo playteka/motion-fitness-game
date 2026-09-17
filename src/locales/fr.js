@@ -15,14 +15,14 @@ export default {
 
   app: {
     brand: 'Fitness en mouvement',
-    subtitle: 'Détection par caméra · comptage squat / fente / pompe / pont fessier · chrono planche / pont fessier statique · points attribués étape par étape',
+    subtitle: 'Plus de 60 exercices suivis par caméra · Haut du corps / Bas du corps / Gainage / Corps entier / Étirements · Comptage et chrono · Points attribués étape par étape',
   },
 
   /* ---------------- Textes de l'interface ---------------- */
   ui: {
     kindRep: "Comptage",
     kindHold: "Chrono",
-    shortcutsText: "<kbd>1</kbd>–<kbd>6</kbd> Changer d'exercice · <kbd>Espace</kbd> Démarrer/Pause · <kbd>R</kbd> Réinitialiser · <kbd>Esc</kbd> Terminer la série · <kbd>M</kbd> Miroir · <kbd>S</kbd> Squelette · <kbd>F</kbd> Plein écran",
+    shortcutsText: "<kbd>1</kbd>–<kbd>9</kbd> Changement rapide · <kbd>H</kbd> Accueil · <kbd>G</kbd> Réglages · <kbd>Espace</kbd> Démarrer/Pause · <kbd>R</kbd> Réinitialiser · <kbd>Esc</kbd> Terminer la série · <kbd>M</kbd> Miroir · <kbd>S</kbd> Squelette · <kbd>F</kbd> Plein écran",
     language: 'Langue',
     model: 'Modèle',
     modelLite: 'Léger (fluide)',
@@ -181,6 +181,17 @@ export default {
     standbyPlank: 'Mets-toi sur le ventre, appui sur les avant-bras ou les mains, corps bien à plat',
     standbyBridgeHold: 'Allonge-toi sur le dos, genoux pliés, pieds bien à plat, de profil',
     lostTracking: 'On ne voit pas tout ton corps : recule un peu pour entrer entièrement dans l’image',
+    need: {
+      stand: 'Place-toi dans l’image et tiens-toi comme indiqué',
+      prone: 'Mets-toi sur le ventre : mains sous les épaules, corps bien aligné',
+      supine: 'Allonge-toi sur le tapis : sur le dos, genoux pliés, comme indiqué',
+      quadruped: 'Mets-toi à quatre pattes : mains et genoux au sol',
+      kneel: 'Mets-toi à genoux : genoux au sol, buste bien droit',
+      seated: 'Assieds-toi sur le tapis et prends la position indiquée',
+      side: 'Mets-toi sur le côté, corps de profil, appui sur l’avant-bras',
+      inverted: 'Poirier contre le mur : corps vertical, hanches au-dessus des épaules',
+      hang: 'Suspends-toi à la barre, deux mains en prise, pieds décollés',
+    },
   },
 
   /* ---------------- Noms des phases ----------------
@@ -233,14 +244,14 @@ export default {
   /* ---------------- Métadonnées des exercices ---------------- */
   ex: {
     squat: {
-      name: 'Squat',
+      name: 'Squat au poids du corps',
       cameraHint: 'Face à la caméra, tout le corps dans l’image (le squat se filme de face pour bien mesurer la profondeur)',
       goal: 'Descends jusqu’à ce que les cuisses soient parallèles au sol ou plus bas',
       howto: ['Pieds écartés à la largeur des épaules, face à la caméra', 'Fléchis les genoux et descends, hanches vers le bas, genoux dans l’axe des pieds', 'Descends jusqu’à ce que les cuisses soient parallèles au sol ou plus bas', 'Pousse dans le sol pour te relever : une répétition quand hanches et genoux sont bien tendus'],
       tips: ['Garde les pieds bien à plat, les talons ne décollent pas', 'Les genoux ne rentrent pas vers l’intérieur', 'À la remontée, ne tire pas sur le bas du dos'],
     },
     lunge: {
-      name: 'Fente',
+      name: 'Fente avant',
       cameraHint: 'De profil face à la caméra, un pied devant l’autre',
       goal: 'Les deux genoux proches de 90°, le genou arrière près du sol',
       howto: ['Fais un grand pas en avant avec une jambe', 'Plie les deux genoux en descendant, genou avant à environ 90°', 'Descends le genou arrière jusqu’à frôler le sol', 'Pousse sur le pied avant pour revenir debout, en alternant les jambes'],
@@ -267,12 +278,90 @@ export default {
       howto: ['Avant-bras juste sous les épaules (ou bras tendus)', 'Serre les abdos : tête, dos, hanches et chevilles alignés', 'Respire régulièrement et tiens la position', 'Le chrono se met en pause tout seul si la position s’effondre'],
       tips: ['Ne monte pas les fesses et ne creuse pas le bas du dos', 'Pousse le sol avec les omoplates', 'Arrête si tu n’y arrives plus : inutile de te faire mal au dos'],
     },
-    bridgehold: {
-      name: 'Pont fessier statique',
-      cameraHint: 'De profil face à la caméra, sur le dos, genoux pliés, pieds bien à plat',
-      goal: 'Monte les fesses au plus haut et tiens la position',
-      howto: ['Allonge-toi sur le dos, genoux pliés, pieds bien à plat à la largeur des hanches', 'Monte les hanches au plus haut', 'Tiens la position, fessiers bien serrés', 'Le chrono s’arrête dès que les fesses redescendent'],
-      tips: ['Pas de compensation avec le bas du dos : travaille avec les fessiers', 'Les genoux ne rentrent pas vers l’intérieur', 'Ne bloque pas ta respiration'],
+    pushupWide: {
+      name: 'Pompes larges',
+      cameraHint: 'De profil face à la caméra, mains plus larges que les épaules',
+      goal: 'Mains plus larges que les épaules, coudes pliés à 90° ou moins',
+    },
+    pushupDiamond: {
+      name: 'Pompes diamant',
+      cameraHint: 'De profil face à la caméra, mains jointes en losange sous la poitrine',
+      goal: 'Mains en losange, coudes serrés contre le corps pendant la descente',
+    },
+    squatSumo: {
+      name: 'Squat sumo',
+      cameraHint: 'Face à la caméra, pieds à environ 1,5 fois la largeur des épaules, pointes vers l’extérieur',
+      goal: 'Jambes ouvertes vers l’extérieur, descends jusqu’à ce que les cuisses soient presque horizontales',
+    },
+    bulgarianSplitSquat: {
+      name: 'Fente bulgare',
+      cameraHint: 'De profil face à la caméra, pied arrière posé sur une chaise ou une marche',
+      goal: 'Pied arrière surélevé : descends sur la jambe avant jusqu’à 90° environ',
+    },
+    lungeBack: {
+      name: 'Fente arrière',
+      cameraHint: 'De profil face à la caméra, un pied devant l’autre',
+      goal: 'Recule une jambe d’un grand pas et plie les deux genoux',
+    },
+    lungeJump: {
+      name: 'Fentes sautées',
+      cameraHint: 'De profil face à la caméra, avec de la place devant et derrière',
+      goal: 'Descends en fente puis saute : les deux pieds quittent le sol',
+    },
+    squatJump: {
+      name: 'Squats sautés',
+      cameraHint: 'Face à la caméra, avec de la place au-dessus de toi',
+      goal: 'Descends complètement puis saute fort : les deux pieds décollent',
+    },
+    sidePlank: {
+      name: 'Planche latérale',
+      cameraHint: 'De profil face à la caméra, sur le côté, appui sur un avant-bras',
+      goal: 'Décolle les hanches, corps aligné de la tête aux pieds',
+    },
+    crunch: {
+      name: 'Crunch',
+      cameraHint: 'De profil face à la caméra, sur le dos, genoux pliés, pieds au sol',
+      goal: 'Décolle les omoplates avec les abdos, puis redescends lentement',
+    },
+    reverseCrunch: {
+      name: 'Crunch inversé',
+      cameraHint: 'De profil face à la caméra, sur le dos, genoux pliés',
+      goal: 'Ramène les genoux vers la poitrine avec le bas des abdos, hanches un peu décollées',
+    },
+    lyingLegRaise: {
+      name: 'Relevés de jambes allongé',
+      cameraHint: 'De profil face à la caméra, sur le dos, jambes tendues',
+      goal: 'Monte les jambes serrées jusqu’à la verticale, puis redescends avec contrôle',
+    },
+    mountainClimber: {
+      name: 'Mountain climber',
+      cameraHint: 'De profil face à la caméra, bras tendus, appui sur les mains',
+      goal: 'Ramène les genoux vers la poitrine en alternance, sans monter les hanches',
+    },
+    deadBug: {
+      name: 'Dead bug',
+      cameraHint: 'De profil face à la caméra, sur le dos, bras et jambes levés',
+      goal: 'Tends un bras et la jambe opposée en même temps, puis alterne',
+    },
+    burpee: {
+      name: 'Burpee',
+      cameraHint: 'Face à la caméra, avec de la place devant, derrière et au-dessus',
+      goal: 'Squat, mains au sol → saut en planche → ramène les pieds → saute en l’air',
+    },
+    boxJump: {
+      name: 'Saut sur box',
+      cameraHint: 'Face à la caméra, avec une caisse stable devant toi',
+      goal: 'Plie les genoux et saute sur la caisse, puis redescends une fois stable',
+    },
+    standingForwardFold: {
+      name: 'Pince debout',
+      cameraHint: 'De profil face à la caméra, pieds serrés ou écartés à la largeur des hanches',
+      goal: 'Genoux légèrement pliés, plie le buste vers l’avant depuis les hanches',
+    },
+    seatedForwardFold: {
+      name: 'Pince assise',
+      cameraHint: 'De profil face à la caméra, assis, jambes tendues',
+      goal: 'Plie-toi vers l’avant depuis les hanches, mains vers les pieds',
     },
   },
 
@@ -349,16 +438,253 @@ export default {
       hold10: { label: 'Tiens la position 10 secondes' },
       hold30: { label: 'Tiens la position 30 secondes' },
     },
-    bridgehold: {
-      setup: {
-        label: 'Sur le dos, genoux pliés, pieds bien à plat à la largeur des hanches',
-        pose: 'Allonge-toi d’abord sur le dos, sur le tapis : genoux pliés, pieds bien à plat',
-        knee: 'Plie les genoux à environ 90° et plante bien les pieds au sol',
+    repStand: {
+      stance: {
+        label: 'Place-toi bien, pieds à plat',
+        hint: 'Commence par te placer : jambes presque tendues, appui stable',
       },
-      lift: { label: 'Monte les hanches au plus haut', hint: 'Monte les hanches au plus haut et tiens la position' },
-      hold3: { label: 'Fessiers serrés, tiens 3 secondes' },
-      hold10: { label: 'Tiens 10 secondes' },
-      hold20: { label: 'Tiens 20 secondes' },
+      lower: {
+        label: 'Plie les genoux et descends',
+        hint: 'Commence à descendre : hanches vers l’arrière et le bas, genoux dans l’axe des pieds',
+      },
+      bottom: {
+        label: 'Va jusqu’à l’amplitude visée (l’étape qui rapporte le plus)',
+        hint: 'Descends encore un peu, va au bout du mouvement',
+      },
+      up: {
+        label: 'Pousse dans le sol et reviens à la position de départ',
+        hint: 'Reviens à la position de départ : c’est là que la répétition compte',
+      },
+    },
+    repProne: {
+      setup: {
+        label: 'Mets-toi en appui, corps aligné de la tête aux pieds',
+        pose: 'Prends d’abord l’appui : mains sous les épaules, corps bien à plat',
+        hint: 'Gaine le corps en une ligne, sans creuser le dos ni monter les fesses',
+      },
+      lower: {
+        label: 'Plie les coudes et descends le corps',
+        hint: 'Plie les coudes et descends doucement',
+      },
+      bottom: {
+        label: 'Descends à la profondeur visée (l’étape qui rapporte le plus)',
+        hint: 'Descends encore un peu, poitrine près du sol',
+      },
+      press: {
+        label: 'Pousse pour remonter, bras tendus',
+        hint: 'Pousse pour remonter et tends bien les bras',
+      },
+    },
+    repSupine: {
+      setup: {
+        label: 'Allonge-toi et prends la position de départ',
+        hint: 'Mets-toi d’abord sur le dos dans la position de départ',
+      },
+      engage: {
+        label: 'Serre les abdos et lance le mouvement',
+        hint: 'Pousse avec les abdos et commence à monter',
+      },
+      top: {
+        label: 'Monte jusqu’à la position visée (l’étape qui rapporte le plus)',
+        hint: 'Monte encore un peu, va au bout du mouvement',
+      },
+      lower: {
+        label: 'Redescends lentement avec contrôle',
+        hint: 'Redescends doucement, sans élan',
+      },
+    },
+    repAlt: {
+      setup: {
+        label: 'Prends la position d’appui, corps bien stable',
+        hint: 'Prends bien ta position avant de commencer l’alternance',
+      },
+      first: {
+        label: 'Fais le premier mouvement',
+        hint: 'Commence d’un côté : l’autre reste immobile',
+      },
+      switch: {
+        label: 'Change de côté, en alternance',
+        hint: 'Change de côté et continue',
+      },
+      rhythm: {
+        label: 'Garde un rythme régulier en alternant',
+        hint: 'Garde le rythme, quelques mouvements de chaque côté',
+      },
+    },
+    sequence: {
+      setup: {
+        label: 'Tiens-toi prêt, l’enchaînement commence',
+        hint: 'Tiens-toi prêt, on commence',
+      },
+      down: {
+        label: 'Descends et pose les mains au sol',
+        hint: 'Descends en squat et pose les mains au sol',
+      },
+      middle: {
+        label: 'Fais la partie centrale du mouvement',
+        hint: 'Aligne bien le corps',
+      },
+      finish: {
+        label: 'Relève-toi et termine le mouvement',
+        hint: 'Ramène les pieds, relève-toi et termine la série',
+      },
+    },
+    jump: {
+      stance: {
+        label: 'Place-toi bien, prêt à sauter',
+        hint: 'Place-toi bien, pieds à plat',
+      },
+      crouch: {
+        label: 'Plie les genoux et arme les bras',
+        hint: 'Plie les genoux et balance les bras vers l’arrière',
+      },
+      flight: {
+        label: 'Pousse fort et décolle, les deux pieds en l’air (l’étape qui rapporte le plus)',
+        hint: 'Saute fort : les deux pieds doivent quitter le sol',
+      },
+      land: {
+        label: 'Réception genoux fléchis, reste stable',
+        hint: 'Réceptionne genoux fléchis et stabilise-toi avant la suivante',
+      },
+    },
+    holdPose: {
+      pose: {
+        label: 'Prends la position décrite',
+        hint: 'Prends la position avant que le chrono démarre',
+      },
+      align: {
+        label: 'Corps aligné et bien stable',
+        hint: 'Gaine ton corps en une ligne et ne bouge plus',
+      },
+      hold3: {
+        label: 'Tiens 3 secondes',
+      },
+      hold10: {
+        label: 'Tiens 10 secondes',
+      },
+      hold30: {
+        label: 'Tiens 30 secondes',
+      },
+    },
+    stretchHold: {
+      pose: {
+        label: 'Entre doucement dans l’étirement',
+        hint: 'Entre tout doucement dans l’étirement, sans à-coups',
+      },
+      settle: {
+        label: 'Respire et relâche, sens l’étirement',
+        hint: 'Respire calmement, une légère tension suffit',
+      },
+      hold10: {
+        label: 'Tiens 10 secondes',
+      },
+      hold20: {
+        label: 'Tiens 20 secondes',
+      },
+    },
+  },
+
+  /* ---------------- Catégories d'exercices ---------------- */
+  cat: {
+    title: 'Catégories',
+    upper: 'Haut du corps',
+    lower: 'Bas du corps',
+    core: 'Gainage',
+    full: 'Corps entier',
+    stretch: 'Étirements',
+  },
+
+  /* ---------------- Choix de l'exercice ---------------- */
+  home: {
+    title: 'Choisis ton exercice',
+    subtitle: 'Choisis un exercice par catégorie et lance-toi : la caméra analyse en direct et te guide à la voix',
+    count: '{n} exercices',
+    search: 'Rechercher un exercice',
+    noResult: 'Aucun exercice correspondant',
+    back: 'Retour à l’accueil',
+    openSettings: 'Réglages',
+    rough: 'Détection approximative',
+    judgeBy: 'Critère : {what}',
+    start: 'Lancer la séance',
+    recent: 'Faits récemment',
+  },
+
+  /* ---------------- Réglages ---------------- */
+  settings: {
+    title: 'Réglages',
+    close: 'Fermer',
+    language: 'Langue',
+    model: 'Modèle de détection',
+    modelHint: 'Le léger est plus fluide, le complet plus précis (le premier changement télécharge quelques dizaines de Mo, puis tout fonctionne hors ligne)',
+    sound: 'Son',
+    cameraGroup: 'Image et détection',
+    view: 'Interface',
+  },
+
+  /* ---------------- Critères de détection ---------------- */
+  judge: {
+    elbow: 'Flexion du coude',
+    knee: 'Flexion du genou',
+    hip: 'Flexion de la hanche',
+    ankle: 'Montée et descente du pied',
+    rise: 'Hauteur des hanches',
+    clear: 'Hauteur du corps au-dessus du sol',
+    flight: 'Pieds décollés (saut)',
+    twist: 'Rotation du buste',
+    sequence: 'Ordre des mouvements',
+    arm: 'Bras levé d’un côté',
+    leg: 'Alternance des jambes',
+    pose: 'Position du corps correcte',
+    time: 'Durée du maintien',
+  },
+
+  /* ---------------- Consignes générales ---------------- */
+  cue: {
+    notReady: 'Tu n’es pas encore dans la bonne position : suis les indications',
+    moreRange: 'Amplitude plus grande : le mouvement doit être complet pour compter',
+    needJump: 'Il faut sauter : les deux pieds doivent quitter le sol pour compter',
+    tooFast: 'Plus lentement, c’est trop rapide',
+    keepStraight: 'Garde le corps bien aligné, sans creuser le dos ni monter les fesses',
+    sag: 'Le bas du dos s’affaisse : rentre le ventre et monte les hanches au niveau du corps',
+    pike: 'Les fesses montent trop : remets le bassin à plat pour aligner le corps',
+    valgus: 'Les genoux ne rentrent pas : ouvre-les dans l’axe des pieds',
+    lean: 'Garde le buste droit, ne te penche pas en avant',
+    pose: 'Ta position s’écarte des consignes : corrige avant de continuer',
+  },
+
+  /* ---------------- Consignes par famille d'exercices ---------------- */
+  fam: {
+    repStand: {
+      howto: ['Pieds à plat, tiens-toi bien droit', 'Hanches vers l’arrière et le bas, genoux dans l’axe des pieds', 'Va jusqu’à l’amplitude visée puis pousse dans le sol pour te redresser'],
+      tips: ['Les genoux ne rentrent pas vers l’intérieur', 'Garde le dos droit, ne t’arrondis pas', 'Le poids reste réparti sur tout le pied'],
+    },
+    repProne: {
+      howto: ['Mains sous les épaules, corps aligné de la tête aux pieds', 'Gaine les abdos et descends lentement en pliant les coudes', 'Pousse pour remonter : une répétition quand les bras sont tendus'],
+      tips: ['Ne creuse pas le dos et ne monte pas les fesses', 'Les poignets juste sous les épaules', 'Descente lente, remontée dynamique'],
+    },
+    repSupine: {
+      howto: ['Allonge-toi sur le dos et prends la position de départ', 'Serre les abdos et monte le corps ou les jambes jusqu’au bout', 'Redescends lentement à la position de départ, avec contrôle'],
+      tips: ['Menton légèrement rentré, ne tire pas sur la nuque', 'Travaille avec les abdos du début à la fin, sans bloquer ta respiration', 'Contrôle aussi la descente, ne laisse pas retomber'],
+    },
+    repAlt: {
+      howto: ['Prends la position d’appui, abdos serrés, corps stable', 'Un côté se replie ou s’étend, l’autre reste immobile', 'Alterne gauche et droite à un rythme régulier'],
+      tips: ['Ne balance pas les hanches d’un côté à l’autre', 'Lentement vaut mieux que vite', 'Arrête si tu sens une gêne au bas du dos'],
+    },
+    sequence: {
+      howto: ['Tiens-toi prêt, descends en squat et pose les mains au sol', 'Saute les pieds en arrière pour te retrouver en planche (tu peux ajouter une pompe)', 'Ramène les pieds, relève-toi et termine par un petit saut'],
+      tips: ['Fléchis les genoux à la réception', 'Si tu es fatigué, saute l’étape de la pompe', 'L’enchaînement ne compte pour une répétition que s’il est continu'],
+    },
+    jump: {
+      howto: ['Tiens-toi prêt, plie les genoux et balance les bras vers l’arrière', 'Pousse fort dans le sol et saute : les deux pieds quittent le sol', 'Réceptionne genoux fléchis, stabilise-toi puis enchaîne'],
+      tips: ['Réception en douceur, ne bloque pas les genoux', 'Pas besoin de sauter haut : décoller suffit', 'Travaille sur un sol souple ou sur un tapis'],
+    },
+    holdPose: {
+      howto: ['Prends la position décrite', 'Gaine le corps pour rester aligné ou bien stable', 'Respire régulièrement et tiens jusqu’au temps visé'],
+      tips: ['Le chrono se met en pause si la position s’effondre : corrige et il repart', 'Si c’est trop dur, réduis d’abord la durée visée', 'Arrête tout de suite si tu as mal au dos'],
+    },
+    stretchHold: {
+      howto: ['Entre lentement dans l’étirement, sans à-coups', 'Une légère tension suffit, ne cherche pas la douleur', 'Respire et tiens la position 20 à 30 secondes'],
+      tips: ['Échauffe tes articulations avant de t’étirer', 'Étire les deux côtés, aussi longtemps de chaque côté', 'Ne bloque pas ta respiration : expire lentement, ça détend'],
     },
   },
 
@@ -400,10 +726,6 @@ export default {
       hands: 'Mains et avant-bras doivent être posés au sol',
       knees: 'Décolle les genoux et prends appui sur la pointe des pieds',
       elbow: 'Avant-bras bien à plat au sol (coude à 90° environ) ou bras complètement tendus',
-    },
-    bridgehold: {
-      pose: 'Sur le dos, genoux pliés, pieds bien à plat, de profil face à la caméra',
-      rise: 'Monte les fesses au plus haut et tiens la position, fessiers serrés',
     },
   },
 

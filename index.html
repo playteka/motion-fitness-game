@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -12,34 +12,36 @@
       <div class="brand">
         <span class="logo">🏃</span>
         <div class="brand-text">
-          <h1><span data-i18n="app.brand"></span> <span class="ver">v2.4</span></h1>
+          <h1><span data-i18n="app.brand"></span> <span class="ver">v3.0</span></h1>
           <p data-i18n="app.subtitle"></p>
         </div>
       </div>
       <div class="topbar-actions">
-        <label class="field">
-          <span data-i18n="ui.language"></span>
-          <select id="langSel" aria-label="Language"></select>
-        </label>
-        <label class="field">
-          <span data-i18n="ui.model"></span>
-          <select id="modelSel">
-            <option value="lite" data-i18n="ui.modelLite"></option>
-            <option value="full" data-i18n="ui.modelFull"></option>
-          </select>
-        </label>
-        <button class="toggle" id="btnMirror" type="button" aria-pressed="true" data-i18n="ui.mirror"></button>
-        <button class="toggle" id="btnVoice" type="button" aria-pressed="true" data-i18n="ui.voice"></button>
-        <button class="toggle" id="btnSfx" type="button" aria-pressed="true" data-i18n="ui.sfx"></button>
-        <button class="toggle" id="btnMusic" type="button" aria-pressed="true" data-i18n="ui.music"></button>
-        <button class="toggle" id="btnStrict" type="button" aria-pressed="true" data-i18n="ui.strict"></button>
-        <button class="toggle" id="btnSkeleton" type="button" aria-pressed="true" data-i18n="ui.skeleton"></button>
-        <button class="toggle" id="btnAngles" type="button" aria-pressed="true" data-i18n="ui.angles"></button>
-        <button class="toggle" id="btnDebug" type="button" aria-pressed="false" data-i18n="ui.debug"></button>
+        <button class="ghost-btn" id="btnHome" type="button" data-i18n="home.back" hidden></button>
+        <button class="icon-btn" id="btnSettings" type="button"
+                data-i18n-title="home.openSettings" data-i18n-aria="home.openSettings">
+          <span aria-hidden="true">⚙️</span>
+        </button>
       </div>
     </header>
 
-    <main class="layout">
+    <!-- ================= 主页：分类 + 动作图标网格 ================= -->
+    <main class="home" id="homeView">
+      <div class="home-head">
+        <div>
+          <h2 class="home-title" data-i18n="home.title"></h2>
+          <p class="home-sub" data-i18n="home.subtitle"></p>
+        </div>
+        <label class="search-field">
+          <span aria-hidden="true">🔍</span>
+          <input id="exSearch" type="search" data-i18n-placeholder="home.search" autocomplete="off" />
+        </label>
+      </div>
+      <div id="homeCats"></div>
+    </main>
+
+    <!-- ================= 动作页：摄像头 + 面板 ================= -->
+    <main class="layout" id="workoutView" hidden>
       <section class="stage-card">
         <div class="stage" id="stage">
           <video id="video" playsinline muted autoplay></video>
@@ -109,13 +111,9 @@
 
       <aside class="panel">
         <section class="card">
-          <h2 class="card-title" data-i18n="ui.step1"></h2>
-          <div class="exercise-grid" id="exerciseGrid"></div>
-        </section>
-
-        <section class="card">
           <h2 class="card-title" id="howtoTitle"></h2>
           <p class="camera-hint" id="cameraHint"></p>
+          <p class="judge-line" id="judgeLine"></p>
           <ul class="howto-list" id="howtoList"></ul>
           <ul class="tip-list" id="tipList"></ul>
         </section>
@@ -210,6 +208,62 @@
         </section>
       </aside>
     </main>
+  </div>
+
+  <!-- ================= 设置弹窗 ================= -->
+  <div class="modal" id="settingsModal" hidden>
+    <div class="modal-backdrop" id="settingsBackdrop"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="modal-head">
+        <h2 id="settingsTitle" data-i18n="settings.title"></h2>
+        <button class="icon-btn" id="btnCloseSettings" type="button"
+                data-i18n-title="settings.close" data-i18n-aria="settings.close">
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="modal-group">
+          <h3 class="modal-group-title" data-i18n="settings.language"></h3>
+          <label class="field wide">
+            <span data-i18n="ui.language"></span>
+            <select id="langSel" aria-label="Language"></select>
+          </label>
+        </div>
+
+        <div class="modal-group">
+          <h3 class="modal-group-title" data-i18n="settings.model"></h3>
+          <label class="field wide">
+            <span data-i18n="ui.model"></span>
+            <select id="modelSel">
+              <option value="lite" data-i18n="ui.modelLite"></option>
+              <option value="full" data-i18n="ui.modelFull"></option>
+            </select>
+          </label>
+          <p class="modal-hint" data-i18n="settings.modelHint"></p>
+        </div>
+
+        <div class="modal-group">
+          <h3 class="modal-group-title" data-i18n="settings.sound"></h3>
+          <div class="toggle-grid">
+            <button class="toggle" id="btnVoice" type="button" aria-pressed="true" data-i18n="ui.voice"></button>
+            <button class="toggle" id="btnSfx" type="button" aria-pressed="true" data-i18n="ui.sfx"></button>
+            <button class="toggle" id="btnMusic" type="button" aria-pressed="true" data-i18n="ui.music"></button>
+          </div>
+        </div>
+
+        <div class="modal-group">
+          <h3 class="modal-group-title" data-i18n="settings.cameraGroup"></h3>
+          <div class="toggle-grid">
+            <button class="toggle" id="btnMirror" type="button" aria-pressed="true" data-i18n="ui.mirror"></button>
+            <button class="toggle" id="btnStrict" type="button" aria-pressed="true" data-i18n="ui.strict"></button>
+            <button class="toggle" id="btnSkeleton" type="button" aria-pressed="true" data-i18n="ui.skeleton"></button>
+            <button class="toggle" id="btnAngles" type="button" aria-pressed="true" data-i18n="ui.angles"></button>
+            <button class="toggle" id="btnDebug" type="button" aria-pressed="false" data-i18n="ui.debug"></button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="src/app.js"></script>

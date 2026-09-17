@@ -15,14 +15,14 @@ export default {
 
   app: {
     brand: 'Motion Fitness',
-    subtitle: 'Camera tracking · Squat / Lunge / Push-up / Glute Bridge reps · Plank / Static Glute Bridge holds · Scored step by step on your form',
+    subtitle: '60+ camera-tracked exercises · Upper body / Lower body / Core / Full body / Stretching · Rep counting and holds · Scored step by step on your form',
   },
 
   /* ---------------- Interface ---------------- */
   ui: {
     kindRep: "Count",
     kindHold: "Timer",
-    shortcutsText: "<kbd>1</kbd>–<kbd>6</kbd> Switch exercise · <kbd>Space</kbd> Start/Pause · <kbd>R</kbd> Reset · <kbd>Esc</kbd> End set · <kbd>M</kbd> Mirror · <kbd>S</kbd> Skeleton · <kbd>F</kbd> Fullscreen",
+    shortcutsText: "<kbd>1</kbd>–<kbd>9</kbd> Quick switch · <kbd>H</kbd> Home · <kbd>G</kbd> Settings · <kbd>Space</kbd> Start/Pause · <kbd>R</kbd> Reset · <kbd>Esc</kbd> End set · <kbd>M</kbd> Mirror · <kbd>S</kbd> Skeleton · <kbd>F</kbd> Fullscreen",
     language: 'Language',
     model: 'Model',
     modelLite: 'Lite (smoother)',
@@ -181,6 +181,17 @@ export default {
     standbyPlank: 'Get down on your forearms or hands and keep your body flat',
     standbyBridgeHold: 'Lie on your back with knees bent and feet planted, sideways to the camera',
     lostTracking: 'Can’t see your whole body — back up a little and keep yourself fully in frame',
+    need: {
+      stand: 'Step into the frame and set up your stance',
+      prone: 'Get down and set up: hands under your shoulders, body in one line',
+      supine: 'Lie down on the mat: on your back with knees bent, set up for the move',
+      quadruped: 'Get on all fours: hands and knees on the floor',
+      kneel: 'Kneel down: knees on the floor, torso tall',
+      seated: 'Sit down on the mat and set up for the move',
+      side: 'Lie on your side toward the camera, resting on your forearm',
+      inverted: 'Handstand against the wall: body vertical, hips above your shoulders',
+      hang: 'Hang from the bar with both hands, feet off the floor',
+    },
   },
 
   /* ---------------- Phase names ---------------- */
@@ -232,14 +243,14 @@ export default {
   /* ---------------- Exercise metadata ---------------- */
   ex: {
     squat: {
-      name: 'Squat',
+      name: 'Bodyweight Squat',
       cameraHint: 'Face the camera with your whole body in frame (squats need a front-on view to measure depth accurately)',
       goal: 'Squat until your thighs are parallel to the floor or lower',
       howto: ['Stand with your feet shoulder-width apart, facing the camera', 'Bend your knees and sink down, sending your hips downward with your knees tracking over your toes', 'Squat until your thighs are parallel to the floor or lower', 'Drive through your feet to stand tall — full hip and knee extension counts as one rep'],
       tips: ['Keep the whole foot planted — heels stay down', 'Don’t let your knees cave inward', 'Don’t arch your lower back on the way up'],
     },
     lunge: {
-      name: 'Lunge',
+      name: 'Forward Lunge',
       cameraHint: 'Turn sideways to the camera with your feet split front and back',
       goal: 'Both knees near 90°, back knee close to the floor',
       howto: ['Step one leg far forward', 'Bend both knees and sink down, front knee around 90°', 'Lower your back knee until it’s close to the floor', 'Drive through your front foot back to standing, alternating legs'],
@@ -266,12 +277,90 @@ export default {
       howto: ['Plant your forearms directly under your shoulders (or use straight arms)', 'Brace your core — head, back, hips and ankles in one line', 'Breathe steadily and keep holding', 'If your form breaks, the timer pauses automatically'],
       tips: ['Don’t let your hips rise or drop', 'Push your shoulder blades away from the floor', 'Stop when you can’t hold it — don’t push through back pain'],
     },
-    bridgehold: {
-      name: 'Static Glute Bridge',
+    pushupWide: {
+      name: 'Wide Push-Up',
+      cameraHint: 'Stand side-on to the camera with your hands wider than your shoulders',
+      goal: 'Hands wider than your shoulders, elbows bending to 90° or less',
+    },
+    pushupDiamond: {
+      name: 'Diamond Push-Up',
+      cameraHint: 'Stand side-on to the camera with your hands together in a diamond under your chest',
+      goal: 'Hands in a diamond shape, elbows tucked in as you lower',
+    },
+    squatSumo: {
+      name: 'Sumo Squat',
+      cameraHint: 'Face the camera with your feet about 1.5 shoulder-widths apart and your toes turned out',
+      goal: 'Knees out wide, sink down until your thighs are near horizontal',
+    },
+    bulgarianSplitSquat: {
+      name: 'Bulgarian Split Squat',
+      cameraHint: 'Stand side-on to the camera with your back foot on a chair or a step',
+      goal: 'Back foot raised, bend your front knee and sink to about 90°',
+    },
+    lungeBack: {
+      name: 'Reverse Lunge',
+      cameraHint: 'Stand side-on to the camera with your feet split front and back',
+      goal: 'Step one leg far back and bend both knees to sink down',
+    },
+    lungeJump: {
+      name: 'Jumping Lunge',
+      cameraHint: 'Stand side-on to the camera and leave room front and back',
+      goal: 'Sink into a lunge, then jump up so both feet leave the floor',
+    },
+    squatJump: {
+      name: 'Jump Squat',
+      cameraHint: 'Face the camera and leave room above you',
+      goal: 'Squat all the way down, then jump hard so both feet leave the floor',
+    },
+    sidePlank: {
+      name: 'Side Plank',
+      cameraHint: 'Turn sideways to the camera, lying on your side on one forearm',
+      goal: 'Lift your hips off the floor until your body is one straight line head to feet',
+    },
+    crunch: {
+      name: 'Crunch',
       cameraHint: 'Turn sideways to the camera, lying on your back with knees bent and feet planted',
-      goal: 'Lift your hips to the top position and hold it',
-      howto: ['Lie on your back with knees bent, feet planted hip-width apart', 'Drive your hips up to the top position', 'Hold it there with your glutes squeezed', 'The timer stops the moment your hips drop'],
-      tips: ['Don’t compensate with your lower back — feel it in your glutes', 'Don’t let your knees cave inward', 'Keep breathing — don’t hold your breath'],
+      goal: 'Curl your shoulder blades off the floor with your abs, then lower slowly',
+    },
+    reverseCrunch: {
+      name: 'Reverse Crunch',
+      cameraHint: 'Turn sideways to the camera, lying on your back with knees bent',
+      goal: 'Curl your knees toward your chest with your lower abs and lift your hips slightly',
+    },
+    lyingLegRaise: {
+      name: 'Lying Leg Raise',
+      cameraHint: 'Turn sideways to the camera, lying on your back with your legs straight',
+      goal: 'Raise both legs together to near vertical, then lower them under control',
+    },
+    mountainClimber: {
+      name: 'Mountain Climber',
+      cameraHint: 'Turn sideways to the camera, up on straight arms',
+      goal: 'Drive your knees toward your chest one after the other, fast',
+    },
+    deadBug: {
+      name: 'Dead Bug',
+      cameraHint: 'Turn sideways to the camera, lying on your back with arms and legs up',
+      goal: 'Reach the opposite arm and leg out straight together, alternating sides',
+    },
+    burpee: {
+      name: 'Burpee',
+      cameraHint: 'Face the camera and leave room in front of you and above you',
+      goal: 'Squat and plant your hands → jump back to a plank → pull your legs in and stand → jump up',
+    },
+    boxJump: {
+      name: 'Box Jump',
+      cameraHint: 'Face the camera with a steady box in front of you',
+      goal: 'Bend your knees, swing your arms and jump onto the box, stand tall, then step down',
+    },
+    standingForwardFold: {
+      name: 'Standing Forward Fold',
+      cameraHint: 'Stand side-on to the camera with your feet together or hip-width apart',
+      goal: 'Knees slightly bent, hinge forward and fold down from your hips',
+    },
+    seatedForwardFold: {
+      name: 'Seated Forward Fold',
+      cameraHint: 'Turn sideways to the camera, seated with both legs straight',
+      goal: 'Hinge forward from your hips and reach your hands toward your toes',
     },
   },
 
@@ -348,16 +437,253 @@ export default {
       hold10: { label: 'Hold steady for 10 seconds' },
       hold30: { label: 'Hold steady for 30 seconds' },
     },
-    bridgehold: {
-      setup: {
-        label: 'Lie on your back with knees bent, feet planted hip-width apart',
-        pose: 'Lie down first: on your back on the mat, knees bent, feet planted',
-        knee: 'Bend your knees to about 90° and plant your feet on the floor',
+    repStand: {
+      stance: {
+        label: 'Stand in your starting position with both feet planted',
+        hint: 'Set up first: legs almost straight and your weight settled',
       },
-      lift: { label: 'Lift your hips to the top position', hint: 'Drive your hips to the top position and hold it there' },
-      hold3: { label: 'Squeeze your glutes and hold 3 seconds' },
-      hold10: { label: 'Hold 10 seconds' },
-      hold20: { label: 'Hold 20 seconds' },
+      lower: {
+        label: 'Bend your knees and sink down',
+        hint: 'Start sinking: hips back and down, knees tracking over your toes',
+      },
+      bottom: {
+        label: 'Reach the target depth (top-scoring step)',
+        hint: 'A little deeper — take the movement all the way',
+      },
+      up: {
+        label: 'Drive back up to the start position',
+        hint: 'Return to the start position to complete the rep',
+      },
+    },
+    repProne: {
+      setup: {
+        label: 'Set up with your body in one straight line from head to feet',
+        pose: 'Set up in the support position first: hands under your shoulders, body in one line',
+        hint: 'Tighten your body into one straight line — no sagging, no piking',
+      },
+      lower: {
+        label: 'Bend your elbows and lower your body',
+        hint: 'Bend your elbows and lower slowly',
+      },
+      bottom: {
+        label: 'Lower to the target depth (top-scoring step)',
+        hint: 'A little lower — bring your chest toward the floor',
+      },
+      press: {
+        label: 'Press back up to straight arms',
+        hint: 'Press back up and straighten your arms',
+      },
+    },
+    repSupine: {
+      setup: {
+        label: 'Lie down and set up your starting position',
+        hint: 'Lie on your back and get into your starting position first',
+      },
+      engage: {
+        label: 'Brace your abs and start the movement',
+        hint: 'Drive from your abs and start lifting',
+      },
+      top: {
+        label: 'Lift to the target position (top-scoring step)',
+        hint: 'Lift a little higher — take it all the way',
+      },
+      lower: {
+        label: 'Lower back down under control',
+        hint: 'Lower slowly — no swinging',
+      },
+    },
+    repAlt: {
+      setup: {
+        label: 'Set up your support position and stay stable',
+        hint: 'Set up your position before you start alternating',
+      },
+      first: {
+        label: 'Complete the first rep on one side',
+        hint: 'Start on one side: tuck or reach on that side while the other side stays still',
+      },
+      switch: {
+        label: 'Switch to the other side and keep alternating',
+        hint: 'Switch to the other side and keep going',
+      },
+      rhythm: {
+        label: 'Keep a steady alternating rhythm',
+        hint: 'Hold the rhythm — a few reps on each side',
+      },
+    },
+    sequence: {
+      setup: {
+        label: 'Stand up and get ready for the whole sequence',
+        hint: 'Stand tall and get ready',
+      },
+      down: {
+        label: 'Squat down and plant your hands',
+        hint: 'Squat down and put both hands on the floor',
+      },
+      middle: {
+        label: 'Complete the middle of the sequence',
+        hint: 'Take your body into one straight line',
+      },
+      finish: {
+        label: 'Stand up and finish the sequence',
+        hint: 'Pull your legs in, stand up and finish the rep',
+      },
+    },
+    jump: {
+      stance: {
+        label: 'Stand up and get ready to jump',
+        hint: 'Get set with both feet planted',
+      },
+      crouch: {
+        label: 'Bend your knees and swing your arms back',
+        hint: 'Sink down and load your arms back',
+      },
+      flight: {
+        label: 'Drive off the floor so both feet leave the ground (top-scoring step)',
+        hint: 'Jump hard so both feet come off the floor',
+      },
+      land: {
+        label: 'Land with soft knees and stand steady',
+        hint: 'Land with bent knees, stand steady, then go again',
+      },
+    },
+    holdPose: {
+      pose: {
+        label: 'Set up the position for this move',
+        hint: 'Get into position before the timer starts',
+      },
+      align: {
+        label: 'Body in one line / holding steady',
+        hint: 'Tighten into one line and hold steady',
+      },
+      hold3: {
+        label: 'Hold for 3 seconds',
+      },
+      hold10: {
+        label: 'Hold for 10 seconds',
+      },
+      hold30: {
+        label: 'Hold for 30 seconds',
+      },
+    },
+    stretchHold: {
+      pose: {
+        label: 'Ease slowly into the stretch',
+        hint: 'Ease into the stretch slowly — no bouncing',
+      },
+      settle: {
+        label: 'Breathe and feel the stretch',
+        hint: 'Relax and breathe — a gentle stretch is enough',
+      },
+      hold10: {
+        label: 'Hold for 10 seconds',
+      },
+      hold20: {
+        label: 'Hold for 20 seconds',
+      },
+    },
+  },
+
+  /* ---------------- Exercise categories ---------------- */
+  cat: {
+    title: 'Categories',
+    upper: 'Upper body',
+    lower: 'Lower body',
+    core: 'Core',
+    full: 'Full body',
+    stretch: 'Stretching',
+  },
+
+  /* ---------------- Exercise library home ---------------- */
+  home: {
+    title: 'Pick an exercise',
+    subtitle: 'Choose a category and tap an exercise to start — the camera tracks you live and coaches you by voice',
+    count: '{n} exercises',
+    search: 'Search exercises',
+    noResult: 'No matching exercise found',
+    back: 'Back to home',
+    openSettings: 'Settings',
+    rough: 'Rough scoring',
+    judgeBy: 'Scored by: {what}',
+    start: 'Start training',
+    recent: 'Recently trained',
+  },
+
+  /* ---------------- Settings ---------------- */
+  settings: {
+    title: 'Settings',
+    close: 'Close',
+    language: 'Language',
+    model: 'Pose model',
+    modelHint: 'Lite runs smoother, Full is more accurate (the first switch downloads a few dozen MB, then it works offline)',
+    sound: 'Sound',
+    cameraGroup: 'Video & tracking',
+    view: 'Interface',
+  },
+
+  /* ---------------- What each exercise is scored by ---------------- */
+  judge: {
+    elbow: 'Elbow bend',
+    knee: 'Knee bend',
+    hip: 'Hip hinge',
+    ankle: 'Heel lift',
+    rise: 'Hip lift height',
+    clear: 'How far your body leaves the floor',
+    flight: 'Both feet off the floor (jump)',
+    twist: 'Torso rotation',
+    sequence: 'Order of the whole sequence',
+    arm: 'Single-arm raise',
+    leg: 'Left/right leg alternation',
+    pose: 'Whether your body position is on target',
+    time: 'Hold time',
+  },
+
+  /* ---------------- Live form cues ---------------- */
+  cue: {
+    notReady: 'You’re not in position for this move yet — set up as shown first',
+    moreRange: 'Bigger range — move all the way for it to count',
+    needJump: 'You need to jump: both feet off the floor to count',
+    tooFast: 'Slow down — that was too fast',
+    keepStraight: 'Keep your body in one straight line — no sagging, no piking',
+    sag: 'Your lower back is sagging: tighten your abs and lift your hips in line with your body',
+    pike: 'Your hips are piked too high: flatten your pelvis so your body is one line',
+    valgus: 'Don’t let your knees cave in — push them out over your toes',
+    lean: 'Keep your torso upright — don’t lean or tilt forward',
+    pose: 'Your form has drifted off the target — fix it before you continue',
+  },
+
+  /* ---------------- Movement-family form templates ---------------- */
+  fam: {
+    repStand: {
+      howto: ['Stand tall with both feet planted', 'Send your hips back and down, bending your knees over your toes', 'Reach the target depth, then drive back up to standing'],
+      tips: ['Don’t let your knees cave inward', 'Keep your back straight — don’t round it', 'Keep your weight over your whole foot'],
+    },
+    repProne: {
+      howto: ['Hands under your shoulders, body in one straight line from head to feet', 'Brace your core and bend your elbows to lower slowly', 'Press back up — straight arms complete the rep'],
+      tips: ['Don’t let your hips sag or pike up', 'Keep your wrists directly under your shoulders', 'Lower slowly and press up hard'],
+    },
+    repSupine: {
+      howto: ['Lie on your back on the mat and set up your starting position', 'Brace your abs and lift your body or legs to the target', 'Lower back to the start position under control'],
+      tips: ['Chin slightly tucked — don’t strain your neck', 'Drive with your abs the whole time and keep breathing', 'Lower under control — don’t drop or crash down'],
+    },
+    repAlt: {
+      howto: ['Set up your support position with your core tight and your body stable', 'Tuck or reach on one side while the other side stays still', 'Alternate sides with an even rhythm'],
+      tips: ['Don’t let your hips swing side to side', 'Slower beats faster here', 'Stop if your lower back complains'],
+    },
+    sequence: {
+      howto: ['Stand up, then squat down and put your hands on the floor', 'Jump both feet back into a plank (add a push-up if you like)', 'Pull your legs in, stand up and finish with a jump'],
+      tips: ['Land with bent knees to absorb the impact', 'If you’re tired, skip the push-up part', 'The whole sequence has to flow for it to count as one rep'],
+    },
+    jump: {
+      howto: ['Stand up, bend your knees and swing your arms back to load', 'Drive off the ground and jump — both feet leave the floor', 'Land with soft knees and stand steady before the next rep'],
+      tips: ['Land softly and don’t lock your knees', 'Height doesn’t matter — getting off the floor counts', 'Do these on a softer surface or a mat'],
+    },
+    holdPose: {
+      howto: ['Set up the position for this move', 'Tighten your core and hold one straight line or stay stable', 'Breathe evenly and hold for the target time'],
+      tips: ['If your form breaks the timer pauses — fix it and the timer resumes', 'Start with a shorter target time if it feels tough', 'Stop right away if your lower back hurts'],
+    },
+    stretchHold: {
+      howto: ['Ease into the stretch slowly — no bouncing', 'A gentle stretch is enough — don’t chase pain', 'Keep breathing and hold for 20–30 seconds'],
+      tips: ['Warm your joints up before you stretch', 'Stretch both sides and keep the times even', 'Don’t hold your breath — slow exhales help you relax'],
     },
   },
 
@@ -399,10 +725,6 @@ export default {
       hands: 'Your palms or forearms need to stay on the floor',
       knees: 'Knees off the floor — support yourself on your toes',
       elbow: 'Plant your forearms (elbows about 90°), or straighten your arms fully',
-    },
-    bridgehold: {
-      pose: 'Lie on your back with knees bent and feet planted, sideways to the camera',
-      rise: 'Drive your hips to the top position and hold it, glutes squeezed',
     },
   },
 

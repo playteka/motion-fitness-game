@@ -2,10 +2,11 @@
 
 [中文](README.md) · [English](README.en.md) · [Español](README.es.md) · [Français](README.fr.md)
 
-A small fitness game that uses an ordinary webcam for motion tracking: **automatic rep counting for Squat / Lunge / Push-up / Glute Bridge**, **automatic timing for Plank / Static Glute Bridge**,
-and **step-by-step scoring against your form** — every form step you hit instantly earns points, rings a chime, and is spoken aloud.
+A small fitness game that uses an ordinary webcam for motion tracking: **22 exercises** split into five categories — **Upper body / Lower body / Core / Full body / Stretching**,
+with a home page where you pick an exercise by category and start training right away; **rep exercises count reps automatically and timed exercises time themselves**,
+and **scoring runs form step by form step** — every form step you hit instantly earns points, rings a chime, and is spoken aloud.
 
-The interface ships in **中文 / English / Español / Français**, switchable any time from the top-right corner of the page.
+The interface ships in **中文 / English / Español / Français**, switchable any time from **⚙️ Settings** in the top-right corner (language, detection model, sound effects and background music all live in there).
 
 It's pure front end: the MediaPipe pose model and wasm all live in the local `vendor/` directory, so **nothing goes online and no video is ever uploaded**.
 
@@ -24,8 +25,11 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   - [Don't want to install Node.js? Use Python instead](#dont-want-to-install-nodejs-use-python-instead)
 - [Running and accessing the app](#running-and-accessing-the-app)
 - [Camera permissions](#camera-permissions)
+- [Home page and exercise page](#home-page-and-exercise-page)
+- [Settings modal (language / model / sound)](#settings-modal-language--model--sound)
 - [Pre-workout calibration](#pre-workout-calibration)
 - [How to use it (camera angle matters)](#how-to-use-it-camera-angle-matters)
+- [Exercise library overview (22 exercises)](#exercise-library-overview-22-exercises)
 - [Scoring rules](#scoring-rules)
 - [Languages](#languages)
 - [Can't fit into the outline or getting no response? Four checks](#cant-fit-into-the-outline-or-getting-no-response-four-checks)
@@ -39,18 +43,25 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 
 ## Feature highlights
 
+- **Exercise home page (five categories)**: you land on a wall of exercises split into **Upper body (3) · Lower body (7) · Core (6) · Full body (5) · Stretching (2)**,
+  and each exercise is one card (icon + name + reps/timed + target + judging basis), with a search box as well. Click a card to open its exercise page, and “Back to home” in the top-left corner brings you back any time.
+  Exercises like “Jump Squat” and “Jumping Lunge” show up in two categories at once (either card opens the same exercise).
+- **Exercise page + settings modal**: the exercise page has ⚙️ Settings in the top-right corner, and the modal collects **language, detection model, sound effects, spoken counting and background music**
+  together with mirror, strict mode, skeleton, angles and metrics toggles — no more hunting for buttons all over the screen.
 - **Pre-workout calibration**: before you start there's a **dashed body silhouette** in the frame (it only traces your outer shape — you don't need to line up your joints), and a text prompt above the video tells you
   “move into the dashed outline”; **as long as a body is detected and your whole body is in frame you're cleared to start** (about 0.6 seconds), while
   distance, centering, height, camera angle and holding still are only recommendations (marked with “·” in the panel) and no longer block the start.
-- **Form steps scored one at a time**: each exercise is broken into 4–6 judgeable steps — hit one and you immediately get points, a chime, and a checkmark;
+- **Form steps scored one at a time**: each exercise is broken into 4–5 judgeable steps — hit one and you immediately get points, a chime, and a checkmark;
   finishing every step in a round earns a perfect-round bonus, and hold exercises give **+1 point for every second you hold**.
-- **Valid rep detection (lenient by default)**: **if you roughly did the movement, it counts** — shallower squats and lunges, push-ups that only go part of the way down and glute bridges that don't rise very high all count, while the voice coach corrects “go lower / down a little more / lift your hips higher / don't let your lower back sag” and the score is discounted for quality; turn on the **Strict mode** switch in the panel if you want “only a full-depth rep counts”. Movements you didn't really do (a mere wobble) aren't counted and won't trigger nagging.
+- **Valid rep detection (lenient by default)**: **if you roughly did the movement, it counts** — shallower squats and lunges, push-ups that only go part of the way down and glute bridges that don't rise very high all count, while the voice coach corrects “go lower / down a little more / lift your hips higher / don't let your lower back sag” and the score is discounted for quality; turn on the **Strict mode** switch in the settings modal if you want “only a full-depth rep counts”. Movements you didn't really do (a mere wobble) aren't counted and won't trigger nagging.
+- **Every exercise states its “judging basis”**: the card and the exercise page spell out what the exercise is judged by (elbow bend / knee bend /
+  hip lift height / both feet off the floor / body posture …), and exercises the camera can't judge reliably are additionally marked as **rough judgement**.
 - **Live status feedback**: the area below the video always shows what state you're in, which step you're stuck on, and how many degrees you still need.
 - **🐞 Metrics panel**: one click shows every raw number the detector sees (view, visibility, each joint angle), so camera-position problems are obvious at a glance.
 - **Spoken counting in your language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
 - **Voice-first throughout**: it calls out when it can't find you, says which form step comes next and how far you still have to go, and corrects bad form the moment it happens,
   while form steps, spoken counts, scores and the set summary are all voiced too — so you barely need to watch the screen.
-- **🎶 Cheerful background music**: a built-in looped BGM (synthesised live — it takes up no space and needs no internet), with a “🎶 Background music” toggle in the top right corner;
+- **🎶 Cheerful background music**: a built-in looped BGM (synthesised live — it takes up no space and needs no internet), with a “🎶 Music” toggle in settings;
   the music is turned down automatically while a cue is spoken, so it never fights the voice.
 - **🦴 Skeleton toggle**: hide the skeleton overlay and keep just the camera view; the angle labels toggle independently.
 - **Goal progress ring, best scores and workout history** (saved locally in your browser).
@@ -321,12 +332,13 @@ the other five are marked with “·” and are only **recommendations** — fol
 | Camera angle right (recommended) | Squats need a **front-on** camera, everything else needs a **side-on** camera |
 | Holding still (recommended) | Holding still makes recognition steadier (you can start without holding still too) |
 
-**Each of the six exercises has its own silhouette**, so just set yourself up to match the outline: squats use a front-on standing pose, lunges a side-on standing pose,
-push-ups a **side-on top-of-the-push-up position** (arms straight, hands on the floor), planks a **side-on forearm-supported prone position** (on your forearms, body low),
-and glute bridges and static glute bridges a **side-on lying pose with bent knees** (on your back, knees bent, feet flat on the floor, hips resting on the ground).
+**Every exercise has its own silhouette** (chosen automatically from the exercise's camera angle and posture), so just set yourself up to match the outline:
+front-facing exercises (Bodyweight Squat / Sumo Squat / Jump Squat / Box Jump / Burpee) use a front-on standing silhouette, and the other standing exercises use a side-on standing pose,
+push-up exercises (Mountain Climber included) use a **side-on top-of-the-push-up position** (arms straight, hands on the floor), Plank and Side Plank use a **side-on forearm-supported prone position**,
+and lying-down exercises like Glute Bridge / Crunch / Lying Leg Raise / Dead Bug use a **side-on lying pose with bent knees** (on your back, knees bent, feet flat on the floor).
 When you film from the side, the outline flips left to right automatically to match which way you're facing.
 
-Once all seven pass and stay that way for a moment, the **dashed outline disappears at once** (that is the signal that your whole body has been recognised),
+Once the two mandatory checks pass and stay that way for about 0.6 s, the **dashed outline disappears at once** (that is the signal that your whole body has been recognised),
 and the 3-2-1 countdown then fires automatically to start counting — there is no button to click.
 When a set ends you go back to calibration: this time the outline stays green, and you start the next set yourself with “Start set” (or Space) —
 so you can rest and look at the summary first instead of being pulled straight into the next set.
@@ -338,26 +350,86 @@ so you can rest and look at the summary first instead of being pulled straight i
 
 ---
 
+## Home page and exercise page
+
+**Home page**: you land on a wall of exercises grouped into **Upper body / Lower body / Core / Full body / Stretching**,
+and every exercise gets one card: icon, name, reps or timed, the default target, and the **judging basis** (what that exercise is judged by).
+The search box at the top finds exercises by name directly (type “push” or “plank”, for example).
+
+- Click any card → you go to its **exercise page** (camera + form-step checklist + scoring + goal setting + records).
+- “Back to home” in the top-left corner of the exercise page returns you to the wall; ⚙️ **Settings** is in the top-right corner.
+- Exercises that belong to two categories (Jump Squat, Jumping Lunge, Mountain Climber) appear in both blocks, and either card opens the same exercise.
+
+## Settings modal (language / model / sound)
+
+Open the ⚙️ settings modal from the top-right corner of the exercise page — every switch is gathered in there:
+
+| Group | Items |
+|---|---|
+| Language | 中文 / English / Español / Français (takes effect immediately, switching exercise names and form steps along with it) |
+| Pose model | Lite (smoother, the default) / Full (more accurate; the first switch has to download one more model file, and it's offline after that) |
+| Sound | 🔊 Voice count · 🎵 Sound FX · 🎶 Music |
+| Video & tracking | 🪞 Mirror · ✅ Strict mode · 🦴 Skeleton · 📐 Angles · 🐞 Metrics |
+
+Click outside the modal, or press `Esc` or `G`, to close it.
+
+---
+
 ## How to use it (camera angle matters)
 
-**Squats are done facing the camera; the other five exercises are done sideways to it**:
+**Front-facing camera: Bodyweight Squat, Sumo Squat, Jump Squat, Box Jump and Burpee; every other exercise is done sideways to the camera.**
+The first line of “Form steps” on the exercise page spells out how to stand for that exercise (and every card also states its judging basis).
 
-- **Squat**: face the camera. A squat's knee bend happens in the "front-to-back" direction, and from the side that direction falls right along the horizontal axis of the frame,
-  where it measures most accurately — but **only a front-on view shows whether your knees are caving inward**, and whether your left and right sides are symmetric, so squats use the front view.
-  Depth is now judged by "how much higher your hips are than your knees", which isn't compressed in a front view and is actually more direct than a knee angle.
+- **Front-facing exercises** (Bodyweight Squat / Sumo Squat / Jump Squat / Box Jump / Burpee): face the camera. Depth is judged by “how much higher your hips are than your knees”,
+  a quantity that isn't compressed in a front view; and only a front-on view shows whether your knees are caving inward and whether your left and right sides are symmetric.
 
 - Stand **2–3 m (6–10 ft)** away from the camera with your **whole body in frame** (head to feet);
-- **Lunge**: stand sideways to the camera so your ankles, knees, hips and shoulders are all visible at once;
-- **Push-up / Plank**: lie or face perpendicular to the lens with both hands and both feet inside the frame;
-- **Glute Bridge / Static Glute Bridge**: camera at your side, so your shoulders, hips, knees and ankles are all visible at once;
+- **Lunge / Bulgarian Split Squat**: stand sideways to the camera so your ankles, knees, hips and shoulders are all visible at once;
+- **Push-up / Plank / Mountain Climber**: your body runs perpendicular to the lens, with both hands and both feet inside the frame;
+- **Glute Bridge / Crunch / Lying Leg Raise / Dead Bug / Side Plank**: lying down, sideways to the camera, with your shoulders, hips, knees and ankles all visible at once;
+- **Stretching**: for Standing Forward Fold, stand up straight sideways to the camera; for Seated Forward Fold, sit on the floor sideways to the camera;
 - Even lighting, a clean background, and closer-fitting clothes all make tracking more stable.
-- **No sound?** ① check the browser tab is not muted (speaker icon on the tab) ② flip the “🔊 Voice” switch once — it speaks a short test line right away ③ open “🐞 Metrics”: the last line shows “Sound” as `running` with a voice count above 0.
+- **No sound?** ① check the browser tab is not muted (speaker icon on the tab) ② open settings and flip “🔊 Voice count” once — it speaks a short test line right away ③ open “🐞 Metrics”: the last line shows “Sound” as `running` with a voice count above 0.
 
-**Note: detection starts the moment you pick an exercise, but standing there no longer earns you any points.**
-**Note the flow: move into the dashed outline → your whole body is recognised (the dashed outline disappears) → automatic 3-2-1 countdown → counting starts;
+**Note the flow: pick an exercise → move into the dashed outline → your whole body is recognised (the dashed outline disappears) → automatic 3-2-1 countdown → counting starts;
 after a set ends you go back to calibration, and you click “Start set” (or press Space) to start the next set.**
+Calibration only checks that you're in position — it never counts reps or awards points.
 
-**Shortcuts**: `1`–`6` switch exercise · `Space` start/pause · `R` reset reps · `Esc` end set · `M` mirror · `S` skeleton · `F` fullscreen the video frame
+**Shortcuts**: `1`–`9` switch exercise · `H` home · `G` settings · `Space` start/pause · `R` reset reps · `Esc` end set · `M` mirror · `S` skeleton · `F` fullscreen the video frame
+
+---
+
+## Exercise library overview (22 exercises)
+
+| Category | Exercise (icon) | Type | Judging basis | Default target |
+|---|---|---|---|---|
+| 💪 Upper body | Push-up 💪 | Reps | Elbow bend | 12 reps |
+| 💪 Upper body | Wide Push-Up ↔️ | Reps | Elbow bend | 12 reps |
+| 💪 Upper body | Diamond Push-Up 💎 | Reps | Elbow bend | 10 reps |
+| 🦵 Lower body | Bodyweight Squat 🏋️ | Reps | Knee bend (front-on depth) | 15 reps |
+| 🦵 Lower body | Sumo Squat 🤼 | Reps | Knee bend | 15 reps |
+| 🦵 Lower body | Bulgarian Split Squat 🦵 | Reps | Knee bend | 12 reps |
+| 🦵 Lower body | Forward Lunge 🚶 | Reps | Front knee angle + back knee height | 16 reps |
+| 🦵 Lower body | Reverse Lunge ↩️ | Reps | Knee bend | 16 reps |
+| 🦵 Lower body | Glute Bridge 🌉 | Reps | Hip lift height | 15 reps |
+| 🦵 Lower body | Jump Squat 🚀 | Reps | Knee bend + both feet off the floor | 12 reps |
+| 🔥 Core | Plank 🧘 | Timed | Hold time | 45 sec |
+| 🔥 Core | Side Plank 🧎 | Timed | Whether your body position is on target (rough judgement) | 30 sec |
+| 🔥 Core | Dead Bug 🐞 | Reps | Left/right leg alternation | 16 reps |
+| 🔥 Core | Crunch 🌀 | Reps | Shoulder height off the floor | 20 reps |
+| 🔥 Core | Reverse Crunch 🔃 | Reps | Hip hinge | 15 reps |
+| 🔥 Core | Lying Leg Raise 🦿 | Reps | Hip hinge | 15 reps |
+| 🤸 Full body | Burpee 💥 | Reps | Order of the whole sequence (squat → plank → jump) | 10 reps |
+| 🤸 Full body | Mountain Climber ⛰️ | Reps | Left/right leg alternation | 24 reps |
+| 🤸 Full body | Box Jump 🦘 | Reps | Knee bend + both feet off the floor (rough judgement) | 10 reps |
+| 🤸 Full body | Jump Squat 🚀 | Reps | Knee bend + both feet off the floor | 12 reps |
+| 🤸 Full body | Jumping Lunge ⤴️ | Reps | Knee bend + both feet off the floor | 14 reps |
+| 🧘 Stretching | Standing Forward Fold 🙇 | Timed | Whether your body position is on target | 30 sec |
+| 🧘 Stretching | Seated Forward Fold 🧎‍♂️ | Timed | Whether your body position is on target | 30 sec |
+
+> “Jump Squat” belongs to both Lower body and Full body, and “Jumping Lunge” belongs to Full body — the same exercise can appear in more than one category.
+> The judging basis is **what the camera actually measures**; exercises marked as **rough judgement** (Side Plank, Box Jump and so on) can only tell that
+> “your body position is roughly on target” — scoring and timing still work as usual, but don't treat them as a strict posture referee.
 
 ---
 
@@ -422,16 +494,28 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 | ⑤ Hold steady for 30 seconds | Held for a full 30 seconds | +25 |
 | ⏱ For every second you hold | While your form is valid | +1/sec |
 
-### Static Glute Bridge (63 points per set, plus 1 point per second)
+### About the exercises that are not in this list
 
-| Form step | How it's judged | Points |
+> This version of the exercise library was trimmed to the 22 exercises on the given list, and Static Glute Bridge isn't one of them — if you want it back,
+> copy the `bridge` entry in `src/catalog.js`, change `kind` to `'hold'`, and run `npm test` once more
+> (the detection engine and the scoring plan are both already there — see [Tuning scores and thresholds yourself](#tuning-scores-and-thresholds-yourself)).
+
+### Generic “family” scoring plans
+
+On top of the 5 hand-written plans above, the remaining exercises share 8 **family plans** (exercises of the same kind are judged by identical logic, only the thresholds differ):
+
+| Family plan | Used by | Step structure |
 |---|---|---|
-| ① Lie on your back with knees bent, feet planted hip-width apart | Supine bent-knee position | +6 |
-| ② Lift your hips to the top position | Hip lift > 0.32× torso length | +12 |
-| ③ Squeeze your glutes and hold 3 seconds | Held for a full 3 seconds | +10 |
-| ④ Hold 10 seconds | Held for a full 10 seconds | +15 |
-| ⑤ Hold 20 seconds | Held for a full 20 seconds | +20 |
-| ⏱ For every second you hold | While your form is valid | +1/sec |
+| Standing bend | Sumo Squat, Bulgarian Split Squat, Reverse Lunge | Set up → bend your knees and sink → hit the target range → drive back to standing |
+| Prone bend | Wide / Diamond Push-Up | Set up in one straight line → bend your elbows and lower → reach the target depth → press back up |
+| Supine lift | Crunch, Reverse Crunch, Lying Leg Raise | Lie down → start the movement → lift all the way → lower back under control |
+| Alternating | Dead Bug, Mountain Climber | Get into position → first tuck/extend → switch sides → keep the rhythm |
+| Multi-stage | Burpee | Stand → squat and plant your hands → complete the middle stage → stand up and finish |
+| Jump family | Jump Squat, Jumping Lunge, Box Jump | Stand → bend your knees and load → **both feet off the floor** → land with bent knees |
+| Timed (posture) | Side Plank | Get into position → body in one straight line → hold 3 / 10 / 30 seconds |
+| Timed (stretch) | Standing Forward Fold, Seated Forward Fold | Enter the stretch → breathe and relax → hold 10 / 20 seconds |
+
+Timed family plans also give **+1 point for every second you hold**; if your form collapses for more than 1.2 seconds, the timer pauses and the voice reminds you.
 
 ### Sound and voice feedback
 
@@ -446,7 +530,7 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 | Holding in a timed exercise | A soft tick every second + the score climbing steadily |
 | Goal reached / set ended | A celebration chord + goal floating text + a summary panel (score plus any form steps you missed) |
 
-Both sound effects and voice can be turned off with one click in the top bar.
+Both sound effects and voice can be turned off with one click in the ⚙️ Settings dialog.
 
 ---
 
@@ -470,9 +554,9 @@ then run `npm run test:i18n` again — the test checks every entry for missing k
 
 ## Can't fit into the outline or getting no response? Four checks
 
-**① Check the version first.** The page title should show `v2.4` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
+**① Check the version first.** The page title should show `v3.0` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
 
-**② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked, do what the line under the panel tells you:
+**② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked (only “body detected” and “whole body in frame” actually block the start), do what the line under the panel tells you:
 
 | Panel message | Meaning |
 |---|---|
@@ -518,7 +602,7 @@ That's almost always the wrong MIME type for `.wasm`. The bundled `node preview-
 Also make sure the `vendor/` directory is complete (when you download the ZIP from GitHub, forgetting to unzip the whole directory is the most common slip).
 
 **Q: The video stutters / the frame rate is low?**
-Switch “Model” in the top bar to **Lite**; turn off “📐 Angles”; try a faster device. Tracking still works fine at 10–15 FPS.
+Switch “Model” to **Lite** and turn off “📐 Angles” in ⚙️ Settings; try a faster device. Tracking still works fine at 10–15 FPS.
 
 **Q: Does it work on a phone?**
 Yes. Open the same address in your phone's browser (the phone and the computer need to be on the same local network, and the server has to listen on `0.0.0.0`:
@@ -532,20 +616,22 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (513 cases)
-npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
-npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
+npm test                       # run all five suites (871 cases)
+npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / README structure of all four files
+npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
+npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
-npm run test:page              # page wiring self-check (DOM ids / module imports / static assets)
+npm run test:page              # page wiring self-check (DOM ids / module imports / static assets / exercise catalogue and category lists)
 npm run test:app               # integration test that loads the real app.js with a minimal DOM stub
 ```
 
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
-| `tests/test-detectors.mjs` | 212 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
-| `tests/test-page.mjs` | 97 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
-| `tests/test-app.mjs` | 172 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
+| `tests/test-detectors.mjs` | 217 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
+| `tests/test-engines.mjs` | 134 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
+| `tests/test-page.mjs` | 308 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
+| `tests/test-app.mjs` | 180 | Startup with the real `app.js`, home-page rendering, the settings modal, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
 
 ---
 
@@ -559,16 +645,19 @@ motion-fitness-game/
 ├─ src/
 │  ├─ i18n.js            ★ i18n core (t / setLang / applyI18n)
 │  ├─ locales/           ★ the four locale files: zh.js / en.js / es.js / fr.js
+│  ├─ catalog.js         ★ the exercise library: five categories + 22 exercises (icon, type, engine, thresholds, judging basis)
 │  ├─ geometry.js        geometry and signal processing (angles, One Euro smoothing)
-│  ├─ metrics.js         per-frame exercise metrics (joint angles, hip lift, body straightness…)
+│  ├─ metrics.js         per-frame exercise metrics (joint angles, hip lift, floor clearance, body straightness…)
 │  ├─ steps.js           ★ the scored form steps per exercise (condition + points + hint key)
 │  ├─ calibration.js     ★ pre-workout calibration: dashed body silhouette outline + the seven positioning checks
-│  ├─ exercises.js       ★ detection state machines + scoring engine for the six exercises
+│  ├─ detector-base.js   detector base class (form-step scoring, cue throttling, dropped-frame handling)
+│  ├─ engines.js         ★ the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
+│  ├─ exercises.js       ★ the five hand-written detectors (Bodyweight Squat / Forward Lunge / Push-up / Glute Bridge / Plank) + factory
 │  ├─ pose-engine.js     MediaPipe PoseLandmarker wrapper + camera management
 │  ├─ render.js          skeleton rendering
 │  ├─ audio.js           sound effects + speech (follows the selected language)
-│  └─ app.js             UI, workout flow, form-step checklist, records, main loop
-├─ tests/                the four automated test suites
+│  └─ app.js             UI, exercise home page, settings modal, workout flow, form-step checklist, records, main loop
+├─ tests/                the five automated test suites
 └─ vendor/               MediaPipe tasks-vision (wasm) and the pose model (offline)
 ```
 
@@ -576,19 +665,30 @@ motion-fitness-game/
 
 ## Tuning scores and thresholds yourself
 
+**Adding an exercise takes one config entry in the exercise library** (no detection code to write):
+
+1. Add one entry to `EXERCISES` in `src/catalog.js`, for example
+   `e('myMove', '🔧', ['core'], { plan: 'repSupine', posture: 'supine', judge: 'clear', target: 15, params: bend({ metric: 'kneeClear', gate: 'supineLow', up: 0.15, down: 0.85 }) })`;
+2. Add `myMove: { name, cameraHint, goal }` to the `ex` block of all four `src/locales/*.js` files
+   (the form steps and tips automatically fall back to the template of the “family” it belongs to — add `howto` / `tips` if you want to write your own);
+3. Run `npm test` — the tests check the five category lists, the copy in all four languages, and that every exercise has both a detector and a complete scoring plan.
+
 - **Change point values or form-step wording**: edit `src/steps.js` (structure and points) and `src/locales/*.js` (wording).
   Each step is one `{ id, labelKey, points, check, hint }`; when `check(frame, det)` returns `true`, that step counts as hit.
-- **Change the judging thresholds**: edit the constants at the top of each exercise in `src/exercises.js` — they all have Chinese comments:
-  - `SQUAT_FRONT` (in `src/steps.js`): the squat's front-on depth thresholds — `standRatio` 0.86 / `enterRatio` 0.78 /
-  `bottomRatio` 0.40 (lower is stricter) / `looseRatio` 0.62 (the counting line in relaxed mode); measured as “how much higher your hips are than your knees ÷ shin length”, standing tall ≈ 1.0;
-  - `LUNGE`: the lunge's three knee-angle levels — `enterKnee` 146 (how far you must bend for a round to count as started) / `looseKnee` 142 (the relaxed counting line) /
-  `downKnee` 128 (strict mode and the depth score); `backKneeDrop` 0.66 is back-knee height off the floor ÷ shin length; `enterHoldMs` / `exitHoldMs` are the jitter tolerances;
-  - `PUSHUP.elbowFull` 106 (full-depth score) / `PUSHUP.looseElbow` 124 (the relaxed counting line);
-  - `BRIDGE.upRise` 0.22 / `BRIDGE_HOLD.holdRise` 0.20: glute bridge hip-lift height (in units of torso length); `BRIDGE.minRepMs` 700 is the minimum whole-cycle time (jitter filter);
-  - `PLANK.bodyStraight`: the minimum angle for “body in one straight line” in a plank (default 142°);
+- **Change the judging thresholds**:
+  - **Exercises on the generic engines** (the large majority of the library): edit that exercise's `params` in `src/catalog.js` —
+    `metric` picks which quantity to use (`kneeBent` / `elbow` / `hipRise` / `kneeClear` / `shoulderClear` …),
+    `gate` requires a posture (`stand` / `prone` / `supine` / `seated` / `sideLying` …),
+    `up` is the start value, `down` the target value, `looseP` the lenient counting line, `minRepMs` the fastest time for one rep, and `flight` whether both feet have to leave the floor;
+  - **The five hand-written detectors**: edit the matching constants in `src/exercises.js` (they all have Chinese comments) —
+    `SQUAT_FRONT` (in `src/steps.js`): `standRatio` 0.86 / `enterRatio` 0.78 / `bottomRatio` 0.40 /
+    `looseRatio` 0.62, measured as “how much higher your hips are than your knees ÷ shin length”, standing tall ≈ 1.0;
+    `LUNGE`: `enterKnee` 146 / `looseKnee` 142 / `downKnee` 128, the three knee-angle levels, with `backKneeDrop` 0.66;
+    `enterHoldMs` / `exitHoldMs` are the jitter tolerances; `PUSHUP.elbowFull` 106 / `PUSHUP.looseElbow` 124;
+    `BRIDGE.upRise` 0.22 and `minRepMs` 700; `PLANK.bodyStraight` 142;
   - `HoldDetector.graceMs`: the grace period for timed exercises (default 1200ms).
   - **Relaxed vs strict**: `DetectorBase.strict` defaults to `false` (roughly doing the movement counts; poor form only triggers a spoken correction plus a quality discount);
-    the **✅ Strict mode** switch in the UI changes the criteria to “only a full-depth rep counts”.
+    the **✅ Strict mode** switch in the settings modal changes the criteria to “only a full-depth rep counts”.
 
 After changing anything, run `npm test` — the tests have the standard range of motion for these exercises baked in, so they'll tell you right away if you've tightened things too far.
 

@@ -2,11 +2,11 @@
 
 [中文](README.md) · [English](README.en.md) · [Español](README.es.md) · [Français](README.fr.md)
 
-Un mini-jeu de fitness qui détecte tes mouvements avec une simple webcam : **comptage automatique des squats / fentes / pompes / ponts fessiers**,
-**chrono automatique pour la planche / le pont fessier statique**, et surtout un **score attribué étape par étape selon les « étapes techniques »** :
-chaque étape validée rapporte aussitôt des points, déclenche un bip et annonce l'étape à voix haute.
+Un mini-jeu de fitness qui détecte tes mouvements avec une simple webcam : **22 exercices** répartis en **cinq catégories — haut du corps / bas du corps / gainage / corps entier / étirements** ;
+la page d'accueil te laisse choisir un exercice par catégorie, et tu peux t'entraîner aussitôt : **les exercices en répétitions comptent les répétitions, les exercices chronométrés lancent le chrono**,
+et surtout un **score attribué étape par étape selon les « étapes techniques »** : chaque étape validée rapporte aussitôt des points, déclenche un bip et annonce l'étape à voix haute.
 
-L'interface existe en **quatre langues : 中文 / English / Español / Français**, que tu peux changer à tout moment en haut à droite de la page.
+L'interface existe en **quatre langues : 中文 / English / Español / Français**, que tu peux changer à tout moment via **⚙️ Réglages** en haut à droite (langue, modèle de détection, effets sonores et musique de fond s'y trouvent tous).
 
 Tout est côté client : le modèle de posture MediaPipe et le wasm sont stockés en local dans le dossier `vendor/`, **aucune connexion réseau, aucune image envoyée**.
 
@@ -25,38 +25,48 @@ Tout est côté client : le modèle de posture MediaPipe et le wasm sont stocké
   - [Pas envie d'installer Node.js ? Utilise Python](#pas-envie-dinstaller-nodejs--utilise-python)
 - [Démarrage et accès](#démarrage-et-accès)
 - [Réglages des autorisations caméra](#réglages-des-autorisations-caméra)
+- [Page d'accueil et page d'exercice](#page-daccueil-et-page-dexercice)
+- [Fenêtre de réglages (langue / modèle / son)](#fenêtre-de-réglages-langue--modèle--son)
 - [Calibrage avant la séance](#calibrage-avant-la-séance)
 - [Comment jouer (le cadrage est essentiel)](#comment-jouer-le-cadrage-est-essentiel)
+- [Catalogue des 22 exercices](#catalogue-des-22-exercices)
 - [Règles de score](#règles-de-score)
 - [Langues](#langues)
 - [Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes](#calibrage-bloqué-ou-rien-ne-se-passe--diagnostic-en-quatre-étapes)
 - [Questions fréquentes](#questions-fréquentes)
 - [Tests](#tests)
 - [Structure du projet](#structure-du-projet)
-- [Ajuster les points / les seuils toi-même](#ajuster-les-points--les-seuils-toi-même)
+- [Ajouter un exercice / ajuster les points et les seuils](#ajouter-un-exercice--ajuster-les-points-et-les-seuils)
 - [Confidentialité et licence](#confidentialité-et-licence)
 
 ---
 
 ## Points forts
 
+- **Une page d'accueil (cinq catégories)** : à l'ouverture, tu arrives sur un mur d'exercices classés par catégorie — Haut du corps (3) · Bas du corps (7) · Gainage (6) · Corps entier (5) · Étirements (2) ;
+  chaque exercice a sa carte (icône + nom + répétitions ou chrono + objectif + critère de détection), et un champ de recherche est là pour aller plus vite. Clique sur une carte pour ouvrir la page de l'exercice ; « Retour à l'accueil », en haut à gauche, te ramène quand tu veux.
+  Certains exercices, comme « Squats sautés », apparaissent dans deux catégories (en cliquant, c'est toujours le même exercice).
+- **Page d'exercice + fenêtre de réglages** : en haut à droite de la page d'exercice se trouve ⚙️ Réglages, et la fenêtre rassemble **la langue, le modèle de détection, les effets sonores, l'annonce vocale du comptage et la musique de fond**,
+  ainsi que les interrupteurs miroir, mode strict, squelette, angles et métriques — plus besoin de chercher des boutons partout à l'écran.
 - **Calibrage avant la séance** : avant de commencer, une **silhouette en pointillés** s'affiche dans l'image (elle n'esquisse que le contour extérieur,
   rien à aligner sur un squelette) et une ligne de texte en haut de l'image t'indique « entre dans la silhouette en pointillés » ;
   **il suffit qu'un corps soit détecté et que ton corps entier soit dans l'image pour lancer la séance** (environ 0,6 seconde) ; en revanche,
   la distance, le centrage, la hauteur, l'angle de vue et l'immobilité ne sont que des recommandations (marquées d'un « · » dans le panneau) et ne bloquent plus le démarrage.
-- **Un score attribué étape par étape selon les étapes techniques** : chaque exercice est découpé en 4 à 6 étapes vérifiables ; chaque étape réussie
+- **Un score attribué étape par étape selon les étapes techniques** : chaque exercice est découpé en 4 à 5 étapes vérifiables ; chaque étape réussie
   rapporte aussitôt des points, déclenche un bip et coche la ligne ; valider toutes les étapes d'une série donne droit à un bonus de série parfaite ;
   pour les exercices chronométrés, **chaque seconde tenue rapporte +1 point**.
 - **Un comptage des répétitions valides (permissif par défaut)** : **si tu fais le mouvement dans les grandes lignes, ça compte** — les squats et les fentes moins profonds, les pompes qui ne descendent qu'en partie
   et les ponts fessiers qui ne montent pas très haut comptent aussi, pendant que la voix corrige « descends plus bas / descends encore un peu / monte plus les hanches / ne creuse pas le bas du dos »
-  et que le score est réduit selon la qualité ; active l'interrupteur **Mode strict** du panneau si tu veux que « seule une répétition complète compte ».
+  et que le score est réduit selon la qualité ; active l'interrupteur **✅ Mode strict** des ⚙️ Réglages si tu veux que « seule une répétition complète compte ».
   Ce que tu n'as pas vraiment fait (un simple balancement) n'est pas compté et ne déclenche pas de rappels insistants.
+- **Chaque exercice annonce son « critère de détection »** : la carte et la page de l'exercice précisent sur quoi repose la détection (flexion du coude / flexion du genou /
+  hauteur des hanches / pieds décollés / position du corps …), et les exercices que la caméra ne peut juger que grossièrement portent la mention **Détection approximative**.
 - **Un retour d'état en temps réel** : sous l'image, tu vois en permanence « dans quel état tu es, à quelle étape tu bloques et combien de degrés il te reste ».
 - **🐞 Panneau « Métriques »** : affiche d'un clic tous les chiffres bruts que voit le détecteur (vue, visibilité, angles des articulations) — un problème de cadrage se repère au premier coup d'œil.
-- **Annonce vocale en chinois + effets sonores** : chaque étape validée est saluée par une gamme montante, la première réussite d'une étape est annoncée à voix haute, et le score est annoncé tous les 50 points.
+- **Annonce vocale du comptage + effets sonores** : chaque étape validée est saluée par une gamme montante, la première réussite d'une étape est annoncée à voix haute, et le score est annoncé tous les 50 points.
 - **La voix avant tout** : s'il ne te trouve pas, il t'appelle, il annonce quelle étape du mouvement faire ensuite et combien il t'en reste, et il corrige aussitôt une posture incorrecte,
   et les étapes validées, le comptage, le score et le bilan de la série sont eux aussi annoncés à voix haute — tu n'as presque pas besoin de regarder l'écran.
-- **🎶 Une musique de fond entraînante** : une musique de fond en boucle intégrée (synthétisée sur place : aucun espace occupé et pas besoin d'internet), avec l'interrupteur « 🎶 Musique de fond » en haut à droite à activer ou couper à tout moment ;
+- **🎶 Une musique de fond entraînante** : une musique de fond en boucle intégrée (synthétisée sur place : aucun espace occupé et pas besoin d'internet), avec l'interrupteur « 🎶 Musique de fond » dans les ⚙️ Réglages à activer ou couper à tout moment ;
   le volume baisse automatiquement pendant l'annonce d'un conseil, pour ne jamais couvrir la voix.
 - **🦴 Interrupteur du squelette** : permet de masquer le squelette pour ne garder que l'image de la caméra ; les annotations d'angles s'activent séparément.
 - **Anneau de progression vers l'objectif, meilleur score et historique d'entraînement** (conservés en local dans le navigateur).
@@ -324,46 +334,107 @@ les cinq autres sont marqués d'un « · » et ne sont que des **recommandations
 | Bonne distance (recommandé) | Ta taille dans l'image est la bonne (trop loin / trop près : le panneau te dit dans quel sens bouger) |
 | Bien centré (recommandé) | Ton corps se trouve au milieu de la silhouette |
 | Bonne hauteur (recommandé) | Ta position verticale dans l'image est la bonne |
-| Bon angle (recommandé) | Le squat se filme **de face**, les autres exercices **de profil** |
+| Bon angle (recommandé) | Certains exercices se filment **de face** (squat, squat sumo, squats sautés, saut sur box, burpee), les autres **de profil** |
 | Immobile (recommandé) | Rester immobile rend la détection plus stable (tu peux aussi commencer sans rester immobile) |
 
-**Chacun des six exercices a sa propre silhouette** : il suffit de te mettre en position et de suivre le contour — le squat est une posture debout de face, la fente une posture debout de profil,
-la pompe une **position haute de pompe, vue de profil** (bras tendus, mains au sol), la planche une **position allongée de profil sur les avant-bras** (sur les avant-bras, corps au ras du sol),
-et le pont fessier comme le pont fessier statique une **position allongée de profil, jambes fléchies** (allongé sur le dos, genoux fléchis, pieds à plat au sol, bassin posé au sol).
+**Chacun des 22 exercices a sa propre silhouette** (choisie automatiquement selon l'angle de vue et la posture de l'exercice) : il suffit de te mettre en position et de suivre le contour.
+Les exercices de face (squat au poids du corps / squat sumo / squats sautés / saut sur box / burpee) sont une silhouette debout de face, les exercices debout une silhouette debout de profil,
+les pompes (y compris le mountain climber) une **position haute de pompe, vue de profil** (bras tendus, mains au sol), la planche et la planche latérale une **position allongée de profil sur les avant-bras** (corps au ras du sol, appui sur les avant-bras),
+et les exercices allongés sur le dos — pont fessier / crunch / crunch inversé / relevés de jambes allongé / dead bug — une **position allongée de profil, jambes fléchies** (allongé sur le dos, genoux fléchis, pieds à plat au sol).
 De profil, le contour se retourne automatiquement de gauche à droite selon ton orientation.
 
-Une fois les sept critères validés et tenus un court instant, **la silhouette en pointillés disparaît immédiatement** (c'est le signal que ton corps entier a bien été reconnu),
+Une fois les deux critères obligatoires validés et tenus environ 0,6 s, **la silhouette en pointillés disparaît immédiatement** (c'est le signal que ton corps entier a bien été reconnu),
 puis le décompte 3-2-1 se lance automatiquement et le comptage démarre : aucun bouton à cliquer.
 À la fin d'une série, tu reviens au calibrage : cette fois la silhouette reste verte et c'est toi qui lances la série suivante avec « Démarrer la séance » (ou Espace) —
 tu peux donc souffler et regarder le récapitulatif sans être embarqué aussitôt dans la série suivante.
 
 > Si tu n'es pas bien placé, la ligne de texte en haut de l'image et le panneau de calibrage t'indiquent tous les deux directement quoi faire (par exemple « rapproche-toi un peu de la caméra », « décale-toi vers la droite », « mets-toi face à la caméra »),
 > tu ne resteras jamais sans savoir ce qui ne va pas.
-> Pour les exercices allongés (pompe / planche / pont fessier), la distance se juge d'après la **longueur du corps** : pas besoin de te lever.
+> Pour les exercices allongés (pompes / planche / pont fessier), la distance se juge d'après la **longueur du corps** : pas besoin de te lever.
 > Pour refaire le calibrage : clique sur « Recalibrer » sous l'image ; chaque fin de série te ramène aussi automatiquement au calibrage.
+
+---
+
+## Page d'accueil et page d'exercice
+
+**Page d'accueil** : à l'ouverture, tu arrives sur un mur d'exercices réparti en cinq blocs **Haut du corps / Bas du corps / Gainage / Corps entier / Étirements** ;
+dans chaque bloc, chaque exercice a sa carte : icône, nom, répétitions ou chrono, objectif par défaut, et le **critère de détection** (sur quoi repose la détection pour cet exercice).
+Le champ de recherche au-dessus permet de trouver un exercice par son nom (par exemple en tapant « pompe » ou « push »).
+
+- Clique sur n'importe quelle carte → tu arrives sur la **page de l'exercice** (caméra + liste des étapes techniques + score + réglage de l'objectif + historique).
+- « Retour à l'accueil » en haut à gauche de la page d'exercice ramène au mur d'exercices ; en haut à droite se trouve ⚙️ **Réglages**.
+- Les exercices qui appartiennent à deux catégories (comme « Squats sautés ») apparaissent dans les deux blocs : en cliquant, c'est toujours le même exercice.
+
+## Fenêtre de réglages (langue / modèle / son)
+
+Le ⚙️ en haut à droite de la page d'exercice ouvre la fenêtre de réglages, qui rassemble tous les interrupteurs :
+
+| Groupe | Élément |
+|---|---|
+| Langue | 中文 / English / Español / Français (effet immédiat : les noms d'exercices et les étapes techniques changent aussi) |
+| Modèle de détection | Léger (fluide, par défaut) ／ Complet (plus précis ; le premier changement télécharge un modèle supplémentaire, ensuite tout fonctionne hors ligne) |
+| Son | 🔊 Annonce du comptage · 🎵 Effets sonores · 🎶 Musique de fond |
+| Image et détection | 🪞 Miroir · ✅ Mode strict · 🦴 Squelette · 📐 Angles · 🐞 Métriques |
+
+Clique en dehors de la fenêtre, ou appuie sur `Esc` ou `G`, pour la fermer.
 
 ---
 
 ## Comment jouer (le cadrage est essentiel)
 
-**Le squat se filme de face, les cinq autres exercices de profil** :
+**Cadrage de face : squat au poids du corps, squat sumo, squats sautés, saut sur box et burpee ; tous les autres exercices se filment de profil.**
+La première ligne des « étapes techniques » de la page d'exercice indique comment te placer pour cet exercice (chaque carte affiche aussi le critère de détection).
 
-- **Squat** : face à la caméra. La flexion du genou se fait dans l'axe « avant-arrière » : de profil, cet axe tombe pile sur l'axe horizontal de l'image, donc il se mesure très bien —
-  mais **seul un cadrage de face permet de voir si les genoux rentrent vers l'intérieur**, et de vérifier la symétrie gauche-droite ; le squat se filme donc de face.
-  La profondeur se juge sur « de combien les hanches dépassent les genoux », une grandeur que la vue de face n'écrase pas, et qui est même plus directe que l'angle du genou.
+- **Exercices de face** (squat au poids du corps / squat sumo / squats sautés / saut sur box / burpee) : face à la caméra. La profondeur se juge sur « de combien les hanches dépassent les genoux »,
+  une grandeur que la vue de face n'écrase pas ; et **seul un cadrage de face permet de voir si les genoux rentrent vers l'intérieur**, et de vérifier la symétrie gauche-droite.
 
 - Place-toi à **2–3 m** de la caméra et fais entrer **tout ton corps** dans l'image (de la tête aux pieds) ;
-- **Fente** : debout de profil face à la caméra, avec chevilles, genoux, hanches et épaules visibles en même temps ;
-- **Pompe / planche** : le corps allongé ou à plat perpendiculaire à l'objectif, mains et pieds dans le cadre ;
-- **Pont fessier / pont fessier statique** : allongé de profil, avec épaules, hanches, genoux et chevilles visibles en même temps ;
+- **Fente avant / fente arrière / fente bulgare** : debout de profil face à la caméra, avec chevilles, genoux, hanches et épaules visibles en même temps ;
+- **Pompes / planche / mountain climber** : le corps allongé ou à plat perpendiculaire à l'objectif, mains et pieds dans le cadre ;
+- **Pont fessier / crunch / crunch inversé / relevés de jambes allongé / dead bug / planche latérale** : allongé, de profil, avec épaules, hanches, genoux et chevilles visibles en même temps ;
+- **Étirements** : la pince debout se fait droit, de profil face à la caméra ; la pince assise s'effectue assis au sol, de profil face à la caméra ;
 - Éclairage homogène, arrière-plan pas trop chargé, et vêtements plutôt ajustés : la détection sera plus stable.
-- **Pas de son ?** ① vérifie que l’onglet n’est pas coupé (icône haut-parleur) ② actionne une fois l’interrupteur « 🔊 Voix » : une phrase de test est lue aussitôt ③ ouvre « 🐞 Métriques » : la dernière ligne affiche « Son » à `running` avec un nombre de voix supérieur à 0.
+- **Pas de son ?** ① vérifie que l’onglet n’est pas coupé (icône haut-parleur) ② ouvre ⚙️ Réglages et actionne une fois « 🔊 Annonce du comptage » : une phrase de test est lue aussitôt ③ ouvre « 🐞 Métriques » : la dernière ligne affiche « Son » à `running` avec un nombre de voix supérieur à 0.
 
-**À noter : l'analyse démarre dès l'instant où tu choisis un exercice ; inutile de cliquer d'abord sur « Démarrer la séance ».**
-**Attention à l'ordre : tu entres dans la silhouette en pointillés → ton corps entier est reconnu (la silhouette en pointillés disparaît) → décompte 3-2-1 automatique → le comptage démarre ;
+**Attention à l'ordre : tu choisis un exercice → tu entres dans la silhouette en pointillés → ton corps entier est reconnu (la silhouette en pointillés disparaît) → décompte 3-2-1 automatique → le comptage démarre ;
 à la fin d'une série tu reviens au calibrage et tu cliques sur « Démarrer la séance » (ou tu appuies sur Espace) pour lancer la suivante.**
+Le calibrage ne fait que vérifier ta position : il ne compte rien et n'attribue aucun point.
 
-**Raccourcis clavier** : `1`~`6` changer d'exercice · `Espace` démarrer/pause · `R` réinitialiser le compteur · `Esc` terminer la série · `M` miroir · `S` squelette · `F` plein écran sur la vidéo
+**Raccourcis clavier** : `1`~`9` changer d'exercice · `H` accueil · `G` réglages · `Espace` démarrer/pause · `R` réinitialiser le compteur · `Esc` terminer la série · `M` miroir · `S` squelette · `F` plein écran sur la vidéo
+
+---
+
+## Catalogue des 22 exercices
+
+| Catégorie | Exercice (icône) | Type | Critère de détection | Objectif par défaut |
+|---|---|---|---|---|
+| 💪 Haut du corps | Pompe 💪 | répétitions | Flexion du coude | 12 rép. |
+| 💪 Haut du corps | Pompes larges ↔️ | répétitions | Flexion du coude | 12 rép. |
+| 💪 Haut du corps | Pompes diamant 💎 | répétitions | Flexion du coude | 10 rép. |
+| 🦵 Bas du corps | Squat au poids du corps 🏋️ | répétitions | Flexion du genou (profondeur, vue de face) | 15 rép. |
+| 🦵 Bas du corps | Squat sumo 🤼 | répétitions | Flexion du genou | 15 rép. |
+| 🦵 Bas du corps | Fente bulgare 🦵 | répétitions | Flexion du genou | 12 rép. |
+| 🦵 Bas du corps | Fente avant 🚶 | répétitions | Angle du genou avant + hauteur du genou arrière | 16 rép. |
+| 🦵 Bas du corps | Fente arrière ↩️ | répétitions | Flexion du genou | 16 rép. |
+| 🦵 Bas du corps | Pont fessier 🌉 | répétitions | Hauteur des hanches | 15 rép. |
+| 🦵 Bas du corps | Squats sautés 🚀 | répétitions | Flexion du genou + pieds décollés | 12 rép. |
+| 🔥 Gainage | Planche 🧘 | chrono | Durée du maintien | 45 s |
+| 🔥 Gainage | Planche latérale 🧎 | chrono | Position du corps correcte (détection approximative) | 30 s |
+| 🔥 Gainage | Dead bug 🐞 | répétitions | Alternance des jambes | 16 rép. |
+| 🔥 Gainage | Crunch 🌀 | répétitions | Hauteur du corps au-dessus du sol | 20 rép. |
+| 🔥 Gainage | Crunch inversé 🔃 | répétitions | Hauteur du corps au-dessus du sol | 15 rép. |
+| 🔥 Gainage | Relevés de jambes allongé 🦿 | répétitions | Flexion de la hanche | 15 rép. |
+| 🤸 Corps entier | Burpee 💥 | répétitions | Ordre des mouvements (squat → appui → saut) | 10 rép. |
+| 🤸 Corps entier | Mountain climber ⛰️ | répétitions | Alternance des jambes | 24 rép. |
+| 🤸 Corps entier | Saut sur box 🦘 | répétitions | Flexion du genou + pieds décollés (détection approximative) | 10 rép. |
+| 🤸 Corps entier | Squats sautés 🚀 | répétitions | Flexion du genou + pieds décollés | 12 rép. |
+| 🤸 Corps entier | Fentes sautées ⤴️ | répétitions | Flexion du genou + pieds décollés | 14 rép. |
+| 🧘 Étirements | Pince debout 🙇 | chrono | Position du corps correcte | 30 s |
+| 🧘 Étirements | Pince assise 🧎‍♂️ | chrono | Position du corps correcte | 30 s |
+
+> « Squats sautés » appartient à la fois au bas du corps et au corps entier, et « Fentes sautées » au corps entier — un même exercice peut donc apparaître dans plusieurs catégories.
+> Le critère de détection correspond à **ce que la caméra mesure réellement** ; les exercices marqués **détection approximative** (planche latérale, saut sur box, etc.) ne permettent que de juger « la position est globalement correcte » :
+> le score et le chrono fonctionnent normalement, mais ne les considère pas comme un juge de posture strict.
 
 ---
 
@@ -429,16 +500,28 @@ Le squat se filme **de face** ; la profondeur se juge sur le rapport « écart d
 | ⑤ Tiens la position 30 secondes | Position tenue 30 secondes complètes | +25 |
 | ⏱ Chaque seconde tenue | Tant que la position reste valide | +1/seconde |
 
-### Pont fessier statique (63 points par série + 1 point par seconde)
+### À propos des exercices absents de cette liste
 
-| Étape technique | Condition de validation | Points |
+> Cette version du catalogue a été ramenée aux 22 exercices demandés : le pont fessier statique n'en fait plus partie. Si tu le veux,
+> copie la configuration de `bridge` dans `src/catalog.js`, passe son `kind` à `'hold'` et relance `npm test` pour le réintégrer
+> (le moteur de détection et le barème existent déjà, voir [Ajouter un exercice](#ajouter-un-exercice--ajuster-les-points-et-les-seuils)).
+
+### Barèmes « famille » génériques
+
+En dehors des 5 barèmes écrits à la main ci-dessus, les autres exercices partagent 8 **barèmes de famille** (les exercices d'une même famille se jugent de la même façon, seuls les seuils diffèrent) :
+
+| Barème de famille | Exercices concernés | Enchaînement des étapes |
 |---|---|---|
-| ① Sur le dos, genoux pliés, pieds bien à plat à la largeur des hanches | Position allongée sur le dos, genoux pliés | +6 |
-| ② Monte les hanches au plus haut | Élévation des hanches > 0,32 fois la longueur du tronc | +12 |
-| ③ Fessiers serrés, tiens 3 secondes | Position tenue 3 secondes complètes | +10 |
-| ④ Tiens 10 secondes | Position tenue 10 secondes complètes | +15 |
-| ⑤ Tiens 20 secondes | Position tenue 20 secondes complètes | +20 |
-| ⏱ Chaque seconde tenue | Tant que la position reste valide | +1/seconde |
+| Flexion debout | Squat sumo, fente bulgare, fente arrière | Bien se placer → plier les genoux et descendre → atteindre l'amplitude visée → pousser dans le sol pour revenir |
+| Flexion en appui | Pompes larges / pompes diamant | Se placer en une ligne → plier les coudes et descendre → atteindre la profondeur visée → pousser pour remonter |
+| Montée allongé | Crunch, crunch inversé, relevés de jambes allongé | S'allonger → lancer le mouvement → monter jusqu'au bout → redescendre avec contrôle |
+| Alternance gauche-droite | Dead bug, mountain climber | Prendre la position → premier repli / extension → passer de l'autre côté → garder le rythme |
+| Mouvement en plusieurs phases | Burpee | Se placer → squat et mains au sol → phase intermédiaire → se relever pour finir |
+| Sauts | Squats sautés, fentes sautées, saut sur box | Se placer → plier les genoux pour charger → **les deux pieds décollent** → réception genoux fléchis |
+| Chrono (posture) | Planche latérale | Prendre la position → corps bien aligné → tenir 3 / 10 / 30 secondes |
+| Chrono (étirement) | Pince debout, pince assise | Entrer dans l'étirement → respirer et relâcher → tenir 10 / 20 secondes |
+
+Comme les autres, les barèmes chronométrés rapportent **+1 point par seconde tenue** ; si la posture s'effondre plus de 1,2 seconde, le chrono se met en pause et une annonce vocale te le signale.
 
 ### Sons et retours vocaux
 
@@ -453,13 +536,13 @@ Le squat se filme **de face** ; la profondeur se juge sur le rapport « écart d
 | Pendant un maintien chronométré | Un petit clic chaque seconde + un score qui grimpe en continu |
 | Objectif atteint / fin de série | Accord de célébration + animation « objectif atteint » + bilan de la série (score et étapes manquées) |
 
-Les effets sonores comme les annonces vocales se désactivent d'un clic dans la barre du haut.
+Les effets sonores comme les annonces vocales se désactivent d'un clic dans les ⚙️ Réglages.
 
 ---
 
 ## Langues
 
-L'interface intègre quatre langues ; la liste **Langue** en haut à droite permet de basculer à tout moment, et ton choix est mémorisé :
+L'interface intègre quatre langues ; la liste **Langue** des ⚙️ Réglages permet de basculer à tout moment, et ton choix est mémorisé :
 
 | Langue | Code | Fichier de libellés |
 |---|---|---|
@@ -477,7 +560,7 @@ puis relance `npm run test:i18n` — le test vérifie une par une les clés manq
 
 ## Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes
 
-**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v2.4`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
+**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v3.0`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
 
 **② Regarde d'abord le panneau « Calibrage avant la séance » à droite.** Le critère qui reste décoché te dit quoi faire, juste en dessous :
 
@@ -492,7 +575,7 @@ puis relance `npm run test:i18n` — le test vérifie une par une les clés manq
 
 **③ Regarde ensuite la barre d'état sous l'image** : elle affiche le même message ; une fois la séance lancée, elle indique quelle est l'étape suivante et ce qu'il reste à faire.
 
-**④ Ouvre « 🐞 Métriques » en haut à droite** (utilisable pendant le calibrage comme pendant la séance). Les chiffres que voit le détecteur s'affichent en temps réel sous l'image, par exemple :
+**④ Ouvre « 🐞 Métriques »** (utilisable pendant le calibrage comme pendant la séance, depuis ⚙️ Réglages). Les chiffres que voit le détecteur s'affichent en temps réel sous l'image, par exemple :
 
 ```
 Vue Profil ✓(0.18) · Corps entier ✓ · Jambes visibles ✓ · Inclinaison du torse 6° · Genou 176° · Coude 172° ·
@@ -503,7 +586,7 @@ Hanche 172° · Alignement du corps 175° · Élévation des hanches -0.98 · An
 
 | Symptôme | Cause | À faire |
 |---|---|---|
-| `Vue Profil ✗(0.90)` | Le cadrage ne correspond pas à l'exercice choisi (le squat se filme de face, les autres de profil) | Tourne-toi comme l'indique la barre d'état : de face pour le squat, de profil pour les autres |
+| `Vue Profil ✗(0.90)` | Le cadrage ne correspond pas à l'exercice choisi (de face pour le squat, le squat sumo, les squats sautés, le saut sur box et le burpee, de profil pour les autres) | Tourne-toi comme l'indique la barre d'état : de face pour les exercices filmés de face, de profil pour les autres |
 | `Corps entier ✗` | Une partie de ton corps sort du cadre | Recule d'1 à 2 pas pour que tout, de la tête aux pieds, entre dans l'image |
 | `Aucun corps détecté` | Trop loin / trop près, contre-jour, arrière-plan de la même couleur que tes vêtements | Rapproche-toi, mets-toi face à la source de lumière, change de vêtements, essaie une caméra de meilleure résolution |
 | `Inclinaison du torse` durablement > 32° | La caméra est penchée, ou tu te tiens de travers | Remets la caméra droite (cale-la avec un livre) |
@@ -525,7 +608,7 @@ C'est le plus souvent un type MIME incorrect pour les fichiers `.wasm`. Le plus 
 Vérifie aussi que le dossier `vendor/` est complet (c'est l'erreur la plus fréquente quand on télécharge le ZIP depuis GitHub : le dossier entier n'est pas toujours décompressé).
 
 **Q : L'image saccade / le débit d'images est faible ?**
-Dans la barre du haut, passe **Modèle** sur **Léger** ; désactive « 📐 Angles » ; essaie un appareil plus puissant. La détection reste parfaitement utilisable entre 10 et 15 FPS.
+Dans les ⚙️ Réglages, passe **Modèle de détection** sur **Léger** ; désactive « 📐 Angles » ; essaie un appareil plus puissant. La détection reste parfaitement utilisable entre 10 et 15 FPS.
 
 **Q : Est-ce que ça marche sur téléphone ?**
 Oui. Ouvre simplement la même adresse dans le navigateur du téléphone (le téléphone et l'ordinateur doivent être sur le même réseau local, et le serveur doit écouter sur `0.0.0.0` :
@@ -539,20 +622,22 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les quatre suites d'un coup (513 tests)
-npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources
-npm run test:detectors         # détection et logique de score (squelettes synthétiques)
+npm test                       # les cinq suites d'un coup (871 tests)
+npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources / structure des quatre README
+npm run test:detectors         # détection et logique de score des cinq détecteurs écrits à la main (squelettes synthétiques)
+npm run test:engines           # moteurs de détection génériques (flexion / alternance / rotation / plusieurs phases / chrono + garde de posture)
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
-npm run test:page              # auto-contrôle du câblage de la page (id DOM / imports de modules / ressources statiques)
+npm run test:page              # auto-contrôle du câblage de la page (id DOM / imports de modules / ressources statiques / catalogue et catégories)
 npm run test:app               # test d'intégration : charge le vrai app.js avec un stub DOM minimal
 ```
 
 | Fichier de test | Nombre de tests | Contenu couvert |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
-| `tests/test-detectors.mjs` | 212 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
-| `tests/test-page.mjs` | 97 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
-| `tests/test-app.mjs` | 172 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
+| `tests/test-detectors.mjs` | 217 | Comptage, chronométrage, points par étape et ordre de validation des cinq détecteurs écrits à la main (mouvements corrects comme erronés), ainsi que la logique de validation du calibrage |
+| `tests/test-engines.mjs` | 134 | Moteurs génériques : une répétition par cycle, souple vs strict, cas limites des balancements et des mouvements trop rapides, garde de posture, décollage des pieds, alternance gauche-droite, enchaînement complet, pause et reprise du chrono |
+| `tests/test-page.mjs` | 308 | Câblage du DOM, imports et exports de modules, ressources statiques, catalogue des 22 exercices par catégorie et exhaustivité des barèmes |
+| `tests/test-app.mjs` | 180 | Démarrage du vrai `app.js`, rendu de la page d'accueil, fenêtre de réglages, déroulé du calibrage, changement d'exercice, score, sons, bilan, changement de langue |
 
 ---
 
@@ -566,36 +651,50 @@ motion-fitness-game/
 ├─ src/
 │  ├─ i18n.js            ★ cœur multilingue (t / setLang / applyI18n)
 │  ├─ locales/           ★ zh.js / en.js / es.js / fr.js, les quatre jeux de libellés
+│  ├─ catalog.js         ★ catalogue : les cinq catégories + les 22 exercices (icône, type, moteur, seuils, critère de détection)
 │  ├─ geometry.js        géométrie et traitement du signal (angles, lissage One Euro)
-│  ├─ metrics.js         métriques par image (angles articulaires, élévation des hanches, alignement du corps…)
+│  ├─ metrics.js         métriques par image (angles articulaires, élévation des hanches, hauteur au-dessus du sol, alignement du corps…)
 │  ├─ steps.js           ★ « étapes techniques » notées de chaque exercice (condition + points + clé d'indice)
 │  ├─ calibration.js     ★ calibrage avant la séance : contour de la silhouette en pointillés + sept critères de placement
-│  ├─ exercises.js       ★ machines à états et moteur de score des six exercices
+│  ├─ detector-base.js   classe de base des détecteurs (score par étape, limitation des indices, gestion des images perdues)
+│  ├─ engines.js         ★ moteurs de détection génériques (flexion / alternance / rotation / plusieurs phases / chrono + garde de posture)
+│  ├─ exercises.js       ★ les cinq détecteurs écrits à la main (squat au poids du corps / fente avant / pompe / pont fessier / planche) + fabrique
 │  ├─ pose-engine.js     enveloppe MediaPipe PoseLandmarker + gestion de la caméra
 │  ├─ render.js          tracé du squelette
 │  ├─ audio.js           effets sonores + annonces vocales (suivent la langue)
-│  └─ app.js             interface, déroulé de la séance, liste des étapes, historique, boucle principale
-├─ tests/                quatre suites de tests automatisés
+│  └─ app.js             interface, page d'accueil, fenêtre de réglages, déroulé de la séance, liste des étapes, historique, boucle principale
+├─ tests/                cinq suites de tests automatisés
 └─ vendor/               MediaPipe tasks-vision (wasm) et modèle de posture (hors ligne)
 ```
 
 ---
 
-## Ajuster les points / les seuils toi-même
+## Ajouter un exercice / ajuster les points et les seuils
+
+**Ajouter un exercice se limite à une ligne de configuration dans le catalogue** (aucun code de détection à écrire) :
+
+1. Ajoute une entrée dans `EXERCISES`, dans `src/catalog.js`, par exemple
+   `e('myMove', '🔧', ['core'], { plan: 'repSupine', posture: 'supine', judge: 'clear', target: 15, params: bend({ metric: 'kneeClear', gate: 'supineLow', up: 0.15, down: 0.85 }) })` ;
+2. Ajoute `myMove: { name, cameraHint, goal }` dans les `ex` des quatre fichiers `src/locales/*.js`
+   (les étapes techniques et les conseils reprennent automatiquement le modèle de la « famille » à laquelle l'exercice appartient ; pour du sur mesure, ajoute `howto` / `tips`) ;
+3. Lance `npm test` — le test vérifie les listes des cinq catégories, les textes dans les quatre langues, et que chaque exercice a bien son détecteur et son barème.
 
 - **Modifier les points ou le texte des étapes** : édite `src/steps.js` (structure et points) et `src/locales/*.js` (textes).
   Chaque étape est un objet `{ id, labelKey, points, check, hint }` ; quand `check(frame, det)` renvoie `true`, l'étape est considérée comme validée.
-- **Modifier les seuils de validation** : édite les constantes en haut de chaque exercice dans `src/exercises.js` — elles sont toutes commentées en chinois :
-  - `SQUAT_FRONT` (dans `src/steps.js`) : les seuils de profondeur du squat filmé de face — `standRatio` 0,86 / `enterRatio` 0,78 /
-  `bottomRatio` 0,40 (plus la valeur est petite, plus c'est strict) / `looseRatio` 0,62 (la ligne de comptage en mode souple) ; l'unité est « écart de hauteur hanches-genoux ÷ longueur du tibia », debout ≈ 1,0 ;
-  - `LUNGE` : les trois paliers d'angle de genou de la fente — `enterKnee` 146 (à partir de quel angle la répétition commence à compter) / `looseKnee` 142 (la ligne de comptage souple) /
-  `downKnee` 128 (mode strict et points de profondeur) ; `backKneeDrop` 0,66 est la hauteur du genou arrière au-dessus du sol ÷ longueur du tibia ; `enterHoldMs` / `exitHoldMs` sont les tolérances au tremblement ;
-  - `PUSHUP.elbowFull` 106 (profondeur pour le score complet) / `PUSHUP.looseElbow` 124 (la ligne de comptage souple) ;
-  - `BRIDGE.upRise` 0,22 / `BRIDGE_HOLD.holdRise` 0,20 : hauteur d'élévation des hanches pour le pont fessier (en unités de longueur de tronc) ; `BRIDGE.minRepMs` 700 est la durée minimale d'un cycle complet (filtre anti-tremblement) ;
-  - `PLANK.bodyStraight` : angle minimum d'alignement du corps pour la planche (142° par défaut) ;
+- **Modifier les seuils de validation** :
+  - **Exercices des moteurs génériques** (la grande majorité du catalogue) : modifie les `params` de l'exercice dans `src/catalog.js` —
+    `metric` choisit la grandeur mesurée (`kneeBent` / `elbow` / `hipRise` / `kneeClear` / `shoulderClear` …),
+    `gate` impose une posture (`stand` / `prone` / `supine` / `seated` / `sideLying` …),
+    `up` la valeur de départ, `down` la valeur à atteindre, `looseP` la ligne de comptage permissive, `minRepMs` la durée minimale d'une répétition et `flight` l'obligation de décoller ;
+  - **Les cinq détecteurs écrits à la main** : modifie les constantes correspondantes dans `src/exercises.js` (elles sont toutes commentées en chinois) —
+    `SQUAT_FRONT` (dans `src/steps.js`) : les seuils de profondeur du squat filmé de face — `standRatio` 0,86 / `enterRatio` 0,78 /
+    `bottomRatio` 0,40 / `looseRatio` 0,62 (la ligne de comptage en mode souple) ; l'unité est « écart de hauteur hanches-genoux ÷ longueur du tibia », debout ≈ 1,0 ;
+    `LUNGE` : les trois paliers d'angle de genou de la fente — `enterKnee` 146 / `looseKnee` 142 / `downKnee` 128 ;
+    `backKneeDrop` 0,66 est la hauteur du genou arrière au-dessus du sol ÷ longueur du tibia ; `enterHoldMs` / `exitHoldMs` sont les tolérances au tremblement ;
+    `PUSHUP.elbowFull` 106 / `PUSHUP.looseElbow` 124 ; `BRIDGE.upRise` 0,22 et `BRIDGE.minRepMs` 700 ; `PLANK.bodyStraight` 142 ;
   - `HoldDetector.graceMs` : délai de tolérance des exercices chronométrés (1200 ms par défaut).
   - **Souple ou strict** : `DetectorBase.strict` vaut `false` par défaut (si tu fais le mouvement dans les grandes lignes, ça compte ; une mauvaise forme ne déclenche qu'une correction vocale et une réduction du score) ;
-    l'interrupteur **✅ Mode strict** de l'interface passe le critère à « seule une répétition complète compte ».
+    l'interrupteur **✅ Mode strict** de la fenêtre de réglages passe le critère à « seule une répétition complète compte ».
 
 Après tes modifications, lance `npm test` : les tests connaissent déjà l'amplitude standard de ces mouvements et te diront tout de suite si tu es allé trop loin.
 

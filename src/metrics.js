@@ -65,6 +65,10 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     ? (a, b, c) => angleAt3(world[a], world[b], world[c])
     : (a, b, c) => angleAt2(metric[a], metric[b], metric[c]);
 
+  // 地面参考线：优先用校准阶段记下的地面（见 calibration.js），没有校准时退回「脚踝最低点」
+  const groundCalib = (calib && Number.isFinite(calib.groundY)) ? calib.groundY : null;
+  const groundRefFor = (i) => ((groundCalib === null ? groundY : groundCalib) - P(i).y) / torsoLen;
+
   // ---- 两侧关节角 ----
   const perSide = {};
   for (const s of ['L', 'R']) {
@@ -73,10 +77,18 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
       knee: angleAt(I.hip, I.knee, I.ankle),
       hip: angleAt(I.shoulder, I.hip, I.knee),
       elbow: angleAt(I.shoulder, I.elbow, I.wrist),
+      // 踝角（膝-踝-脚背）：平地站立 ≈ 110，踮脚 ≈ 150 —— 提踵类动作靠它判定
+      ankle: angleAt(I.knee, I.ankle, I.foot),
       body: angleAt(I.shoulder, I.hip, I.ankle),
       kneeY: P(I.knee).y,
       hipY: P(I.hip).y,
       ankleY: P(I.ankle).y,
+      wristY: P(I.wrist).y,
+      // 抬得越高越正：小臂离地 / 膝离地 / 手举过头顶（都除以躯干长）
+      wristClear: (groundRefFor(I.wrist)),
+      kneeClear: (groundRefFor(I.knee)),
+      shoulderClear: (groundRefFor(I.shoulder)),
+      armRaised: (P(I.shoulder).y - P(I.wrist).y) / torsoLen,
       vis: Math.min(P(I.hip).v, P(I.knee).v, P(I.ankle).v),
     };
   }
@@ -101,10 +113,17 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const elbowAngle = perSide[best.s].elbow;
 
   const torsoIncl = tiltFromVertical(hipMid, shoulderMid);          // 0=直立, 90=水平
-  const shoulderClear = (groundY - shoulderMid.y) / torsoLen;        // 肩离地高度（躯干长为单位）
+
+  // ---- 地面参考线 ----
+  // 默认用「脚踝所在的最低点」当地面 —— 站立、俯撑时都对。
+  // 但把腿抬起来（仰卧抬腿、反向卷腹）或整个人跳起来时，脚踝会跟着身体一起动，
+  // 这时它就不是地面了；所以校准阶段记下的那条地面线优先用（见 calibration.js 的 groundY）。
+  const groundRef = (calib && Number.isFinite(calib.groundY)) ? calib.groundY : groundY;
+
+  const shoulderClear = (groundRef - shoulderMid.y) / torsoLen;      // 肩离地高度（躯干长为单位）
   const hipRise = (shoulderMid.y - hipMid.y) / torsoLen;             // 髋相对肩的高度（臀桥用）
-  const kneeClear = (groundY - P(idx.knee).y) / torsoLen;            // 膝离地高度
-  const wristClear = (groundY - P(idx.wrist).y) / torsoLen;          // 手离地高度
+  const kneeClear = (groundRef - P(idx.knee).y) / torsoLen;          // 膝离地高度
+  const wristClear = (groundRef - P(idx.wrist).y) / torsoLen;        // 手离地高度
   const hipLineDev = signedLineDev(shoulderMid, P(idx.ankle), hipMid) / torsoLen; // >0 塌腰, <0 撅臀
 
   // 视角判断：肩宽 / 躯干长。正面 ≈ 0.8+，侧面 ≈ 0.1~0.4
@@ -170,6 +189,34 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const ankleGap = Math.abs(P(LM.L_ANKLE).x - P(LM.R_ANKLE).x);
   const valgus = view === 'front' && ankleGap > 0.02 ? 1 - kneeGap / ankleGap : 0;
 
+  // ---- 多动作库（22 个动作）共用的姿势判据量 ----
+  // 地面参考线 groundRef 已经在上面定义（校准地面优先、否则用脚踝最低点）。
+  // 有了它才能判断「脚离地（跳起来了）」「人是坐着还是站着」「悬垂」这类问题 ——
+  // 只靠脚踝自己算出来的地面会跟着人一起上下动，跳起来时永远看不出离地。
+  const hipClear = (groundRef - hipMid.y) / torsoLen;                 // 髋离地高度（站立≈1.0，坐地≈0.2，跪≈0.7）
+  const ankleClear = (groundRef - Math.min(P(LM.L_ANKLE).y, P(LM.R_ANKLE).y)) / torsoLen; // 脚离地高度（跳跃 >0）
+  const kneeSpread = Math.abs(P(LM.L_KNEE).x - P(LM.R_KNEE).x) / torsoLen;   // 双膝横向距离（相扑/蝴蝶/青蛙式）
+  const ankleSpread = Math.abs(P(LM.L_ANKLE).x - P(LM.R_ANKLE).x) / torsoLen; // 双踝横向距离（前后/左右站距）
+  // 双手相对髋部中线的偏移（俄罗斯转体：左右转体时正负翻转）
+  const wristMidX = (P(LM.L_WRIST).x + P(LM.R_WRIST).x) / 2;
+  const wristTwist = (wristMidX - hipMid.x) / torsoLen;
+  // 双手相对肩部的高度：举过头顶为正（倒立撑 / 悬垂举腿 / 伸展类）
+  const armRaised = (shoulderMid.y - Math.min(P(LM.L_WRIST).y, P(LM.R_WRIST).y)) / torsoLen;
+  // 倒立：髋高于肩（头朝下）
+  const inverted = hipMid.y < shoulderMid.y - 0.05 * torsoLen;
+  // 横着躺（俯卧 / 仰卧 / 侧卧都算）：躯干接近水平
+  const horizontal = torsoIncl > 55;
+  // 四点支撑（熊爬 / 鸟狗 / 猫牛）：躯干水平 + 手撑地 + 膝也在低位
+  const quadruped = horizontal && (groundRef - Math.min(P(LM.L_WRIST).y, P(LM.R_WRIST).y)) / torsoLen < 0.75
+    && (groundRef - Math.min(P(LM.L_KNEE).y, P(LM.R_KNEE).y)) / torsoLen < 0.75
+    && shoulderMid.y < groundRef - 0.35 * torsoLen;
+  // 双肘/双膝的最弯与最直（弓箭手俯卧撑、单臂动作要看单侧）
+  const elbowBent = Math.min(...['L', 'R'].map((s) => perSide[s].elbow).filter(Number.isFinite));
+  const elbowExtended = Math.max(...['L', 'R'].map((s) => perSide[s].elbow).filter(Number.isFinite));
+  const ankleAngle = Math.min(...['L', 'R'].map((s) => perSide[s].ankle).filter(Number.isFinite));
+  // 双手离地高度（俯卧撑类：手撑在地面 ≈0；手撑在椅子/箱子上会明显更高）
+  const wristClearMin = Math.min(...['L', 'R'].map((s) => perSide[s].wristClear).filter(Number.isFinite));
+
   const visMin = Math.min(...metric.map((p) => p.v ?? 1));
   // 只看核心关节的平均可见度：个别末端点（手指、耳朵）被遮挡不应该判定为“没人”
   const coreIdx = [
@@ -228,6 +275,21 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     valgus,
     view,
     viewRatio,
+    // 多动作库共用的姿势量
+    groundRef,
+    hipClear,
+    ankleClear,
+    kneeSpread,
+    ankleSpread,
+    wristTwist,
+    armRaised,
+    inverted,
+    horizontal,
+    quadruped,
+    elbowBent,
+    elbowExtended,
+    ankleAngle,
+    wristClearMin,
     bodyVisible,
     legsVisible,
     coreVis,

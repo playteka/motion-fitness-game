@@ -4,7 +4,8 @@
  */
 
 import {
-  EXERCISES, createDetector, localizedExercise, localizedExercises, exerciseUnit,
+  EXERCISES, EXERCISE_MAP, createDetector, localizedExercise, exerciseUnit,
+  localizedCategories, localizedByCategory,
 } from './exercises.js';
 import { LandmarkSmoother, toMetric, clamp } from './geometry.js';
 import { computeFrame } from './metrics.js';
@@ -56,7 +57,8 @@ const state = {
   settings: loadSettings(),
   exerciseId: 'squat',
   target: 15,
-  session: 'calibrating',   // calibrating | ready | countdown | running | paused
+  session: 'calibrating',   // calibrating | ready | countdown | running | paused | idle
+  homeMode: false,          // 停在动作主页：不校准、不计数（避免浏览动作时偷偷开始一组）
   autoStart: false,         // 校准识别完成后是否自动进入运动状态（选好动作后为 true）
   afterSet: false,          // 刚结束一组：先让用户休息，不自动开始；离开轮廓后自动恢复
   detector: null,
@@ -139,20 +141,126 @@ function buildLanguageSelect() {
   sel.value = getLang();
 }
 
-function buildExerciseGrid() {
-  const grid = $('exerciseGrid');
-  grid.innerHTML = '';
-  localizedExercises().forEach((ex, i) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'exercise-btn';
-    btn.dataset.id = ex.id;
-    const kind = t(ex.kind === 'rep' ? 'ui.kindRep' : 'ui.kindHold');
-    btn.innerHTML = `<span class="ex-icon">${ex.icon}</span><span>${ex.name}</span>`
-      + `<span class="ex-kind">${kind} · ${i + 1}</span>`;
-    btn.addEventListener('click', () => selectExercise(ex.id));
-    grid.appendChild(btn);
-  });
+/* ------------------------------------------------------------------ *
+ * 主页：五个分类 × 动作图标网格
+ * ------------------------------------------------------------------ */
+
+/** 当前搜索词（主页搜索框） */
+let homeQuery = '';
+
+function buildHome() {
+  const box = $('homeCats');
+  if (!box) return;
+  const q = homeQuery.trim().toLowerCase();
+  box.innerHTML = '';
+  let shown = 0;
+  for (const cat of localizedCategories()) {
+    const list = localizedByCategory(cat.id)
+      .filter((ex) => !q
+        || ex.name.toLowerCase().includes(q)
+        || ex.id.toLowerCase().includes(q)
+        || (ex.goal || '').toLowerCase().includes(q)
+        || (ex.cameraHint || '').toLowerCase().includes(q));
+    const block = document.createElement('section');
+    block.className = 'cat-block';
+    block.dataset.cat = cat.id;
+    const count = t('home.count', { n: list.length });
+    block.innerHTML = `<h3 class="cat-head"><span class="cat-icon">${cat.icon}</span>`
+      + `<span>${cat.name}</span><span class="cat-count">${count}</span></h3>`;
+    if (!list.length) {
+      const p = document.createElement('p');
+      p.className = 'empty';
+      p.textContent = t('home.noResult');
+      block.appendChild(p);
+    } else {
+      const grid = document.createElement('div');
+      grid.className = 'ex-grid';
+      for (const ex of list) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ex-card';
+        btn.dataset.id = ex.id;
+        if (ex.id === state.exerciseId) btn.classList.add('active');
+        const kind = t(ex.kind === 'rep' ? 'ui.kindRep' : 'ui.kindHold');
+        const target = `${ex.target} ${ex.unit}`;
+        btn.innerHTML = `<span class="ex-icon">${ex.icon}</span>`
+          + `<span class="ex-name">${ex.name}</span>`
+          + `<span class="ex-meta">${kind} · ${target} · ${ex.judgeText}</span>`
+          + (ex.rough ? `<span class="ex-badge">${t('home.rough')}</span>` : '');
+        btn.addEventListener('click', () => openExercise(ex.id));
+        grid.appendChild(btn);
+      }
+      block.appendChild(grid);
+    }
+    if (list.length || !q) box.appendChild(block);
+    shown += list.length;
+  }
+  if (q && !shown) {
+    const p = document.createElement('p');
+    p.className = 'empty';
+    p.textContent = t('home.noResult');
+    box.appendChild(p);
+  }
+}
+
+/** 切到主页（结束正在进行的训练，避免后台空跑） */
+function showHome() {
+  if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
+    stopSession('switch');
+  }
+  // 主页上不校准也不计数：摄像头可以留着预热，但不能在浏览动作时偷偷开始一组
+  state.homeMode = true;
+  state.session = 'idle';
+  clearInterval(state.countdownTimer);
+  state.countdownTimer = null;
+  $('countdown').hidden = true;
+  state.calib = null;
+  renderCalibration(null);
+  $('homeView').hidden = false;
+  $('workoutView').hidden = true;
+  $('btnHome').hidden = true;
+  closeSettings();
+  buildHome();
+  updateButtons();
+}
+
+/** 切到动作页 */
+function showWorkout() {
+  state.homeMode = false;
+  $('homeView').hidden = true;
+  $('workoutView').hidden = false;
+  $('btnHome').hidden = false;
+}
+
+/** 从主页点进某个动作 */
+function openExercise(id) {
+  if (!EXERCISE_MAP[id]) return;
+  showWorkout();
+  selectExercise(id);
+  // 有些环境（老浏览器 / 自动化桩）没有 scrollTo，别让它把流程打断
+  try { window.scrollTo?.({ top: 0, behavior: 'smooth' }); } catch { /* ignore */ }
+}
+
+/* ------------------------------------------------------------------ *
+ * 设置弹窗（语言 / 模型 / 音效 / 背景音乐 / 画面与识别）
+ * ------------------------------------------------------------------ */
+
+function settingsOpen() { return !$('settingsModal').hidden; }
+
+function openSettings() {
+  const modal = $('settingsModal');
+  if (!modal) return;
+  modal.hidden = false;
+  // 让读屏软件念出弹窗标题（标题文案走 i18n，这里只做无障碍关联）
+  const title = $('settingsTitle');
+  if (title) title.textContent = t('settings.title');
+  const first = modal.querySelector('select, button');
+  if (first) first.focus({ preventScroll: true });
+}
+
+function closeSettings() {
+  const modal = $('settingsModal');
+  if (modal) modal.hidden = true;
 }
 
 function selectExercise(id) {
@@ -170,7 +278,7 @@ function selectExercise(id) {
   state.calibrator.setMirror(state.settings.mirror);
   saveSettings();
 
-  document.querySelectorAll('.exercise-btn').forEach((b) => {
+  document.querySelectorAll('.exercise-btn, .ex-card').forEach((b) => {
     b.classList.toggle('active', b.dataset.id === id);
   });
 
@@ -180,6 +288,10 @@ function selectExercise(id) {
   $('targetUnit').textContent = ex.unit;
   $('statTimerLabel').textContent = ex.kind === 'hold' ? t('ui.holdTime') : t('ui.setTime');
   $('cameraHint').textContent = `📹 ${ex.cameraHint}`;
+  if ($('judgeLine')) {
+    $('judgeLine').textContent = `🎯 ${t('home.judgeBy', { what: ex.judgeText })}`
+      + (ex.rough ? ` · ${t('home.rough')}` : '');
+  }
   $('howtoTitle').textContent = `${ex.icon} ${ex.name} · ${t('ui.actionGuide')}`;
   $('howtoList').innerHTML = ex.howto.map((x) => `<li>${x}</li>`).join('');
   $('tipList').innerHTML = ex.tips.map((x) => `<li>${x}</li>`).join('');
@@ -1027,7 +1139,10 @@ function loop() {
     state.poseHits += 1;
     if (state.lostSince) { smoother.reset(); state.lostSince = 0; }
     const smoothed = smoother.apply(landmarks, now / 1000);
-    frame = computeFrame(toMetric(smoothed, aspect), null, now, false, res.worldLandmarks);
+    // 把校准阶段观测到的地面线传进去：所有「离地高度」都以它为基准。
+    // 否则仰卧抬腿 / 跳跃这类动作里，脚踝会跟着身体一起动，地面基准就飘了。
+    frame = computeFrame(toMetric(smoothed, aspect),
+      { groundY: state.calibrator?.groundRef ?? null }, now, false, res.worldLandmarks);
   } else {
     if (!state.lostSince) state.lostSince = now;
     if (now - state.lostSince > 800) smoother.reset();
@@ -1036,11 +1151,15 @@ function loop() {
   // 尺寸对齐
   renderer.resize(video.videoWidth || 1280, video.videoHeight || 720);
 
-  const calibrating = state.session === 'calibrating' || state.session === 'ready';
-  const counting = state.session === 'running';
+  const calibrating = !state.homeMode && (state.session === 'calibrating' || state.session === 'ready');
+  const counting = !state.homeMode && state.session === 'running';
   let outline = null;
 
-  if (calibrating) {
+  if (state.homeMode) {
+    // ---- 在动作主页上：不校准、不计数、不提示（摄像头可以继续开着预热） ----
+    renderCalibration(null);
+    state.session = state.session === 'running' ? state.session : 'idle';
+  } else if (calibrating) {
     // ---- 运动前校准：只做就位判定与引导，不计数、不计分 ----
     outline = calibrationStep(frame, now);
   } else {
@@ -1188,7 +1307,7 @@ async function reloadModel() {
 function refreshForLang() {
   applyI18n(document);
   buildLanguageSelect();
-  buildExerciseGrid();
+  buildHome();
   const prevId = state.exerciseId;
   // 重新渲染当前动作的文案；切换语言不该丢掉已经拿到的分和要领进度
   const det = state.detector;
@@ -1220,6 +1339,7 @@ function refreshForLang() {
   renderHistory();
   updateButtons();
   if (state.calib) renderCalibration(state.calib);
+  buildHome();      // 主页分类/动作名也要跟着换语言
   setCueLine('');
 }
 
@@ -1325,6 +1445,16 @@ function bindUI() {
   audio.voiceOn = state.settings.voice;
   audio.sfxOn = state.settings.sfx;
 
+  // ---- 主页 / 设置弹窗 ----
+  $('btnHome').addEventListener('click', () => showHome());
+  $('btnSettings').addEventListener('click', () => openSettings());
+  $('btnCloseSettings').addEventListener('click', () => closeSettings());
+  $('settingsBackdrop').addEventListener('click', () => closeSettings());
+  $('exSearch').addEventListener('input', (e) => {
+    homeQuery = e.target.value || '';
+    buildHome();
+  });
+
   // 浏览器要求「页面先有过一次用户交互」才允许出声（WebAudio 的 AudioContext 会一直 suspended，
   // Chrome 也会拦住没有交互就发起的语音）。所以在第一次点击/按键/触摸时就把音频解锁，
   // 免得后面由「自动识别完成」触发的倒计时、要领语音因为没赶上手势而整场静音。
@@ -1376,15 +1506,35 @@ function bindUI() {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+    if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) {
+      // 搜索框里按 Esc 先退出搜索，而不是结束整组
+      if (e.key === 'Escape' && e.target.id === 'exSearch') {
+        e.target.value = '';
+        homeQuery = '';
+        buildHome();
+        e.target.blur();
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      // 弹窗优先关闭；其次是结束本组
+      if (settingsOpen()) { closeSettings(); return; }
+      stopSession('user');
+      return;
+    }
+    if (e.key === 'h' || e.key === 'H') { showHome(); return; }
+    if (e.key === 'g' || e.key === 'G' || e.key === '?') {
+      if (settingsOpen()) closeSettings(); else openSettings();
+      return;
+    }
     if (e.code === 'Space') { e.preventDefault(); startSession(); return; }
     if (e.key === 'r' || e.key === 'R') { $('btnResetReps').click(); return; }
-    if (e.key === 'Escape') { stopSession('user'); return; }
     if (e.key === 'm' || e.key === 'M') { $('btnMirror').click(); return; }
     if (e.key === 's' || e.key === 'S') { $('btnSkeleton').click(); return; }
     if (e.key === 'f' || e.key === 'F') { $('btnFullscreen').click(); return; }
+    // 数字键 1~9：快速切到动作库里前 9 个动作（动作变多了，全部映射已经没有意义）
     const n = Number(e.key);
-    if (n >= 1 && n <= EXERCISES.length) selectExercise(EXERCISES[n - 1].id);
+    if (n >= 1 && n <= Math.min(9, EXERCISES.length)) openExercise(EXERCISES[n - 1].id);
   });
 
   document.addEventListener('visibilitychange', () => {
@@ -1449,7 +1599,10 @@ function installProbe() {
       cueLine: $('cueLine').textContent,
       stepHint: $('stepHint').textContent,
       maskVisible: !$('stageMask').classList.contains('hidden'),
-      exerciseButtons: document.querySelectorAll('.exercise-btn').length,
+      exerciseButtons: document.querySelectorAll('.ex-card, .exercise-btn').length,
+      homeCards: document.querySelectorAll('.ex-card').length,
+      homeView: !$('homeView').hidden,
+      settingsOpen: !$('settingsModal').hidden,
       resources: res,
       consoleErrors: state.consoleErrors,
     };
@@ -1477,9 +1630,13 @@ function boot() {
   setLang(detectLang(), { persist: false });
   applyI18n(document);
   buildLanguageSelect();
-  buildExerciseGrid();
   bindUI();
-  selectExercise(params.get('exercise') || state.settings.exerciseId || 'squat');
+  // 先把动作选好（摄像头一开就能练）：带 ?exercise= / ?autostart / ?probe 时直接进动作页，
+  // 否则停在主页让用户挑分类与动作。
+  const wantId = params.get('exercise');
+  const direct = !!wantId || params.has('autostart') || params.has('probe');
+  selectExercise(wantId || state.settings.exerciseId || 'squat');
+  if (direct) showWorkout(); else showHome();
   renderHistory();
   renderRecords();
   updateButtons();
@@ -1506,5 +1663,6 @@ window.__mfg = {
   selectExercise, startSession, pauseSession, resumeSession, stopSession, toCalibration,
   feedDetector, handleEvents, updateHud, renderSteps, renderDebug, updatePipelineStatus,
   calibrationStep, renderCalibration, syncFullscreenSupport, finishCountdown, updateStatusHint,
-  setTarget, buildExerciseGrid, changeLang, refreshForLang,
+  setTarget, changeLang, refreshForLang,
+  buildHome, showHome, showWorkout, openExercise, openSettings, closeSettings,
 };

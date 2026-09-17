@@ -16,6 +16,7 @@
  */
 
 import { LM } from './geometry.js';
+import { EXERCISE_MAP as CATALOG_MAP } from './catalog.js';
 
 /* ---------------- 小工具 ---------------- */
 
@@ -317,34 +318,296 @@ export const STEP_PLANS = {
   },
 
   /* ---------------- 静态臀桥（计时） ---------------- */
-  bridgehold: {
+  /* ================================================================== *
+   * 通用「族」方案：60+ 动作库用（动作多到不可能每个都手写一套步骤）
+   *
+   * 判定只依赖通用引擎暴露的字段：
+   *   d.gateOk    姿势门控是否满足（人处在应有的姿势里）
+   *   d.progress  当前进度 0=起始 1=到位
+   *   d.peak      本轮达到过的最大进度
+   *   d.validReps / d.holdMs / d.idx / d.flightSeen
+   * ================================================================== */
+
+  /* 站姿屈伸（深蹲/提踵/硬拉/箭步蹲的各种变体） */
+  repStand: {
+    perCycle: true,
+    repBonus: 6,
+    steps: [
+      {
+        id: 'stance',
+        labelKey: 'steps.repStand.stance.label',
+        points: 4,
+        check: (f, d) => d.gateOk && f.kneeExtended > 135,
+        hint: () => H('steps.repStand.stance.hint'),
+      },
+      {
+        id: 'lower',
+        labelKey: 'steps.repStand.lower.label',
+        points: 7,
+        check: (f, d) => d.progress >= 0.35,
+        hint: () => H('steps.repStand.lower.hint'),
+      },
+      {
+        id: 'bottom',
+        labelKey: 'steps.repStand.bottom.label',
+        points: 14,
+        check: (f, d) => d.progress >= 0.80,
+        hint: () => H('steps.repStand.bottom.hint'),
+      },
+      {
+        id: 'up',
+        labelKey: 'steps.repStand.up.label',
+        points: 8,
+        check: (f, d) => d.peak >= 0.5 && d.progress <= 0.30,
+        hint: () => H('steps.repStand.up.hint'),
+      },
+    ],
+  },
+
+  /* 俯撑屈伸（俯卧撑/臂屈伸/倒立撑的各种变体） */
+  repProne: {
+    perCycle: true,
+    repBonus: 6,
+    steps: [
+      {
+        id: 'setup',
+        labelKey: 'steps.repProne.setup.label',
+        points: 5,
+        check: (f, d) => d.gateOk && f.bodyStraight >= 130,
+        hint: (f) => (f.bodyStraight < 130 ? H('steps.repProne.setup.hint') : H('steps.repProne.setup.pose')),
+      },
+      {
+        id: 'lower',
+        labelKey: 'steps.repProne.lower.label',
+        points: 7,
+        check: (f, d) => d.progress >= 0.35,
+        hint: () => H('steps.repProne.lower.hint'),
+      },
+      {
+        id: 'bottom',
+        labelKey: 'steps.repProne.bottom.label',
+        points: 14,
+        check: (f, d) => d.progress >= 0.80,
+        hint: () => H('steps.repProne.bottom.hint'),
+      },
+      {
+        id: 'press',
+        labelKey: 'steps.repProne.press.label',
+        points: 8,
+        check: (f, d) => d.peak >= 0.5 && d.progress <= 0.30,
+        hint: () => H('steps.repProne.press.hint'),
+      },
+    ],
+  },
+
+  /* 仰卧抬起（卷腹/抬腿/臀桥/龙旗） */
+  repSupine: {
+    perCycle: true,
+    repBonus: 6,
+    steps: [
+      {
+        id: 'setup',
+        labelKey: 'steps.repSupine.setup.label',
+        points: 4,
+        check: (f, d) => d.gateOk,
+        hint: () => H('steps.repSupine.setup.hint'),
+      },
+      {
+        id: 'engage',
+        labelKey: 'steps.repSupine.engage.label',
+        points: 7,
+        check: (f, d) => d.progress >= 0.35,
+        hint: () => H('steps.repSupine.engage.hint'),
+      },
+      {
+        id: 'top',
+        labelKey: 'steps.repSupine.top.label',
+        points: 14,
+        check: (f, d) => d.progress >= 0.80,
+        hint: () => H('steps.repSupine.top.hint'),
+      },
+      {
+        id: 'lower',
+        labelKey: 'steps.repSupine.lower.label',
+        points: 8,
+        check: (f, d) => d.peak >= 0.5 && d.progress <= 0.30,
+        hint: () => H('steps.repSupine.lower.hint'),
+      },
+    ],
+  },
+
+  /* 左右交替（登山者/自行车卷腹/死虫式/鸟狗式） */
+  repAlt: {
+    perCycle: true,
+    repBonus: 6,
+    steps: [
+      {
+        id: 'setup',
+        labelKey: 'steps.repAlt.setup.label',
+        points: 5,
+        check: (f, d) => d.gateOk,
+        hint: () => H('steps.repAlt.setup.hint'),
+      },
+      {
+        id: 'first',
+        labelKey: 'steps.repAlt.first.label',
+        points: 10,
+        check: (f, d) => d.validReps >= 1,
+        hint: () => H('steps.repAlt.first.hint'),
+      },
+      {
+        id: 'switch',
+        labelKey: 'steps.repAlt.switch.label',
+        points: 10,
+        check: (f, d) => d.validReps >= 2 && d.lastSide !== null,
+        hint: () => H('steps.repAlt.switch.hint'),
+      },
+      {
+        id: 'rhythm',
+        labelKey: 'steps.repAlt.rhythm.label',
+        points: 12,
+        check: (f, d) => d.validReps >= 4,
+        hint: () => H('steps.repAlt.rhythm.hint'),
+      },
+    ],
+  },
+
+  /* 左右转体（俄罗斯转体） */
+
+  /* 多段动作（波比跳这类一整套） */
+  sequence: {
+    perCycle: true,
+    repBonus: 8,
+    steps: [
+      {
+        id: 'setup',
+        labelKey: 'steps.sequence.setup.label',
+        points: 5,
+        check: (f, d) => d.gateOk,
+        hint: () => H('steps.sequence.setup.hint'),
+      },
+      {
+        id: 'down',
+        labelKey: 'steps.sequence.down.label',
+        points: 8,
+        check: (f, d) => d.idx >= 2,
+        hint: () => H('steps.sequence.down.hint'),
+      },
+      {
+        id: 'middle',
+        labelKey: 'steps.sequence.middle.label',
+        points: 10,
+        check: (f, d) => d.idx >= 3,
+        hint: () => H('steps.sequence.middle.hint'),
+      },
+      {
+        id: 'finish',
+        labelKey: 'steps.sequence.finish.label',
+        points: 12,
+        check: (f, d) => d.validReps >= 1,
+        hint: () => H('steps.sequence.finish.hint'),
+      },
+    ],
+  },
+
+  /* 跳跃类（深蹲跳/弓步跳/跳箱/击掌俯卧撑） */
+  jump: {
+    perCycle: true,
+    repBonus: 8,
+    steps: [
+      {
+        id: 'stance',
+        labelKey: 'steps.jump.stance.label',
+        points: 4,
+        check: (f, d) => d.gateOk && f.kneeExtended > 135,
+        hint: () => H('steps.jump.stance.hint'),
+      },
+      {
+        id: 'crouch',
+        labelKey: 'steps.jump.crouch.label',
+        points: 7,
+        check: (f, d) => d.progress >= 0.35,
+        hint: () => H('steps.jump.crouch.hint'),
+      },
+      {
+        id: 'flight',
+        labelKey: 'steps.jump.flight.label',
+        points: 14,
+        check: (f, d) => !!d.flightSeen,
+        hint: () => H('steps.jump.flight.hint'),
+      },
+      {
+        id: 'land',
+        labelKey: 'steps.jump.land.label',
+        points: 8,
+        check: (f, d) => d.peak >= 0.5 && d.progress <= 0.30,
+        hint: () => H('steps.jump.land.hint'),
+      },
+    ],
+  },
+
+  /* 计时：姿势类（平板/侧平板/空心/超人/熊爬/螃蟹走） */
+  holdPose: {
     perCycle: false,
     repBonus: 0,
     pointsPerSecond: 1,
     steps: [
       {
-        id: 'setup',
-        labelKey: 'steps.bridgehold.setup.label',
-        points: 6,
-        check: (f) => supine(f),
-        hint: (f) => (f.torsoIncl <= 40 ? H('steps.bridgehold.setup.pose') : H('steps.bridgehold.setup.knee')),
+        id: 'pose',
+        labelKey: 'steps.holdPose.pose.label',
+        points: 8,
+        check: (f, d) => !!d.gateOk,
+        hint: () => H('steps.holdPose.pose.hint'),
       },
       {
-        id: 'lift',
-        labelKey: 'steps.bridgehold.lift.label',
+        id: 'align',
+        labelKey: 'steps.holdPose.align.label',
         points: 12,
-        check: (f) => f.hipRise > 0.32,
-        hint: (f) => (f.hipRise <= 0.32 ? H('steps.bridgehold.lift.hint') : null),
+        check: (f, d) => !!d.gateOk && (f.bodyStraight >= 140 || f.horizontal),
+        hint: () => H('steps.holdPose.align.hint'),
       },
-      { id: 'hold3', labelKey: 'steps.bridgehold.hold3.label', points: 10, check: (f, d) => d.holdMs >= 3000 },
-      { id: 'hold10', labelKey: 'steps.bridgehold.hold10.label', points: 15, check: (f, d) => d.holdMs >= 10000 },
-      { id: 'hold20', labelKey: 'steps.bridgehold.hold20.label', points: 20, check: (f, d) => d.holdMs >= 20000 },
+      { id: 'hold3', labelKey: 'steps.holdPose.hold3.label', points: 10, check: (f, d) => d.holdMs >= 3000 },
+      { id: 'hold10', labelKey: 'steps.holdPose.hold10.label', points: 15, check: (f, d) => d.holdMs >= 10000 },
+      { id: 'hold30', labelKey: 'steps.holdPose.hold30.label', points: 20, check: (f, d) => d.holdMs >= 30000 },
+    ],
+  },
+
+  /* 计时：拉伸类（进入拉伸姿势后保持） */
+  stretchHold: {
+    perCycle: false,
+    repBonus: 0,
+    pointsPerSecond: 1,
+    steps: [
+      {
+        id: 'pose',
+        labelKey: 'steps.stretchHold.pose.label',
+        points: 8,
+        check: (f, d) => !!d.gateOk,
+        hint: () => H('steps.stretchHold.pose.hint'),
+      },
+      {
+        id: 'settle',
+        labelKey: 'steps.stretchHold.settle.label',
+        points: 10,
+        check: (f, d) => d.holdMs >= 1500,
+        hint: () => H('steps.stretchHold.settle.hint'),
+      },
+      { id: 'hold10', labelKey: 'steps.stretchHold.hold10.label', points: 14, check: (f, d) => d.holdMs >= 10000 },
+      { id: 'hold20', labelKey: 'steps.stretchHold.hold20.label', points: 18, check: (f, d) => d.holdMs >= 20000 },
     ],
   },
 };
 
-export function getStepPlan(exerciseId) {
+/**
+ * 取某个动作的计分方案。
+ * 动作自带 `plan` 时用族方案（60+ 动作库都是这样），
+ * 最初那 6 个动作有专门写的方案，优先用它们。
+ * 没传 meta 时自己从动作库里查（调用方常常只拿得到 id）。
+ */
+export function getStepPlan(exerciseId, meta) {
   const plan = STEP_PLANS[exerciseId];
-  if (!plan) return { steps: [], repBonus: 0, perCycle: true, pointsPerSecond: 0 };
-  return plan;
+  if (plan) return plan;
+  const planId = (meta && meta.plan) || CATALOG_MAP[exerciseId]?.plan;
+  if (planId && STEP_PLANS[planId]) return STEP_PLANS[planId];
+  return { steps: [], repBonus: 0, perCycle: true, pointsPerSecond: 0 };
 }
