@@ -52,6 +52,8 @@ Tout est côté client : le modèle de posture MediaPipe et le wasm sont stocké
 - **Un retour d'état en temps réel** : sous l'image, tu vois en permanence « dans quel état tu es, à quelle étape tu bloques et combien de degrés il te reste ».
 - **🐞 Panneau « Métriques »** : affiche d'un clic tous les chiffres bruts que voit le détecteur (vue, visibilité, angles des articulations) — un problème de cadrage se repère au premier coup d'œil.
 - **Annonce vocale en chinois + effets sonores** : chaque étape validée est saluée par une gamme montante, la première réussite d'une étape est annoncée à voix haute, et le score est annoncé tous les 50 points.
+- **La voix avant tout** : s'il ne te trouve pas, il t'appelle, il annonce quelle étape du mouvement faire ensuite et combien il t'en reste, et il corrige aussitôt une posture incorrecte,
+  et les étapes validées, le comptage, le score et le bilan de la série sont eux aussi annoncés à voix haute — tu n'as presque pas besoin de regarder l'écran.
 - **🎶 Une musique de fond entraînante** : une musique de fond en boucle intégrée (synthétisée sur place : aucun espace occupé et pas besoin d'internet), avec l'interrupteur « 🎶 Musique de fond » en haut à droite à activer ou couper à tout moment ;
   le volume baisse automatiquement pendant l'annonce d'un conseil, pour ne jamais couvrir la voix.
 - **🦴 Interrupteur du squelette** : permet de masquer le squelette pour ne garder que l'image de la caméra ; les annotations d'angles s'activent séparément.
@@ -473,7 +475,7 @@ puis relance `npm run test:i18n` — le test vérifie une par une les clés manq
 
 ## Calibrage bloqué ou rien ne se passe ? Diagnostic en quatre étapes
 
-**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v2.2`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
+**① Vérifie d'abord la version.** À côté du titre de la page doit s'afficher `v2.3`. Si tu ne la vois pas, ton navigateur utilise encore l'ancienne version en cache — force le rechargement avec **Ctrl + F5** (sur Mac : Cmd + Shift + R).
 
 **② Regarde d'abord le panneau « Calibrage avant la séance » à droite.** Le critère qui reste décoché te dit quoi faire, juste en dessous :
 
@@ -535,7 +537,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les quatre suites d'un coup (488 tests)
+npm test                       # les quatre suites d'un coup (499 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources
 npm run test:detectors         # détection et logique de score (squelettes synthétiques)
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
@@ -548,7 +550,7 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
 | `tests/test-detectors.mjs` | 198 | Comptage, chronométrage, points par étape et ordre de validation, pour les mouvements corrects comme pour toutes sortes de mouvements erronés, ainsi que la logique de validation du calibrage |
 | `tests/test-page.mjs` | 97 | Câblage du DOM, imports et exports de modules, ressources statiques, exhaustivité du barème |
-| `tests/test-app.mjs` | 161 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
+| `tests/test-app.mjs` | 172 | Démarrage du vrai `app.js`, déroulé du calibrage, changement d'exercice, score, sons, bilan, interrupteur du squelette, changement de langue |
 
 ---
 

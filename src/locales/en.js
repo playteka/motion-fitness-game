@@ -415,5 +415,9 @@ export default {
     half: 'Halfway there, keep it up',
     voiceTest: 'Voice is on',
     goal: 'Goal reached, awesome',
+    noPerson: 'Step into the middle of the frame and keep your whole body in view',
+    nextStep: 'Next: {label}. {hint}',
+    nextStepNoHint: 'Next: {label}',
+    setSummary: 'Set done: {value} {unit}, score {score}',
   },
 };

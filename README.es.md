@@ -48,6 +48,8 @@ Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la car
 - **Estado en tiempo real**: debajo de la imagen siempre ves «en qué estado estás, en qué paso te has quedado y cuántos grados te faltan».
 - **🐞 Métricas**: muestra con un clic todos los números en bruto que ve el detector (vista, visibilidad, ángulos de cada articulación), así localizas de un vistazo cualquier problema de colocación.
 - **Voz con conteo + sonidos**: cada paso cumplido suena con un aviso ascendente; la primera vez que lo cumples, la voz lo anuncia, y cada 50 puntos te canta la puntuación.
+- **La voz ante todo**: si no te encuentra te llama, dice en voz alta qué paso del movimiento toca y cuánto te falta, y corrige al instante cuando la postura no es correcta,
+  y los pasos cumplidos, el conteo, la puntuación y el resumen de la serie también se dicen en voz alta: casi no hace falta mirar la pantalla.
 - **🎶 Música de fondo alegre**: una BGM en bucle integrada (sintetizada en vivo: no ocupa espacio ni necesita internet) y el interruptor «🎶 Música de fondo» en la esquina superior derecha para activarla o desactivarla cuando quieras;
   al anunciar un consejo en voz alta, la música baja automáticamente para no tapar la voz.
 - **🦴 Esqueleto**: puedes ocultarlo y dejar solo la imagen de la cámara; las anotaciones de ángulos se activan por separado.
@@ -468,7 +470,7 @@ después vuelve a ejecutar `npm run test:i18n` —— la prueba revisa una por u
 
 ## Si no entras en el contorno o no pasa nada: cuatro pasos de diagnóstico
 
-**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v2.2`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
+**① Confirma primero la versión.** Junto al título de la página tiene que aparecer `v2.3`. Si no lo ves, es que el navegador sigue usando una versión antigua en caché: pulsa **Ctrl + F5** (en Mac, Cmd + Shift + R) para forzar la recarga.
 
 **② Mira primero el panel «Calibración previa» de la derecha.** De las siete comprobaciones, la que no esté marcada te dice lo que tienes que hacer, siguiendo la frase que aparece debajo del panel:
 
@@ -530,7 +532,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cuatro suites juntas (488 pruebas)
+npm test                       # las cuatro suites juntas (499 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino en el código
 npm run test:detectors         # lógica de detección y puntuación (con esqueletos sintéticos)
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
@@ -543,7 +545,7 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
 | `tests/test-detectors.mjs` | 198 | Conteo, cronómetro, puntos por paso y orden de puntuación con el ejercicio bien hecho y con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-page.mjs` | 97 | Conexión con el DOM, importación y exportación de módulos, recursos estáticos y coherencia del sistema de puntuación |
-| `tests/test-app.mjs` | 161 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
+| `tests/test-app.mjs` | 172 | Arranque del `app.js` real, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen, interruptor del esqueleto y cambio de idioma |
 
 ---
 

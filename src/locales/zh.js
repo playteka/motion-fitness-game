@@ -416,5 +416,9 @@ export default {
     half: '完成一半，继续保持',
     voiceTest: '语音已开启',
     goal: '目标完成，太棒了',
+    noPerson: '请站到画面中间，让全身进入画面',
+    nextStep: '下一步，{label}。{hint}',
+    nextStepNoHint: '下一步，{label}',
+    setSummary: '本组 {value} {unit}，得分 {score}',
   },
 };

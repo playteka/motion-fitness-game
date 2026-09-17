@@ -416,5 +416,9 @@ export default {
     half: 'À mi-chemin, continue',
     voiceTest: 'Voix activée',
     goal: 'Objectif atteint, bravo',
+    noPerson: 'Place-toi au centre de l’image, tout le corps bien visible',
+    nextStep: 'Suivant : {label}. {hint}',
+    nextStepNoHint: 'Suivant : {label}',
+    setSummary: 'Série terminée : {value} {unit}, score {score}',
   },
 };

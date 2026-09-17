@@ -1080,8 +1080,86 @@ console.log('\n[11] 背景音乐');
     api.state.consoleErrors.slice(-2).join(' | '));
 }
 
-console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
-if (failures.length) {
+/* ------------------------------------------------------------------ *
+ * 语音教练：画面上的提示都要念出来（以语音提示为主）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[12] 语音教练');
+{
+  const api = windowStub.__mfg;
+  const said = [];
+  const origSay = api.audio.say;
+  api.audio.say = (txt, o) => { said.push(txt); return origSay.call(api.audio, txt, o); };
+  api.state.settings.voice = true;
+
+  // 1) 找不到人：主动念「请站到画面中间…」
+  said.length = 0;
+  api.state.coachAt = -Infinity;
+  api.state.hintUntil = 0;
+  api.updateStatusHint({ ok: false }, performance.now() + 1000);
+  ok('找不到人时会念出来', said.some((s) => s.includes('站到画面中间')), said.join(' / '));
+
+  // 2) 该做哪个动作：念「下一步，…」并带上具体差多少
+  said.length = 0;
+  api.state.coachAt = -Infinity;
+  api.state.hintUntil = 0;
+  const detRef = api.state.detector || api.state.__det;
+  const fakeDet = {
+    pendingHint: () => ({ id: 'descend', labelKey: 'steps.squat.descend.label', hint: { key: 'steps.squat.descend.hint', params: null } }),
+    feedback: null,
+    active: true,
+    standby: '',
+  };
+  const savedDet = api.state.detector;
+  api.state.detector = fakeDet;
+  api.updateStatusHint({ ok: true }, performance.now() + 2000);
+  ok('会念出「下一步 + 要领名 + 差多少」',
+    said.some((s) => s.startsWith('下一步') && s.includes('蹲')), said.join(' / '));
+
+  // 3) 节流：紧接着再说一次不同的话不会立刻插话
+  said.length = 0;
+  fakeDet.pendingHint = () => ({ id: 'parallel', labelKey: 'steps.squat.parallel.label', hint: null });
+  api.updateStatusHint({ ok: true }, performance.now() + 2100);
+  ok('教练有全局最小间隔，不会每帧都念', said.length === 0, said.join(' / '));
+
+  // 4) 同一句话短时间内不重复（间隔过了也不重复，超过去重窗口才再提醒）
+  said.length = 0;
+  api.state.coachAt = -Infinity;
+  api.state.coachSig = '';
+  const tBase = performance.now();
+  api.updateStatusHint({ ok: false }, tBase + 10000);
+  const first = said.length;
+  api.updateStatusHint({ ok: false }, tBase + 15000);
+  ok('同一句提示短时间内不重复念（间隔已过也不重复）',
+    first === 1 && said.length === 1, said.join(' / '));
+  // coachSay 用的是真实时钟，这里直接把「上次说话时间」往前拨，模拟去重窗口已过
+  api.state.coachAt = performance.now() - 20000;
+  api.updateStatusHint({ ok: false }, tBase + 31000);
+  ok('超过去重窗口后会再提醒一次', said.length === 2, said.join(' / '));
+  api.state.detector = savedDet;
+
+  // 5) 姿势纠正：cue 事件直接念出来
+  said.length = 0;
+  api.state.coachAt = -Infinity;
+  api.handleEvents([{ type: 'cue', code: 'depth', key: 'cues.squat.depth', params: null, level: 'warn' }]);
+  ok('姿势纠正会被念出来', said.some((s) => s.includes('蹲低')), said.join(' / '));
+
+  // 6) 一组结束：念本组成绩
+  said.length = 0;
+  api.state.coachAt = -Infinity;
+  api.state.detector = savedDet;
+  if (api.state.detector) { api.state.detector.validReps = 7; api.state.detector.score = 42; }
+  api.state.session = 'running';
+  api.stopSession('user');
+  ok('一组结束时会念出本组成绩',
+    said.some((s) => s.includes('7') && s.includes('42')), said.join(' / '));
+
+  api.audio.say = origSay;
+  api.state.settings.voice = true;
+  api.toCalibration({ silent: true });
+}
+
+console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {
   console.log('失败项：');
   for (const f of failures) console.log('  - ' + f);
   process.exitCode = 1;

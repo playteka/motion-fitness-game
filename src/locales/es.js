@@ -414,5 +414,9 @@ export default {
     half: 'Vas por la mitad, sigue así',
     voiceTest: 'Voz activada',
     goal: 'Objetivo cumplido, ¡increíble!',
+    noPerson: 'Ponte en el centro de la imagen y que se te vea todo el cuerpo',
+    nextStep: 'Siguiente: {label}. {hint}',
+    nextStepNoHint: 'Siguiente: {label}',
+    setSummary: 'Serie terminada: {value} {unit}, puntuación {score}',
   },
 };

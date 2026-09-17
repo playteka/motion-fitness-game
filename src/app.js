@@ -84,6 +84,8 @@ const state = {
   stepSig: '',
   calibSig: '',
   lastScoreMilestone: 0,
+  coachAt: -Infinity, // 语音教练上一次说话的时间（全局节流；-Infinity = 还没说过）
+  coachSig: '',     // 上一次念的那句话（同一句短时间内不重复）
 };
 
 /** 收集控制台错误，供 ?probe=1 自检输出 */
@@ -210,6 +212,9 @@ function toCalibration({ silent = false, afterSet = false } = {}) {
   state.session = 'calibrating';
   state.autoStart = true;
   state.afterSet = afterSet;
+  // 新阶段开始：让语音教练可以立刻开口（不受上一阶段的节流限制）
+  state.coachAt = -Infinity;
+  state.coachSig = '';
   state.calibrator?.reset();
   state.calib = null;
   state.elapsedMs = 0;
@@ -473,6 +478,9 @@ function beginCountdown() {
 
   state.session = 'countdown';
   state.countdownStartedAt = performance.now();
+  // 一组开始：教练可以立刻念第一条指令
+  state.coachAt = -Infinity;
+  state.coachSig = '';
   let n = 3;
   $('countdownNum').textContent = String(n);
   $('countdown').hidden = false;
@@ -555,6 +563,10 @@ function stopSession(reason = 'user') {
   const doneCount = steps.filter((s) => s.done).length;
   const hasWork = value > 0 || det.partialReps > 0 || score > 0;
   if (hasWork) saveSession({ ex, value, partial: det.partialReps, reason, score });
+  // 本组结果也念出来（以语音为主：用户不必转头看小结卡）
+  if (hasWork) {
+    audio.say(t('speech.setSummary', { value, unit: ex.unit, score }), { rate: 1.15, force: true });
+  }
 
   const items = [
     [t('ui.colAction'), `${ex.icon} ${ex.name}`],
@@ -819,6 +831,10 @@ function calibrationStep(frame, now) {
 
   renderCalibration(calib);
   setHint(null);
+  // 校准阶段的每一条提示也念出来：站位、机位、有没有进画面，都不要用户去看屏幕
+  coachSay(t(calib.hintKey, calib.hintParams), {
+    gapMs: 2600, dedupeMs: 12000, key: `calib:${calib.hintKey}`,
+  });
   return outlineOf(!frame.ok ? 'search' : (calib.ready ? 'ready' : 'adjust'));
 }
 
@@ -845,7 +861,12 @@ function feedDetector(f, now) {
 function updateStatusHint(frame, now) {
   if (now <= state.hintUntil) return;
   const det = state.detector;
-  if (!frame || !frame.ok) { setHint(t('status.noPerson'), 'bad', 700); return; }
+  if (!frame || !frame.ok) {
+    setHint(t('status.noPerson'), 'bad', 700);
+    // 找不到人也要主动说话：这是最容易「不知道发生了什么」的时刻
+    coachSay(t('speech.noPerson'), { gapMs: 4000, dedupeMs: 15000, key: 'noPerson' });
+    return;
+  }
   if (!det) { setHint(t('status.noDetector'), 'bad', 700); return; }
   const pending = det.pendingHint();
   const recentCue = det.feedback && now - det.feedback.at < 3200 ? det.feedback : null;
@@ -853,11 +874,44 @@ function updateStatusHint(frame, now) {
     setHint(pending.hint
       ? t('ui.nextStepWithHint', { label: t(pending.labelKey), hint: t(pending.hint.key, pending.hint.params) })
       : t('ui.nextStepNoHint', { label: t(pending.labelKey) }), 'warn', 700);
+    // 「下一步做什么」也要念出来（带具体差多少的提示，念出来才是真的在教）
+    const label = t(pending.labelKey);
+    coachSay(pending.hint
+      ? t('speech.nextStep', { label, hint: t(pending.hint.key, pending.hint.params) })
+      : t('speech.nextStepNoHint', { label }),
+    { gapMs: 2600, dedupeMs: 20000, key: `step:${pending.id}` });
     return;
   }
-  if (recentCue) { setHint(t(recentCue.key, recentCue.params), recentCue.level, 700); return; }
-  if (!det.active && det.standby) { setHint(t(det.standby), 'warn', 700); return; }
+  if (recentCue) {
+    setHint(t(recentCue.key, recentCue.params), recentCue.level, 700);
+    return;
+  }
+  if (!det.active && det.standby) {
+    setHint(t(det.standby), 'warn', 700);
+    coachSay(t(det.standby), { gapMs: 3000, dedupeMs: 15000, key: det.standby });
+    return;
+  }
   setHint(t('status.ready'), 'good', 700);
+}
+
+/**
+ * 语音教练：把画面上的提示同步念出来 —— 这个应用是**以语音提示为主**的，
+ * 用户不该盯着屏幕才知道下一步做什么、哪里不对、有没有被看到。
+ *
+ * 三条纪律（避免变成唠叨）：
+ *   1) 全局最小间隔（gapMs）：一句话说完之后短时间内不再插话；
+ *   2) 同一句话短时间内不重复（dedupeMs）：比如「请站到画面中间」不必每帧都念；
+ *   3) 用 force 打断上一句：**最新的指示比正在念的旧话更重要**。
+ */
+function coachSay(text, { gapMs = 2500, dedupeMs = 12000, key = '' } = {}) {
+  if (!text || !state.settings.voice) return;
+  const now = performance.now();
+  const sig = key || text;
+  if (sig === state.coachSig && now - state.coachAt < dedupeMs) return;
+  if (now - state.coachAt < gapMs) return;
+  state.coachSig = sig;
+  state.coachAt = now;
+  audio.say(text, { force: true, rate: 1.12 });
 }
 
 function handleEvents(events) {
@@ -902,7 +956,8 @@ function handleEvents(events) {
     } else if (ev.type === 'cue') {
       state.lastCueAt = performance.now();
       state.lastCueLevel = ev.level === 'info' ? 'warn' : ev.level;
-      audio.sayCue(t(ev.key, ev.params));
+      // 姿势纠正直接念出来（节流交给教练，识别器本身也已经按 code 限流过）
+      coachSay(t(ev.key, ev.params), { gapMs: 1800, dedupeMs: 9000, key: ev.key });
     } else if (ev.type === 'hold') {
       if (ev.action === 'start') {
         audio.go();

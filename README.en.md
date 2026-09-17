@@ -48,6 +48,8 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - **Live status feedback**: the area below the video always shows what state you're in, which step you're stuck on, and how many degrees you still need.
 - **🐞 Metrics panel**: one click shows every raw number the detector sees (view, visibility, each joint angle), so camera-position problems are obvious at a glance.
 - **Spoken counting in your language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
+- **Voice-first throughout**: it calls out when it can't find you, says which form step comes next and how far you still have to go, and corrects bad form the moment it happens,
+  while form steps, spoken counts, scores and the set summary are all voiced too — so you barely need to watch the screen.
 - **🎶 Cheerful background music**: a built-in looped BGM (synthesised live — it takes up no space and needs no internet), with a “🎶 Background music” toggle in the top right corner;
   the music is turned down automatically while a cue is spoken, so it never fights the voice.
 - **🦴 Skeleton toggle**: hide the skeleton overlay and keep just the camera view; the angle labels toggle independently.
@@ -468,7 +470,7 @@ then run `npm run test:i18n` again — the test checks every entry for missing k
 
 ## Can't fit into the outline or getting no response? Four checks
 
-**① Check the version first.** The page title should show `v2.2` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
+**① Check the version first.** The page title should show `v2.3` next to it. If you don't see it, the browser is still running a cached old version — force a refresh with **Ctrl + F5** (Cmd + Shift + R on Mac).
 
 **② Look at the “Pre-workout calibration” panel on the right first.** Whichever of the seven checks isn't ticked, do what the line under the panel tells you:
 
@@ -530,7 +532,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all four suites (488 cases)
+npm test                       # run all four suites (499 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source
 npm run test:detectors         # detection and scoring logic (driven by synthetic skeletons)
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
@@ -543,7 +545,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
 | `tests/test-detectors.mjs` | 198 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-page.mjs` | 97 | DOM wiring, module imports and exports, static assets, completeness of the scoring plans |
-| `tests/test-app.mjs` | 161 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
+| `tests/test-app.mjs` | 172 | Startup, the calibration flow, exercise switching, scoring, sound, the set summary, the skeleton toggle and language switching with the real `app.js` |
 
 ---
 
