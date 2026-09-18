@@ -58,7 +58,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   hip lift height / both feet off the floor / body posture …), and exercises the camera can't judge reliably are additionally marked as **rough judgement**.
 - **Live status feedback**: the area below the video always shows what state you're in, which step you're stuck on, and how many degrees you still need.
 - **🐞 Metrics panel**: one click shows every raw number the detector sees (view, visibility, each joint angle), so camera-position problems are obvious at a glance.
-- **Spoken counting in your language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
+- **Spoken counting in the selected language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
 - **Voice-first throughout**: it calls out when it can't find you, says which form step comes next and how far you still have to go, and corrects bad form the moment it happens,
   while form steps, spoken counts, scores and the set summary are all voiced too — so you barely need to watch the screen.
 - **🎶 Cheerful background music**: a built-in looped BGM (synthesised live — it takes up no space and needs no internet), with a “🎶 Music” toggle in settings;
@@ -580,7 +580,7 @@ Read them like this:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `View Side ✗(0.90)` | The camera angle doesn't match what this exercise needs (squats want front-on, everything else wants the side) | Turn as the status bar says: face the camera for squats, sideways for everything else |
+| `View Side ✗(0.90)` | The camera angle doesn't match what this exercise needs (the five front-facing exercises want you facing the camera, everything else wants the side) | Turn as the status bar says: face the camera for Bodyweight Squat / Sumo Squat / Squat Jump / Box Jump / Burpee, sideways for the rest |
 | `Full body ✗` | Some body parts are out of frame | Back up 1–2 steps so you're in frame from head to feet |
 | `No person detected` | Too far / too close, backlighting, or a background the same color as your clothes | Move closer, face the light source, change clothes, or use a higher-resolution camera |
 | `Trunk lean` stuck above 32° | The camera is tilted or you're standing crooked | Straighten the camera (or level it with a book) |
