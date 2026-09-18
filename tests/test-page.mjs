@@ -172,6 +172,14 @@ console.log('\n[3] 静态资源与模型文件');
     !/documentElement\.requestFullscreen/.test(app));
   ok('样式里有视频框全屏规则 .stage:fullscreen', /\.stage:fullscreen\s*\{/.test(css));
   ok('样式里有右下角全屏按钮规则 .stage-btn', /\.stage-btn\s*\{/.test(css));
+  // 主页与动作页是同一文档里的两个视图，靠 hidden 属性切换。
+  // .layout 这类容器自带 display:grid，只靠属性默认样式会被类选择器盖掉（两个页面会同时显示），
+  // 所以样式表里必须有一条全局 [hidden] 兜底规则。
+  ok('样式表里有全局 [hidden] 规则（视图切换才会真的隐藏）',
+    /\[hidden\][^{]*\{[^}]*display:\s*none/.test(css));
+  ok('两个视图的切换写的是 hidden 属性',
+    /homeView'\)\.hidden = false/.test(app) && /workoutView'\)\.hidden = true/.test(app)
+    && /homeView'\)\.hidden = true/.test(app) && /workoutView'\)\.hidden = false/.test(app));
 }
 
 /* ---------- 4. 动作与界面按钮一一对应 ---------- */

@@ -357,6 +357,8 @@ and every exercise gets one card: icon, name, reps or timed, the default target,
 The search box at the top finds exercises by name directly (type “push” or “plank”, for example).
 
 - Click any card → you go to its **exercise page** (camera + form-step checklist + scoring + goal setting + records).
+  The exercise page has its own address: `#/ex/<id>` (for example `#/ex/bridge`), so **a refresh keeps you on the same exercise**,
+  **the browser Back button returns to the home page**, and you can bookmark the link.
 - “Back to home” in the top-left corner of the exercise page returns you to the wall; ⚙️ **Settings** is in the top-right corner.
 - An exercise that belongs to two categories (Jump Squat) appears in both blocks, and either card opens the same exercise.
 
@@ -616,7 +618,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all five suites (875 cases)
+npm test                       # run all five suites (879 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / README structure of all four files
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -630,8 +632,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
 | `tests/test-detectors.mjs` | 217 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-engines.mjs` | 138 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
-| `tests/test-page.mjs` | 308 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 180 | Startup with the real `app.js`, home-page rendering, the settings modal, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
+| `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
+| `tests/test-app.mjs` | 182 | Startup with the real `app.js`, home-page rendering, the settings modal, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
 
 ---
 

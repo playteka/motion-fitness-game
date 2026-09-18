@@ -362,6 +362,8 @@ dans chaque bloc, chaque exercice a sa carte : icône, nom, répétitions ou chr
 Le champ de recherche au-dessus permet de trouver un exercice par son nom (par exemple en tapant « pompe » ou « push »).
 
 - Clique sur n'importe quelle carte → tu arrives sur la **page de l'exercice** (caméra + liste des étapes techniques + score + réglage de l'objectif + historique).
+  La page de l'exercice a sa propre adresse : `#/ex/<id>` (par exemple `#/ex/bridge`) : **un rafraîchissement te laisse sur le même exercice**,
+  **le bouton Retour du navigateur ramène à l'accueil** et tu peux mettre le lien en favori.
 - « Retour à l'accueil » en haut à gauche de la page d'exercice ramène au mur d'exercices ; en haut à droite se trouve ⚙️ **Réglages**.
 - Les exercices qui appartiennent à deux catégories (comme « Squats sautés ») apparaissent dans les deux blocs : en cliquant, c'est toujours le même exercice.
 
@@ -622,7 +624,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les cinq suites d'un coup (875 tests)
+npm test                       # les cinq suites d'un coup (879 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources / structure des quatre README
 npm run test:detectors         # détection et logique de score des cinq détecteurs écrits à la main (squelettes synthétiques)
 npm run test:engines           # moteurs de détection génériques (flexion / alternance / rotation / plusieurs phases / chrono + garde de posture)
@@ -636,8 +638,8 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
 | `tests/test-detectors.mjs` | 217 | Comptage, chronométrage, points par étape et ordre de validation des cinq détecteurs écrits à la main (mouvements corrects comme erronés), ainsi que la logique de validation du calibrage |
 | `tests/test-engines.mjs` | 138 | Moteurs génériques : une répétition par cycle, souple vs strict, cas limites des balancements et des mouvements trop rapides, garde de posture, décollage des pieds, alternance gauche-droite, enchaînement complet, pause et reprise du chrono |
-| `tests/test-page.mjs` | 308 | Câblage du DOM, imports et exports de modules, ressources statiques, catalogue des 22 exercices par catégorie et exhaustivité des barèmes |
-| `tests/test-app.mjs` | 180 | Démarrage du vrai `app.js`, rendu de la page d'accueil, fenêtre de réglages, déroulé du calibrage, changement d'exercice, score, sons, bilan, changement de langue |
+| `tests/test-page.mjs` | 310 | Câblage du DOM, imports et exports de modules, ressources statiques, catalogue des 22 exercices par catégorie et exhaustivité des barèmes |
+| `tests/test-app.mjs` | 182 | Démarrage du vrai `app.js`, rendu de la page d'accueil, fenêtre de réglages, déroulé du calibrage, changement d'exercice, score, sons, bilan, changement de langue |
 
 ---
 

@@ -203,8 +203,38 @@ function buildHome() {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * 两个视图：主页（只负责挑动作）与动作页（体感训练）
+ *
+ * 用地址栏 hash 当路由，这样「进动作页」是真的换页面：
+ *   #/            主页
+ *   #/ex/<id>     某个动作的训练页
+ * 好处是浏览器后退能回主页、刷新能停在同一个动作、链接可以直接分享。
+ * ------------------------------------------------------------------ */
+
+const ROUTE_EX = '#/ex/';
+
+/** 从地址栏读当前动作用户想练哪个动作（不在动作页时返回 null） */
+function routeExercise() {
+  try {
+    const h = String(location.hash || '');
+    if (!h.startsWith(ROUTE_EX)) return null;
+    const id = h.slice(ROUTE_EX.length);
+    return EXERCISE_MAP[id] ? id : null;
+  } catch { return null; }
+}
+
+/** 同步地址栏（不写历史，避免每帧都塞一条记录） */
+function setRoute(hash) {
+  try {
+    if (location.hash === hash) return;
+    if (typeof history !== 'undefined' && history.replaceState) history.replaceState(null, '', hash);
+    else location.hash = hash;
+  } catch { /* 某些环境（自动化桩）没有 history，忽略即可 */ }
+}
+
 /** 切到主页（结束正在进行的训练，避免后台空跑） */
-function showHome() {
+function showHome({ syncRoute = true } = {}) {
   if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
     stopSession('switch');
   }
@@ -222,6 +252,7 @@ function showHome() {
   closeSettings();
   buildHome();
   updateButtons();
+  if (syncRoute) setRoute('#/');
 }
 
 /** 切到动作页 */
@@ -232,13 +263,24 @@ function showWorkout() {
   $('btnHome').hidden = false;
 }
 
-/** 从主页点进某个动作 */
-function openExercise(id) {
+/** 从主页点进某个动作（进入训练页） */
+function openExercise(id, { fromRoute = false } = {}) {
   if (!EXERCISE_MAP[id]) return;
   showWorkout();
   selectExercise(id);
+  if (!fromRoute) setRoute(ROUTE_EX + id);
   // 有些环境（老浏览器 / 自动化桩）没有 scrollTo，别让它把流程打断
   try { window.scrollTo?.({ top: 0, behavior: 'smooth' }); } catch { /* ignore */ }
+}
+
+/** 浏览器前进/后退 → 在两个视图之间切换 */
+function handleRouteChange() {
+  const id = routeExercise();
+  if (id) {
+    if (state.homeMode || state.exerciseId !== id) openExercise(id, { fromRoute: true });
+  } else {
+    showHome({ syncRoute: false });
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -1454,6 +1496,8 @@ function bindUI() {
     homeQuery = e.target.value || '';
     buildHome();
   });
+  // 浏览器前进/后退在两个视图之间切换（自动化桩可能没有 hashchange，忽略即可）
+  try { window.addEventListener('hashchange', handleRouteChange); } catch { /* ignore */ }
 
   // 浏览器要求「页面先有过一次用户交互」才允许出声（WebAudio 的 AudioContext 会一直 suspended，
   // Chrome 也会拦住没有交互就发起的语音）。所以在第一次点击/按键/触摸时就把音频解锁，
@@ -1631,12 +1675,17 @@ function boot() {
   applyI18n(document);
   buildLanguageSelect();
   bindUI();
-  // 先把动作选好（摄像头一开就能练）：带 ?exercise= / ?autostart / ?probe 时直接进动作页，
-  // 否则停在主页让用户挑分类与动作。
-  const wantId = params.get('exercise');
+  // 先按地址栏路由定位：带 ?exercise= / ?autostart / ?probe 时直接进动作页（自动化与书签要用），
+  // 地址栏是 #/ex/<id> 时进那个动作，否则停在主页让用户挑分类与动作。
+  const wantId = params.get('exercise') || routeExercise();
   const direct = !!wantId || params.has('autostart') || params.has('probe');
   selectExercise(wantId || state.settings.exerciseId || 'squat');
-  if (direct) showWorkout(); else showHome();
+  if (direct) {
+    showWorkout();
+    setRoute(ROUTE_EX + state.exerciseId);
+  } else {
+    showHome();
+  }
   renderHistory();
   renderRecords();
   updateButtons();

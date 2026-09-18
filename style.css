@@ -17,6 +17,13 @@
 
 * { box-sizing: border-box; }
 
+/* `hidden` 属性必须是「最高优先级」的隐藏方式。
+   主页与动作页是同一个文档里的两个视图（#homeView / #workoutView），
+   而 .layout 这类容器自带 display:grid —— 只写 [hidden] 的默认样式会被类选择器盖掉，
+   结果两个页面会同时显示（主页里就能看到摄像头与训练面板）。
+   这里统一兜底，避免以后再加视图时又踩同一个坑。 */
+[hidden] { display: none !important; }
+
 html, body { height: 100%; }
 
 body {

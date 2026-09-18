@@ -269,6 +269,14 @@ if (app) {
   ok('返回主页：回到 idle 且动作页隐藏',
     api.state.homeMode === true && elements.get('workoutView').hidden === true,
     `homeMode=${api.state.homeMode}`);
+  // 地址栏路由：#/ex/<id> 能在刷新后直接进同一个动作；后退能回主页
+  api.openExercise('crunch');
+  ok('进动作页会写地址栏路由（#/ex/<id>）',
+    String(windowStub.location.hash || '').endsWith('#/ex/crunch'), String(windowStub.location.hash));
+  api.showHome();
+  ok('回主页会把路由收回 #/',
+    String(windowStub.location.hash || '') === '#/' || String(windowStub.location.hash || '') === '',
+    String(windowStub.location.hash));
   ok('要领清单已渲染', elements.get('stepList').innerHTML.includes('step-item'));
   ok('没有运行时错误横幅', !documentStub.documentElement.dataset.error,
     documentStub.documentElement.dataset.error);

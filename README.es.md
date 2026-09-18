@@ -357,6 +357,8 @@ y dentro de cada bloque cada ejercicio tiene su tarjeta: icono, nombre, si cuent
 Con el buscador de arriba puedes encontrar un ejercicio directamente por su nombre (por ejemplo, escribe «flexión» o «push»).
 
 - Pulsa cualquier tarjeta → entras en la **página del ejercicio** (cámara + lista de pasos de la técnica + puntuación + ajuste del objetivo + registros).
+  La página del ejercicio tiene su propia dirección: `#/ex/<id>` (por ejemplo `#/ex/bridge`), así que **al recargar sigues en el mismo ejercicio**,
+  **el botón Atrás del navegador vuelve al inicio** y puedes guardar el enlace en favoritos.
 - Con «Volver al inicio», arriba a la izquierda de la página del ejercicio, vuelves al muro de ejercicios; arriba a la derecha está ⚙️ **Ajustes**.
 - Un ejercicio que pertenece a dos categorías (la sentadilla con salto) aparece en los dos bloques, pero al entrar es el mismo ejercicio.
 
@@ -616,7 +618,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cinco suites juntas (875 pruebas)
+npm test                       # las cinco suites juntas (879 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino escrito a fuego en el código / estructura de los cuatro README
 npm run test:detectors         # lógica de detección y puntuación de los cinco detectores escritos a mano (con esqueletos sintéticos)
 npm run test:engines           # motores de reconocimiento genéricos (flexión-extensión / alternancia / giro / movimiento por fases / cronómetro + control de postura)
@@ -630,8 +632,8 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
 | `tests/test-detectors.mjs` | 217 | Conteo, cronómetro, puntos por paso y orden de puntuación de los cinco detectores escritos a mano, tanto con el ejercicio bien hecho como con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-engines.mjs` | 138 | Motores genéricos: un ciclo y una repetición, permisivo frente a estricto, los límites del balanceo y de la velocidad excesiva, control de postura, despegue del suelo en los saltos, alternancia de lados, secuencia completa y pausa y reanudación del cronómetro |
-| `tests/test-page.mjs` | 308 | Cableado del DOM, importación y exportación de módulos, recursos estáticos, lista de categorías de los 22 ejercicios e integridad de los planes de puntuación |
-| `tests/test-app.mjs` | 180 | Arranque del `app.js` real, renderizado de la página de inicio, ventana de ajustes, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
+| `tests/test-page.mjs` | 310 | Cableado del DOM, importación y exportación de módulos, recursos estáticos, lista de categorías de los 22 ejercicios e integridad de los planes de puntuación |
+| `tests/test-app.mjs` | 182 | Arranque del `app.js` real, renderizado de la página de inicio, ventana de ajustes, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
 
 ---
 
