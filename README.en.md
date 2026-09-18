@@ -45,7 +45,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 
 - **Exercise home page (five categories)**: you land on a wall of exercises split into **Upper body (3) · Lower body (7) · Core (6) · Full body (5) · Stretching (2)**,
   and each exercise is one card (icon + name + reps/timed + target + judging basis), with a search box as well. Click a card to open its exercise page, and “Back to home” in the top-left corner brings you back any time.
-  Exercises like “Jump Squat” and “Jumping Lunge” show up in two categories at once (either card opens the same exercise).
+  “Jump Squat” is listed in two categories at once (either card opens the same exercise).
 - **Exercise page + settings modal**: the exercise page has ⚙️ Settings in the top-right corner, and the modal collects **language, detection model, sound effects, spoken counting and background music**
   together with mirror, strict mode, skeleton, angles and metrics toggles — no more hunting for buttons all over the screen.
 - **Pre-workout calibration**: before you start there's a **dashed body silhouette** in the frame (it only traces your outer shape — you don't need to line up your joints), and a text prompt above the video tells you
@@ -55,7 +55,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   finishing every step in a round earns a perfect-round bonus, and hold exercises give **+1 point for every second you hold**.
 - **Valid rep detection (lenient by default)**: **if you roughly did the movement, it counts** — shallower squats and lunges, push-ups that only go part of the way down and glute bridges that don't rise very high all count, while the voice coach corrects “go lower / down a little more / lift your hips higher / don't let your lower back sag” and the score is discounted for quality; turn on the **Strict mode** switch in the settings modal if you want “only a full-depth rep counts”. Movements you didn't really do (a mere wobble) aren't counted and won't trigger nagging.
 - **Every exercise states its “judging basis”**: the card and the exercise page spell out what the exercise is judged by (elbow bend / knee bend /
-  hip lift height / both feet off the floor / body posture …), and exercises the camera can't judge reliably are additionally marked as **rough judgement**.
+  hip lift height / both feet off the floor / body posture …), and exercises the camera can't judge reliably are additionally marked as **rough scoring**.
 - **Live status feedback**: the area below the video always shows what state you're in, which step you're stuck on, and how many degrees you still need.
 - **🐞 Metrics panel**: one click shows every raw number the detector sees (view, visibility, each joint angle), so camera-position problems are obvious at a glance.
 - **Spoken counting in the selected language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
@@ -358,7 +358,7 @@ The search box at the top finds exercises by name directly (type “push” or �
 
 - Click any card → you go to its **exercise page** (camera + form-step checklist + scoring + goal setting + records).
 - “Back to home” in the top-left corner of the exercise page returns you to the wall; ⚙️ **Settings** is in the top-right corner.
-- Exercises that belong to two categories (Jump Squat, Jumping Lunge, Mountain Climber) appear in both blocks, and either card opens the same exercise.
+- An exercise that belongs to two categories (Jump Squat) appears in both blocks, and either card opens the same exercise.
 
 ## Settings modal (language / model / sound)
 
@@ -414,21 +414,21 @@ Calibration only checks that you're in position — it never counts reps or awar
 | 🦵 Lower body | Glute Bridge 🌉 | Reps | Hip lift height | 15 reps |
 | 🦵 Lower body | Jump Squat 🚀 | Reps | Knee bend + both feet off the floor | 12 reps |
 | 🔥 Core | Plank 🧘 | Timed | Hold time | 45 sec |
-| 🔥 Core | Side Plank 🧎 | Timed | Whether your body position is on target (rough judgement) | 30 sec |
+| 🔥 Core | Side Plank 🧎 | Timed | Whether your body position is on target (rough scoring) | 30 sec |
 | 🔥 Core | Dead Bug 🐞 | Reps | Left/right leg alternation | 16 reps |
 | 🔥 Core | Crunch 🌀 | Reps | Shoulder height off the floor | 20 reps |
 | 🔥 Core | Reverse Crunch 🔃 | Reps | Hip hinge | 15 reps |
 | 🔥 Core | Lying Leg Raise 🦿 | Reps | Hip hinge | 15 reps |
 | 🤸 Full body | Burpee 💥 | Reps | Order of the whole sequence (squat → plank → jump) | 10 reps |
 | 🤸 Full body | Mountain Climber ⛰️ | Reps | Left/right leg alternation | 24 reps |
-| 🤸 Full body | Box Jump 🦘 | Reps | Knee bend + both feet off the floor (rough judgement) | 10 reps |
+| 🤸 Full body | Box Jump 🦘 | Reps | Knee bend + both feet off the floor (rough scoring) | 10 reps |
 | 🤸 Full body | Jump Squat 🚀 | Reps | Knee bend + both feet off the floor | 12 reps |
 | 🤸 Full body | Jumping Lunge ⤴️ | Reps | Knee bend + both feet off the floor | 14 reps |
 | 🧘 Stretching | Standing Forward Fold 🙇 | Timed | Whether your body position is on target | 30 sec |
 | 🧘 Stretching | Seated Forward Fold 🧎‍♂️ | Timed | Whether your body position is on target | 30 sec |
 
 > “Jump Squat” belongs to both Lower body and Full body, and “Jumping Lunge” belongs to Full body — the same exercise can appear in more than one category.
-> The judging basis is **what the camera actually measures**; exercises marked as **rough judgement** (Side Plank, Box Jump and so on) can only tell that
+> The judging basis is **what the camera actually measures**; exercises marked as **rough scoring** (Side Plank, Box Jump and so on) can only tell that
 > “your body position is roughly on target” — scoring and timing still work as usual, but don't treat them as a strict posture referee.
 
 ---

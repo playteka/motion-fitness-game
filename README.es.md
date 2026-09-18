@@ -45,7 +45,7 @@ Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la car
 
 - **Página de inicio (cinco categorías)**: al entrar lo primero que ves es un muro de ejercicios por categorías — tren superior (3) · tren inferior (7) · core (6) · cuerpo completo (5) · estiramientos (2) —,
   cada ejercicio con su tarjeta (icono + nombre + repeticiones/cronómetro + objetivo + criterio de detección) y, arriba, un buscador. Pulsa una tarjeta para entrar en la página del ejercicio y con «Volver al inicio», arriba a la izquierda, vuelves cuando quieras.
-  Ejercicios como «sentadilla con salto» y «zancada con salto» aparecen a la vez en dos categorías (al pulsarlos es el mismo ejercicio).
+  La «sentadilla con salto» aparece a la vez en dos categorías (al pulsarla es el mismo ejercicio).
 - **Página del ejercicio + ventana de ajustes**: arriba a la derecha de la página del ejercicio está ⚙️ Ajustes, y la ventana reúne el **idioma, el modelo de detección, los efectos de sonido, la voz y la música de fondo**,
   además de los interruptores de espejo, modo estricto, esqueleto, ángulos y métricas — ya no tienes que buscar botones por toda la pantalla.
 - **Calibración previa**: antes de empezar, en la imagen aparece una **silueta punteada del cuerpo** (solo el contorno exterior, sin alinear ningún esqueleto) y arriba aparece un texto que te indica
@@ -358,7 +358,7 @@ Con el buscador de arriba puedes encontrar un ejercicio directamente por su nomb
 
 - Pulsa cualquier tarjeta → entras en la **página del ejercicio** (cámara + lista de pasos de la técnica + puntuación + ajuste del objetivo + registros).
 - Con «Volver al inicio», arriba a la izquierda de la página del ejercicio, vuelves al muro de ejercicios; arriba a la derecha está ⚙️ **Ajustes**.
-- Los ejercicios que pertenecen a dos categorías a la vez (sentadilla con salto, zancada con salto, escaladores) aparecen en los dos bloques, pero al entrar es el mismo ejercicio.
+- Un ejercicio que pertenece a dos categorías (la sentadilla con salto) aparece en los dos bloques, pero al entrar es el mismo ejercicio.
 
 ## Ventana de ajustes (idioma / modelo / sonido)
 
@@ -427,7 +427,7 @@ La fase de calibración solo comprueba la colocación: no cuenta repeticiones ni
 | 🧘 Estiramientos | Flexión de pie 🙇 | Cronómetro | Corrección de la postura | 30 s |
 | 🧘 Estiramientos | Flexión sentado 🧎‍♂️ | Cronómetro | Corrección de la postura | 30 s |
 
-> La «sentadilla con salto» pertenece a la vez a tren inferior y a cuerpo completo, y la «zancada con salto» a cuerpo completo: un mismo ejercicio puede aparecer en varias categorías.
+> La «sentadilla con salto» pertenece a la vez a tren inferior y a cuerpo completo: un mismo ejercicio puede aparecer en varias categorías (según cuántas categorías tengas en su lista `cats`).
 > El criterio de detección es **lo que la cámara mide de verdad**; los ejercicios marcados como **detección aproximada** (plancha lateral, salto al cajón, etc.) solo pueden comprobar que «la postura está más o menos bien»:
 > la puntuación y el cronómetro funcionan igual, pero no lo tomes como un árbitro estricto de la postura.
 
