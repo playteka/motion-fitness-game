@@ -619,7 +619,7 @@ PORT=8080 node preview-server.js
 ## 测试
 
 ```bash
-npm test                       # 五套测试一起跑（871 项）
+npm test                       # 五套测试一起跑（875 项）
 npm run test:i18n              # 多语言：缺键 / 漏翻 / 占位符 / 数组长度 / 源码残留中文 / 四份 README 结构
 npm run test:detectors         # 五个手写识别器的识别与计分逻辑（合成骨架驱动）
 npm run test:engines           # 通用识别引擎（屈伸 / 左右交替 / 转体 / 多段动作 / 计时 + 姿势门控）
@@ -632,7 +632,7 @@ npm run test:app               # 最小 DOM 桩加载真实 app.js 的集成测�
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | 四种语言键结构一致、无漏翻、占位符与数组长度一致、源码里无写死中文、四份文档结构一致 |
 | `tests/test-detectors.mjs` | 217 | 五个手写识别器的标准/错误动作计数、计时、要领得分与顺序，以及运动前校准的判定 |
-| `tests/test-engines.mjs` | 134 | 通用引擎：一次循环一次数、宽松 vs 严格、晃动与过快的边界、姿势门控、跳跃离地、左右交替、整套动作、计时暂停恢复 |
+| `tests/test-engines.mjs` | 138 | 通用引擎：一次循环一次数、宽松 vs 严格、晃动与过快的边界、姿势门控、跳跃离地、左右交替、整套动作、计时暂停恢复 |
 | `tests/test-page.mjs` | 308 | DOM 接线、模块导入导出、静态资源、22 个动作的分类清单与计分方案完整性 |
 | `tests/test-app.mjs` | 180 | 真实 `app.js` 的启动、主页渲染、设置弹窗、校准流程、切动作、计分、音效、结算、多语言切换 |
 

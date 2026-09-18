@@ -143,9 +143,13 @@ function makeFrameRunner(det) {
   };
 }
 
+/** 把一段「一次循环」的手搓帧序列重复 count 次 */
+function repeatFrames(segments, count) {
+  return Array.from({ length: count }, () => segments).flat();
+}
+
 /** 把一个「一次循环」的姿势函数展开成 count 次重复的帧序列（真实骨架） */
-function repeat(poseFn, cycleMs, count) {
-  return Array.from({ length: count }, () => ({ pose: poseFn, ms: cycleMs }));
+function repeat(poseFn, cycleMs, count) {  return Array.from({ length: count }, () => ({ pose: poseFn, ms: cycleMs }));
 }
 
 /** 同上，但用于手搓帧的驱动器 */
@@ -617,6 +621,43 @@ console.log('\n[5] bend 引擎：跳跃（离地）');
   ok('箭步跳：真的离地 = 3 次', air.validReps === 3, `实际 ${air.validReps}`);
 }
 {
+  // 有校准地面线时，离地判定直接对着地面线算（不再依赖会漂移的滚动基准）：
+  // 脚一直踩在地面线上 → 怎么屈伸都不算起跳；蹬伸时整具身体抬离地面线 → 才算一次。
+  const GROUND = 0.95;
+  const frame = (kneeBent, bottomY, calibrated = true) => ({
+    ok: true, torsoIncl: 10, view: 'front', kneeClear: 0.5, hipClear: 1.0,
+    kneeBent, kneeExtended: 170, kneeAngle: kneeBent, bodyStraight: 175, hipLineDev: 0,
+    bodyBottomY: bottomY, groundRef: GROUND, groundRefCalibrated: calibrated,
+    torsoLen: 0.3, perSide: { L: {}, R: {} },
+  });
+  const onFloor = [
+    { f: frame(170, GROUND), ms: 300 },
+    { f: frame(100, GROUND), ms: 500 },
+    { f: frame(170, GROUND), ms: 500 },
+  ];
+  const grounded = makeFrameRunner(createDetector('squatJump'));
+  grounded.run(repeatFrames(onFloor, 3));
+  ok('有地面线：脚不离地（怎么屈伸都不算起跳）',
+    grounded.det.validReps === 0 && hasCue(grounded, 'needJump'),
+    `有效 ${grounded.det.validReps} / ${cuesOf(grounded).join(',')}`);
+
+  const jumping = [
+    { f: frame(170, GROUND), ms: 300 },
+    { f: frame(100, GROUND), ms: 400 },
+    { f: frame(170, GROUND - 0.09), ms: 300 },
+    { f: frame(170, GROUND), ms: 400 },
+  ];
+  const air = makeFrameRunner(createDetector('squatJump'));
+  air.run(repeatFrames(jumping, 3));
+  ok('有地面线：抬离地面线 0.09 = 3 次', air.det.validReps === 3, `实际 ${air.det.validReps}`);
+  ok('有地面线：离地了就不再提示「要跳起来」', !hasCue(air, 'needJump'), cuesOf(air).join(','));
+
+  // 没有校准线时：同一组帧要靠滚动基准推断（所以真机必须先过校准，判定才稳）
+  const noCalib = makeFrameRunner(createDetector('squatJump'));
+  noCalib.run(repeatFrames(onFloor.map((s) => ({ ...s, f: frame(0, GROUND, false) })), 3));
+  ok('没有地面线时退回滚动基准：同一姿势不会一直累加次数',
+    noCalib.det.validReps === 0, `有效 ${noCalib.det.validReps}`);
+}{
   // 跳箱：离地门槛更高（flightMin 0.05），抬到 0.09 才算数
   const low = makeRunner(createDetector('boxJump'));
   low.run(repeat(jumpCycle(false), 1300, 3));

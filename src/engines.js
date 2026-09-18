@@ -162,6 +162,22 @@ const ADVISORY = {
   },
 };
 
+/**
+ * 离地高度（正数 = 身体整体离开地面）。
+ *
+ * 有校准地面线时直接用它：脚一定踩在那条线上，换姿势（站↔俯撑）不会被误判成起跳。
+ * 没有校准时退回「最近 3 秒身体最低点」的滚动基准 —— 注意这个基准在
+ * 「站姿 → 俯撑」这类会让最低跟踪点抬高的姿势切换里会短暂失准，所以真机要走校准那条路。
+ */
+export function bodyLift(det, f, now) {
+  const bottom = Number.isFinite(f.bodyBottomY) ? f.bodyBottomY : 0;
+  if (f.groundRefCalibrated && Number.isFinite(f.groundRef)) return f.groundRef - bottom;
+  det.baseBottom = Math.max(det.baseBottom || bottom, bottom);
+  if (det._baseAt === undefined) det._baseAt = now;
+  if (now - det._baseAt > 3000) { det._baseAt = now; det.baseBottom = bottom; }
+  return det.baseBottom - bottom;
+}
+
 /* ------------------------------------------------------------------ *
  * 引擎 1：屈伸一次（膝 / 肘 / 髋 / 踝 / 抬高高度）
  * ------------------------------------------------------------------ */
@@ -183,6 +199,9 @@ class BendRepDetector extends DetectorBase {
     this.minRepMs = p.minRepMs ?? 380;
     this.maxRepMs = p.maxRepMs ?? 9000;
     this.flightMin = p.flightMin ?? 0.035;
+    // 跳跃类：身体刚回到起始位时，离地信号往往还差一帧才到（蹬伸的最后一段才离地），
+    // 所以留一个短窗口等它 —— 否则「真的跳了」也会被判成「没离地」。
+    this.flightGraceMs = p.flightGraceMs ?? 320;
   }
 
   onReset() {
@@ -192,12 +211,16 @@ class BendRepDetector extends DetectorBase {
     this.progress = 0;
     this.gateOk = false;
     this.flightSeen = false;
+    this.backSince = 0;
     this.baseBottom = 0;
     this._badFrames = 0;
     this._baseAt = undefined;
   }
 
   metric(f) { return (METRICS[this.metricName] || METRICS.knee)(f); }
+
+  /** 离地高度：见文件顶部的 bodyLift 说明 */
+  liftOf(f, now) { return bodyLift(this, f, now); }
 
   /** 0 = 起始位置，1 = 到位 */
   progressOf(v) {
@@ -207,13 +230,9 @@ class BendRepDetector extends DetectorBase {
   }
 
   step(f, now) {
-    // 离地高度：以最近 3 秒内“身体最低点”为基准，跳起来时整体抬升
-    const bottom = Number.isFinite(f.bodyBottomY) ? f.bodyBottomY : 0;
-    this.baseBottom = Math.max(this.baseBottom || bottom, bottom);
-    if (this._baseAt === undefined) this._baseAt = now;
-    if (now - this._baseAt > 3000) { this._baseAt = now; this.baseBottom = bottom; }
-    const lift = this.baseBottom - bottom;
-
+    const lift = this.liftOf(f, now);
+    // 离地高度：有校准地面线就用它当地面；没有就用最近 3 秒里「身体最低点」当基准，
+    // 跳起来时整体抬升。基准每 3 秒重设一次，允许跑动/换机位。
     const gate = GATES[this.gateName] || GATES.stand;
     const gated = !!gate(f);
     this.gateOk = gated;
@@ -255,13 +274,21 @@ class BendRepDetector extends DetectorBase {
     }
 
     this.peak = Math.max(this.peak, pr);
-    if (pr <= this.backP) {
+    const backToStart = pr <= this.backP;
+    if (backToStart) {
+      if (!this.backSince) this.backSince = now;
+    } else {
+      this.backSince = 0;
+    }
+    const waitMs = this.p.flight ? this.flightGraceMs : 0;
+    if (backToStart && now - this.backSince >= waitMs) {
       this.finish(f, now);
     } else if (now - this.repStartAt > this.maxRepMs) {
       // 卡在半路太久（换姿势、走神）：安静地作废这一轮，不刷半程
       this.stage = 'up';
       this.repStartAt = 0;
       this.peak = 0;
+      this.backSince = 0;
       this.phase = 'up';
     }
   }
@@ -500,11 +527,8 @@ class SequenceRepDetector extends DetectorBase {
   }
 
   step(f, now) {
-    const bottom = Number.isFinite(f.bodyBottomY) ? f.bodyBottomY : 0;
-    this.baseBottom = Math.max(this.baseBottom || bottom, bottom);
-    if (this._baseAt === undefined) this._baseAt = now;
-    if (now - this._baseAt > 3000) { this._baseAt = now; this.baseBottom = bottom; }
-    const lift = this.baseBottom - bottom;
+    // 离地高度：与 bend 引擎同一套规则（校准地面优先，否则用滚动基准）
+    const lift = bodyLift(this, f, now);
     const ff = { ...f, __lift: lift };
     this.lift = lift;
 

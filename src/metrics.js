@@ -277,6 +277,7 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     viewRatio,
     // 多动作库共用的姿势量
     groundRef,
+    groundRefCalibrated: groundCalib !== null,   // 地面线是校准出来的（而不是脚踝临时估的）
     hipClear,
     ankleClear,
     kneeSpread,
