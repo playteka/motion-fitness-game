@@ -1135,6 +1135,18 @@ console.log('\n[11] 背景音乐');
   api.showHome();
   ok('回到主页后背景音乐停掉', api.audio.musicOn === false);
   ok('回主页只是停播，用户的选择仍然保留', api.state.settings.music === true);
+
+  // ---- 摄像头：回到主页就关掉（用户反馈：回主页可以关摄像头了） ----
+  let trackStopped = false;
+  api.camera.stream = { getTracks: () => [{ stop() { trackStopped = true; } }] };
+  api.showHome();
+  ok('回到主页会关掉摄像头', trackStopped === true && api.state.camStoppedForHome === true);
+  ok('关掉摄像头后遮罩回来（提示可以重新开启）',
+    elements.get('stageMask').classList.contains('hidden') === false);
+  ok('状态条说明摄像头已关', elements.get('camStatus').textContent.includes('摄像头'),
+    elements.get('camStatus').textContent);
+  api.state.camStoppedForHome = false;   // 后面还要用摄像头跑端到端
+
   api.openExercise('bridge');
   ok('再次进动作页会自动接着放', api.audio.musicOn === true);
   api.showHome();
@@ -1247,10 +1259,10 @@ console.log('\n[12] 语音教练');
   said.length = 0;
   api.state.detector.validReps = 3;
   api.handleEvents([{ type: 'rep', valid: true, index: 3 }]);
-  const pool = api.t ? [] : [];
-  void pool;
-  const encouraged = said.filter((s) => /加油|太棒|继续|做得很好|保持住|优秀/.test(s));
-  ok('满 3 次会给一句激励语', encouraged.length >= 1, said.join(' / '));
+  const poolRaw = (await import('../src/i18n.js')).t('speech.encourage');
+  const pool = Array.isArray(poolRaw) ? poolRaw : [String(poolRaw)];
+  const encouraged = said.filter((s) => pool.includes(s));
+  ok('满 3 次会给一句激励语', encouraged.length >= 1, `说了 ${said.join(' / ')}｜池子 ${pool.join('/')}`);
   // 5.3) 纠正提示在做过几次之后明显降频（gapMs 更大）
   said.length = 0;
   api.state.detector.validReps = 6;

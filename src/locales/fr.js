@@ -183,6 +183,7 @@ export default {
     standbyPlank: 'Mets-toi sur le ventre, appui sur les avant-bras ou les mains, corps bien à plat',
     standbyBridgeHold: 'Allonge-toi sur le dos, genoux pliés, pieds bien à plat, de profil',
     lostTracking: 'On ne voit pas tout ton corps : recule un peu pour entrer entièrement dans l’image',
+    camOff: 'Caméra éteinte (elle se rallume quand tu ouvres un exercice)',
     need: {
       stand: 'Place-toi dans l’image et tiens-toi comme indiqué',
       prone: 'Mets-toi sur le ventre : mains sous les épaules, corps bien aligné',
@@ -194,6 +195,7 @@ export default {
       inverted: 'Poirier contre le mur : corps vertical, hanches au-dessus des épaules',
       hang: 'Suspends-toi à la barre, deux mains en prise, pieds décollés',
     },
+    camOff: 'Caméra éteinte (elle se rallume quand tu ouvres un exercice)',
   },
 
   /* ---------------- Noms des phases ----------------

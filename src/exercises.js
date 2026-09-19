@@ -242,12 +242,17 @@ class SquatDetector extends DetectorBase {
  * ------------------------------------------------------------------ */
 
 const LUNGE = {
-  // 判据整体放宽：看得出是箭步蹲就算一次，动作不标准交给语音提示。
+  // 判据整体放宽：**动作大体做到位就算一次**，不要求前膝弯到 90°。
   // 三档膝角：enter 开始算这一轮 → loose 宽松计数线 → down 拿标准深度分。
-  standKnee: 142,     // 「回到站姿」的门槛（原来 152：跟踪噪声下很难稳定回到站直，一卡就整轮作废）
-  enterKnee: 146,     // 下蹲到 146° 以内才算「开始这一轮」（比站姿晃动深，避免碎碎念）
+  standKnee: 142,     // 「回到站姿」的参考门槛（实际跟着用户自己的站姿走，见 standLine）
+  enterKnee: 146,     // 「开始这一轮」的参考门槛（实际还会跟 standLine 一起放宽）
   downKnee: 128,      // 「沉到底」阶段（拿整轮满分奖励 / 严格模式的深度）
-  looseKnee: 142,     // 宽松模式：前膝弯到 142° 以内就算一次（原来靠 140，但被 aborted 拦掉了）
+  // 宽松计数线：前膝弯到 152°（≈ 从站直弯下去 25° 以上）就算一次 ——
+  // 用户反馈「即使膝关节没有 90° 也应该计次，大体做到位就行」。
+  looseKnee: 152,
+  enterDrop: 20,      // 比「自己站得最直时」弯下去这么多度，才算这一轮开始
+  minBend: 8,         // 回到自己站姿 8° 以内算这一轮结束；也是「是否算一次尝试」的相对门槛
+  recovery: 0.60,     // 从最弯处回升这么多比例就算「回到站姿」（按本轮自己的幅度算）
   // 抖动宽容：膝角必须在门槛内「持续」住才算真的开始/结束一次，
   // 否则跟踪噪声在门槛附近来回跳会造出一堆假的“半程 + 下沉不够”提醒。
   enterHoldMs: 200,
@@ -256,6 +261,9 @@ const LUNGE = {
   backKneeCue: 0.66,  // 后膝太高 → 提示（后膝离地高度 / 小腿长）
   backKneeDrop: 0.66, // 深度达标要求（原来 0.58，要求后膝几乎贴地太严）
   minRepMs: 450,      // 一次有效箭步蹲的最短用时（原来 750/520）
+  // 「太快」只对**真的沉下去过**的那些轮次做检查：浅的一次本来就做得快，
+  // 拿速度去卡它只会把「大体做到」的动作判成半程（用户反馈）。
+  tempoDepth: 138,
 };
 
 class LungeDetector extends DetectorBase {
@@ -291,6 +299,38 @@ class LungeDetector extends DetectorBase {
     const best = Math.max(...this._straight.map((r) => r.v));
     return Math.min(LUNGE.standKnee, Math.max(best, LUNGE.downKnee + 6));
   }
+
+  /** 「开始这一轮」的判定线：比**自己站得最直时**弯下去 enterDrop 度（自适应，不看绝对角度） */
+  get enterLine() { return this.topLine - LUNGE.enterDrop; }
+
+  /**
+   * 「回到站姿」的判定线：按这一轮**自己的幅度**算，三条一起看，取最容易达成的那条：
+   *   ① 从最弯处回升 recovery（60%）—— 蹲得深的人回程长，这条先到；
+   *   ② 回到站姿 minBend（8°）以内 —— 浅的那次靠这条收尾；
+   *   ③ 无论如何至少比最弯处高出 minBend —— 保证是「掉头回升」，而不是还在往下走。
+   * 只用一个固定角度不行：固定线在浅蹲时一进一出就被数成两次（实测 0.4 幅度被数成 8 次），
+   * 在深蹲时又一直等不到，把后面几次并进同一轮。
+   */
+  get exitLine() {
+    const recovered = this.minFront + LUNGE.recovery * (this.topLine - this.minFront);
+    return Math.max(
+      this.minFront + LUNGE.minBend,
+      Math.min(recovered, this.topLine - LUNGE.minBend),
+    );
+  }
+
+  /** 用户自己站得最直时量到的膝角（用最近观测；没观测到时按「直腿」起步） */
+  get topLine() {
+    if (!this._straight.length) return LUNGE.standKnee + 36;
+    return Math.max(...this._straight.map((r) => r.v));
+  }
+
+  /**
+   * 计一次的膝角线：**不要求前膝 90°**（用户明确要求）。
+   * 152° ≈ 从站直（170° 上下）弯下去 18° 以上；比这更浅的只提示不计数，
+   * 而「读数被压缩的人」（站直只有 140°）由自适应的 enter/exit 线兜住，不会乱计数。
+   */
+  get countLine() { return LUNGE.looseKnee; }
 
   rememberStraight(v, now) {
     if (!Number.isFinite(v)) return;
@@ -334,14 +374,14 @@ class LungeDetector extends DetectorBase {
       this.cue('lean', null, 'warn', now, 10000);
     }
 
-    const standing = bent >= this.standLine && bothBent >= this.standLine - 8;
+    const standing = bent >= this.exitLine && bothBent >= this.exitLine - 8;
 
     switch (this.stage) {
       case 'up':
         // 站着的时候记下「自己最直能到多少度」：回到站姿的判定线跟着自己的幅度走
         this.rememberStraight(bent, now);
         // 下蹲要“持续”住才算这一轮开始（滤掉单帧抖动）
-        if (bent <= LUNGE.enterKnee) {
+        if (bent <= this.enterLine) {
           if (!this.bendSince) this.bendSince = now;
           if (now - this.bendSince >= LUNGE.enterHoldMs) {
             this.stage = 'descending';
@@ -400,20 +440,27 @@ class LungeDetector extends DetectorBase {
     this.bendSince = 0;
     this.upSince = 0;
 
-    // 宽松模式：前膝弯进 looseKnee 就算一次——不再要求“必须沉到底才作数”。
+    // 宽松模式：前膝弯进 countLine（默认 152°，比站姿弯 25° 以上）就算一次 ——
+    // **不要求前膝 90°**，只要动作大体做到位就计次数（用户明确要求）。
     // 沉得不够的，只提示“下沉不够 / 后膝再低一点”，不再把次数吃掉。
     // 严格模式：既要深度达标，又要真的沉到 downKnee 以内。
-    const deepEnough = (!this.strict && this.minFront <= LUNGE.looseKnee)
+    const bentEnough = this.topLine - this.minFront;   // 这一轮比自己站直时弯了多少度
+    const deepEnough = (!this.strict && this.minFront <= this.countLine)
       || (this.depthOk && (!this.strict || this.minFront <= LUNGE.downKnee));
+    if (bentEnough < LUNGE.minBend) {
+      // 只是晃了一下：连半程都不记，也不出声
+      this.reject('moreRange', `${Math.round(bentEnough)}°`);
+      return;
+    }
     if (!deepEnough) {
       this.partialReps += 1;
-      this.reject('depth', `${Math.round(this.minFront)}°/${LUNGE.looseKnee}°`);
+      this.reject('depth', `${Math.round(this.minFront)}°/${Math.round(this.countLine)}°`);
       this.cue('lungeDepth', null, 'warn', now, 8000);
       this.emit({ type: 'rep', valid: false, reason: 'depth' });
       this.nextCycle(now);
       return;
     }
-    if (dur < LUNGE.minRepMs) {
+    if (this.minFront <= LUNGE.tempoDepth && dur < LUNGE.minRepMs) {
       this.partialReps += 1;
       this.reject('tempo', `${Math.round(dur)}ms`);
       this.cue('tempo', null, 'warn', now, 3000);

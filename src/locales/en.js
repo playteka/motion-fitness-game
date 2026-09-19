@@ -183,6 +183,7 @@ export default {
     standbyPlank: 'Get down on your forearms or hands and keep your body flat',
     standbyBridgeHold: 'Lie on your back with knees bent and feet planted, sideways to the camera',
     lostTracking: 'Can’t see your whole body — back up a little and keep yourself fully in frame',
+    camOff: 'Camera off (it turns back on when you open an exercise)',
     need: {
       stand: 'Step into the frame and set up your stance',
       prone: 'Get down and set up: hands under your shoulders, body in one line',
@@ -194,6 +195,7 @@ export default {
       inverted: 'Handstand against the wall: body vertical, hips above your shoulders',
       hang: 'Hang from the bar with both hands, feet off the floor',
     },
+    camOff: 'Camera off (it turns back on when you open an exercise)',
   },
 
   /* ---------------- Phase names ---------------- */

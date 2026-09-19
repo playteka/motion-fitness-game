@@ -368,13 +368,28 @@ console.log('\n[2] 箭步蹲计数');
   ok('严格模式：提示下沉不够', r.cues.some((c) => c.code === 'lungeDepth'));
 }
 {
-  // 抖动宽容：站姿/踏步时的轻微晃动不能变成“半程 + 下沉不够”的碎碎念
+  // 抖动宽容：站姿/踏步时的**真正轻微晃动**（膝盖几乎没弯）不能变成碎碎念
   const det = fresh('lunge');
   const r = makeRunner(det);
-  r.run(repeat(lungeMix(0.35), 1800, 4));
-  ok('轻微晃动不计数、也不记半程', det.validReps === 0 && det.partialReps === 0,
+  r.run(repeat(lungeMix(0.15), 1800, 4));
+  ok('轻微晃动（膝盖几乎没弯）不计数、也不记半程', det.validReps === 0 && det.partialReps === 0,
     `有效 ${det.validReps} / 半程 ${det.partialReps}`);
   ok('轻微晃动不反复提示', r.cues.filter((c) => c.code === 'lungeDepth').length === 0);
+}
+{
+  // 用户明确要求：**前膝不到 90° 也算一次**，只要大体做到位
+  for (const [d, label, min] of [
+    [0.35, '前膝只弯到约 149°', 3],
+    [0.5, '前膝只弯到约 135°', 3],
+    [0.6, '前膝只弯到约 127°', 3],
+  ]) {
+    const det = fresh('lunge');
+    const r = makeRunner(det);
+    r.run(repeat(lungeMix(d), 1800, 4));
+    atLeast(`${label} 也计次（不要求 90°）`, det.validReps, min);
+    ok(`${label} 不误记半程`, det.partialReps === 0, `实际 ${det.partialReps}`);
+    void r;
+  }
 }
 {
   // 下沉深度扫描：只要真的蹲下去了（> 站姿晃动），要么计进次数，要么给出纠正提示——不留“无声空档”

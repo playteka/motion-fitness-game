@@ -183,7 +183,9 @@ export default {
     standbyBridge: '请仰卧在垫子上：屈膝、双脚踩实，侧对摄像头',
     standbyPlank: '请趴下用小臂或手掌撑地，身体放平',
     standbyBridgeHold: '请仰卧屈膝、双脚踩实，侧对摄像头',
-    lostTracking: '没看到你的完整身体，请退后一点、让全身入镜',    need: {
+    lostTracking: '没看到你的完整身体，请退后一点、让全身入镜',
+    camOff: '摄像头已关闭（回到动作页会自动打开）',
+    need: {
       stand: '站到画面里，按要领站好',
       prone: '趴下撑好：手在肩下，身体成一条线',
       supine: '躺到垫子上：仰卧屈膝，按要领摆好',

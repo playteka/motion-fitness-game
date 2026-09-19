@@ -274,6 +274,36 @@ function selectMusicTrack(id) {
  * 背景音乐只在**动作页**播放：主页只是挑动作，不放音乐（用户明确要求）。
  * 用户的选择（state.settings.music）保留着，回到动作页时自动接着放。
  */
+/**
+ * 摄像头只在**动作页**开着：回到主页就关掉（用户明确要求）。
+ * 关闭时把遮罩恢复到「开启摄像头」，下次进动作页会自动重新打开（那一下点击本身就是用户手势，
+ * 浏览器允许 getUserMedia），所以用户感觉不到多一步操作。
+ */
+function stopCameraForHome() {
+  if (!camera.active && !camera.stream) return;
+  try { camera.stop(); } catch { /* ignore */ }
+  state.camStoppedForHome = true;
+  state.poseHits = 0;
+  $('hud').hidden = true;
+  renderer.clear();
+  const mask = $('stageMask');
+  if (mask) mask.classList.remove('hidden');
+  $('maskIcon').textContent = '📷';
+  $('maskTitle').textContent = t('ui.maskTitle');
+  $('maskText').textContent = t('ui.maskText');
+  $('btnStartCam').textContent = t('ui.startCam');
+  $('camDot').className = 'dot';
+  $('camStatus').textContent = t('status.camOff');
+  updatePipelineStatus();
+}
+
+/** 从主页回到动作页时把摄像头接回来（只在确实是被主页关掉时需要） */
+function resumeCameraFromHome() {
+  if (!state.camStoppedForHome || !Camera.supported()) return;
+  state.camStoppedForHome = false;
+  startCamera(state.settings.camDeviceId || null);
+}
+
 function applyMusic() {
   const want = !!state.settings.music && !state.homeMode;
   audio.setMusic(want);
@@ -287,6 +317,7 @@ function showHome({ syncRoute = true } = {}) {
   state.homeMode = true;
   state.session = 'idle';
   applyMusic();          // 主页不放背景音乐
+  stopCameraForHome();   // 主页也不需要摄像头，直接关掉（省电、也让摄像头灯灭掉）
   clearInterval(state.countdownTimer);
   state.countdownTimer = null;
   $('countdown').hidden = true;
@@ -305,6 +336,7 @@ function showHome({ syncRoute = true } = {}) {
 function showWorkout() {
   state.homeMode = false;
   applyMusic();          // 回到动作页再把背景音乐接上（用户选择保留着）
+  resumeCameraFromHome(); // 摄像头之前被主页关掉了就自动重开
   $('homeView').hidden = true;
   $('workoutView').hidden = false;
   $('btnHome').hidden = false;

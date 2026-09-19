@@ -184,6 +184,7 @@ export default {
     standbyPlank: 'Apóyate en el suelo con los antebrazos o las manos y alinea el cuerpo',
     standbyBridgeHold: 'Túmbate boca arriba con las rodillas flexionadas y los pies bien apoyados, de perfil a la cámara',
     lostTracking: 'No veo tu cuerpo entero: retrocede un poco para que salgas completo en el encuadre',
+    camOff: 'Cámara apagada (se enciende al abrir un ejercicio)',
     need: {
       stand: 'Colócate en el encuadre y ponte bien de pie',
       prone: 'Ponte boca abajo: manos bajo los hombros y cuerpo en línea',
@@ -195,6 +196,7 @@ export default {
       inverted: 'Haz el pino contra la pared: cuerpo vertical y cadera por encima de los hombros',
       hang: 'Cuélgate de la barra con las dos manos y los pies en el aire',
     },
+    camOff: 'Cámara apagada (se enciende al abrir un ejercicio)',
   },
 
   /* ---------------- Fases ---------------- */
