@@ -122,7 +122,7 @@ export default {
     visible: 'No veo bien todo tu cuerpo: ajusta tu posición para que se vean la cabeza y los pies',
     headCut: 'Se te corta la cabeza: retrocede un poco',
     feetCut: 'Se te cortan los pies: retrocede un poco',
-    cutOff: 'Tu cuerpo se sale del encuadre: retrocede un poco o desplaza todo el cuerpo hacia el centro',
+    cutOff: 'Un lado del cuerpo se sale del encuadre: retrocede un poco o desplázate hacia dentro (no hace falta ponerte justo en el centro)',
     lieCutOff: 'Un extremo del cuerpo se sale del encuadre: retrocede un poco o desplázate hacia dentro (no hace falta estar justo en el centro)',
     tooFar: 'Estás demasiado lejos de la cámara: acércate un poco para encajar en el contorno punteado',
     tooClose: 'Estás demasiado cerca de la cámara: aléjate un poco para encajar en el contorno punteado',
@@ -759,6 +759,7 @@ export default {
 
   /* ---------------- Voz ---------------- */
   speech: {
+    encourage: ['¡Vamos!', '¡Muy bien!', '¡Sigue así!', '¡Buen trabajo!', '¡Aguanta!', '¡Excelente!'],
     repSuffix: '',
     secondSuffix: 'segundos',
     scoreSuffix: 'puntos',

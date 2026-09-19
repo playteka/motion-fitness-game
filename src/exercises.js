@@ -328,10 +328,10 @@ class LungeDetector extends DetectorBase {
     if (bent <= 130) this.cycleSunk = true;
 
     if (this.stage !== 'up' && back.drop > LUNGE.backKneeCue && bent < 140) {
-      this.cue('backknee', null, 'warn', now);
+      this.cue('backknee', null, 'warn', now, 10000);
     }
     if (f.trunkLean > 38 && bent < 146) {
-      this.cue('lean', null, 'warn', now);
+      this.cue('lean', null, 'warn', now, 10000);
     }
 
     const standing = bent >= this.standLine && bothBent >= this.standLine - 8;
@@ -408,7 +408,7 @@ class LungeDetector extends DetectorBase {
     if (!deepEnough) {
       this.partialReps += 1;
       this.reject('depth', `${Math.round(this.minFront)}°/${LUNGE.looseKnee}°`);
-      this.cue('lungeDepth', null, 'warn', now, 3000);
+      this.cue('lungeDepth', null, 'warn', now, 8000);
       this.emit({ type: 'rep', valid: false, reason: 'depth' });
       this.nextCycle(now);
       return;
@@ -422,7 +422,7 @@ class LungeDetector extends DetectorBase {
       return;
     }
     // 计数放宽了，但深度不够还是要出声纠正（分数也已经按深度打了折扣）
-    if (!this.depthOk) this.cue('lungeDepth', null, 'warn', now, 4000);
+    if (!this.depthOk) this.cue('lungeDepth', null, 'warn', now, 12000);
 
     // 左右腿交替检查
     if (this.lastFrontSide && this.lastFrontSide === this.frontSide) {
@@ -562,8 +562,9 @@ class PushupDetector extends DetectorBase {
     this.depthPct = bendPct(elbow, 168, 88);
     if (elbow <= PUSHUP.looseElbow) this.cycleLowered = true;
 
-    if (f.hipLineDev > 0.13) this.cue('sag', null, 'warn', now);
-    else if (f.hipLineDev < -0.13) this.cue('pike', null, 'warn', now);
+    // 姿势提醒适度即可：同一句至少隔 9 秒（用户反馈「语音提示太多，缺少鼓励」）
+    if (f.hipLineDev > 0.13) this.cue('sag', null, 'warn', now, 9000);
+    else if (f.hipLineDev < -0.13) this.cue('pike', null, 'warn', now, 9000);
 
     switch (this.stage) {
       case 'up':
@@ -773,9 +774,9 @@ class PlankDetector extends HoldDetector {
     }
     // ---- 建议项：出声纠正，但计时继续 ----
     if (f.hipLineDev > PLANK.hipDevMax) {
-      this.cue('sag', null, 'warn', this._lastT || 0, 6000);
+      this.cue('sag', null, 'warn', this._lastT || 0, 9000);
     } else if (f.hipLineDev < -PLANK.hipDevMax) {
-      this.cue('pike', null, 'warn', this._lastT || 0, 6000);
+      this.cue('pike', null, 'warn', this._lastT || 0, 9000);
     }
     if (f.bodyStraight < PLANK.bodyStraight) {
       this.cue('straight', null, 'warn', this._lastT || 0, 6000);

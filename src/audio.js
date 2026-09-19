@@ -196,6 +196,7 @@ export class AudioKit {
     this._speaking = false;
     this._speakingSince = 0;
     this._lastVoiceAt = 0;
+    this._lastEncourage = '';   // 上一次说过的激励语（尽量不重复）
     this._unlocked = false;
     // 背景音乐
     this._musicGain = null;
@@ -363,9 +364,28 @@ export class AudioKit {
   }
 
   /** 报数：数字交给 TTS，单位后缀随语言变化 */
+  /**
+   * 报数：**每做一个都念出来**（用户明确要求）。
+   * 所以这里用 force 打断上一句 —— 否则「上一次报数还没念完」会把新的报数吞掉。
+   */
   sayRep(n) {
     const suffix = t('speech.repSuffix');
-    this.say(`${n} ${suffix}`.trim(), { rate: 1.35, minGapMs: 200 });
+    this.say(`${n} ${suffix}`.trim(), { rate: 1.4, force: true });
+  }
+
+  /**
+   * 激励语：从当前语言的一组短句里轮着说，尽量不重复上一句。
+   * 这是「以激励为主」的核心 —— 做得好要及时夸，而不是只挑毛病。
+   */
+  sayEncourage(seed = 0) {
+    const pool = t('speech.encourage');
+    const list = Array.isArray(pool) ? pool : [String(pool)];
+    if (!list.length) return;
+    const idx = Math.abs(Math.round(seed)) % list.length;
+    const line = list[idx];
+    if (line === this._lastEncourage) return;
+    this._lastEncourage = line;
+    this.say(line, { rate: 1.25, force: true, pitch: 1.12 });
   }
 
   /** 报要领：只在每个要领第一次完成时念出来，避免刷屏 */

@@ -627,7 +627,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cinco suites juntas (917 pruebas)
+npm test                       # las cinco suites juntas (925 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino escrito a fuego en el código / estructura de los cuatro README
 npm run test:detectors         # lógica de detección y puntuación de los cinco detectores escritos a mano (con esqueletos sintéticos)
 npm run test:engines           # motores de reconocimiento genéricos (flexión-extensión / alternancia / giro / movimiento por fases / cronómetro + control de postura)
@@ -642,7 +642,7 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | `tests/test-detectors.mjs` | 234 | Conteo, cronómetro, puntos por paso y orden de puntuación de los cinco detectores escritos a mano, tanto con el ejercicio bien hecho como con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-engines.mjs` | 141 | Motores genéricos: un ciclo y una repetición, permisivo frente a estricto, los límites del balanceo y de la velocidad excesiva, control de postura, despegue del suelo en los saltos, alternancia de lados, secuencia completa y pausa y reanudación del cronómetro |
 | `tests/test-page.mjs` | 310 | Cableado del DOM, importación y exportación de módulos, recursos estáticos, lista de categorías de los 22 ejercicios e integridad de los planes de puntuación |
-| `tests/test-app.mjs` | 200 | Arranque del `app.js` real, renderizado de la página de inicio, ventana de ajustes, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
+| `tests/test-app.mjs` | 208 | Arranque del `app.js` real, renderizado de la página de inicio, ventana de ajustes, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
 
 ---
 

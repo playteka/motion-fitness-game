@@ -31,6 +31,7 @@ export const OUTLINE = {
   centerTol: 0.34,      // 建议值：左右偏多少算「不太居中」
   topTol: 0.36,         // 建议值：头顶偏离目标位置多少算「高度不太对」
   groundTol: 0.28,      // 建议值：脚位偏离目标地面线多少算「高度不太对」
+  edgeSlip: 0.03,       // 「全身入镜」容忍出画 3%：手脚尖端贴着边缘不该拦人
   holdMs: 600,          // 满足必须项后保持这么久就放行（够看清人、又不让人觉得卡）
   steadyWindowMs: 700,  // 「保持不动」的观察窗口
   steadyTol: 0.06,      // 窗口内的最大位移（归一化）
@@ -472,9 +473,13 @@ export class Calibrator {
     }
 
     if (!this.lying) {
-      // framing 是「必须项」：上下不出画、左右也不出画，也就是全身都在画面里
-      push('framing', f.bodyTop > 0.02 && f.groundY < 0.98
-        && f.bodyLeftFrac > 0.01 && f.bodyRightFrac < 0.99);
+      // framing 是「必须项」：全身大致在画面里。
+      // 允许按 edgeSlip 出画一点点（用户反馈：箭步蹲总被要求「站到画面中心」）——
+      // 手脚尖端贴着边缘、或者前后站位拉得很开时，脚尖/脚跟压到框外一点点
+      // 完全不影响识别，不该因此把人拦在门外。
+      const slip = OUTLINE.edgeSlip;
+      push('framing', f.bodyTop > -slip && f.groundY < 1 + slip
+        && f.bodyLeftFrac > -slip && f.bodyRightFrac < 1 + slip);
       // 以下都是建议项：会提示，但不拦着开始
       push('distance', f.bodySpan >= OUTLINE.spanMin && f.bodySpan <= OUTLINE.spanMax);
       push('center', Math.abs(f.centerXFrac - OUTLINE.centerX) <= OUTLINE.centerTol);

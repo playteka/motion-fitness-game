@@ -121,7 +121,7 @@ export default {
     visible: 'On ne voit pas tout ton corps : ajuste ta position pour que la tête et les pieds entrent dans l’image',
     headCut: 'Le haut de ta tête sort de l’image : recule un peu',
     feetCut: 'Tes pieds sortent de l’image : recule un peu',
-    cutOff: 'Ton corps sort de l’image : recule un peu ou décale tout ton corps vers le centre de l’image',
+    cutOff: 'Un côté du corps sort de l’image : recule un peu ou décale-toi vers l’intérieur (pas besoin d’être pile au centre)',
     lieCutOff: 'Une partie du corps sort de l’image : recule un peu ou décale-toi vers l’intérieur (pas besoin d’être pile au centre)',
     tooFar: 'Tu es trop loin de la caméra : rapproche-toi un peu pour t’aligner sur la silhouette en pointillés',
     tooClose: 'Tu es trop près de la caméra : éloigne-toi un peu pour t’aligner sur la silhouette en pointillés',
@@ -761,6 +761,7 @@ export default {
 
   /* ---------------- Voix ---------------- */
   speech: {
+    encourage: ['Allez !', 'Bravo !', 'Continue comme ça !', 'Beau travail !', 'Tiens bon !', 'Excellent !'],
     repSuffix: '',
     secondSuffix: 'secondes',
     scoreSuffix: 'points',

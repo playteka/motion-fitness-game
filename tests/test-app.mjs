@@ -1126,11 +1126,21 @@ console.log('\n[11] 背景音乐');
   const musicBtn = elements.get('btnMusic');
   musicBtn.setAttribute('aria-pressed', 'false');
   musicBtn.dispatch('click');
-  ok('点「音乐」开关打开音乐并记住设置',
-    api.audio.musicOn === true && api.state.settings.music === true);
-  musicBtn.dispatch('click');
-  ok('再点一次关闭音乐',
-    api.audio.musicOn === false && api.state.settings.music === false);
+  ok('点「音乐」开关会记住设置（主页上不播，进动作页才播）',
+    api.state.settings.music === true && api.state.homeMode === true && api.audio.musicOn === false,
+    `settings=${api.state.settings.music} home=${api.state.homeMode} musicOn=${api.audio.musicOn}`);
+  // 进动作页 → 背景音乐接上；回主页 → 停掉（用户反馈：主页不要放背景音）
+  api.openExercise('bridge');
+  ok('进动作页后开始播放背景音乐', api.audio.musicOn === true);
+  api.showHome();
+  ok('回到主页后背景音乐停掉', api.audio.musicOn === false);
+  ok('回主页只是停播，用户的选择仍然保留', api.state.settings.music === true);
+  api.openExercise('bridge');
+  ok('再次进动作页会自动接着放', api.audio.musicOn === true);
+  api.showHome();
+  musicBtn.dispatch('click');   // 关掉
+  ok('关掉音乐开关后设置也变了',
+    api.state.settings.music === false && api.audio.musicOn === false);
   musicBtn.dispatch('click');   // 恢复默认（开）
   ok('没有 WebAudio 环境时启动音乐不报错（静默降级）',
     api.audio._musicTimer === null || typeof api.audio._musicTimer === 'object');
@@ -1149,8 +1159,8 @@ console.log('\n[11] 背景音乐');
   ok('点某首曲子会切换曲目并记住',
     api.state.settings.musicTrack === TRACKS[2].id && api.audio.trackId === TRACKS[2].id,
     `${api.state.settings.musicTrack}`);
-  ok('选曲子会自动打开背景音乐（否则选了也听不到）',
-    api.state.settings.music === true && api.audio.musicOn === true);
+  ok('选曲子会自动把背景音乐打开（否则选了也听不到）',
+    api.state.settings.music === true);
   api.selectMusicTrack(DEFAULT_TRACK);
   ok('可以切回默认曲目', api.state.settings.musicTrack === DEFAULT_TRACK);
 }
@@ -1218,6 +1228,35 @@ console.log('\n[12] 语音教练');
   api.state.coachAt = -Infinity;
   api.handleEvents([{ type: 'cue', code: 'depth', key: 'cues.squat.depth', params: null, level: 'warn' }]);
   ok('姿势纠正会被念出来', said.some((s) => s.includes('蹲低')), said.join(' / '));
+
+  // 5.1) 每做一个都报数（用户明确要求）
+  said.length = 0;
+  api.state.coachAt = -Infinity;
+  api.state.detector = savedDet;
+  api.state.repsSinceEncourage = 0;
+  api.state.settings.voice = true;
+  if (api.state.detector) api.state.detector.validReps = 1;
+  api.handleEvents([{ type: 'rep', valid: true, index: 1 }]);
+  ok('做一次就报一次数（1 次）', said.some((s) => /^1\b/.test(s.trim())), said.join(' / '));
+  said.length = 0;
+  api.state.detector.validReps = 2;
+  api.handleEvents([{ type: 'rep', valid: true, index: 2 }]);
+  ok('第二下也要报数（不会被上一句吞掉）', said.some((s) => /^2\b/.test(s.trim())), said.join(' / '));
+
+  // 5.2) 每 3 次给一句激励（语音以鼓励为主）
+  said.length = 0;
+  api.state.detector.validReps = 3;
+  api.handleEvents([{ type: 'rep', valid: true, index: 3 }]);
+  const pool = api.t ? [] : [];
+  void pool;
+  const encouraged = said.filter((s) => /加油|太棒|继续|做得很好|保持住|优秀/.test(s));
+  ok('满 3 次会给一句激励语', encouraged.length >= 1, said.join(' / '));
+  // 5.3) 纠正提示在做过几次之后明显降频（gapMs 更大）
+  said.length = 0;
+  api.state.detector.validReps = 6;
+  api.state.coachAt = performance.now() - 2000;   // 距上次说话 2 秒
+  api.handleEvents([{ type: 'cue', code: 'depth', key: 'cues.squat.depth', params: null, level: 'warn' }]);
+  ok('做起来之后纠正提示不再插话（2 秒间隔内不念）', said.length === 0, said.join(' / '));
 
   // 6) 一组结束：念本组成绩
   said.length = 0;

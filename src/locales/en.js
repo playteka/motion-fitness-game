@@ -121,7 +121,7 @@ export default {
     visible: 'Can’t see your whole body clearly: adjust your position so you’re in frame from head to toe',
     headCut: 'Your head is out of frame: back up a little',
     feetCut: 'Your feet are out of frame: back up a little',
-    cutOff: 'Your body is out of frame: move back a little, or shift your whole body toward the middle of the frame',
+    cutOff: 'One side of your body is out of frame: step back a little, or shift inwards (no need to stand dead centre)',
     lieCutOff: 'One end of your body is out of frame: back up a little, or shift inwards (no need to be dead centre)',
     tooFar: 'You’re too far from the camera: move a little toward the camera to line up with the dashed outline',
     tooClose: 'You’re too close to the camera: move a little away from the camera to line up with the dashed outline',
@@ -760,6 +760,7 @@ export default {
 
   /* ---------------- Speech ---------------- */
   speech: {
+    encourage: ['Keep going', 'Great job', 'Stay with it', 'Nice work', 'Hold that form', 'Excellent'],
     repSuffix: '',
     secondSuffix: 'seconds',
     scoreSuffix: 'points',

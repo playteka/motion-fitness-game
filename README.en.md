@@ -61,8 +61,10 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   which stage the detector is in, the line it needs you to come back to for a rep to count, this rep’s minimum/peak, and **why the last attempt was not counted**
   (too shallow / too fast / too little range …). If counting looks wrong, read that line out and we can pinpoint it instead of guessing.
 - **Spoken counting in the selected language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
-- **Voice-first throughout**: it calls out when it can't find you, says which form step comes next and how far you still have to go, and corrects bad form the moment it happens,
-  while form steps, spoken counts, scores and the set summary are all voiced too — so you barely need to watch the screen.
+- **Motivation first, guidance moderate**: **every rep is spoken aloud**, every 3 reps you get an **encouragement**
+  (“Keep going / Great job / Stay with it / Nice work / Hold that form / Excellent”, rotating so it never repeats), and hitting your target celebrates you before adding another cheer;
+  form corrections are kept but run much less often (the same line is not repeated within 15–30 s, and less often once you are a few reps in), and “what comes next” is slowed to one line every 9 s
+  — the airtime goes to counting and encouragement, so you barely need to watch the screen.
 - **🎶 Four selectable background tracks**: all synthesised live (no space taken, no internet needed) — pick one under “🎵 Background track” in the settings:
   **City Run** (132 BPM, light and swinging) / **Neon Pulse** (144 BPM, four-on-the-floor electronic) / **Sunrise Funk** (122 BPM, funky syncopation) / **Power Drive** (152 BPM, driving rock).
   The drum kit is really synthesised (kick, snare, hats, claps), so the rhythm is much punchier than before, and the music ducks automatically while the coach is speaking.
@@ -633,7 +635,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all five suites (917 cases)
+npm test                       # run all five suites (925 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / README structure of all four files
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -648,7 +650,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 234 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 200 | Startup with the real `app.js`, home-page rendering, the settings modal, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
+| `tests/test-app.mjs` | 208 | Startup with the real `app.js`, home-page rendering, the settings modal, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
 
 ---
 

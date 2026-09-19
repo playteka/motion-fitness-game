@@ -87,6 +87,8 @@ const state = {
   stepSig: '',
   calibSig: '',
   lastScoreMilestone: 0,
+  repsSinceEncourage: 0,      // 距离上一句激励过了几次（每 3 次给一句）
+  lastEncourageHint: '',      // 屏幕上刚显示过的激励语（不重复）
   coachAt: -Infinity, // 语音教练上一次说话的时间（全局节流；-Infinity = 还没说过）
   coachSig: '',     // 上一次念的那句话（同一句短时间内不重复）
 };
@@ -261,11 +263,20 @@ function selectMusicTrack(id) {
   if (!state.settings.music) {
     state.settings.music = true;
     $('btnMusic').setAttribute('aria-pressed', 'true');
-    audio.setMusic(true);
+    applyMusic();
   }
   saveSettings();
   buildMusicTracks();
   setCueLine(t('status.musicTrack', { name: t(getTrack(next).nameKey) }));
+}
+
+/**
+ * 背景音乐只在**动作页**播放：主页只是挑动作，不放音乐（用户明确要求）。
+ * 用户的选择（state.settings.music）保留着，回到动作页时自动接着放。
+ */
+function applyMusic() {
+  const want = !!state.settings.music && !state.homeMode;
+  audio.setMusic(want);
 }
 
 function showHome({ syncRoute = true } = {}) {
@@ -275,6 +286,7 @@ function showHome({ syncRoute = true } = {}) {
   // 主页上不校准也不计数：摄像头可以留着预热，但不能在浏览动作时偷偷开始一组
   state.homeMode = true;
   state.session = 'idle';
+  applyMusic();          // 主页不放背景音乐
   clearInterval(state.countdownTimer);
   state.countdownTimer = null;
   $('countdown').hidden = true;
@@ -292,6 +304,7 @@ function showHome({ syncRoute = true } = {}) {
 /** 切到动作页 */
 function showWorkout() {
   state.homeMode = false;
+  applyMusic();          // 回到动作页再把背景音乐接上（用户选择保留着）
   $('homeView').hidden = true;
   $('workoutView').hidden = false;
   $('btnHome').hidden = false;
@@ -1088,10 +1101,11 @@ function updateStatusHint(frame, now) {
       : t('ui.nextStepNoHint', { label: t(pending.labelKey) }), 'warn', 700);
     // 「下一步做什么」也要念出来（带具体差多少的提示，念出来才是真的在教）
     const label = t(pending.labelKey);
+    // 用户反馈「指导太多、缺少鼓励」：指导放慢一倍多，把话语权留给报数与激励
     coachSay(pending.hint
       ? t('speech.nextStep', { label, hint: t(pending.hint.key, pending.hint.params) })
       : t('speech.nextStepNoHint', { label }),
-    { gapMs: 2600, dedupeMs: 20000, key: `step:${pending.id}` });
+    { gapMs: 9000, dedupeMs: 35000, key: `step:${pending.id}` });
     return;
   }
   if (recentCue) {
@@ -1126,6 +1140,23 @@ function coachSay(text, { gapMs = 2500, dedupeMs = 12000, key = '' } = {}) {
   audio.say(text, { force: true, rate: 1.12 });
 }
 
+/**
+ * 语音策略（用户反馈：指导太多、缺少鼓励）：
+ *   - **每做一个动作都要报数**（sayRep 用 force，不会被别的提示吞掉）；
+ *   - 每 ENCOURAGE_EVERY 次给一句**激励**（加油 / 太棒了 / 继续坚持 …），轮换不重复；
+ *   - 纠正提示保留但**适度**：同一句话长去重、组内做过 3 次之后进一步降频。
+ */
+const ENCOURAGE_EVERY = 3;
+
+/** 屏幕上的激励语：跟语音同一个池子，轮着显示，不重复上一句 */
+function pickEncourageHint(seed) {
+  const pool = t('speech.encourage');
+  const list = Array.isArray(pool) ? pool : [String(pool)];
+  if (!list.length) return '';
+  const line = list[Math.abs(Math.round(seed)) % list.length];
+  return line === state.lastEncourageHint ? list[(Math.abs(Math.round(seed)) + 1) % list.length] : line;
+}
+
 function handleEvents(events) {
   const det = state.detector;
   if (!det) return;
@@ -1151,16 +1182,23 @@ function handleEvents(events) {
       if (ev.valid) {
         pulseValue();
         audio.rep(det.validReps);
+        // **每做一个都报数**（用户明确要求）：报数用 force 打断上一句，不会被吞掉
         audio.sayRep(det.validReps);
+        state.repsSinceEncourage = (state.repsSinceEncourage || 0) + 1;
+        state.maxRepsSinceEncourage = Math.max(state.maxRepsSinceEncourage || 0, state.repsSinceEncourage);
         const half = Math.ceil(state.target / 2);
         if (det.validReps === half && half > 0) {
           audio.milestone();
           setHint(t('status.half'), 'good', 2200);
           audio.sayCue(t('status.halfVoice'));
-        }
-        if (running && det.validReps >= state.target && !state.goalHit) {
+        } else if (running && det.validReps >= state.target && !state.goalHit) {
           state.goalHit = true;
           onGoalReached();
+        } else if (state.repsSinceEncourage >= ENCOURAGE_EVERY) {
+          // 隔几次给一句激励 —— 语音以「鼓励」为主，而不是只挑毛病
+          state.repsSinceEncourage = 0;
+          audio.sayEncourage(det.validReps / ENCOURAGE_EVERY + det.cycle);
+          setHint(pickEncourageHint(det.validReps), 'good', 1500);
         }
       } else {
         audio.partial();
@@ -1168,8 +1206,15 @@ function handleEvents(events) {
     } else if (ev.type === 'cue') {
       state.lastCueAt = performance.now();
       state.lastCueLevel = ev.level === 'info' ? 'warn' : ev.level;
-      // 姿势纠正直接念出来（节流交给教练，识别器本身也已经按 code 限流过）
-      coachSay(t(ev.key, ev.params), { gapMs: 1800, dedupeMs: 9000, key: ev.key });
+      // 姿势纠正：**适度即可**。统一走教练的大间隔 + 同一句话长去重，
+      // 而且动作已经做起来之后（组内有效次数 ≥ 3）进一步降低纠正频率，
+      // 把话语权留给报数与激励。
+      const warmed = (det.validReps || 0) >= 3;
+      coachSay(t(ev.key, ev.params), {
+        gapMs: warmed ? 9000 : 3000,
+        dedupeMs: warmed ? 30000 : 15000,
+        key: ev.key,
+      });
     } else if (ev.type === 'hold') {
       if (ev.action === 'start') {
         audio.go();
@@ -1202,7 +1247,9 @@ function onGoalReached() {
   $('celebrate').hidden = false;
   state.celebrateUntil = performance.now() + 2600;
   audio.finish();
+  // 达标了要夸：先念达成，再补一句激励（用户要求语音以激励为主）
   audio.say(t('status.goalVoice'), { rate: 1.15, force: true });
+  setTimeout(() => audio.sayEncourage((state.detector?.validReps || 0) + 1), 1500);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1516,7 +1563,7 @@ function bindUI() {
       if (v) { audio.unlock(); audio.milestone(); }   // 打开音效也立刻响一声
     }, null],
     ['btnMusic', 'music', (v) => {
-      audio.setMusic(v);
+      applyMusic();          // 主页上不放背景音乐，回到动作页才播
       if (v) audio.unlock();
     }, (v) => setCueLine(t(v ? 'status.musicOn' : 'status.musicOff'))],
     ['btnStrict', 'strict', (v) => {
@@ -1566,7 +1613,7 @@ function bindUI() {
   const unlockOnFirstGesture = () => {
     try { audio.unlock(); } catch { /* ignore */ }
     // 背景音乐要等这次用户手势之后才能出声（浏览器 autoplay 策略）
-    if (state.settings.music) { try { audio.setMusic(true); } catch { /* ignore */ } }
+    try { applyMusic(); } catch { /* ignore */ }   // 首次手势解锁后，只在动作页放音乐
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
       document.removeEventListener(ev, unlockOnFirstGesture);
     }
