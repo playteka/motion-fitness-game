@@ -429,13 +429,23 @@ console.log('\n[3] 俯卧撑计数');
     `有效 ${det.validReps}, active=${det.active}`);
 }
 {
-  // 只放到一半（肘 130° 左右）：宽松线（124°）之外，仍然记为半程并提示，但不吃成有效次数
+  // 只放到一半多（肘 130°）：判定放宽后照样算一次，但仍要提示「再低一点」
   const det = fresh('pushup');
   const r = makeRunner(det);
   r.run(repeat(pushupMix(() => 0, { botElbow: 130 }), 1400, 4));
-  ok('半程俯卧撑不计有效次数', det.validReps === 0, `实际 ${det.validReps}`);
-  atLeast('半程俯卧撑记为半程', det.partialReps, 3);
-  ok('半程俯卧撑提示再低一点', r.cues.some((c) => c.code === 'depth' || c.code === 'body'));
+  atLeast('半程俯卧撑也计数（放宽后）', det.validReps, 3);
+  ok('半程俯卧撑不误记半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+  ok('半程俯卧撑提示再低一点', r.cues.some((c) => c.code === 'depth' || c.code === 'body'),
+    r.cues.map((c) => c.code).join(','));
+}
+{
+  // 什么都没做（只晃了一下，肘角没弯过 146°）：既不计次也不出声
+  const det = fresh('pushup');
+  const r = makeRunner(det);
+  r.run(repeat(pushupMix(() => 0, { botElbow: 150 }), 1400, 4));
+  ok('只是晃了一下不计次、也不记半程', det.validReps === 0 && det.partialReps === 0,
+    `有效 ${det.validReps} / 半程 ${det.partialReps}`);
+  ok('只是晃了一下不唠叨', r.cues.length === 0, r.cues.map((c) => c.code).join(','));
 }
 {
   // 默认宽松 / 可选严格：面板上的“严格”开关必须真的改变判据
@@ -443,7 +453,8 @@ console.log('\n[3] 俯卧撑计数');
   ok('传 strict: true 才严格', fresh('squat', { strict: true }).strict === true);
   const loose = fresh('pushup');
   const strict = fresh('pushup', { strict: true });
-  const shallow = repeat(pushupMix(() => 0, { botElbow: 116 }), 1400, 3);
+  // 肘弯到 128°：宽松计次（计数线 135°），严格不计（满分深度 118°）
+  const shallow = repeat(pushupMix(() => 0, { botElbow: 128 }), 1400, 3);
   makeRunner(loose).run(shallow);
   makeRunner(strict).run(shallow);
   ok('放一半多：宽松计次、严格不计次', loose.validReps === 3 && strict.validReps === 0,

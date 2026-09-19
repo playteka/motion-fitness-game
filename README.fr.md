@@ -476,11 +476,16 @@ Le squat se filme **de face** ; la profondeur se juge sur le rapport « écart d
 
 | Étape technique | Condition de validation | Points |
 |---|---|---|
-| ① Mains au sol, corps bien aligné | Position sur les mains + alignement du corps ≥ 165° + sans affaissement du bas du dos ni fesses relevées | +5 |
-| ② Serre les abdos et descends en pliant les coudes | Angle du coude ≤ 140° | +7 |
-| ③ **Coudes pliés à 90° ou moins** | Angle du coude ≤ 95° et corps toujours bien aligné | **+14** |
-| ④ Pousse pour remonter, bras complètement tendus | Angle du coude ≥ 145° (après être descendu) | +8 |
+| ① Mains au sol, corps bien aligné | Position sur les mains + alignement du corps ≥ 150° + sans affaissement du bas du dos ni fesses relevées | +5 |
+| ② Serre les abdos et descends en pliant les coudes | Angle du coude ≤ 138° | +7 |
+| ③ **Coudes pliés jusqu’à approcher la poitrine du sol** | Angle du coude ≤ 105° et corps toujours bien aligné | **+14** |
+| ④ Pousse pour remonter, bras complètement tendus | Angle du coude ≥ 142° (après être descendu) | +8 |
 | 🎁 Toutes les étapes de la série validées | Les 4 étapes ci-dessus validées dans la même série | +6 |
+
+> **Le comptage des pompes est permissif (si tu fais le mouvement dans les grandes lignes, ça compte)** : il suffit de plier les coudes jusqu’à **135° ou moins** puis de remonter au-delà de **145°**
+> (avant, il fallait descendre à 124° et remonter jusqu’à 152°). Le bas du dos qui s’affaisse, les fesses relevées ou un alignement imparfait ne déclenchent plus qu’**une correction vocale et une réduction du score** — ils ne te retirent plus de répétitions ;
+> une répétition peu profonde compte aussi, mais tu reçois le conseil « descends un peu plus » et moins de points. Seul « tu n’as presque pas plié les coudes » (jamais sous 146°) ne compte rien et reste silencieux.
+> Le mode strict (dans les réglages) est celui qui exige la profondeur complète.
 
 ### Pont fessier (39 points par série au maximum)
 
@@ -628,7 +633,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les cinq suites d'un coup (902 tests)
+npm test                       # les cinq suites d'un coup (904 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources / structure des quatre README
 npm run test:detectors         # détection et logique de score des cinq détecteurs écrits à la main (squelettes synthétiques)
 npm run test:engines           # moteurs de détection génériques (flexion / alternance / rotation / plusieurs phases / chrono + garde de posture)
@@ -640,7 +645,7 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | Fichier de test | Nombre de tests | Contenu couvert |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
-| `tests/test-detectors.mjs` | 222 | Comptage, chronométrage, points par étape et ordre de validation des cinq détecteurs écrits à la main (mouvements corrects comme erronés), ainsi que la logique de validation du calibrage |
+| `tests/test-detectors.mjs` | 224 | Comptage, chronométrage, points par étape et ordre de validation des cinq détecteurs écrits à la main (mouvements corrects comme erronés), ainsi que la logique de validation du calibrage |
 | `tests/test-engines.mjs` | 138 | Moteurs génériques : une répétition par cycle, souple vs strict, cas limites des balancements et des mouvements trop rapides, garde de posture, décollage des pieds, alternance gauche-droite, enchaînement complet, pause et reprise du chrono |
 | `tests/test-page.mjs` | 310 | Câblage du DOM, imports et exports de modules, ressources statiques, catalogue des 22 exercices par catégorie et exhaustivité des barèmes |
 | `tests/test-app.mjs` | 200 | Démarrage du vrai `app.js`, rendu de la page d'accueil, fenêtre de réglages, déroulé du calibrage, changement d'exercice, score, sons, bilan, changement de langue |

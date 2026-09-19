@@ -208,11 +208,12 @@ export const STEP_PLANS = {
         id: 'setup',
         labelKey: 'steps.pushup.setup.label',
         points: 5,
-        check: (f) => prone(f) && straight(f) && aligned(f),
+        // 与识别器同一套放宽口径：撑住了、大致成一条线就给分
+        check: (f) => prone(f) && straight(f, 150) && aligned(f, 0.18),
         hint: (f) => {
-          if (f.torsoIncl <= 35) return H('steps.pushup.setup.pose');
-          if (f.wristClear >= 0.55) return H('steps.pushup.setup.hands');
-          if (!straight(f, 165)) return H('steps.pushup.setup.straight');
+          if (f.torsoIncl <= 32) return H('steps.pushup.setup.pose');
+          if (f.wristClear >= 0.62) return H('steps.pushup.setup.hands');
+          if (!straight(f, 150)) return H('steps.pushup.setup.straight');
           return H('steps.pushup.setup.tune');
         },
       },
@@ -220,22 +221,22 @@ export const STEP_PLANS = {
         id: 'lower',
         labelKey: 'steps.pushup.lower.label',
         points: 7,
-        check: (f) => f.elbowAngle <= 140 && straight(f, 146),
-        hint: (f) => (f.elbowAngle > 140 ? H('steps.pushup.lower.hint') : null),
+        check: (f) => f.elbowAngle <= 138 && straight(f, 138),
+        hint: (f) => (f.elbowAngle > 138 ? H('steps.pushup.lower.hint') : null),
       },
       {
         id: 'depth',
         labelKey: 'steps.pushup.depth.label',
         points: 14,
-        check: (f) => f.elbowAngle <= 95 && straight(f, 146),
-        hint: (f) => (f.elbowAngle > 95 ? H('steps.pushup.depth.hint', { deg: Math.round(f.elbowAngle) }) : null),
+        check: (f) => f.elbowAngle <= 105 && straight(f, 138),
+        hint: (f) => (f.elbowAngle > 105 ? H('steps.pushup.depth.hint', { deg: Math.round(f.elbowAngle) }) : null),
       },
       {
         id: 'press',
         labelKey: 'steps.pushup.press.label',
         points: 8,
-        check: (f, d) => d.cycleLowered && f.elbowAngle >= 145,
-        hint: (f) => (f.elbowAngle < 145 ? H('steps.pushup.press.hint') : null),
+        check: (f, d) => d.cycleLowered && f.elbowAngle >= 142,
+        hint: (f) => (f.elbowAngle < 142 ? H('steps.pushup.press.hint') : null),
       },
     ],
   },

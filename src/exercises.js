@@ -385,16 +385,30 @@ class LungeDetector extends DetectorBase {
  * 计数类：俯卧撑
  * ------------------------------------------------------------------ */
 
+/**
+ * 俯卧撑的判定（**整体放宽**：大体上做了一次就计一次）。
+ *
+ * 三档肘角说清了一件事：
+ *   elbowUp      回到这个角度以上 = 一次动作结束（原来 152°，手臂必须几乎全直；现在 145° 就认）
+ *   looseElbow   宽松模式的计数线（原来 124°：要下放到「胸口接近地面」才算；现在 135° 就算一次）
+ *   elbowFull    拿满分深度的线（原来 106°）
+ * 另外：
+ *   - 身体不够直不再吃次数，只出声纠正 + 质量分打折；
+ *   - 用时下限只用来滤掉「手抖一下」，260ms 比人能做的任何一次俯卧撑都快；
+ *   - 只是晃了一下（肘角没弯过 146°）不算一次尝试，也不出声。
+ */
 const PUSHUP = {
   activeTorso: 32,
   activeShoulderClear: 0.12,
   activeHandOnFloor: 0.62,
-  elbowUp: 152,
-  elbowDown: 118,     // 下放到这里就算「下去了」（原来 104）
-  elbowFull: 106,     // 满分要求也放宽（原来 92，要压到胸口贴地）
-  looseElbow: 124,    // 宽松模式：肘弯到 124° 以内就算一次（原来必须 120 且身体够直）
-  minRepMs: 340,      // 原来 420
-  bodyStraightMin: 138, // 身体不够直只提示，不再吃次数（原来 146，直接判半程）
+  elbowUp: 145,       // 回到这个角度算「推起来了」（原来 152）
+  elbowEnter: 138,    // 从这个角度开始算「正在下放」（原来 elbowUp-12 = 140）
+  elbowDown: 120,     // 下放到这里算「到过底部」（原来 118）
+  elbowFull: 118,     // 满分深度（原来 106，要压到胸口贴地）
+  looseElbow: 135,    // 宽松模式计数线（原来 124）
+  ignoreElbow: 146,   // 没弯过这里 = 只是晃了一下（不计次也不出声）
+  minRepMs: 260,      // 原来 340
+  bodyStraightMin: 138, // 身体不够直只提示，不再吃次数
 };
 
 class PushupDetector extends DetectorBase {
@@ -432,14 +446,14 @@ class PushupDetector extends DetectorBase {
     this.standby = '';
     const elbow = f.elbowAngle;
     this.depthPct = bendPct(elbow, 168, 88);
-    if (elbow <= 140) this.cycleLowered = true;
+    if (elbow <= PUSHUP.looseElbow) this.cycleLowered = true;
 
     if (f.hipLineDev > 0.13) this.cue('sag', null, 'warn', now);
     else if (f.hipLineDev < -0.13) this.cue('pike', null, 'warn', now);
 
     switch (this.stage) {
       case 'up':
-        if (elbow <= PUSHUP.elbowUp - 12) {
+        if (elbow <= PUSHUP.elbowEnter) {
           this.stage = 'descending';
           this.repStartAt = now;
           this.minElbow = elbow;
@@ -466,10 +480,12 @@ class PushupDetector extends DetectorBase {
     const dur = now - this.repStartAt;
     this.stage = 'up';
     this.repStartAt = 0;
-    if (aborted && this.minElbow > 150) return; // 还没开始下放就走了，不算一次尝试
+    // 只是晃了一下（肘角没弯过 146°）：连半程都不记，也不出声
+    if (this.minElbow > PUSHUP.ignoreElbow) return;
     const full = this.minElbow <= PUSHUP.elbowFull;
     const bodyOk = this.minBody >= PUSHUP.bodyStraightMin;
-    const okDepth = full || (!this.strict && this.minElbow <= PUSHUP.looseElbow);
+    const deepEnough = this.minElbow <= PUSHUP.elbowFull;
+    const looseEnough = !this.strict && this.minElbow <= PUSHUP.looseElbow;
 
     // 计数放宽：身体不够直也照样算一次，只是要出声纠正、分数打折（严格模式才拦）
     if (this.strict && !bodyOk) {
@@ -479,7 +495,7 @@ class PushupDetector extends DetectorBase {
       this.nextCycle(now);
       return;
     }
-    if (!okDepth) {
+    if (!deepEnough && !looseEnough) {
       this.partialReps += 1;
       this.cue('depth', null, 'warn', now, 3000);
       this.emit({ type: 'rep', valid: false, reason: 'depth' });
@@ -494,10 +510,16 @@ class PushupDetector extends DetectorBase {
       return;
     }
     if (!bodyOk) this.cue('body', null, 'warn', now, 3000);
+    // 计数放宽了，但沉得不够还是要出声纠正（分数也已经按深度打了折）
+    if (!deepEnough) this.cue('depth', null, 'warn', now, 4000);
     this.validReps += 1;
     this.reps = this.validReps;
     this.cycleHadValidRep = true;
-    const quality = clamp(Math.round(60 + (full ? 30 : 15) + (this.minBody > 165 ? 10 : bodyOk ? 5 : 0)), 0, 100);
+    // 质量分按「下放深度」给：压到 elbowFull 以内满分，只到宽松线就少一截
+    const depthGain = this.minElbow <= PUSHUP.elbowFull ? 30
+      : this.minElbow <= 124 ? 24
+        : this.minElbow <= 130 ? 18 : 12;
+    const quality = clamp(Math.round(56 + depthGain + (this.minBody > 165 ? 10 : bodyOk ? 5 : 0)), 0, 100);
     this.emit({ type: 'rep', valid: true, index: this.validReps, quality, duration: dur });
     this.nextCycle(now);
   }

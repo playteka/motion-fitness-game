@@ -470,11 +470,16 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 
 | Form step | How it's judged | Points |
 |---|---|---|
-| ① Hands on the floor, body in one straight line | Push-up position + body line angle ≥165° + no sagging, no piking | +5 |
-| ② Brace your core and bend your elbows to lower down | Elbow angle ≤140° | +7 |
-| ③ **Elbows to 90° or less, chest close to the floor (top-scoring step)** | Elbow angle ≤95° and the body still in one straight line | **+14** |
-| ④ Press back up to fully straight arms | Elbow angle ≥145° (after first lowering down) | +8 |
+| ① Hands on the floor, body in one straight line | Push-up position + body line angle ≥150° + deviation ≤0.18 | +5 |
+| ② Brace your core and bend your elbows to lower down | Elbow angle ≤138° | +7 |
+| ③ **Elbows bent until your chest is near the floor (top-scoring step)** | Elbow angle ≤105° and the body still in one straight line | **+14** |
+| ④ Press back up to nearly straight arms | Elbow angle ≥142° (after first lowering down) | +8 |
 | 🎁 All form steps complete for the round | All 4 steps above hit within the same round | +6 |
+
+> **Push-up counting is lenient (roughly doing the movement counts)**: bending your elbows to **135° or less** and coming back up past **145°** counts as one rep
+> (it used to require reaching 124° and returning all the way to 152°). A sagging or piked hip and a body that isn’t perfectly straight only trigger a **spoken correction plus a quality discount** — they no longer eat your reps;
+> a shallow rep still counts but you get a “go lower” cue and fewer points. Only “you barely bent your elbows” (never below 146°) counts for nothing and stays silent.
+> Strict mode (available in the settings) is what requires full depth.
 
 ### Glute Bridge (39 points per round)
 
@@ -622,7 +627,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all five suites (902 cases)
+npm test                       # run all five suites (904 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / README structure of all four files
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -634,7 +639,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
-| `tests/test-detectors.mjs` | 222 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
+| `tests/test-detectors.mjs` | 224 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-engines.mjs` | 138 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
 | `tests/test-app.mjs` | 200 | Startup with the real `app.js`, home-page rendering, the settings modal, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |

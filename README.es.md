@@ -470,11 +470,16 @@ En la sentadilla se usa la **vista frontal** y la profundidad se mide con «cuá
 
 | Paso | Condición | Puntos |
 |---|---|---|
-| ① Apoya las manos en el suelo con el cuerpo en línea recta | Postura boca abajo + ángulo del cuerpo en línea ≥165° + sin hundir la lumbar ni levantar el trasero | +5 |
-| ② Activa el core y baja flexionando los codos | Ángulo del codo ≤140° | +7 |
-| ③ **Flexiona los codos por debajo de 90°** | Ángulo del codo ≤95° y el cuerpo sigue en línea recta | **+14** |
-| ④ Empuja hacia arriba hasta estirar los brazos del todo | Ángulo del codo ≥145° (tienes que haber bajado antes) | +8 |
+| ① Apoya las manos en el suelo con el cuerpo en línea recta | Postura boca abajo + ángulo del cuerpo en línea ≥150° + sin hundir la lumbar ni levantar el trasero | +5 |
+| ② Activa el core y baja flexionando los codos | Ángulo del codo ≤138° | +7 |
+| ③ **Flexiona los codos hasta acercar el pecho al suelo** | Ángulo del codo ≤105° y el cuerpo sigue en línea recta | **+14** |
+| ④ Empuja hacia arriba hasta estirar los brazos del todo | Ángulo del codo ≥142° (tienes que haber bajado antes) | +8 |
 | 🎁 Todos los pasos de la ronda | Los 4 pasos anteriores completados en la misma ronda | +6 |
+
+> **El conteo de flexiones es permisivo (si haces el movimiento a grandes rasgos, cuenta)**: basta con flexionar los codos hasta **135° o menos** y volver a pasar de **145°**
+> (antes había que llegar a 124° y volver hasta 152°). Hundir la lumbar, levantar el trasero o no estar perfectamente alineado solo provocan **una corrección por voz y un descuento de calidad** — ya no te quitan repeticiones;
+> una repetición poco profunda también cuenta, pero recibes el aviso «baja un poco más» y menos puntos. Solo «casi no has flexionado» (nunca por debajo de 146°) no cuenta nada y no dice nada.
+> El modo estricto (en los ajustes) es el que exige la profundidad completa.
 
 ### Puente de glúteos (39 puntos por ronda)
 
@@ -622,7 +627,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cinco suites juntas (902 pruebas)
+npm test                       # las cinco suites juntas (904 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino escrito a fuego en el código / estructura de los cuatro README
 npm run test:detectors         # lógica de detección y puntuación de los cinco detectores escritos a mano (con esqueletos sintéticos)
 npm run test:engines           # motores de reconocimiento genéricos (flexión-extensión / alternancia / giro / movimiento por fases / cronómetro + control de postura)
@@ -634,7 +639,7 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | Archivo de prueba | N.º de pruebas | Cobertura |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
-| `tests/test-detectors.mjs` | 222 | Conteo, cronómetro, puntos por paso y orden de puntuación de los cinco detectores escritos a mano, tanto con el ejercicio bien hecho como con todo tipo de errores, además de las comprobaciones de la calibración previa |
+| `tests/test-detectors.mjs` | 224 | Conteo, cronómetro, puntos por paso y orden de puntuación de los cinco detectores escritos a mano, tanto con el ejercicio bien hecho como con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-engines.mjs` | 138 | Motores genéricos: un ciclo y una repetición, permisivo frente a estricto, los límites del balanceo y de la velocidad excesiva, control de postura, despegue del suelo en los saltos, alternancia de lados, secuencia completa y pausa y reanudación del cronómetro |
 | `tests/test-page.mjs` | 310 | Cableado del DOM, importación y exportación de módulos, recursos estáticos, lista de categorías de los 22 ejercicios e integridad de los planes de puntuación |
 | `tests/test-app.mjs` | 200 | Arranque del `app.js` real, renderizado de la página de inicio, ventana de ajustes, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
