@@ -291,12 +291,13 @@ export const STEP_PLANS = {
         id: 'setup',
         labelKey: 'steps.plank.setup.label',
         points: 8,
-        check: (f) => f.shoulderClear > 0.22 && f.wristClear < 0.32
-          && (f.elbowAngle < 122 || f.elbowAngle > 148),
+        // 与识别器同一套「放宽」口径：撑起来了就给分（手撑地 + 肩离地）
+        check: (f) => f.shoulderClear > 0.16 && f.wristClear < 0.42
+          && (f.elbowAngle < 132 || f.elbowAngle > 140),
         hint: (f) => {
-          if (f.torsoIncl <= 45) return H('steps.plank.setup.pose');
-          if (f.shoulderClear <= 0.22) return H('steps.plank.setup.lift');
-          if (f.wristClear >= 0.32) return H('steps.plank.setup.hands');
+          if (f.torsoIncl <= 38) return H('steps.plank.setup.pose');
+          if (f.shoulderClear <= 0.16) return H('steps.plank.setup.lift');
+          if (f.wristClear >= 0.42) return H('steps.plank.setup.hands');
           return H('steps.plank.setup.elbow');
         },
       },
@@ -304,10 +305,10 @@ export const STEP_PLANS = {
         id: 'align',
         labelKey: 'steps.plank.align.label',
         points: 12,
-        check: (f) => straight(f, 158) && aligned(f, 0.14),
+        check: (f) => straight(f, 148) && aligned(f, 0.18),
         hint: (f) => {
-          if (f.hipLineDev > 0.14) return H('steps.plank.align.sag');
-          if (f.hipLineDev < -0.14) return H('steps.plank.align.pike');
+          if (f.hipLineDev > 0.18) return H('steps.plank.align.sag');
+          if (f.hipLineDev < -0.18) return H('steps.plank.align.pike');
           return H('steps.plank.align.tune');
         },
       },

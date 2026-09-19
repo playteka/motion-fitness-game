@@ -160,6 +160,7 @@ export default {
     skeletonOff: 'Skeleton overlay hidden — camera view only.',
     musicOn: 'Cheerful background music on.',
     musicOff: 'Background music off.',
+    musicTrack: 'Background music switched to “{name}”',
     modelReady: 'Model ready. Pick an exercise, move into the dashed outline to finish calibration, then start your set.',
     modelSwitched: 'Switched to the “{model}” model.',
     modelSwitchFail: 'Model switch failed: {msg}',
@@ -616,6 +617,7 @@ export default {
     model: 'Pose model',
     modelHint: 'Lite runs smoother, Full is more accurate (the first switch downloads a few dozen MB, then it works offline)',
     sound: 'Sound',
+    musicTrack: '🎵 Background track',
     cameraGroup: 'Video & tracking',
     view: 'Interface',
   },
@@ -688,6 +690,16 @@ export default {
   },
 
   /* ---------------- Form cues ---------------- */
+  /* ---------------- 背景音乐曲目 ---------------- */
+  music: {
+    track: {
+      cityRun: 'City Run',
+      neonPulse: 'Neon Pulse',
+      sunriseFunk: 'Sunrise Funk',
+      powerDrive: 'Power Drive',
+    },
+  },
+
   cues: {
     squat: {
       valgus: 'Don’t let your knees cave in — push them out over your toes',

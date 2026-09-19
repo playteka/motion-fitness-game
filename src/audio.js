@@ -16,65 +16,173 @@ import { t, getMeta } from './i18n.js';
 export const mtof = (midi) => 440 * (2 ** ((midi - 69) / 12));
 
 /**
- * 欢快的四小节循环：I–V–vi–IV（C–G–Am–F），132 BPM，带一点摇摆（swing）。
- * 每小节：跳跃的低音 + 明亮的主旋律 + 每小节开头的和弦点缀 + 底鼓/军鼓/踩镲（含切分），
- * 听起来是「轻快有推动力」的练习背景乐；音量仍然压在语音之下，念要领时还会自动降低。
+ * 背景音乐：4 首风格不同的循环曲，用户可以自己挑（设置弹窗里选）。
  *
- * melody 是 8 个八分音符的音级偏移（相对 root + 12）；缺省时退回和弦琶音。
+ * 每首曲子由四小节组成，全部是**现场合成**（不需要音频文件、不联网）：
+ *   progression 每小节的和弦根音（MIDI）与和弦性质
+ *   drums      鼓组图案，写在 16 分音符网格上（0 是这一小节第 1 拍的第 1 个 16 分）
+ *   bass       贝斯：每个音 [16分位置, 相对根音的半音数, 持续几个 16 分]
+ *   lead       主旋律 / 和弦点缀，同上
+ * 节奏感靠三件事拉开：
+ *   ① 底鼓与军鼓的重音位置（four-on-the-floor / 摇滚 / 放克各不同）
+ *   ② 反拍开镲与拍手（clap）—— 这是「跟着动起来」的关键
+ *   ③ 贝斯的切分（funk 与四踩的差别主要在这里）
+ *
+ * 音色也都是合成的：底鼓是下滑正弦 + 点击声，军鼓/拍手是噪声音爆，踩镲是高通噪声。
  */
-export const MUSIC = {
-  bpm: 132,
-  swing: 0.16,   // 每对八分音符的第二个稍晚一点 → 更有律动
-  bars: [
-    { root: 48, notes: [0, 4, 7, 12, 7, 4, 7, 12], melody: [0, 0, 4, 0, 7, 4, 0, 2] },   // C
-    { root: 43, notes: [0, 4, 7, 12, 7, 4, 7, 12], melody: [0, 4, 7, 4, 12, 7, 4, 0] },  // G
-    { root: 45, notes: [0, 3, 7, 12, 7, 3, 7, 12], melody: [0, 3, 7, 3, 12, 7, 3, 0] },  // Am
-    { root: 41, notes: [0, 4, 7, 12, 7, 4, 7, 12], melody: [0, 4, 7, 12, 9, 7, 4, 2] },  // F
-  ],
-};
+export const TRACKS = [
+  {
+    id: 'cityRun',
+    bpm: 132,
+    swing: 0.16,          // 每对八分音符的第二个稍晚一点 → 摇摆的跳跃感
+    nameKey: 'music.track.cityRun',
+    progression: [
+      { root: 48, type: 'maj' },   // C
+      { root: 43, type: 'maj' },   // G
+      { root: 45, type: 'min' },   // Am
+      { root: 41, type: 'maj' },   // F
+    ],
+    drums: {
+      kick: [0, 4, 10],
+      snare: [4, 12],
+      hat: [0, 2, 4, 6, 8, 10, 12, 14],
+      hatAccent: [2, 6, 10, 14],
+      clap: [12],
+    },
+    bass: [[0, 0], [4, 0], [6, 7], [10, 7], [12, 12]],
+    lead: [[0, 0], [2, 4], [4, 7], [6, 12], [8, 7], [10, 4], [12, 7], [14, 12]],
+    leadType: 'triangle',
+  },
+  {
+    id: 'neonPulse',
+    bpm: 144,
+    swing: 0,
+    nameKey: 'music.track.neonPulse',
+    progression: [
+      { root: 45, type: 'min' },   // Am
+      { root: 41, type: 'maj' },   // F
+      { root: 48, type: 'maj' },   // C
+      { root: 43, type: 'maj' },   // G
+    ],
+    drums: {
+      // 四踩（每拍一记底鼓）+ 反拍开镲：电子舞曲的推进感
+      kick: [0, 4, 8, 12],
+      snare: [4, 12],
+      hat: [2, 6, 10, 14],
+      hatAccent: [6, 14],
+      clap: [4, 12],
+    },
+    bass: [[0, 0], [3, 0], [6, 12], [8, 7], [11, 7], [14, 10]],
+    lead: [[2, 12], [6, 7], [10, 12], [14, 15]],
+    leadType: 'square',
+  },
+  {
+    id: 'sunriseFunk',
+    bpm: 122,
+    swing: 0.22,
+    nameKey: 'music.track.sunriseFunk',
+    progression: [
+      { root: 50, type: 'min' },   // Dm
+      { root: 43, type: 'maj' },   // G
+      { root: 48, type: 'maj' },   // C
+      { root: 45, type: 'maj' },   // A
+    ],
+    drums: {
+      // 放克：底鼓切分 + 军鼓重拍 + 幽灵音 + 密集 16 分踩镲
+      kick: [0, 3, 6, 10],
+      snare: [4, 12],
+      ghost: [7, 15],
+      hat: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      hatAccent: [2, 6, 10, 14],
+      clap: [12],
+    },
+    bass: [[0, 0], [3, 12], [6, 7], [9, 10], [12, 7], [14, 3]],
+    lead: [[0, 0], [2, 3], [5, 7], [8, 10], [11, 7], [13, 3]],
+    leadType: 'triangle',
+  },
+  {
+    id: 'powerDrive',
+    bpm: 152,
+    swing: 0,
+    nameKey: 'music.track.powerDrive',
+    progression: [
+      { root: 40, type: 'min' },   // Em
+      { root: 48, type: 'maj' },   // C
+      { root: 43, type: 'maj' },   // G
+      { root: 50, type: 'maj' },   // D
+    ],
+    drums: {
+      // 摇滚驱动：双底鼓「咚咚」+ 厚军鼓 + 每小节开头的镲片重击
+      kick: [0, 2, 8, 10],
+      snare: [4, 12],
+      hat: [0, 2, 4, 6, 8, 10, 12, 14],
+      hatAccent: [2, 6, 10, 14],
+      clap: [0],
+    },
+    bass: [[0, 0], [2, 0], [4, 0], [6, 0], [8, 0], [10, 0], [12, 7], [14, 0]],
+    lead: [[0, 12], [4, 12], [8, 19], [12, 15]],
+    leadType: 'sawtooth',
+  },
+];
+
+export const DEFAULT_TRACK = TRACKS[0].id;
+
+/** 取某首曲子（给错 id 时退回默认，界面永远不会没音乐） */
+export function getTrack(id) {
+  return TRACKS.find((m) => m.id === id) || TRACKS[0];
+}
+
+/** 兼容旧名字：默认那首曲子 */
+export const MUSIC = TRACKS[0];
 
 /** 一个完整循环的所有音符事件（t 是相对循环起点的秒数），确定性输出，方便测试 */
-export function musicEvents(music = MUSIC) {
-  const beat = 60 / music.bpm;
+export function musicEvents(track = MUSIC) {
+  const music = typeof track === 'string' ? getTrack(track) : track;
+  const beat = 60 / (music.bpm || 132);
+  const step = beat / 4;                       // 一个 16 分音符
   const swing = music.swing || 0;
-  // 第 b 小节第 i 个八分音符落在第几拍（奇数位加摇摆偏移）
-  const at = (b, i) => (b * 4 + (i >> 1) + ((i & 1) ? 0.5 + swing : 0)) * beat;
+  // 第 b 小节第 s 个 16 分音符的时间：反拍八分（s % 4 === 2）整体后挪一点 → 摇摆感
+  const at = (b, s) => (b * 4 + s / 4 + (swing && s % 4 === 2 ? swing : 0)) * beat;
   const out = [];
-  music.bars.forEach((bar, b) => {
-    const mel = bar.melody || bar.notes;
-    // 主旋律：8 个八分音符，明亮的三角波
-    for (let i = 0; i < 8; i++) {
-      out.push({
-        t: at(b, i), kind: 'lead', freq: mtof(bar.root + 12 + mel[i % mel.length]),
-        dur: beat * 0.38, gain: 0.075, type: 'triangle',
-      });
+  music.progression.forEach((bar, b) => {
+    const tones = bar.type === 'min' ? [0, 3, 7] : [0, 4, 7];
+    // ---- 鼓组 ----
+    for (const s of music.drums.kick || []) {
+      out.push({ t: at(b, s), kind: 'kick', freq: 125, dur: 0.11, gain: 0.24, type: 'sine', slideTo: 52, noise: 'click' });
     }
-    // 低音：根音-根音-五音-五音的跳跃进行
-    for (const [i, deg] of [[0, 0], [3, 0], [4, 7], [6, 7]]) {
-      out.push({ t: at(b, i), kind: 'bass', freq: mtof(bar.root - 12 + deg), dur: beat * 0.5, gain: 0.1, type: 'sine' });
+    for (const s of music.drums.snare || []) {
+      out.push({ t: at(b, s), kind: 'snare', freq: 210, dur: 0.13, gain: 0.15, type: 'triangle', noise: 'snare' });
     }
-    // 每小节开头一个明亮的和弦点缀（两个音）
-    out.push({ t: at(b, 0), kind: 'stab', freq: mtof(bar.root + 12), dur: beat * 0.22, gain: 0.05, type: 'square' });
-    out.push({ t: at(b, 0), kind: 'stab', freq: mtof(bar.root + 19), dur: beat * 0.22, gain: 0.035, type: 'square' });
-    // 踩镲：每个八分音符，反拍更响一点 → 有推动力
-    for (let i = 0; i < 8; i++) {
-      out.push({ t: at(b, i), kind: 'hat', freq: 8200, dur: 0.022, gain: (i & 1) ? 0.028 : 0.016, type: 'square' });
+    for (const s of music.drums.ghost || []) {
+      out.push({ t: at(b, s), kind: 'snare', freq: 210, dur: 0.06, gain: 0.05, type: 'triangle', noise: 'snare' });
     }
-    // 底鼓：1、3 拍 + 第 2 拍后半的切分（这也是「活泼」的关键）
-    for (const i of [0, 3, 4]) {
-      out.push({ t: at(b, i), kind: 'kick', freq: 120, dur: 0.1, gain: 0.14, type: 'sine', slideTo: 58 });
+    for (const s of music.drums.hat || []) {
+      const strong = (music.drums.hatAccent || []).includes(s);
+      out.push({ t: at(b, s), kind: 'hat', freq: 9000, dur: strong ? 0.05 : 0.022, gain: strong ? 0.05 : 0.022, noise: 'hat' });
     }
-    // 军鼓：2、4 拍 + 第 4 拍后半的轻打
-    for (const [i, g] of [[2, 0.055], [6, 0.055], [7, 0.025]]) {
-      out.push({ t: at(b, i), kind: 'snare', freq: 2000, dur: 0.07, gain: g, type: 'triangle' });
+    for (const s of music.drums.clap || []) {
+      out.push({ t: at(b, s), kind: 'clap', freq: 1500, dur: 0.12, gain: 0.09, noise: 'clap' });
+    }
+    // ---- 贝斯 ----
+    for (const [s, deg] of music.bass) {
+      out.push({ t: at(b, s), kind: 'bass', freq: mtof(bar.root - 12 + deg), dur: step * 1.6, gain: 0.12, type: 'sine' });
+    }
+    // ---- 主旋律 ----
+    for (const [s, deg] of music.lead) {
+      out.push({ t: at(b, s), kind: 'lead', freq: mtof(bar.root + 12 + deg), dur: step * 2.2, gain: 0.07, type: music.leadType || 'triangle' });
+    }
+    // ---- 和弦点缀：每小节开头一个明亮的短和弦 ----
+    for (const deg of [tones[0], tones[2]]) {
+      out.push({ t: at(b, 0), kind: 'stab', freq: mtof(bar.root + 12 + deg), dur: step * 1.2, gain: 0.045, type: 'square' });
     }
   });
   return out.sort((a, b) => a.t - b.t);
 }
 
 /** 一个循环的时长（秒） */
-export function musicLoopSeconds(music = MUSIC) {
-  return music.bars.length * 4 * (60 / music.bpm);
+export function musicLoopSeconds(track = MUSIC) {
+  const music = typeof track === 'string' ? getTrack(track) : track;
+  return music.progression.length * 4 * (60 / (music.bpm || 132));
 }
 
 export class AudioKit {
@@ -93,6 +201,8 @@ export class AudioKit {
     this._musicGain = null;
     this._musicTimer = null;
     this._musicLoopAt = 0;
+    this._trackId = DEFAULT_TRACK;   // 用户选的曲子（见 TRACKS）
+    this._noise = null;              // 噪声缓冲（鼓组用，按需生成并复用）
     this.musicVolume = 0.3;       // 正常音量（要能明显听到，又不盖住语音）
     this.musicDuckVolume = 0.11;  // 念要领时压低
   }
@@ -281,6 +391,27 @@ export class AudioKit {
 
   /* ---------- 背景音乐 ---------- */
 
+  /** 当前选的是哪首曲子（id） */
+  get trackId() { return this._trackId || DEFAULT_TRACK; }
+  get track() { return getTrack(this.trackId); }
+
+  /**
+   * 选曲子。正在播的话立刻换成新曲子（不用先关再开）。
+   * @param {string} id TRACKS 里的 id
+   */
+  setTrack(id) {
+    const next = getTrack(id).id;
+    if (next === this.trackId) return this.trackId;
+    this._trackId = next;
+    if (this.musicOn && this._musicGain) {
+      // 换曲：停掉旧的、等淡出后从头开始播新的
+      const wasOn = this.musicOn;
+      this.stopMusic();
+      setTimeout(() => { if (wasOn && this.musicOn) this.startMusic(); }, 240);
+    }
+    return next;
+  }
+
   /** 开/关背景音乐（开关状态由界面维护） */
   setMusic(on) {
     this.musicOn = !!on;
@@ -325,26 +456,84 @@ export class AudioKit {
     // 说话时压低音乐，念完再抬回来，保证语音听得清
     const target = this._speaking ? this.musicDuckVolume : this.musicVolume;
     try { this._musicGain.gain.setTargetAtTime(target, ctx.currentTime, 0.25); } catch { /* ignore */ }
-    const loop = musicLoopSeconds();
+    const track = this.track;
+    const loop = musicLoopSeconds(track);
     let guard = 0;
     while (this._musicLoopAt < ctx.currentTime + 2 && guard < 3) {
-      for (const e of musicEvents()) this._playNote(e, this._musicLoopAt + e.t);
+      for (const e of musicEvents(track)) this._playNote(e, this._musicLoopAt + e.t);
       this._musicLoopAt += loop;
       guard += 1;
     }
+  }
+
+  /** 噪声缓冲（鼓组的军鼓/踩镲/拍手都用它，只需要生成一次） */
+  _noiseBuffer(ctx) {
+    if (this._noise) return this._noise;
+    const len = Math.floor(ctx.sampleRate * 0.5);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    this._noise = buf;
+    return buf;
+  }
+
+  /**
+   * 噪声类鼓声：踩镲（高通、极短）、军鼓（噪声 + 一点音高）、拍手（三次短噪声音爆）。
+   * 全部现场合成，不需要任何音频素材。
+   */
+  _playNoise(e, at) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this._noiseBuffer(ctx);
+    const filter = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    if (e.noise === 'hat') {
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(7000, at);
+      g.gain.setValueAtTime(Math.max(0.0002, e.gain), at);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + e.dur);
+    } else if (e.noise === 'snare') {
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1800, at);
+      filter.Q.value = 0.8;
+      g.gain.setValueAtTime(Math.max(0.0002, e.gain), at);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + e.dur);
+    } else if (e.noise === 'clap') {
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1100, at);
+      filter.Q.value = 1.2;
+      // 三次快拍 → 听起来像拍手，而不是一团噪声
+      for (const [off, gg] of [[0, 1], [0.012, 0.7], [0.026, 0.45]]) {
+        g.gain.setValueAtTime(Math.max(0.0002, e.gain * gg), at + off);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + off + 0.03);
+      }
+    } else {   // click：给底鼓起音加一点「啪」的瞬态
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(2500, at);
+      g.gain.setValueAtTime(Math.max(0.0002, e.gain), at);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.02);
+    }
+    src.connect(filter).connect(g).connect(this._musicGain);
+    src.start(at, Math.random() * 0.2, e.dur + 0.05);
+    src.stop(at + e.dur + 0.08);
   }
 
   /** 排一个音符（音高、包络都现场算，不需要任何音频素材） */
   _playNote(e, at) {
     const ctx = this.ctx;
     if (!ctx || !this._musicGain) return;
+    if (e.noise) this._playNoise(e, at);
+    // 纯噪声的打击乐（踩镲 / 拍手）到这里就结束了
+    if (e.kind === 'hat' || e.kind === 'clap') return;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     osc.type = e.type || 'sine';
     osc.frequency.setValueAtTime(e.freq, at);
     if (e.slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(40, e.slideTo), at + e.dur);
+    // 军鼓是「噪声 + 一点音高」，所以振荡器音量压低，主体交给噪声
+    const peak = e.kind === 'snare' ? e.gain * 0.5 : e.gain;
     g.gain.setValueAtTime(0.0001, at);
-    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, e.gain), at + 0.012);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), at + 0.012);
     g.gain.exponentialRampToValueAtTime(0.0001, at + e.dur);
     osc.connect(g).connect(this._musicGain);
     osc.start(at);

@@ -524,14 +524,32 @@ console.log('\n[5] 平板支撑计时');
   ok('记录到开始计时事件', r.holds.some((h) => h.action === 'start'));
 }
 {
+  // 判定放宽：塌腰也继续计时（只出声纠正 + 质量分打折），不再打断
   const det = fresh('plank');
   const r = makeRunner(det);
   r.run([{ pose: plankPose(), ms: 5000 }]);
   r.run([{ pose: plankPose({ sag: 0.16 }), ms: 3000 }]); // 塌腰 3 秒
-  ok('塌腰时暂停计时', det.holdMs / 1000 < 5.6, `实际 ${(det.holdMs / 1000).toFixed(2)}`);
+  ok('塌腰时继续计时（判定放宽）', det.holdMs / 1000 > 7.4, `实际 ${(det.holdMs / 1000).toFixed(2)}`);
   ok('提示塌腰', r.cues.some((c) => c.code === 'sag'));
+  ok('塌腰时质量分下降（进度条变短）', det.depthPct < 100, String(Math.round(det.depthPct)));
   r.run([{ pose: plankPose(), ms: 3000 }]);
-  near('恢复后继续累计 ≈ 8 秒', det.holdMs / 1000, 8, 0.6);
+  near('恢复标准姿势后累计 ≈ 11 秒', det.holdMs / 1000, 11, 0.8);
+}
+{
+  // 大体撑对（稍微不够直/偏一点）也要计时：这是用户明确要求放宽的地方
+  const det = fresh('plank');
+  const r = makeRunner(det);
+  r.run([{ pose: plankPose({ bodyTilt: 70, hip: { x: 0.95, y: 0.78 } }), ms: 5000 }]);
+  ok('略不标准的支撑也计时', det.holdMs / 1000 > 4.4, `实际 ${(det.holdMs / 1000).toFixed(2)}`);
+}
+{
+  // 明显塌腰：仍然计时（只是出声纠正 + 质量分打折），不再打断
+  const det = fresh('plank');
+  const r = makeRunner(det);
+  r.run([{ pose: plankPose({ sag: 0.30 }), ms: 5000 }]);
+  ok('明显塌腰也计时', det.holdMs / 1000 > 4.4, `实际 ${(det.holdMs / 1000).toFixed(2)}`);
+  ok('并且语音提示塌腰', r.cues.some((c) => c.code === 'sag'), r.cues.map((c) => c.code).join(','));
+  ok('质量分明显下降', det.depthPct < 100, String(Math.round(det.depthPct)));
 }
 {
   const det = fresh('plank');

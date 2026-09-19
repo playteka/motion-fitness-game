@@ -161,6 +161,7 @@ export default {
     skeletonOff: 'Esqueleto oculto; solo se ve la imagen de la cámara.',
     musicOn: 'Música de fondo alegre activada.',
     musicOff: 'Música de fondo desactivada.',
+    musicTrack: 'Música de fondo cambiada a «{name}»',
     modelReady: 'Modelo listo. Elige el ejercicio, entra en el contorno punteado para completar la calibración y empieza a entrenar.',
     modelSwitched: 'Modelo «{model}» activado.',
     modelSwitchFail: 'No se pudo cambiar de modelo: {msg}',
@@ -615,6 +616,7 @@ export default {
     model: 'Modelo de detección',
     modelHint: 'El ligero va más fluido y el completo es más preciso (el primer cambio descarga unas decenas de MB; después funciona sin conexión)',
     sound: 'Sonido',
+    musicTrack: '🎵 Pista de fondo',
     cameraGroup: 'Imagen y detección',
     view: 'Interfaz',
   },
@@ -687,6 +689,16 @@ export default {
   },
 
   /* ---------------- Correcciones en directo (cues) ---------------- */
+  /* ---------------- 背景音乐曲目 ---------------- */
+  music: {
+    track: {
+      cityRun: 'Carrera urbana',
+      neonPulse: 'Pulso de neón',
+      sunriseFunk: 'Funk del amanecer',
+      powerDrive: 'Impulso total',
+    },
+  },
+
   cues: {
     squat: {
       valgus: 'No metas las rodillas hacia dentro: ábrelas hacia la punta de los pies',

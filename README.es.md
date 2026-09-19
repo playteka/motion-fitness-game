@@ -61,8 +61,9 @@ Es 100 % front-end: el modelo de postura de MediaPipe y el wasm están en la car
 - **Voz con conteo + sonidos**: cada paso cumplido suena con un aviso ascendente; la primera vez que lo cumples, la voz lo anuncia, y cada 50 puntos te canta la puntuación.
 - **La voz ante todo**: si no te encuentra te llama, dice en voz alta qué paso del movimiento toca y cuánto te falta, y corrige al instante cuando la postura no es correcta,
   y los pasos cumplidos, el conteo, la puntuación y el resumen de la serie también se dicen en voz alta: casi no hace falta mirar la pantalla.
-- **🎶 Música de fondo alegre**: una BGM en bucle integrada (sintetizada en vivo: no ocupa espacio ni necesita internet), y en ⚙️ Ajustes tienes el interruptor «🎶 Música de fondo» para activarla o desactivarla cuando quieras;
-  al anunciar un consejo en voz alta, la música baja automáticamente para no tapar la voz.
+- **🎶 Cuatro pistas de fondo a elegir**: todas sintetizadas al vuelo (no ocupan espacio ni necesitan conexión): elige una en «🎵 Pista de fondo» dentro de los ajustes:
+  **Carrera urbana** (132 BPM, ligera y con swing) / **Pulso de neón** (144 BPM, electrónica a cuatro tiempos) / **Funk del amanecer** (122 BPM, síncopa funk) / **Impulso total** (152 BPM, rock que empuja).
+  La batería está de verdad sintetizada (bombo, caja, charles, palmas), así que el ritmo suena mucho más marcado, y la música se baja sola mientras la voz habla.
 - **🦴 Esqueleto**: puedes ocultarlo y dejar solo la imagen de la cámara; las anotaciones de ángulos se activan por separado.
 - **Anillo de progreso del objetivo, mejor marca e historial de entrenamientos** (se guardan en el navegador).
 - **Funciona sin conexión**: el modelo y el wasm están en local, así que funciona sin internet; la imagen no se sube a ningún sitio.
@@ -490,11 +491,14 @@ En la sentadilla se usa la **vista frontal** y la profundidad se mide con «cuá
 | Paso | Condición | Puntos |
 |---|---|---|
 | ① Apoya los antebrazos bajo los hombros y levanta el cuerpo | Hombros separados del suelo + manos o antebrazos apoyados + ángulo de codo válido | +8 |
-| ② Cabeza, espalda, cadera y tobillos en línea recta | Ángulo del cuerpo en línea ≥158° + sin hundir la lumbar ni levantar el trasero | +12 |
+| ② Cabeza, espalda, cadera y tobillos en línea recta | Ángulo del cuerpo en línea ≥148° + sin hundir la lumbar ni levantar el trasero | +12 |
 | ③ Aguanta 3 segundos sin moverte | Mantener 3 segundos completos | +10 |
 | ④ Aguanta 10 segundos sin moverte | Mantener 10 segundos completos | +15 |
 | ⑤ Aguanta 30 segundos sin moverte | Mantener 30 segundos completos | +25 |
 | ⏱ Cada segundo que aguantas | Mientras la postura sea válida | +1/s |
+> **La plancha se evalúa de forma permisiva**: el cronómetro arranca en cuanto «el cuerpo está más o menos plano + los hombros separados del suelo + las manos o antebrazos cerca del suelo».
+> Hundir la lumbar, levantar el trasero, no estar perfectamente alineado o tener las rodillas bajas solo provocan **una corrección por voz y un descuento de calidad** — ya no pausan el cronómetro;
+> solo «no has llegado a hacer la plancha» (de pie, tumbado sin más) detiene el tiempo. Lo mismo vale para el resto de ejercicios cronometrados: los pequeños temblores dentro del margen de 1,2 s no interrumpen.
 
 ### Sobre los ejercicios que no están en la lista
 
@@ -618,7 +622,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cinco suites juntas (879 pruebas)
+npm test                       # las cinco suites juntas (902 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino escrito a fuego en el código / estructura de los cuatro README
 npm run test:detectors         # lógica de detección y puntuación de los cinco detectores escritos a mano (con esqueletos sintéticos)
 npm run test:engines           # motores de reconocimiento genéricos (flexión-extensión / alternancia / giro / movimiento por fases / cronómetro + control de postura)
@@ -630,10 +634,10 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | Archivo de prueba | N.º de pruebas | Cobertura |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
-| `tests/test-detectors.mjs` | 217 | Conteo, cronómetro, puntos por paso y orden de puntuación de los cinco detectores escritos a mano, tanto con el ejercicio bien hecho como con todo tipo de errores, además de las comprobaciones de la calibración previa |
+| `tests/test-detectors.mjs` | 222 | Conteo, cronómetro, puntos por paso y orden de puntuación de los cinco detectores escritos a mano, tanto con el ejercicio bien hecho como con todo tipo de errores, además de las comprobaciones de la calibración previa |
 | `tests/test-engines.mjs` | 138 | Motores genéricos: un ciclo y una repetición, permisivo frente a estricto, los límites del balanceo y de la velocidad excesiva, control de postura, despegue del suelo en los saltos, alternancia de lados, secuencia completa y pausa y reanudación del cronómetro |
 | `tests/test-page.mjs` | 310 | Cableado del DOM, importación y exportación de módulos, recursos estáticos, lista de categorías de los 22 ejercicios e integridad de los planes de puntuación |
-| `tests/test-app.mjs` | 182 | Arranque del `app.js` real, renderizado de la página de inicio, ventana de ajustes, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
+| `tests/test-app.mjs` | 200 | Arranque del `app.js` real, renderizado de la página de inicio, ventana de ajustes, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
 
 ---
 

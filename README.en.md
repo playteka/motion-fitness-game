@@ -61,8 +61,9 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - **Spoken counting in the selected language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
 - **Voice-first throughout**: it calls out when it can't find you, says which form step comes next and how far you still have to go, and corrects bad form the moment it happens,
   while form steps, spoken counts, scores and the set summary are all voiced too — so you barely need to watch the screen.
-- **🎶 Cheerful background music**: a built-in looped BGM (synthesised live — it takes up no space and needs no internet), with a “🎶 Music” toggle in settings;
-  the music is turned down automatically while a cue is spoken, so it never fights the voice.
+- **🎶 Four selectable background tracks**: all synthesised live (no space taken, no internet needed) — pick one under “🎵 Background track” in the settings:
+  **City Run** (132 BPM, light and swinging) / **Neon Pulse** (144 BPM, four-on-the-floor electronic) / **Sunrise Funk** (122 BPM, funky syncopation) / **Power Drive** (152 BPM, driving rock).
+  The drum kit is really synthesised (kick, snare, hats, claps), so the rhythm is much punchier than before, and the music ducks automatically while the coach is speaking.
 - **🦴 Skeleton toggle**: hide the skeleton overlay and keep just the camera view; the angle labels toggle independently.
 - **Goal progress ring, best scores and workout history** (saved locally in your browser).
 - **Works offline**: the model and wasm are local files, so it runs with no internet at all — and no video is ever uploaded.
@@ -490,11 +491,14 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 | Form step | How it's judged | Points |
 |---|---|---|
 | ① Forearms under your shoulders, push your body up | Shoulders off the floor + hands on the floor + legal elbow angle | +8 |
-| ② Head, back, hips and ankles in one straight line | Body line angle ≥158° + no sagging, no piking | +12 |
+| ② Head, back, hips and ankles in one straight line | Body line angle ≥148° + no sagging, no piking | +12 |
 | ③ Hold steady for 3 seconds | Held for a full 3 seconds | +10 |
 | ④ Hold steady for 10 seconds | Held for a full 10 seconds | +15 |
 | ⑤ Hold steady for 30 seconds | Held for a full 30 seconds | +25 |
 | ⏱ For every second you hold | While your form is valid | +1/sec |
+> **The plank is judged leniently**: the timer starts as soon as your body is roughly flat, your shoulders are off the floor and your hands or forearms are near the floor.
+> A sagging or piked hip, a body that isn't perfectly straight and low knees only trigger a **spoken correction plus a quality discount** — they no longer pause the timer;
+> only “you never got into a plank” (standing, lying flat) stops the clock. The same goes for the other hold exercises: small wobbles within the 1.2 s grace period do not interrupt.
 
 ### About the exercises that are not in this list
 
@@ -618,7 +622,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all five suites (879 cases)
+npm test                       # run all five suites (902 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / README structure of all four files
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -630,10 +634,10 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
-| `tests/test-detectors.mjs` | 217 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
+| `tests/test-detectors.mjs` | 222 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
 | `tests/test-engines.mjs` | 138 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 182 | Startup with the real `app.js`, home-page rendering, the settings modal, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
+| `tests/test-app.mjs` | 200 | Startup with the real `app.js`, home-page rendering, the settings modal, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
 
 ---
 

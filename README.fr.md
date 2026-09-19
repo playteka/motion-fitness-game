@@ -66,8 +66,9 @@ Tout est côté client : le modèle de posture MediaPipe et le wasm sont stocké
 - **Annonce vocale du comptage + effets sonores** : chaque étape validée est saluée par une gamme montante, la première réussite d'une étape est annoncée à voix haute, et le score est annoncé tous les 50 points.
 - **La voix avant tout** : s'il ne te trouve pas, il t'appelle, il annonce quelle étape du mouvement faire ensuite et combien il t'en reste, et il corrige aussitôt une posture incorrecte,
   et les étapes validées, le comptage, le score et le bilan de la série sont eux aussi annoncés à voix haute — tu n'as presque pas besoin de regarder l'écran.
-- **🎶 Une musique de fond entraînante** : une musique de fond en boucle intégrée (synthétisée sur place : aucun espace occupé et pas besoin d'internet), avec l'interrupteur « 🎶 Musique de fond » dans les ⚙️ Réglages à activer ou couper à tout moment ;
-  le volume baisse automatiquement pendant l'annonce d'un conseil, pour ne jamais couvrir la voix.
+- **🎶 Quatre pistes de fond au choix** : toutes synthétisées en direct (aucun espace occupé, aucune connexion requise) — choisis-en une sous « 🎵 Piste de fond » dans les ⚙️ Réglages :
+  **Course urbaine** (132 BPM, légère et swinguée) / **Pulsation néon** (144 BPM, électro quatre temps) / **Funk de l'aube** (122 BPM, syncope funk) / **Pleine puissance** (152 BPM, rock qui pousse).
+  La batterie est réellement synthétisée (grosse caisse, caisse claire, charleys, claps) : le rythme est bien plus marqué qu'avant, et la musique baisse automatiquement pendant que la voix parle.
 - **🦴 Interrupteur du squelette** : permet de masquer le squelette pour ne garder que l'image de la caméra ; les annotations d'angles s'activent séparément.
 - **Anneau de progression vers l'objectif, meilleur score et historique d'entraînement** (conservés en local dans le navigateur).
 - **Fonctionne hors ligne** : le modèle et le wasm sont en local, tout marche même sans connexion ; aucune image n'est envoyée.
@@ -496,11 +497,14 @@ Le squat se filme **de face** ; la profondeur se juge sur le rapport « écart d
 | Étape technique | Condition de validation | Points |
 |---|---|---|
 | ① Avant-bras sous les épaules, décolle le corps du sol | Épaules décollées + mains au sol + angle du coude valide | +8 |
-| ② Tête, dos, hanches et chevilles alignés | Alignement du corps ≥ 158° + sans affaissement du bas du dos ni fesses relevées | +12 |
+| ② Tête, dos, hanches et chevilles alignés | Alignement du corps ≥ 148° + sans affaissement du bas du dos ni fesses relevées | +12 |
 | ③ Tiens la position 3 secondes | Position tenue 3 secondes complètes | +10 |
 | ④ Tiens la position 10 secondes | Position tenue 10 secondes complètes | +15 |
 | ⑤ Tiens la position 30 secondes | Position tenue 30 secondes complètes | +25 |
 | ⏱ Chaque seconde tenue | Tant que la position reste valide | +1/seconde |
+> **La planche est jugée de façon permissive** : le chrono démarre dès que « le corps est à peu près à plat + les épaules décollées + les mains ou avant-bras près du sol ».
+> Le bas du dos qui s’affaisse, les fesses relevées, un alignement imparfait ou des genoux trop bas ne déclenchent plus qu’**une correction vocale et une réduction du score** — ils ne mettent plus le chrono en pause ;
+> seul « tu n’es pas du tout en planche » (debout, allongé sans rien faire) arrête le temps. Idem pour les autres exercices chronométrés : les petits tremblements dans la marge de 1,2 s ne coupent pas le temps.
 
 ### À propos des exercices absents de cette liste
 
@@ -624,7 +628,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les cinq suites d'un coup (879 tests)
+npm test                       # les cinq suites d'un coup (902 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources / structure des quatre README
 npm run test:detectors         # détection et logique de score des cinq détecteurs écrits à la main (squelettes synthétiques)
 npm run test:engines           # moteurs de détection génériques (flexion / alternance / rotation / plusieurs phases / chrono + garde de posture)
@@ -636,10 +640,10 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | Fichier de test | Nombre de tests | Contenu couvert |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
-| `tests/test-detectors.mjs` | 217 | Comptage, chronométrage, points par étape et ordre de validation des cinq détecteurs écrits à la main (mouvements corrects comme erronés), ainsi que la logique de validation du calibrage |
+| `tests/test-detectors.mjs` | 222 | Comptage, chronométrage, points par étape et ordre de validation des cinq détecteurs écrits à la main (mouvements corrects comme erronés), ainsi que la logique de validation du calibrage |
 | `tests/test-engines.mjs` | 138 | Moteurs génériques : une répétition par cycle, souple vs strict, cas limites des balancements et des mouvements trop rapides, garde de posture, décollage des pieds, alternance gauche-droite, enchaînement complet, pause et reprise du chrono |
 | `tests/test-page.mjs` | 310 | Câblage du DOM, imports et exports de modules, ressources statiques, catalogue des 22 exercices par catégorie et exhaustivité des barèmes |
-| `tests/test-app.mjs` | 182 | Démarrage du vrai `app.js`, rendu de la page d'accueil, fenêtre de réglages, déroulé du calibrage, changement d'exercice, score, sons, bilan, changement de langue |
+| `tests/test-app.mjs` | 200 | Démarrage du vrai `app.js`, rendu de la page d'accueil, fenêtre de réglages, déroulé du calibrage, changement d'exercice, score, sons, bilan, changement de langue |
 
 ---
 

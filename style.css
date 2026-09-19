@@ -979,6 +979,34 @@ kbd {
 .field.wide select { min-width: 190px; }
 .toggle-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* 背景音乐选曲：一行一首，标出 BPM，选中的高亮 */
+.modal-group-title--sub { margin-top: 16px; }
+.track-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+.track-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px 12px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease;
+}
+.track-btn:hover { border-color: rgba(52, 229, 196, 0.5); transform: translateY(-1px); }
+.track-btn.active {
+  border-color: rgba(52, 229, 196, 0.8);
+  background: rgba(52, 229, 196, 0.12);
+  box-shadow: 0 0 0 1px rgba(52, 229, 196, 0.35) inset;
+}
+.track-btn .track-name { font-weight: 600; }
+.track-btn .track-meta { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
 /* 小屏 */
 @media (max-width: 720px) {
   .app { padding: 12px; }

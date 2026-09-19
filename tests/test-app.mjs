@@ -1059,40 +1059,63 @@ console.log('\n[10] 声音自检');
 
 console.log('\n[11] 背景音乐');
 {
-  const { musicEvents, musicLoopSeconds, mtof, MUSIC } = await import('../src/audio.js');
+  const {
+    musicEvents, musicLoopSeconds, mtof, MUSIC, TRACKS, DEFAULT_TRACK, getTrack,
+  } = await import('../src/audio.js');
   const ev = musicEvents();
   const count = (k) => ev.filter((e) => e.kind === k).length;
 
   ok('mtof 换算正确（A4 = 440Hz）', mtof(69) === 440 && Math.abs(mtof(60) - 261.63) < 0.01);
-  ok('循环是 4 小节 I–V–vi–IV（C–G–Am–F）',
-    MUSIC.bars.length === 4
-    && MUSIC.bars.map((b) => b.root).join(',') === '48,43,45,41',
-    MUSIC.bars.map((b) => b.root).join(','));
-  ok('一个循环 16 拍、约 8.3 秒',
+  ok('至少 4 首可选曲目，id 唯一且有名字键', TRACKS.length >= 4
+    && new Set(TRACKS.map((m) => m.id)).size === TRACKS.length
+    && TRACKS.every((m) => typeof m.nameKey === 'string' && m.nameKey.startsWith('music.track.')),
+  TRACKS.map((m) => m.id).join(','));
+  ok('默认曲子是列表里的第一首', DEFAULT_TRACK === TRACKS[0].id && getTrack('nope').id === TRACKS[0].id);
+  ok('每首曲子都是 4 小节、带和弦进行与鼓组/贝斯/主旋律图案',
+    TRACKS.every((m) => m.progression.length === 4
+      && m.drums && m.drums.kick.length > 0 && m.drums.snare.length > 0 && m.drums.hat.length > 0
+      && m.bass.length >= 4 && m.lead.length >= 4
+      && ['kick', 'snare', 'hat'].every((k) => Array.isArray(m.drums[k]))));
+  ok('四首曲子的速度与和声进行各不相同（不是同一首换个名字）',
+    new Set(TRACKS.map((m) => m.bpm)).size >= 3
+    && new Set(TRACKS.map((m) => m.progression.map((b) => b.root).join('-'))).size === TRACKS.length,
+    TRACKS.map((m) => `${m.id}:${m.bpm}`).join(' '));
+
+  // 每首曲子的事件都要：排好序、落在循环内、音量不刺耳、音高在可听范围
+  for (const track of TRACKS) {
+    const e2 = musicEvents(track);
+    const loop = musicLoopSeconds(track);
+    ok(`${track.id}：事件都在一个循环内且有序`,
+      e2.length > 60 && e2[0].t === 0 && e2.every((x, i) => i === 0 || x.t >= e2[i - 1].t)
+      && e2.every((x) => x.t >= 0 && x.t < loop + 0.05),
+      `${e2.length} 个事件 / 循环 ${loop.toFixed(2)}s`);
+    ok(`${track.id}：有鼓组（底鼓+军鼓+踩镲）与贝斯`,
+      ['kick', 'snare', 'hat', 'bass'].every((k) => e2.some((x) => x.kind === k)));
+    ok(`${track.id}：单音音量 ≤0.25、音高在 40Hz~12kHz`,
+      e2.every((x) => x.gain <= 0.25 && x.freq >= 40 && x.freq <= 12000));
+  }
+
+  ok('循环长度 = 16 拍（4 小节）',
     Math.abs(musicLoopSeconds() - 16 * (60 / MUSIC.bpm)) < 1e-9,
     `${musicLoopSeconds().toFixed(2)}s`);
-  ok('音符事件确定性：32 旋律 + 16 低音 + 8 和弦点缀 + 32 踩镲 + 12 底鼓 + 12 军鼓',
-    count('lead') === 32 && count('bass') === 16 && count('stab') === 8 && count('hat') === 32
-    && count('kick') === 12 && count('snare') === 12,
-    JSON.stringify({ lead: count('lead'), bass: count('bass'), stab: count('stab'), hat: count('hat'), kick: count('kick'), snare: count('snare') }));
   ok('事件按时间排好序，且从 0 开始',
     ev[0].t === 0 && ev.every((e, i) => i === 0 || e.t >= ev[i - 1].t));
-  ok('所有音高都在可听范围内（40Hz~12kHz）',
-    ev.every((e) => e.freq >= 40 && e.freq <= 12000),
-    `${Math.min(...ev.map((e) => e.freq)).toFixed(1)}~${Math.max(...ev.map((e) => e.freq)).toFixed(1)}`);
-  ok('单个音符音量不超过 0.15（不刺耳、也不会盖住语音）',
-    ev.every((e) => e.gain <= 0.15), String(Math.max(...ev.map((e) => e.gain))));
-  // 「更活泼」的三条特征：切分底鼓、摇摆、以及足够快的速度
+  ok('默认曲目包含明亮的旋律、低音与鼓组',
+    count('lead') > 0 && count('bass') > 0 && count('kick') > 0 && count('snare') > 0 && count('hat') > 0,
+    JSON.stringify({ lead: count('lead'), bass: count('bass'), kick: count('kick'), snare: count('snare'), hat: count('hat') }));
+  ok('单个音符音量不超过 0.25（不刺耳、也不会盖住语音）',
+    ev.every((e) => e.gain <= 0.25), String(Math.max(...ev.map((e) => e.gain))));
+
+  // 「节奏感鲜明」的三条特征：① 重拍清晰 ② 有切分或反拍重音 ③ 拍速在运动区间
   const beat = 60 / MUSIC.bpm;
-  ok('速度 132 BPM（比原来更欢快）', MUSIC.bpm === 132, String(MUSIC.bpm));
   const kicks = ev.filter((e) => e.kind === 'kick').map((e) => e.t / beat);
-  ok('底鼓有切分（有的落在拍与拍之间，不只是死板的正拍）',
-    kicks.length === 12 && kicks.some((t) => Math.abs(t - Math.round(t)) > 0.3),
+  ok('底鼓有切分（不只是死板的正拍）',
+    kicks.some((t) => Math.abs(t - Math.round(t)) > 0.3),
     kicks.slice(0, 6).map((t) => t.toFixed(2)).join(','));
-  const hatPhase = ev.filter((e) => e.kind === 'hat').map((e) => (e.t / beat) % 1);
-  ok('八分音符带摇摆（反拍落在半拍之后，而不是正中 0.5）',
-    hatPhase.some((p) => p > 0.55) && !hatPhase.some((p) => Math.abs(p - 0.5) < 1e-6),
-    hatPhase.slice(0, 4).map((p) => p.toFixed(3)).join(','));
+  ok('有拍手/反拍重音这类「推着动」的元素',
+    TRACKS.every((m) => (m.drums.clap || []).length > 0 || (m.drums.hatAccent || []).length > 0));
+  ok('每首曲子都在运动可用的拍速区间（110~160 BPM）',
+    TRACKS.every((m) => m.bpm >= 110 && m.bpm <= 160), TRACKS.map((m) => m.bpm).join(','));
   const musicVolume = windowStub.__mfg.audio.musicVolume;
   const duckVolume = windowStub.__mfg.audio.musicDuckVolume;
   ok('音乐音量明显调大（≥0.25），且念要领时仍会压低',
@@ -1114,6 +1137,22 @@ console.log('\n[11] 背景音乐');
   ok('控制台里没有因音乐产生的错误',
     !api.state.consoleErrors.some((e) => /music/i.test(e)),
     api.state.consoleErrors.slice(-2).join(' | '));
+
+  // ---- 选曲界面：设置弹窗里能选，选了会记住，并且会自动把音乐打开 ----
+  const trackBtns = documentStub.querySelectorAll('.track-btn');
+  ok('设置弹窗里列出了全部曲目', trackBtns.length === TRACKS.length,
+    `实际 ${trackBtns.length} 个`);
+  const pick = trackBtns.find((b) => b.dataset.track === TRACKS[2].id);
+  musicBtn.setAttribute('aria-pressed', 'false');
+  api.state.settings.music = false;
+  pick.dispatch('click');
+  ok('点某首曲子会切换曲目并记住',
+    api.state.settings.musicTrack === TRACKS[2].id && api.audio.trackId === TRACKS[2].id,
+    `${api.state.settings.musicTrack}`);
+  ok('选曲子会自动打开背景音乐（否则选了也听不到）',
+    api.state.settings.music === true && api.audio.musicOn === true);
+  api.selectMusicTrack(DEFAULT_TRACK);
+  ok('可以切回默认曲目', api.state.settings.musicTrack === DEFAULT_TRACK);
 }
 
 /* ------------------------------------------------------------------ *

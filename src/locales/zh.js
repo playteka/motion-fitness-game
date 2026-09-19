@@ -160,6 +160,8 @@ export default {
     skeletonOff: '已隐藏火柴人骨架，只保留摄像头画面。',
     musicOn: '已开启欢快的背景音乐。',
     musicOff: '已关闭背景音乐。',
+    musicTrack: '背景音乐已切换到「{name}」',
+    musicTrack: '背景音乐已切换到「{name}」',
     modelReady: '模型就绪。选好动作后进入虚线轮廓完成校准，再开始训练。',
     modelSwitched: '已切换到「{model}」模型。',
     modelSwitchFail: '模型切换失败：{msg}',
@@ -615,6 +617,7 @@ export default {
     model: '识别模型',
     modelHint: '轻量更流畅，完整更准（首次切换需要下载几十 MB，之后离线可用）',
     sound: '声音',
+    musicTrack: '🎵 背景音乐曲目',
     cameraGroup: '画面与识别',
     view: '界面',
   },
@@ -684,7 +687,27 @@ export default {
   },
 
 
+  /* ---------------- 背景音乐曲目 ---------------- */
+  music: {
+    track: {
+      cityRun: '城市跑动',
+      neonPulse: '霓虹脉冲',
+      sunriseFunk: '晨光放克',
+      powerDrive: '动力驱动',
+    },
+  },
+
   /* ---------------- 动作纠正提示（cue） ---------------- */
+  /* ---------------- 背景音乐曲目 ---------------- */
+  music: {
+    track: {
+      cityRun: '城市跑动',
+      neonPulse: '霓虹脉冲',
+      sunriseFunk: '晨光放克',
+      powerDrive: '动力驱动',
+    },
+  },
+
   cues: {
     squat: {
       valgus: '膝盖别内扣，向外打开对准脚尖',

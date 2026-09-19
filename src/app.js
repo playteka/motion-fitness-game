@@ -11,7 +11,7 @@ import { LandmarkSmoother, toMetric, clamp } from './geometry.js';
 import { computeFrame } from './metrics.js';
 import { PoseEngine, Camera } from './pose-engine.js';
 import { PoseRenderer } from './render.js';
-import { AudioKit } from './audio.js';
+import { AudioKit, TRACKS, getTrack, DEFAULT_TRACK } from './audio.js';
 import { Calibrator, requiredView } from './calibration.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS = {
   voice: true,
   sfx: true,
   music: true,
+  musicTrack: DEFAULT_TRACK,   // 背景音乐选哪首（见 audio.js 的 TRACKS）
   strict: false,   // 默认宽松：大体做到就算次数（想严格可以自己开）
   showAngles: true,
   showSkeleton: true,
@@ -233,7 +234,40 @@ function setRoute(hash) {
   } catch { /* 某些环境（自动化桩）没有 history，忽略即可 */ }
 }
 
-/** 切到主页（结束正在进行的训练，避免后台空跑） */
+/** 曲子列表（设置弹窗里选背景音乐） */
+function buildMusicTracks() {
+  const box = $('musicTracks');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const track of TRACKS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'track-btn';
+    btn.dataset.track = track.id;
+    const on = track.id === state.settings.musicTrack;
+    btn.setAttribute('aria-pressed', String(on));
+    if (on) btn.classList.add('active');
+    btn.innerHTML = `<span class="track-name">${t(track.nameKey)}</span>`
+      + `<span class="track-meta">${track.bpm} BPM</span>`;
+    btn.addEventListener('click', () => selectMusicTrack(track.id));
+    box.appendChild(btn);
+  }
+}
+
+/** 选一首曲子：立刻生效（顺便把背景音乐打开，否则选了也听不到） */
+function selectMusicTrack(id) {
+  const next = audio.setTrack(id);
+  state.settings.musicTrack = next;
+  if (!state.settings.music) {
+    state.settings.music = true;
+    $('btnMusic').setAttribute('aria-pressed', 'true');
+    audio.setMusic(true);
+  }
+  saveSettings();
+  buildMusicTracks();
+  setCueLine(t('status.musicTrack', { name: t(getTrack(next).nameKey) }));
+}
+
 function showHome({ syncRoute = true } = {}) {
   if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
     stopSession('switch');
@@ -1381,7 +1415,8 @@ function refreshForLang() {
   renderHistory();
   updateButtons();
   if (state.calib) renderCalibration(state.calib);
-  buildHome();      // 主页分类/动作名也要跟着换语言
+  buildHome();        // 主页分类/动作名也要跟着换语言
+  buildMusicTracks(); // 曲子名也要跟着换语言
   setCueLine('');
 }
 
@@ -1486,6 +1521,8 @@ function bindUI() {
   }
   audio.voiceOn = state.settings.voice;
   audio.sfxOn = state.settings.sfx;
+  // 用上次选的曲子（selectExercise 之前也来得及，因为音乐是这里才启动的）
+  audio.setTrack(state.settings.musicTrack || DEFAULT_TRACK);
 
   // ---- 主页 / 设置弹窗 ----
   $('btnHome').addEventListener('click', () => showHome());
@@ -1674,6 +1711,7 @@ function boot() {
   setLang(detectLang(), { persist: false });
   applyI18n(document);
   buildLanguageSelect();
+  buildMusicTracks();
   bindUI();
   // 先按地址栏路由定位：带 ?exercise= / ?autostart / ?probe 时直接进动作页（自动化与书签要用），
   // 地址栏是 #/ex/<id> 时进那个动作，否则停在主页让用户挑分类与动作。
@@ -1714,4 +1752,5 @@ window.__mfg = {
   calibrationStep, renderCalibration, syncFullscreenSupport, finishCountdown, updateStatusHint,
   setTarget, changeLang, refreshForLang,
   buildHome, showHome, showWorkout, openExercise, openSettings, closeSettings,
+  buildMusicTracks, selectMusicTrack,
 };

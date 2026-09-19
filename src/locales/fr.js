@@ -160,6 +160,7 @@ export default {
     skeletonOff: 'Squelette masqué : seule l’image de la caméra reste visible.',
     musicOn: 'Musique de fond joyeuse activée.',
     musicOff: 'Musique de fond désactivée.',
+    musicTrack: 'Musique de fond passée à « {name} »',
     modelReady: 'Modèle prêt. Choisis ton exercice, entre dans la silhouette en pointillés pour terminer le calibrage, puis lance la séance.',
     modelSwitched: 'Modèle « {model} » activé.',
     modelSwitchFail: 'Échec du changement de modèle : {msg}',
@@ -617,6 +618,7 @@ export default {
     model: 'Modèle de détection',
     modelHint: 'Le léger est plus fluide, le complet plus précis (le premier changement télécharge quelques dizaines de Mo, puis tout fonctionne hors ligne)',
     sound: 'Son',
+    musicTrack: '🎵 Piste de fond',
     cameraGroup: 'Image et détection',
     view: 'Interface',
   },
@@ -689,6 +691,16 @@ export default {
   },
 
   /* ---------------- Corrections techniques (cue) ---------------- */
+  /* ---------------- 背景音乐曲目 ---------------- */
+  music: {
+    track: {
+      cityRun: 'Course urbaine',
+      neonPulse: 'Pulsation néon',
+      sunriseFunk: 'Funk de l’aube',
+      powerDrive: 'Pleine puissance',
+    },
+  },
+
   cues: {
     squat: {
       valgus: 'Les genoux ne rentrent pas : pousse-les vers l’extérieur, dans l’axe des pieds',

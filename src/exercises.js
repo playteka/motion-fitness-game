@@ -590,45 +590,68 @@ class GluteBridgeDetector extends DetectorBase {
  * 计时类：平板支撑
  * ------------------------------------------------------------------ */
 
+/**
+ * 平板支撑的判定（**整体放宽**：大体撑对了就开始计时）。
+ *
+ * 分两档：
+ *   HARD（必须满足，否则暂停计时）：身体基本放平、肩离地、手/小臂在地面附近
+ *   SOFT（只是语音纠正，不打断计时）：身体不够直、塌腰/撅臀、膝盖偏低、肘角读数模糊
+ * 这样「撑得不太标准」也能一直计时（分数照常按性价比打折），
+ * 而「根本没撑起来」（站着、趴在地上）才不计时。
+ */
 const PLANK = {
-  torsoIncl: 42,
-  bodyStraight: 142,   // 身体成线（原来 158/146，稍微塌一点就不算）
-  shoulderClearMin: 0.14,
-  handOnFloorMax: 0.45,
-  kneeClearMin: 0.03,
-  elbowBentMax: 122,
-  elbowStraightMin: 148,
+  // ---- HARD：撑起来了才开始计时 ----
+  torsoIncl: 38,          // 身体接近水平（原来 42）
+  shoulderClearMin: 0.10, // 肩离地（原来 0.14）
+  handOnFloorMax: 0.55,   // 手/小臂在地面附近（原来 0.45）
+  // ---- SOFT：只提示不打断 ----
+  bodyStraight: 132,      // 身体成线（原来 142）
+  hipDevMax: 0.20,        // 塌腰 / 撅臀的容忍度（原来 0.14）
+  kneeClearMin: 0.02,     // 膝离地（原来 0.03）
+  elbowBentMax: 132,      // 低于此值算「小臂撑」（原来 122）
+  elbowStraightMin: 140,  // 高于此值算「直臂撑」（原来 148）
 };
 
 class PlankDetector extends HoldDetector {
   checkHold(f) {
+    // ---- 必须项：没撑起来就不计时 ----
     if (f.shoulderClear < PLANK.shoulderClearMin) {
       return { valid: false, reason: 'lift' };
     }
     if (f.torsoIncl < PLANK.torsoIncl) {
       return { valid: false, reason: 'pose' };
     }
-    if (f.hipLineDev > 0.14) {
-      return { valid: false, reason: 'sag' };
-    }
-    if (f.hipLineDev < -0.14) {
-      return { valid: false, reason: 'pike' };
-    }
-    if (f.bodyStraight < PLANK.bodyStraight) {
-      return { valid: false, reason: 'straight' };
-    }
     if (f.wristClear > PLANK.handOnFloorMax) {
       return { valid: false, reason: 'hands' };
     }
+    // ---- 建议项：出声纠正，但计时继续 ----
+    if (f.hipLineDev > PLANK.hipDevMax) {
+      this.cue('sag', null, 'warn', this._lastT || 0, 6000);
+    } else if (f.hipLineDev < -PLANK.hipDevMax) {
+      this.cue('pike', null, 'warn', this._lastT || 0, 6000);
+    }
+    if (f.bodyStraight < PLANK.bodyStraight) {
+      this.cue('straight', null, 'warn', this._lastT || 0, 6000);
+    }
     if (f.kneeClear < PLANK.kneeClearMin) {
-      return { valid: false, reason: 'knees' };
+      this.cue('knees', null, 'warn', this._lastT || 0, 6000);
     }
     const bent = f.elbowAngle < PLANK.elbowBentMax;
     const straight = f.elbowAngle > PLANK.elbowStraightMin;
     if (!bent && !straight) {
-      return { valid: false, reason: 'elbow' };
+      this.cue('elbow', null, 'info', this._lastT || 0, 9000);
     }
-    this.depthPct = 100;
+    // 姿势质量进分数：不太标准也计时，但 depthPct 会低一些（进度条与质量分都看得出来）
+    const quality = clamp(
+      Math.round(
+        100
+        - Math.max(0, PLANK.bodyStraight - f.bodyStraight)
+        - Math.max(0, Math.abs(f.hipLineDev) - 0.10) * 120,
+      ),
+      55,
+      100,
+    );
+    this.depthPct = quality;
     return { valid: true };
   }
 }
