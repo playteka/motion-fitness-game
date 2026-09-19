@@ -170,11 +170,11 @@ const standPose = (o = {}) => standingPose({ ankleX: 1.0, ...o });
 const IDLE_FRONT = standPose({ knee: 178, lean: 6, armDown: 0, view: 'front' });
 const IDLE_SIDE = standPose({ knee: 178, lean: 6, armDown: 0, view: 'side' });
 
-/** 站立类「屈膝一次」循环：p: 0→1 蹲下去再站起来；kneeMin 越小蹲得越深 */
-function kneeCycle(kneeMin, view = 'front') {
+/** 站立类「屈膝一次」循环：p: 0→1 蹲下去再站起来；kneeMin 越小蹲得越深；kneeMax 用来模拟「站不直」 */
+function kneeCycle(kneeMin, view = 'front', kneeMax = 178) {
   return (p) => {
     const s = Math.sin(Math.PI * p);
-    const knee = 178 - (178 - kneeMin) * s;
+    const knee = kneeMax - (kneeMax - kneeMin) * s;
     return standingPose({
       knee, lean: 6 + (178 - knee) * 0.14, armDown: (178 - knee) * 0.45, ankleX: 1.0, view,
     });
@@ -462,6 +462,20 @@ console.log('\n[1] bend 引擎：一次循环一次数');
     const r = makeFrameRunner(det);
     r.run(repeatF((p) => supineFrame({ hipAngle: 100 + (60 - 100) * Math.sin(Math.PI * p) }), 1400, 4));
     ok('反向卷腹：起始位偏高（腿伸得比较直）也能计次', det.validReps === 4, `实际 ${det.validReps}`);
+  }
+}
+
+{
+  // ===== 回归：起始位到不了「参考起始值」时不能吞次数 =====
+  // 真机上机位/投影会让「站直」的读数只有 150° 左右，而参考起始值写的是 168°。
+  // 旧版按绝对值判断「回到了起始位吗」，于是这一轮永不结算，
+  // 后面每一次都被并进同一轮 —— 做了 5 个只记 1 个。
+  // 现在起始值跟着用户自己的幅度走，必须每次都记上。
+  for (const kneeMax of [170, 160, 150]) {
+    const det = createDetector('squatSumo');
+    const r = makeRunner(det);
+    r.run(repeat(kneeCycle(95, 'front', kneeMax), 1600, 4));
+    ok(`站不直（顶位读数 ${kneeMax}°）：4 次都要计到`, det.validReps === 4, `实际 ${det.validReps}`);
   }
 }
 

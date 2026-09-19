@@ -241,6 +241,21 @@ export default {
     state: '状态',
     yes: '✓',
     no: '✗',
+    count: '计数诊断',
+    diag: {
+      stage: '阶段',
+      steps: '要领',
+      counts: '有效/半程',
+      backLine: '结算线',
+      repMin: '本轮最小',
+      topBase: '跟踪顶位',
+      standLine: '站姿线',
+      startValue: '起始值(自/参考)',
+      peak: '本轮峰值',
+      hold: '已计时',
+      pose: '姿势',
+      reject: '上次未计入',
+    },
   },
 
   /* ---------------- 动作元数据 ---------------- */
@@ -639,6 +654,8 @@ export default {
   },
 
   cue: {
+    depth: '幅度还差一点，再做深一些',
+    tempo: '慢一点，跟着节奏做',
     notReady: '还没进入这个动作的姿势，先按提示摆好',
     moreRange: '幅度再大一点，把动作做满才算一次',
     needJump: '要跳起来：双脚离开地面才算一次',

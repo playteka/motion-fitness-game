@@ -169,6 +169,9 @@ const ADVISORY = {
  * 没有校准时退回「最近 3 秒身体最低点」的滚动基准 —— 注意这个基准在
  * 「站姿 → 俯撑」这类会让最低跟踪点抬高的姿势切换里会短暂失准，所以真机要走校准那条路。
  */
+/** 诊断显示用的数值格式：比例型指标（0~1）保留两位小数，角度型取整 */
+const fmt = (v) => (Math.abs(v) < 10 ? Number(v).toFixed(2) : String(Math.round(v)));
+
 export function bodyLift(det, f, now) {
   const bottom = Number.isFinite(f.bodyBottomY) ? f.bodyBottomY : 0;
   if (f.groundRefCalibrated && Number.isFinite(f.groundRef)) return f.groundRef - bottom;
@@ -215,18 +218,54 @@ class BendRepDetector extends DetectorBase {
     this.baseBottom = 0;
     this._badFrames = 0;
     this._baseAt = undefined;
+    // 最近 1.5 秒里「起始侧」的极值（见 effUp 的说明）
+    this._recent = [];
   }
 
   metric(f) { return (METRICS[this.metricName] || METRICS.knee)(f); }
 
+  /**
+   * 记下最近的指标值（用来估用户自己的「起始位置」）。
+   * 为什么需要：绝对阈值会被机位/投影骗 —— 侧拍俯卧撑时手臂明明伸直了，
+   * 二维肘角可能只有 140°，于是「回到 168° 才算一轮结束」永远不成立，
+   * 后面每一次下放都被并进同一轮，十次变成一次。用「回到自己刚才的起始位置附近」
+   * 判断才算得准，而且对每个人都自适应。
+   */
+  rememberValue(v, now) {
+    if (!Number.isFinite(v)) return;
+    this._recent.push({ t: now, v });
+    while (this._recent.length && now - this._recent[0].t > 1500) this._recent.shift();
+  }
+
+  /** 这一轮实际使用的「起始值」：用户自己的极值，但不越过动作本身的参考值 */
+  get effUp() {
+    if (!this._recent.length) return this.up;
+    const vals = this._recent.map((r) => r.v);
+    const upward = this.up >= this.down;   // 起始值的数值更大（膝角/肘角）还是更小（踝角/抬起高度）
+    const extreme = upward ? Math.max(...vals) : Math.min(...vals);
+    return upward ? Math.min(this.up, extreme) : Math.max(this.up, extreme);
+  }
+
   /** 离地高度：见文件顶部的 bodyLift 说明 */
   liftOf(f, now) { return bodyLift(this, f, now); }
 
-  /** 0 = 起始位置，1 = 到位 */
+  /** 计数诊断（🐞 面板显示）：起始值（跟着用户自己走）/ 本轮峰值 / 上次为什么没计上 */
+  diag() {
+    return [
+      { key: 'debug.diag.stage', value: this.stage },
+      { key: 'debug.diag.startValue', value: `${fmt(this.effUp)}/${fmt(this.up)}` },
+      { key: 'debug.diag.peak', value: `${Math.round(this.peak * 100)}%` },
+      { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
+      ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
+    ];
+  }
+
+  /** 0 = 起始位置，1 = 到位（起始位置用「用户自己的」极值，见 effUp） */
   progressOf(v) {
-    const span = this.up - this.down;
+    const up = this.effUp;
+    const span = up - this.down;
     if (!Number.isFinite(v) || Math.abs(span) < 1e-6) return 0;
-    return (this.up - v) / span;
+    return (up - v) / span;
   }
 
   step(f, now) {
@@ -256,7 +295,9 @@ class BendRepDetector extends DetectorBase {
 
     if (this.p.flight && lift > this.flightMin) this.flightSeen = true;
 
-    const pr = clamp(this.progressOf(this.metric(f)), 0, 1.25);
+    const rawV = this.metric(f);
+    this.rememberValue(rawV, now);
+    const pr = clamp(this.progressOf(rawV), 0, 1.25);
     this.progress = pr;
     this.depthPct = clamp(pr * 100, 0, 100);
 
@@ -310,6 +351,7 @@ class BendRepDetector extends DetectorBase {
 
     if (!deepEnough && !looseEnough) {
       this.partialReps += 1;
+      this.reject('moreRange', `${Math.round(peak * 100)}%`);
       this.cue('moreRange', null, 'warn', now, 3500);
       this.emit({ type: 'rep', valid: false, reason: 'range' });
       this.nextCycle(now);
@@ -317,6 +359,7 @@ class BendRepDetector extends DetectorBase {
     }
     if (this.p.flight && !flight) {
       this.partialReps += 1;
+      this.reject('needJump');
       this.cue('needJump', null, 'warn', now, 3500);
       this.emit({ type: 'rep', valid: false, reason: 'flight' });
       this.nextCycle(now);
@@ -324,6 +367,7 @@ class BendRepDetector extends DetectorBase {
     }
     if (dur < this.minRepMs) {
       this.partialReps += 1;
+      this.reject('tempo', `${Math.round(dur)}ms`);
       this.cue('tooFast', null, 'warn', now, 3500);
       this.emit({ type: 'rep', valid: false, reason: 'tempo' });
       this.nextCycle(now);
@@ -593,6 +637,15 @@ class PoseHoldDetector extends HoldDetector {
     const p = meta.params || {};
     this.p = p;
     this.gateName = p.gate || 'stand';
+  }
+
+  /** 计数诊断（🐞 面板显示）：现在计到几秒、姿势门控过没过 */
+  diag() {
+    return [
+      { key: 'debug.diag.hold', value: `${(this.holdMs / 1000).toFixed(1)}s` },
+      { key: 'debug.diag.pose', value: this.gateOk ? 'ok' : 'no' },
+      ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
+    ];
   }
 
   checkHold(f) {

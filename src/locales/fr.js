@@ -240,6 +240,21 @@ export default {
     state: 'État',
     yes: '✓',
     no: '✗',
+    count: 'Diagnostic du comptage',
+    diag: {
+      stage: 'Étape',
+      steps: 'Points clés',
+      counts: 'Valides/partielles',
+      backLine: 'Ligne de retour',
+      repMin: 'Minimum de cette rép.',
+      topBase: 'Sommet mesuré',
+      standLine: 'Ligne debout',
+      startValue: 'Départ (toi/réf.)',
+      peak: 'Pic de cette rép.',
+      hold: 'Chrono',
+      pose: 'Posture',
+      reject: 'Dernière non comptée',
+    },
   },
 
   /* ---------------- Métadonnées des exercices ---------------- */
@@ -642,6 +657,8 @@ export default {
 
   /* ---------------- Consignes générales ---------------- */
   cue: {
+    depth: 'Un peu plus d’amplitude : descends davantage',
+    tempo: 'Ralentis et garde le rythme',
     notReady: 'Tu n’es pas encore dans la bonne position : suis les indications',
     moreRange: 'Amplitude plus grande : le mouvement doit être complet pour compter',
     needJump: 'Il faut sauter : les deux pieds doivent quitter le sol pour compter',

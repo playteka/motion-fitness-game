@@ -57,7 +57,9 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - **Every exercise states its “judging basis”**: the card and the exercise page spell out what the exercise is judged by (elbow bend / knee bend /
   hip lift height / both feet off the floor / body posture …), and exercises the camera can't judge reliably are additionally marked as **rough scoring**.
 - **Live status feedback**: the area below the video always shows what state you're in, which step you're stuck on, and how many degrees you still need.
-- **🐞 Metrics panel**: one click shows every raw number the detector sees (view, visibility, each joint angle), so camera-position problems are obvious at a glance.
+- **🐞 Metrics panel (with “Rep diagnosis”)**: besides the raw numbers (view, visibility, joint angles), the first line is a **rep diagnosis** —
+  which stage the detector is in, the line it needs you to come back to for a rep to count, this rep’s minimum/peak, and **why the last attempt was not counted**
+  (too shallow / too fast / too little range …). If counting looks wrong, read that line out and we can pinpoint it instead of guessing.
 - **Spoken counting in the selected language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
 - **Voice-first throughout**: it calls out when it can't find you, says which form step comes next and how far you still have to go, and corrects bad form the moment it happens,
   while form steps, spoken counts, scores and the set summary are all voiced too — so you barely need to watch the screen.
@@ -476,7 +478,11 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 | ④ Press back up to nearly straight arms | Elbow angle ≥142° (after first lowering down) | +8 |
 | 🎁 All form steps complete for the round | All 4 steps above hit within the same round | +6 |
 
-> **Push-up counting is lenient (roughly doing the movement counts)**: bending your elbows to **135° or less** and coming back up past **145°** counts as one rep
+> **The “return to the top” line follows *your* range (important)**: on a real camera the projection makes “arms straight / standing tall” read lower
+> (a side-on push-up often reads only 140–150°). If the detector insists on an absolute 145/168° to close a rep, the rep never closes and
+> every following rep is merged into it — **ten reps, one or two counted**. The start position is now the largest range you actually reached in the last 1.5 s,
+> so coming back near your own top closes the rep; and if a rep gets stuck, it is force-settled after 9–12 s, so reps are never swallowed.
+> Every rep exercise also shows a “Rep diagnosis” line in the 🐞 panel.: bending your elbows to **135° or less** and coming back up past **145°** counts as one rep
 > (it used to require reaching 124° and returning all the way to 152°). A sagging or piked hip and a body that isn’t perfectly straight only trigger a **spoken correction plus a quality discount** — they no longer eat your reps;
 > a shallow rep still counts but you get a “go lower” cue and fewer points. Only “you barely bent your elbows” (never below 146°) counts for nothing and stays silent.
 > Strict mode (available in the settings) is what requires full depth.
@@ -627,7 +633,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all five suites (904 cases)
+npm test                       # run all five suites (914 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / README structure of all four files
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -639,8 +645,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
-| `tests/test-detectors.mjs` | 224 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
-| `tests/test-engines.mjs` | 138 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
+| `tests/test-detectors.mjs` | 231 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
+| `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
 | `tests/test-app.mjs` | 200 | Startup with the real `app.js`, home-page rendering, the settings modal, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
 

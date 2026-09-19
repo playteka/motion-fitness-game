@@ -235,8 +235,11 @@ export const STEP_PLANS = {
         id: 'press',
         labelKey: 'steps.pushup.press.label',
         points: 8,
-        check: (f, d) => d.cycleLowered && f.elbowAngle >= 142,
-        hint: (f) => (f.elbowAngle < 142 ? H('steps.pushup.press.hint') : null),
+        // 「推起还原」这一步在**识别器判定这一轮完成的那一刻**就该给分，
+        // 所以直接对齐识别器的结算线（它已经跟着用户自己的幅度自适应了）
+        check: (f, d) => d.cycleLowered
+          && f.elbowAngle >= (Number.isFinite(d.backLine) ? d.backLine - 2 : 142),
+        hint: (f) => (f.elbowAngle < 138 ? H('steps.pushup.press.hint') : null),
       },
     ],
   },

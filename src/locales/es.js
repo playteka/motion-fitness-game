@@ -238,6 +238,21 @@ export default {
     state: 'Estado',
     yes: '✓',
     no: '✗',
+    count: 'Diagnóstico de conteo',
+    diag: {
+      stage: 'Fase',
+      steps: 'Pasos',
+      counts: 'Válidas/parciales',
+      backLine: 'Línea de retorno',
+      repMin: 'Mínimo de esta rep',
+      topBase: 'Tope medido',
+      standLine: 'Línea de pie',
+      startValue: 'Inicio (tuyo/ref)',
+      peak: 'Pico de esta rep',
+      hold: 'Cronometrado',
+      pose: 'Postura',
+      reject: 'Última no contada',
+    },
   },
 
   /* ---------------- Datos de los ejercicios ---------------- */
@@ -640,6 +655,8 @@ export default {
 
   /* ---------------- Avisos generales (cue) ---------------- */
   cue: {
+    depth: 'Un poco más de recorrido: baja algo más',
+    tempo: 'Más despacio, sigue el ritmo',
     notReady: 'Todavía no estás en la postura del ejercicio: colócate como te indico',
     moreRange: 'Haz más recorrido: el movimiento completo cuenta como repetición',
     needJump: 'Hay que saltar: cuenta cuando los pies despeguen del suelo',

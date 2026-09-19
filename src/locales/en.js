@@ -239,6 +239,21 @@ export default {
     state: 'State',
     yes: '✓',
     no: '✗',
+    count: 'Rep diagnosis',
+    diag: {
+      stage: 'Stage',
+      steps: 'Steps',
+      counts: 'Valid/partial',
+      backLine: 'Return line',
+      repMin: 'This rep min',
+      topBase: 'Tracked top',
+      standLine: 'Standing line',
+      startValue: 'Start (yours/ref)',
+      peak: 'This rep peak',
+      hold: 'Held',
+      pose: 'Posture',
+      reject: 'Last not counted',
+    },
   },
 
   /* ---------------- Exercise metadata ---------------- */
@@ -641,6 +656,8 @@ export default {
 
   /* ---------------- Live form cues ---------------- */
   cue: {
+    depth: 'A bit more range — go deeper next time',
+    tempo: 'Slow down and keep the rhythm',
     notReady: 'You’re not in position for this move yet — set up as shown first',
     moreRange: 'Bigger range — move all the way for it to count',
     needJump: 'You need to jump: both feet off the floor to count',

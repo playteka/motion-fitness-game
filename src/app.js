@@ -493,13 +493,34 @@ function updateHud() {
   renderSteps();
 }
 
+/**
+ * 计数诊断文本（给 🐞 面板用）。
+ * 识别器只给「i18n 键 + 数值」，文案在这里按当前语言拼 —— 这样出问题时
+ * 用户能直接把这一行念给我：卡在哪个阶段、判定线在哪、上一轮为什么没计上。
+ */
+function diagText() {
+  const det = state.detector;
+  if (!det || typeof det.diag !== 'function') return '—';
+  let items = [];
+  try { items = det.diag() || []; } catch { items = []; }
+  return items.map((d) => {
+    const label = t(d.key);
+    if (d.reject) {
+      const why = t(`cue.${d.reject.code}`);
+      return `${label} ${why}${d.reject.value ? ` ${d.reject.value}` : ''}`;
+    }
+    if (d.key === 'debug.diag.pose') return `${label} ${d.value === 'ok' ? t('debug.yes') : t('debug.no')}`;
+    return `${label} ${d.value}`;
+  }).join(' · ');
+}
+
 /** 实时指标面板：把识别器“看到的”数字直接摆出来，方便自己判断机位问题 */
 function renderDebug(f) {
   const el = $('debugLine');
   if (!state.settings.debug) { if (!el.hidden) el.hidden = true; return; }
   el.hidden = false;
   if (!f || !f.ok) {
-    el.textContent = t('debug.noPerson');
+    el.textContent = `${t('debug.count')} ${diagText()} · ${t('debug.noPerson')}`;
     return;
   }
   const n = (v, d = 0) => (Number.isFinite(v) ? v.toFixed(d) : '—');
@@ -508,7 +529,10 @@ function renderDebug(f) {
   // 机位是否“正确”取决于当前动作：深蹲要正面，其余要侧面
   const wantView = requiredView(state.exerciseId);
   const viewName = f.view === 'front' ? t('debug.viewFront') : t('debug.viewSide');
+  // 计数诊断：识别器的内部判定状态（为什么这一下没计上）
+  const diag = diagText();
   el.textContent = [
+    `${t('debug.count')} ${diag || '—'}`,
     `${t('debug.view')} ${viewName}${mark(f.view === wantView)}(${n(f.viewRatio, 2)})`,
     `${t('debug.bodyVisible')} ${mark(f.bodyVisible)}`,
     `${t('debug.legsVisible')} ${mark(f.legsVisible)}`,

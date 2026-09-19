@@ -183,12 +183,13 @@ const pushupTop = { hip: { x: 1.0, y: 0.68 }, bodyTilt: 63, elbow: 172, armDown:
 const pushupBottom = { hip: { x: 1.0, y: 0.80 }, bodyTilt: 80, elbow: 85, armDown: -30, sag: 0 };
 function pushupMix(sagFn = () => 0, opts = {}) {
   const botElbow = opts.botElbow ?? pushupBottom.elbow;   // 抬高点 = 只放一半
+  const topElbow = opts.topElbow ?? pushupTop.elbow;      // 压低点 = 手臂伸不直（真机常见）
   return (p) => {
     const s = Math.sin(Math.PI * p);
     return pronePose({
       hip: { x: lerp(pushupTop.hip.x, pushupBottom.hip.x, s), y: lerp(pushupTop.hip.y, pushupBottom.hip.y, s) },
       bodyTilt: lerp(pushupTop.bodyTilt, pushupBottom.bodyTilt, s),
-      elbow: lerp(pushupTop.elbow, botElbow, s),
+      elbow: lerp(topElbow, botElbow, s),
       armDown: lerp(pushupTop.armDown, pushupBottom.armDown, s),
       sag: sagFn(p),
     });
@@ -446,6 +447,26 @@ console.log('\n[3] 俯卧撑计数');
   ok('只是晃了一下不计次、也不记半程', det.validReps === 0 && det.partialReps === 0,
     `有效 ${det.validReps} / 半程 ${det.partialReps}`);
   ok('只是晃了一下不唠叨', r.cues.length === 0, r.cues.map((c) => c.code).join(','));
+}
+{
+  // ===== 回归：真机最常见、也最坑的一个 bug =====
+  // 侧拍时肘角是二维投影又经过平滑，手臂明明伸直了读数也可能只有 140~150°。
+  // 旧版要求「肘角回到 145/152° 才算推起来」，于是这一轮永不结算，
+  // 后面每一次下放都被并进同一轮 —— 做了 5 个只记 1 个甚至 0 个。
+  // 现在「顶位」跟着用户自己的幅度走，这种情况必须每次都记上。
+  for (const topElbow of [150, 146, 142]) {
+    const det = fresh('pushup');
+    const r = makeRunner(det);
+    r.run(repeat(pushupMix(() => 0, { topElbow, botElbow: 85 }), 1600, 5));
+    ok(`手臂伸直时读数只有 ${topElbow}°：5 次都要计到`, det.validReps === 5, `实际 ${det.validReps}`);
+    ok(`手臂伸直时读数只有 ${topElbow}°：不该再提示「太快」`, !r.cues.some((c) => c.code === 'tempo'),
+      r.cues.map((c) => c.code).join(','));
+  }
+  // 连续做、中途不完全站直（顶位就是自己的幅度）也不能漏
+  const det2 = fresh('pushup');
+  const r2 = makeRunner(det2);
+  r2.run(repeat(pushupMix(() => 0, { topElbow: 138, botElbow: 88 }), 1700, 6));
+  ok('顶位只有 138°（几乎不伸直）连续 6 次也计 6 次', det2.validReps === 6, `实际 ${det2.validReps}`);
 }
 {
   // 默认宽松 / 可选严格：面板上的“严格”开关必须真的改变判据

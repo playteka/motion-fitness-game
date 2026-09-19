@@ -107,14 +107,45 @@ class SquatDetector extends DetectorBase {
     this.minRatio = 9;
     this.depthOk = false;
     this.cycleDescended = false;
+    this._straight = [];   // 「自己站得最直」的最近观测（见 standLine）
   }
   onLost() { this.stage = 'up'; this.repStartAt = 0; }
   onNewCycle() { this.cycleDescended = false; }
+
+  /**
+   * 「回到站姿」的判定线：默认 0.86，但跟着**用户自己的站姿**走
+   * （他站直时读数只有 0.80 就按 0.80 算）。
+   * 绝对阈值一旦高于他实际能到的值，这一轮就永远不结算，后面几次会并进同一轮
+   * —— 这正是「做了好几个只记一次」的成因（俯卧撑上是同一个 bug）。
+   */
+  get standLine() {
+    if (!this._straight.length) return SQUAT.standRatio;
+    const best = Math.max(...this._straight.map((x) => x.v));
+    return Math.min(SQUAT.standRatio, Math.max(best, SQUAT.looseRatio));
+  }
+
+  rememberStraight(v, now) {
+    if (!Number.isFinite(v)) return;
+    this._straight.push({ t: now, v });
+    while (this._straight.length > 2 && now - this._straight[0].t > 2000) this._straight.shift();
+  }
+
+  /** 计数诊断（🐞 面板显示） */
+  diag() {
+    return [
+      { key: 'debug.diag.stage', value: this.stage },
+      { key: 'debug.diag.standLine', value: this.standLine.toFixed(2) },
+      { key: 'debug.diag.repMin', value: Number.isFinite(this.minRatio) ? this.minRatio.toFixed(2) : '—' },
+      { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
+      ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
+    ];
+  }
 
   step(f, now) {
     this.active = true;
     this.standby = '';
     const r = f.hipAboveKnee;   // 髋比膝高多少（除以小腿长）
+    const standLine = this.standLine;
 
     // 进度条：0% = 站直，100% = 蹲到大腿水平或更低
     this.depthPct = clamp(((SQUAT.standRatio - r) / SQUAT.standRatio) * 100, 0, 100);
@@ -134,6 +165,7 @@ class SquatDetector extends DetectorBase {
 
     switch (this.stage) {
       case 'up':
+        this.rememberStraight(r, now);
         if (r <= SQUAT.enterRatio) {
           this.stage = 'descending';
           this.repStartAt = now;
@@ -149,7 +181,7 @@ class SquatDetector extends DetectorBase {
           this.stage = 'bottom';
           this.phase = 'bottom';
           this.emit({ type: 'phase', phase: 'bottom' });
-        } else if (r >= SQUAT.standRatio) {
+        } else if (r >= standLine) {
           this.finish(f, now, true);
         } else if (now - this.repStartAt > 2500) {
           this.cue('halfway', null, 'warn', now, 4000);
@@ -159,7 +191,8 @@ class SquatDetector extends DetectorBase {
 
       case 'bottom':
         this.minRatio = Math.min(this.minRatio, r);
-        if (r >= SQUAT.standRatio) this.finish(f, now, false);
+        if (r >= standLine) this.finish(f, now, false);
+        else if (now - this.repStartAt > 12000) this.finish(f, now, false);   // 超时强制结算，不吞次数
         break;
       default:
         break;
@@ -237,6 +270,7 @@ class LungeDetector extends DetectorBase {
     this.lastFrontSide = null;
     this.sameSideStreak = 0;
     this.cycleSunk = false;
+    this._straight = [];   // 「自己站得最直」的最近观测（见 standLine）
   }
   onLost() {
     this.stage = 'up';
@@ -245,6 +279,24 @@ class LungeDetector extends DetectorBase {
     this.upSince = 0;
   }
   onNewCycle() { this.cycleSunk = false; }
+
+  /**
+   * 「回到站姿」的判定线：默认 142°，但跟着**用户自己的站姿**走
+   * （如果他的膝盖伸直时读数只有 138°，就按 138 算）。
+   * 不这么做的话，绝对阈值一旦高于他实际能到的角度，这一轮永远不结算，
+   * 后面几次都会并进同一轮 —— 正是「做了好几个只记一次」的成因。
+   */
+  get standLine() {
+    if (!this._straight.length) return LUNGE.standKnee;
+    const best = Math.max(...this._straight.map((r) => r.v));
+    return Math.min(LUNGE.standKnee, Math.max(best, LUNGE.downKnee + 6));
+  }
+
+  rememberStraight(v, now) {
+    if (!Number.isFinite(v)) return;
+    this._straight.push({ t: now, v });
+    while (this._straight.length > 2 && now - this._straight[0].t > 2000) this._straight.shift();
+  }
 
   sideInfo(f, s) {
     const I = { L: { k: LM.L_KNEE, a: LM.L_ANKLE, h: LM.L_HIP }, R: { k: LM.R_KNEE, a: LM.R_ANKLE, h: LM.R_HIP } }[s];
@@ -282,10 +334,12 @@ class LungeDetector extends DetectorBase {
       this.cue('lean', null, 'warn', now);
     }
 
-    const standing = bent >= LUNGE.standKnee && bothBent >= LUNGE.standKnee - 8;
+    const standing = bent >= this.standLine && bothBent >= this.standLine - 8;
 
     switch (this.stage) {
       case 'up':
+        // 站着的时候记下「自己最直能到多少度」：回到站姿的判定线跟着自己的幅度走
+        this.rememberStraight(bent, now);
         // 下蹲要“持续”住才算这一轮开始（滤掉单帧抖动）
         if (bent <= LUNGE.enterKnee) {
           if (!this.bendSince) this.bendSince = now;
@@ -327,6 +381,17 @@ class LungeDetector extends DetectorBase {
     }
   }
 
+  /** 计数诊断（🐞 面板显示）：站姿线 / 本轮最弯的前膝 / 上次为什么没计上 */
+  diag() {
+    return [
+      { key: 'debug.diag.stage', value: this.stage },
+      { key: 'debug.diag.standLine', value: Math.round(this.standLine) },
+      { key: 'debug.diag.repMin', value: Math.round(this.minFront) },
+      { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
+      ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
+    ];
+  }
+
   finish(f, now) {
     const dur = now - this.repStartAt;
     this.stage = 'up';
@@ -342,6 +407,7 @@ class LungeDetector extends DetectorBase {
       || (this.depthOk && (!this.strict || this.minFront <= LUNGE.downKnee));
     if (!deepEnough) {
       this.partialReps += 1;
+      this.reject('depth', `${Math.round(this.minFront)}°/${LUNGE.looseKnee}°`);
       this.cue('lungeDepth', null, 'warn', now, 3000);
       this.emit({ type: 'rep', valid: false, reason: 'depth' });
       this.nextCycle(now);
@@ -349,6 +415,7 @@ class LungeDetector extends DetectorBase {
     }
     if (dur < LUNGE.minRepMs) {
       this.partialReps += 1;
+      this.reject('tempo', `${Math.round(dur)}ms`);
       this.cue('tempo', null, 'warn', now, 3000);
       this.emit({ type: 'rep', valid: false, reason: 'tempo' });
       this.nextCycle(now);
@@ -388,27 +455,35 @@ class LungeDetector extends DetectorBase {
 /**
  * 俯卧撑的判定（**整体放宽**：大体上做了一次就计一次）。
  *
- * 三档肘角说清了一件事：
- *   elbowUp      回到这个角度以上 = 一次动作结束（原来 152°，手臂必须几乎全直；现在 145° 就认）
- *   looseElbow   宽松模式的计数线（原来 124°：要下放到「胸口接近地面」才算；现在 135° 就算一次）
- *   elbowFull    拿满分深度的线（原来 106°）
- * 另外：
- *   - 身体不够直不再吃次数，只出声纠正 + 质量分打折；
- *   - 用时下限只用来滤掉「手抖一下」，260ms 比人能做的任何一次俯卧撑都快；
- *   - 只是晃了一下（肘角没弯过 146°）不算一次尝试，也不出声。
+ * 关键教训（用户实测「做了好几个只记 1 个」的根因）：
+ *   原来「回到 145° 才算推起来」是一个**绝对角度**，而侧拍时肘角是二维投影、
+ *   又经过平滑，手臂明明伸直了读数也可能只有 140° 左右 —— 于是这一轮**永远不结算**，
+ *   后面每一次下放都被并进同一轮里，十次变成一次。
+ *   所以现在「顶位」是**跟着用户自己的幅度走**的（topBase 慢慢跟踪他实际能举到的最高角度，
+ *   上限仍然是 145°），只要回到自己顶位附近就算这一轮完成。
+ * 另外：一轮最多 9 秒，超时也会**强制结算**（够深就计数），绝不把次数悄悄吞掉。
+ *
+ * 三档肘角的意义：
+ *   elbowUp      参考顶位（145°，只在用户能举得更高时才用它）
+ *   looseElbow   宽松模式的计数线（135°）
+ *   elbowFull    拿满分深度的线（118°）
  */
 const PUSHUP = {
   activeTorso: 32,
   activeShoulderClear: 0.12,
   activeHandOnFloor: 0.62,
-  elbowUp: 145,       // 回到这个角度算「推起来了」（原来 152）
-  elbowEnter: 138,    // 从这个角度开始算「正在下放」（原来 elbowUp-12 = 140）
-  elbowDown: 120,     // 下放到这里算「到过底部」（原来 118）
-  elbowFull: 118,     // 满分深度（原来 106，要压到胸口贴地）
-  looseElbow: 135,    // 宽松模式计数线（原来 124）
-  ignoreElbow: 146,   // 没弯过这里 = 只是晃了一下（不计次也不出声）
-  minRepMs: 260,      // 原来 340
-  bodyStraightMin: 138, // 身体不够直只提示，不再吃次数
+  elbowUp: 145,       // 参考顶位（原来 152，要求手臂几乎全直）
+  elbowEnter: 138,    // 起步角度参考值（实际用「顶位基准 − 22°」判断，见 step）
+  elbowDown: 120,     // 下放到这里算「到过底部」
+  elbowFull: 118,     // 满分深度
+  looseElbow: 135,    // 宽松模式计数线
+  ignoreElbow: 146,   // 没弯过这里 = 只是晃了一下（相对判定用，见 minBend）
+  minBend: 12,        // 一轮至少要比「自己的顶位」弯这么多度才算一次尝试（滤掉噪声）
+  enterDrop: 22,      // 相对顶位弯下去这么多才算「开始做」
+  returnTol: 8,       // 回到顶位 8° 以内算「推起来了」
+  minRepMs: 260,      // 用时下限（只滤手抖）
+  maxRepMs: 9000,     // 一轮最长时限：超时强制结算，不吞次数
+  bodyStraightMin: 138,
 };
 
 class PushupDetector extends DetectorBase {
@@ -420,6 +495,10 @@ class PushupDetector extends DetectorBase {
     this.maxSag = -9;
     this.minSag = 9;
     this.cycleLowered = false;
+    // 顶位基准 + 最近 1.5 秒的肘角：判断「回到顶位」用（见 topLine / backLine）
+    this.topBase = PUSHUP.elbowUp;
+    this._recent = [];
+    this._recentAt = undefined;
   }
   onLost() { this.stage = 'up'; this.repStartAt = 0; }
   onNewCycle() { this.cycleLowered = false; }
@@ -429,6 +508,41 @@ class PushupDetector extends DetectorBase {
     return f.torsoIncl > PUSHUP.activeTorso
       && f.shoulderClear > PUSHUP.activeShoulderClear
       && f.wristClear < PUSHUP.activeHandOnFloor;
+  }
+
+  /** 这一轮的「顶位」：用户自己刚才举到的最高角度（不越过参考值 145°） */
+  get topLine() {
+    if (!this._recent.length) return Math.min(this.topBase, PUSHUP.elbowUp);
+    const max = Math.max(...this._recent.map((r) => r.v));
+    return Math.min(Math.max(max, PUSHUP.elbowDown), PUSHUP.elbowUp);
+  }
+
+  /** 「推起来」的判定线：回到自己顶位附近，或者手臂确实伸直了 */
+  get backLine() {
+    return Math.min(this.topLine - PUSHUP.returnTol, PUSHUP.elbowUp - PUSHUP.returnTol);
+  }
+
+  /** 计数诊断（🐞 面板显示）：结算线 / 本轮最小肘角 / 跟踪到的顶位 / 上次为什么没计上 */
+  diag() {
+    return [
+      { key: 'debug.diag.stage', value: this.stage },
+      { key: 'debug.diag.backLine', value: Math.round(this.backLine) },
+      { key: 'debug.diag.repMin', value: Math.round(this.minElbow) },
+      { key: 'debug.diag.topBase', value: Math.round(this.topLine) },
+      { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
+      ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
+    ];
+  }
+
+  /**
+   * 记住最近 1.5 秒的肘角（估用户自己的顶位，见 topLine 的说明）。
+   * 注意：一轮进行中不能把缓冲清空 —— 否则结算时只剩「参考顶位」，
+   * 手臂伸不直的人就永远回不到那条线，次数又会被吞掉；所以至少保留最早的两个值。
+   */
+  rememberElbow(v, now) {
+    if (!Number.isFinite(v)) return;
+    this._recent.push({ t: now, v });
+    while (this._recent.length > 2 && now - this._recent[0].t > 1500) this._recent.shift();
   }
 
   step(f, now) {
@@ -453,7 +567,11 @@ class PushupDetector extends DetectorBase {
 
     switch (this.stage) {
       case 'up':
-        if (elbow <= PUSHUP.elbowEnter) {
+        this.rememberElbow(elbow, now);
+        this.topBase = clamp(Math.max(elbow, this.topBase - 0.2), 90, 179);
+        // 起步：相对自己的顶位弯下去 enterDrop 度，或者已经到达计数线（135°），
+        // 这样「手肘伸不直」的人也能被认出来
+        if (elbow <= Math.max(this.topLine - PUSHUP.enterDrop, PUSHUP.looseElbow)) {
           this.stage = 'descending';
           this.repStartAt = now;
           this.minElbow = elbow;
@@ -469,7 +587,9 @@ class PushupDetector extends DetectorBase {
         this.maxSag = Math.max(this.maxSag, f.hipLineDev);
         this.minSag = Math.min(this.minSag, f.hipLineDev);
         if (elbow <= PUSHUP.elbowDown && this.stage === 'descending') this.stage = 'bottom';
-        if (elbow >= PUSHUP.elbowUp) this.finish(f, now, false);
+        // 回到「自己的顶位」附近就算推起来了
+        if (elbow >= this.backLine) this.finish(f, now, false);
+        else if (now - this.repStartAt > PUSHUP.maxRepMs) this.finish(f, now, false);
         break;
       default:
         break;
@@ -480,8 +600,11 @@ class PushupDetector extends DetectorBase {
     const dur = now - this.repStartAt;
     this.stage = 'up';
     this.repStartAt = 0;
-    // 只是晃了一下（肘角没弯过 146°）：连半程都不记，也不出声
-    if (this.minElbow > PUSHUP.ignoreElbow) return;
+    // 只是晃了一下（比自己的顶位弯得还不够 12°）：连半程都不记，也不出声
+    if (this.topLine - this.minElbow < PUSHUP.minBend) {
+      this.reject('moreRange', `${Math.round(this.topLine - this.minElbow)}°`);
+      return;
+    }
     const full = this.minElbow <= PUSHUP.elbowFull;
     const bodyOk = this.minBody >= PUSHUP.bodyStraightMin;
     const deepEnough = this.minElbow <= PUSHUP.elbowFull;
@@ -497,6 +620,7 @@ class PushupDetector extends DetectorBase {
     }
     if (!deepEnough && !looseEnough) {
       this.partialReps += 1;
+      this.reject('depth', `${Math.round(this.minElbow)}°/${PUSHUP.looseElbow}°`);
       this.cue('depth', null, 'warn', now, 3000);
       this.emit({ type: 'rep', valid: false, reason: 'depth' });
       this.nextCycle(now);
@@ -504,6 +628,7 @@ class PushupDetector extends DetectorBase {
     }
     if (!aborted && dur < PUSHUP.minRepMs) {
       this.partialReps += 1;
+      this.reject('tempo', `${Math.round(dur)}ms`);
       this.cue('tempo', null, 'warn', now, 3000);
       this.emit({ type: 'rep', valid: false, reason: 'tempo' });
       this.nextCycle(now);

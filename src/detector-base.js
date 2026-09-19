@@ -35,6 +35,7 @@ export class DetectorBase {
     this.standby = '';
     this.depthPct = 0;
     this.feedback = null;
+    this.lastReject = null;   // 最近一次「没计上」的原因（诊断面板显示）
     this.events = [];
     this._cueAt = new Map();
     this._lostSince = null;
@@ -192,6 +193,38 @@ export class DetectorBase {
 
   /** 计时类动作的“每秒得分”，默认无 */
   tickHoldScore() {}
+
+  /**
+   * 一行「计数诊断」文本：给 🐞 识别指标面板用。
+   *
+   * 为什么要有它：用户反馈「做了好几个只记几次」时，光看关节角度是查不出来的 ——
+   * 必须能看到识别器的**内部判定状态**（现在处在哪一阶段、这一轮的最小值、
+   * 「回到起始位」的判定线在哪、上一次为什么没计上）。各识别器覆盖这个方法来补自己的字段。
+   */
+  /**
+   * 记一笔「这次没计上，因为…」。只给诊断面板用，不影响计数。
+   * 存的是**提示码 + 数值**（不存文案），界面再按语言渲染
+   * —— src/ 里不写死任何语言的文字。
+   */
+  reject(code, value = null) {
+    this.lastReject = { code, value };
+  }
+
+  /**
+   * 计数诊断（结构化）：给 🐞 识别指标面板用。
+   * 返回 [{ key: i18n 键, value }] 或 [{ key, reject: {code, value} }]，
+   * 各识别器覆盖它来补自己的内部状态（阶段、判定线、本轮最小值…）。
+   */
+  diag() {
+    const steps = this.plan && this.plan.steps ? this.stepStatus() : [];
+    const out = [
+      { key: 'debug.diag.stage', value: this.stage || 'idle' },
+    ];
+    if (steps.length) out.push({ key: 'debug.diag.steps', value: `${steps.filter((s) => s.done).length}/${steps.length}` });
+    out.push({ key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` });
+    if (this.lastReject) out.push({ key: 'debug.diag.reject', reject: this.lastReject });
+    return out;
+  }
 
   snapshot() {
     return {
