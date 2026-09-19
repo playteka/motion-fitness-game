@@ -378,18 +378,20 @@ export function outlineBounds(kind) {
 
 /**
  * 躺姿（俯卧 / 仰卧）的判定阈值。
- * 躺下以后身体是横着的：竖直方向的跨度只剩身体厚度（约 0.2），
- * 所以「距离」改量身体在水平方向有多长（单位同样是画面高度，区间因此可以复用），
- * 「高度」改成看身体上下范围的中心落在哪一带。
+ *
+ * 躺下以后身体是横着的，所以：
+ *   - 「距离」量身体在水平方向有多长（单位同样是画面高度，区间因此可以复用）；
+ *   - 只有「身体大致在画面里」是必须项，而且**允许按 edgeSlip 出画一点点**：
+ *     躺着时身体横跨整幅画面，头顶或脚碰到边缘并不影响识别，
+ *     以前要求「完全落在画面内」会把已经躺好的人一直卡在「往中间挪」。
+ *   - 不再要求「左右居中」和「上下位置」——横躺的身体本来就不会正对画面中央。
  */
 export const LYING = {
   spanMin: 0.42,     // 身体长度至少占画面高度 42%（与站立同一套尺度）
   spanMax: 0.90,
-  centerTol: 0.28,   // 身体水平中点偏离画面中线的容忍度
-  // 上下位置给得很宽：摄像头放桌上时躺姿会出现在画面偏下，放地上时又接近画面中央，
-  // 这条只负责挡掉「整体跑到画面上半部分 / 贴边」的离谱情况，不该逼着用户为了对齐轮廓去挪地方。
-  bandTol: 0.40,
-  edgeMargin: 0.01,  // 身体不能贴边（贴边就说明没完整进画）——放宽到 1%，别把「脚刚好压在边上」当成没进画
+  centerTol: 0.28,   // （已不再用于判定，保留给调试自检参考）
+  bandTol: 0.40,     // （已不再用于判定，保留给调试自检参考）
+  edgeSlip: 0.03,    // 允许身体外接框出画 3%（约画面高度的 3%），超过才提示「往里挪一点」
 };
 
 /**
@@ -479,14 +481,19 @@ export class Calibrator {
       push('vertical', Math.abs(f.bodyTop - OUTLINE.bodyTopY) <= OUTLINE.topTol
         && Math.abs(f.groundY - OUTLINE.groundY) <= OUTLINE.groundTol);
     } else {
-      // 躺姿：量「身体有多长」（水平方向）、身体中点是否居中、上下位置是否落在轮廓那一带
-      const b = outlineBounds(this.kind);
-      push('framing', f.bodyLeftFrac > LYING.edgeMargin && f.bodyRightFrac < 1 - LYING.edgeMargin
-        && f.bodyTopY > LYING.edgeMargin && f.bodyBottomY < 1 - LYING.edgeMargin);
+      // 躺姿：只要求「身体大致在画面里」，而且**允许一点点出画**。
+      //
+      // 用户反馈：「臀桥总是要我到画面中央，其实我已经在画面里面了」。
+      // 原因有两个，都在这里修掉：
+      //   ① 原来要求身体外接框完全落在画面内 1% 以内 —— 躺着时身体横跨整幅画面，
+      //      头顶或脚稍稍碰到边缘就判「没进画」，于是永远卡在「往中间挪」；
+      //      但躺姿真正需要的只是「躯干+膝+踝看得到」，边缘切掉一点完全不影响识别。
+      //   ② 原来还要求「身体水平中点居中」（center）与「上下位置落在轮廓那一带」（vertical）
+      //      —— 横躺的身体本来就不会正对画面中央，这两条纯属多余，现已删除。
+      const slip = LYING.edgeSlip;
+      push('framing', f.bodyLeftFrac > -slip && f.bodyRightFrac < 1 + slip
+        && f.bodyTopY > -slip && f.bodyBottomY < 1 + slip);
       push('distance', f.bodySpanX >= LYING.spanMin && f.bodySpanX <= LYING.spanMax);
-      push('center', Math.abs(f.bodyMidFrac - OUTLINE.centerX) <= LYING.centerTol);
-      const bodyMidY = (f.bodyTopY + f.bodyBottomY) / 2;
-      push('vertical', Math.abs(bodyMidY - (b.top + b.bottom) / 2) <= LYING.bandTol);
     }
     push('view', f.view === this.view);
     push('steady', this.steady.ok);
@@ -561,8 +568,8 @@ export class Calibrator {
       case 'visible':
         return { key: 'calib.visible' };
       case 'framing': {
-        // 躺姿是被左右边框切掉的（身体横着放），提示统一按「往中间挪 / 退后」给
-        if (this.lying) return { key: 'calib.cutOff' };
+        // 躺姿只有「明显有一端出画」才会走到这里，提示要明确说清「不用挪到正中间」
+        if (this.lying) return { key: 'calib.lieCutOff' };
         const verticalCut = f && (f.bodyTop <= 0.02 || f.groundY >= 0.98);
         if (!verticalCut) return { key: 'calib.cutOff' };   // 左右被切掉
         return { key: f && f.groundY >= 0.968 ? 'calib.feetCut' : 'calib.headCut' };

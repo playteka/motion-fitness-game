@@ -122,6 +122,7 @@ export default {
     headCut: 'Your head is out of frame: back up a little',
     feetCut: 'Your feet are out of frame: back up a little',
     cutOff: 'Your body is out of frame: move back a little, or shift your whole body toward the middle of the frame',
+    lieCutOff: 'One end of your body is out of frame: back up a little, or shift inwards (no need to be dead centre)',
     tooFar: 'You’re too far from the camera: move a little toward the camera to line up with the dashed outline',
     tooClose: 'You’re too close to the camera: move a little away from the camera to line up with the dashed outline',
     centerLeft: 'Shift a little to the left to land in the middle of the outline',

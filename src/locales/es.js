@@ -123,6 +123,7 @@ export default {
     headCut: 'Se te corta la cabeza: retrocede un poco',
     feetCut: 'Se te cortan los pies: retrocede un poco',
     cutOff: 'Tu cuerpo se sale del encuadre: retrocede un poco o desplaza todo el cuerpo hacia el centro',
+    lieCutOff: 'Un extremo del cuerpo se sale del encuadre: retrocede un poco o desplázate hacia dentro (no hace falta estar justo en el centro)',
     tooFar: 'Estás demasiado lejos de la cámara: acércate un poco para encajar en el contorno punteado',
     tooClose: 'Estás demasiado cerca de la cámara: aléjate un poco para encajar en el contorno punteado',
     centerLeft: 'Muévete un poco a la izquierda para quedar en el centro del contorno',

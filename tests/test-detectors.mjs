@@ -1015,13 +1015,26 @@ function calibOnce(cal, lm, now) {
     ok(`${label}：身体太短 → 提示靠近镜头`, far.hintKey === 'calib.tooFar', far.hintKey);
     const near = calibOnce(new Calibrator(id), lyingFit(pose, { target: 1.0 }), 0).res;
     ok(`${label}：身体太长 → 提示离镜头远一点`, near.hintKey === 'calib.tooClose', near.hintKey);
+    // 躺姿只要求「身体大致在画面里」：偏一点、整体偏上都不再拦人，也不再催用户挪到正中间
+    // （用户反馈：「臀桥总是要我到画面中央，其实我已经在画面里面了」）
     const off = calibOnce(new Calibrator(id), lyingFit(pose, { target: 0.6, dx: 0.3 }), 0).res;
-    ok(`${label}：横着偏了 → 给出左右方向提示`,
-      ['calib.centerLeft', 'calib.centerRight'].includes(off.hintKey), off.hintKey);
+    ok(`${label}：横着偏了也照样就位（不再要求居中）`,
+      off.ready === true && off.checks.find((c) => c.id === 'center') === undefined,
+      `${off.hintKey} ready=${off.ready}`);
     const up = calibOnce(new Calibrator(id), lyingFit(pose, { groundY: highY }), 0).res;
-    ok(`${label}：整体跑到画面上半部分 → 提示往下挪`, up.hintKey === 'calib.moveDown', up.hintKey);
+    ok(`${label}：整体偏上也不拦人（不再要求对齐轮廓高度）`,
+      up.ready === true && up.checks.find((c) => c.id === 'vertical') === undefined,
+      `${up.hintKey} ready=${up.ready}`);
+    // 允许「一点点出画」：头顶/脚刚好压在边上不算没进画
+    // （先量出居中时身体右端在哪，再按差值平移，让它刚好压在 1.02 = 出画 2%）
+    const centered = calibOnce(new Calibrator(id), lyingFit(pose), 0);
+    const shift = 1.02 - centered.f.bodyRightFrac;
+    const slipFit = calibOnce(new Calibrator(id), lyingFit(pose, { dx: shift }), 0);
+    ok(`${label}：身体稍微压到边缘（出画 2%）也算在画面里`, slipFit.res.ready === true,
+      `hint=${slipFit.res.hintKey} 右端=${slipFit.f.bodyRightFrac.toFixed(3)}`);
     const cut = calibOnce(new Calibrator(id), lyingFit(pose, { dx: 0.8 }), 0).res;
-    ok(`${label}：身体出画 → 提示回到画面里`, cut.hintKey === 'calib.cutOff', cut.hintKey);
+    ok(`${label}：明显出画才提示往里挪（并说明不用挪到正中间）`,
+      cut.hintKey === 'calib.lieCutOff' && cut.ready === false, cut.hintKey);
     ok(`${label}：没就位时不会判定完成`, far.done === false && cut.done === false);
   }
 
