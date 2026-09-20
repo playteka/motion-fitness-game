@@ -40,7 +40,7 @@ const DEFAULT_SETTINGS = {
   sfx: true,
   music: true,
   musicTrack: DEFAULT_TRACK,   // 背景音乐选哪首（见 audio.js 的 TRACKS）
-  strict: false,   // 默认宽松：大体做到就算次数（想严格可以自己开）
+  // 判据只有宽松档（用户明确要求取消严格模式），所以设置里没有 strict 这个开关
   showAngles: true,
   showSkeleton: true,
   debug: false,
@@ -471,13 +471,20 @@ const ROUND_NUM = ['①', '②', '③', '④', '⑤', '⑥', '⑦'];
 /**
  * 运动设定弹窗最上面那组：**这个动作的关键帧 + 每格判据 + 每格分数**。
  *
- * 用户要求「把对应动作的关键帧判别标准以及对应的判分标准列出来」——
- * 所以这里逐格列出：图标、序号+短标签、判定标准（就是画面上进度条的判据）、这一格能拿多少分，
- * 最后一格标出「计次那一刻」（计时类是「开始计时」）。数据与进度条同源（criteriaModel）。
+ * 用户要求「把对应动作的关键帧判别标准以及对应的判分标准列出来」，并且
+ * **判据完全由关键帧承担** —— 所以这里逐格列出：图标、序号+短标签、判定标准
+ * （就是画面上进度条的判据；有替代判据的写成「A 或 B」）、这一格能拿多少分，
+ * 以及这一格相关的补充判据（第一格把其余姿势要求、计次格把深度线、最后一格把时间线列出来）。
+ * 原来的「计次判据 / 姿势要求」两组已经去掉，判据一律挂在关键帧上。
  */
 function keyframeRowsHtml(id) {
   const { stages, icons, max } = criteriaModel(id);
   const isHold = localizedExercise(id).kind === 'hold';
+  const { groups } = exerciseSpecs(id);
+  const itemsOf = (key) => groups.find((g) => g.titleKey === key)?.items || [];
+  const countItems = itemsOf('spec.group.count');
+  const postureItems = itemsOf('spec.group.posture');
+  const pick = (label) => countItems.find((it) => it.labelKey === label);
   const parts = [];
   let total = 0;
   stages.forEach((stage, i) => {
@@ -490,14 +497,48 @@ function keyframeRowsHtml(id) {
       row.bonus > 0 ? `+${row.bonus} ${t('spec.roundBonus')}` : '',
       row.perSecond > 0 ? `+${row.perSecond}${t('spec.perSecondSuffix')}` : '',
     ].filter(Boolean).join(' ');
+
+    // 这一格的判据：主判据（+ 有替代判据时写成「A 或 B」）+ 该判据原本的说明
+    const condText = stage.alt
+      ? `${cond} ${t('spec.orAlt')} ${specCondition(stage.alt.item || stage.alt)}`
+      : cond;
+    const lines = [];
+    if (stage.item?.noteKey) lines.push(t(stage.item.noteKey, stage.item.noteParams || null));
+    // 第一格 = 「进入这个动作的姿势」：其余姿势要求也属于这一格（按判据文字去重，避免重复同一句）
+    if (i === 0) {
+      const mine = stage.item ? specCondition(stage.item) : '';
+      const extra = postureItems.filter((it) => specCondition(it) !== mine);
+      if (extra.length) lines.push(`${t('spec.poseExtra')}${extra.map((it) => specCondition(it)).join('、')}`);
+    }
+    // 「计次」那一格：把深度线 / 更浅只算晃了一下的线也挂在它下面
+    if (stage.item?.labelKey === 'spec.countLine') {
+      const bottom = pick('spec.bottomLine');
+      if (bottom) lines.push(`${t('spec.depthLine')}${specCondition(bottom)}`);
+      const wobble = pick('spec.wobble');
+      if (wobble) lines.push(`${t('spec.wobbleLine')}${specCondition(wobble)}`);
+    }
+    // 最后一格 = 计次那一刻（计时类是开始计时）：把时间类判据挂在这里
+    if (isMoment) {
+      const minRep = pick('spec.minRep');
+      if (minRep) lines.push(`${t('spec.tempoLine')}${specCondition(minRep)}`);
+      const prime = pick('spec.holdPrime');
+      if (prime) lines.push(`${t('spec.holdPrimeLine')}${specCondition(prime)}`);
+      const grace = pick('spec.holdGrace');
+      if (grace) lines.push(`${t('spec.holdGraceLine')}${specCondition(grace)}`);
+      const giveUp = pick('spec.giveUp');
+      if (giveUp) lines.push(t(giveUp.noteKey, giveUp.noteParams || null));
+    }
+
     parts.push(
       '<div class="spec-row spec-kf">'
       + `<span class="spec-kf-icon">${icons[i] || ''}</span>`
       + `<span class="spec-name">${esc(`${ROUND_NUM[i] || `(${i + 1})`} ${short}`)}`
       + (isMoment ? `<span class="spec-badge">${esc(t(isHold ? 'spec.holdMoment' : 'spec.countMoment'))}</span>` : '')
       + '</span>'
-      + `<span class="spec-cond">${esc(cond)}</span>`
+      + `<span class="spec-cond">${esc(condText)}</span>`
       + (pts ? `<span class="spec-pts">${esc(pts)}</span>` : '')
+      + (lines.filter(Boolean).length
+        ? `<span class="spec-note">${esc(lines.filter(Boolean).join(' · '))}</span>` : '')
       + '</div>',
     );
   });
@@ -512,16 +553,24 @@ function keyframeRowsHtml(id) {
     + '</div>';
 }
 
-/** 把当前动作的「关键帧 + 计次技术指标」渲染进运动设定弹窗（数值来自识别器真正使用的常量） */
+/**
+ * 把当前动作的判据渲染进运动设定弹窗。
+ *
+ * **判据完全挂在关键帧上**（用户要求）：所以只渲染
+ *   ① 关键帧与判分（含每格的判据、分数、以及深度/时间等补充线）
+ *   ② 姿态提醒（只出声纠正、不吃次数的那几条）
+ * 原来的「计次判据（做到什么程度算一次）」「姿势要求」两组已经取消。
+ */
 function renderExerciseSpecs() {
   const box = $('exerciseSpecs');
   if (!box) return;
   const { groups } = exerciseSpecs(state.exerciseId);
   const parts = [keyframeRowsHtml(state.exerciseId)];
-  for (const g of groups) {
+  const advice = groups.find((g) => g.titleKey === 'spec.group.advice');
+  if (advice && advice.items.length) {
     parts.push('<div class="spec-group">');
-    parts.push(`<div class="spec-group-title">${esc(t(g.titleKey))}</div>`);
-    for (const it of g.items) {
+    parts.push(`<div class="spec-group-title">${esc(t(advice.titleKey))}</div>`);
+    for (const it of advice.items) {
       const note = it.noteKey ? t(it.noteKey, it.noteParams || null) : '';
       parts.push(
         '<div class="spec-row">'
@@ -546,8 +595,6 @@ function renderExerciseSettings() {
   $('exerciseCamera').textContent = `📹 ${ex.cameraHint}`;
   $('targetUnit').textContent = unit;
   $('targetReadout').textContent = `${t('exercise.target')}: ${state.target} ${unit}`;
-  const strictBtn = $('btnStrictEx');
-  if (strictBtn) strictBtn.setAttribute('aria-pressed', String(!!state.settings.strict));
   renderExerciseSpecs();
 }
 
@@ -1036,7 +1083,7 @@ function selectExercise(id) {
   state.settings.exerciseId = id;
   const ex = localizedExercise(id);
   state.target = state.settings.targets[id] || ex.defaultTarget;
-  state.detector = createDetector(id, { strict: state.settings.strict });
+  state.detector = createDetector(id);
   state.calibrator = state.calibrator || new Calibrator(id, { mirror: state.settings.mirror });
   state.calibrator.setExercise(id);
   state.calibrator.setMirror(state.settings.mirror);
@@ -1371,7 +1418,7 @@ function updatePipelineStatus() {
 
 function ensureDetector() {
   if (!state.detector || state.detector.meta.id !== state.exerciseId) {
-    state.detector = createDetector(state.exerciseId, { strict: state.settings.strict });
+    state.detector = createDetector(state.exerciseId);
   }
   return state.detector;
 }
@@ -2327,10 +2374,7 @@ function bindUI() {
       applyMusic();          // 主页上不放背景音乐，回到动作页才播
       if (v) audio.unlock();
     }, (v) => setCueLine(t(v ? 'status.musicOn' : 'status.musicOff'))],
-    // 「严格模式」在配置弹窗和运动设定弹窗里各有一个按钮：共用同一个状态与处理函数
-    [['btnStrict', 'btnStrictEx'], 'strict', (v) => {
-      if (state.detector) state.detector.strict = v;
-    }, (v) => setCueLine(t(v ? 'status.strictOn' : 'status.strictOff'))],
+    // 「严格模式」已按用户要求彻底取消：判据只有关键帧这一套，界面与识别器里都没有开关了
     ['btnAngles', 'showAngles', (v) => { renderer.showAngles = v; }, null],
     ['btnSkeleton', 'showSkeleton', (v) => {
       renderer.showSkeleton = v;

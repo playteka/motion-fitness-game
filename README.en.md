@@ -48,13 +48,16 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   and each exercise is one card (icon + name + reps/timed + target + judging basis), with a search box as well. Click a card to open its exercise page, and the 🏠 icon in the top-left corner brings you back any time.
   “Jumping Jack” in Full body opens with a target of 50 reps.
 - **Exercise page + settings modal**: the exercise page has ⚙️ Settings in the top-right corner, and the modal collects **language, detection model, sound effects, spoken counting and background music**
-  together with mirror, strict mode, skeleton, angles and metrics toggles — no more hunting for buttons all over the screen.
+  together with mirror, skeleton, angles and metrics toggles — no more hunting for buttons all over the screen.
 - **Pre-workout calibration**: before you start there's a **dashed body silhouette** in the frame (it only traces your outer shape — you don't need to line up your joints), and a text prompt above the video tells you
   “move into the dashed outline”; **as long as a body is detected and your whole body is in frame you're cleared to start** (about 0.6 seconds), while
   distance, centering, height, camera angle and holding still are only recommendations (marked with “·” in the panel) and no longer block the start.
 - **Form steps scored one at a time**: each exercise is broken into 4–5 judgeable steps — hit one and you immediately get points, a chime, and a checkmark;
   finishing every step in a round earns a perfect-round bonus, and hold exercises give **+1 point for every second you hold**.
-- **Valid rep detection (lenient by default)**: **if you roughly did the movement, it counts** — shallower squats and lunges, push-ups that only go part of the way down and glute bridges that don't rise very high all count, while the voice coach corrects “go lower / down a little more / lift your hips higher / don't let your lower back sag” and the score is discounted for quality; turn on the **Strict mode** switch in the settings modal if you want “only a full-depth rep counts”. Movements you didn't really do (a mere wobble) aren't counted and won't trigger nagging.
+- **The keyframes are the only criteria**: every exercise is split into 4–5 keyframes on the progress bar — **clear one and it lights up and scores**;
+  **clearing all of them counts one rep**. There is no strict mode and no separate “counting rule” any more: both the criteria and the
+  points hang off the keyframes (`tests/test-specs.mjs` checks, exercise by exercise, that “the chain finished” and “a rep was counted” happen on the same frame).
+- **Valid rep detection (one relaxed tier only)**: **if you roughly did the movement, it counts** — shallower squats and lunges, push-ups that only go part of the way down and glute bridges that don't rise very high all count, while the voice coach corrects “go lower / down a little more / lift your hips higher / don't let your lower back sag” and the score is discounted for quality. Movements you didn't really do (a mere wobble) aren't counted and won't trigger nagging.
 - **Every exercise states its “judging basis”**: the card and the exercise page spell out what the exercise is judged by (elbow bend / knee bend /
   hip lift height / both feet off the floor / body posture …), and exercises the camera can't judge reliably are additionally marked as **rough scoring**.
 - **Live status feedback**: the area below the video always shows what state you're in, which step you're stuck on, and how many degrees you still need.
@@ -372,8 +375,8 @@ The search box at the top finds exercises by name directly (type “push” or �
 - The 🏠 icon in the top-left corner of the exercise page (its tooltip and screen-reader name is “Back to home”, shortcut `H`) returns you to the wall; the top-right corner has
   🎯 **Exercise settings** (this exercise only) next to ⚙️ **Settings** (global) — all three are icon buttons, so the top bar carries no text buttons and stays narrow on small screens.
 - **🎯 Exercise settings** (shown on the exercise page only, side by side with ⚙️): one modal gathers this exercise's target and
-  judging rules — the set target (number box plus preset buttons), the counting rule (relaxed / strict, the very same switch as in ⚙️),
-  this exercise's **judging basis**, its **camera hint**, and the **📐 counting thresholds** below.
+  judging rules — the set target (number box plus preset buttons), this exercise's **judging basis**, its **camera hint**,
+  and the **📐 keyframe criteria and scoring** group below (one row per keyframe with its criterion and its points).
   The “② Set target” card in the side panel keeps just a one-line target readout, and its button opens the same modal.
 - An exercise that belongs to two categories (Jump Squat) appears in both blocks, and either card opens the same exercise.
 
@@ -489,16 +492,21 @@ keyboard, so the two most common choices should not force you to tap a screen.
 - **Only one can fire**: the two rings keep their own timers, and whichever reaches 3 seconds first wins (resting a hand on one ring
   never triggers the other).
 
-## 📐 Counting thresholds (inside the exercise-settings modal)
+## 📐 Keyframe criteria and scoring (inside the exercise-settings modal)
 
-The exercise-settings modal of every exercise lists **the rules the detector is using right now**: how far a rep has to go to count,
-what counts as full depth, what is treated as a mere wobble, where the rep has to return to, and what posture is required.
+The exercise-settings modal of every exercise lists exactly one group — **🎬 Keyframes and scoring**: it walks the
+**segments of the progress bar** one by one — the segment's **line icon**, its number + short label, **the criterion for that
+segment** (the very line the bar uses), and **how many points that segment is worth**. The last segment carries a green badge
+marking the **“rep counted here”** moment (for timed exercises, **“timer starts”**), and a closing line reads “N segments … the
+segment scores plus the perfect-round bonus add up to X points per round”.
 
-**The first group in the modal is “🎬 Keyframes and scoring”**: it walks the **segments of the progress bar** one by one —
-the segment's **line icon**, its number + short label, **the criterion for that segment** (the very line the bar uses), and
-**how many points that segment is worth**. The last segment carries a green badge marking the **“rep counted here”** moment
-(for timed exercises, **“timer starts”**), and a closing line reads “N segments … the segment scores plus the perfect-round
-bonus add up to X points per round”.
+**The criteria hang off the keyframes entirely**: the old “counting rules (how far a rep must go to count)” and “posture required”
+groups are gone, leaving the keyframes plus the “form reminders” group below (the rows that only trigger a spoken correction and
+never cost reps). Any extra criterion that belongs to one segment is listed under that segment:
+
+- **the first segment** (the position a rep starts from): the remaining posture requirements (trunk, heights off the floor …);
+- **the “count” segment**: the full-depth line and the “anything shallower is just a wobble” line;
+- **the last segment** (rep counted here / timer starts): the shortest rep time, and for timed exercises the timer prime time and the grace period.
 
 Take the squat (the numbers are the constants in the code, one row per segment on screen):
 
@@ -509,21 +517,25 @@ Take the squat (the numbers are the constants in the code, one row per segment o
 | ③ Count | Hip above knee ≤ 0.62× shin length | +21 (sink 7 + parallel 14) |
 | ④ Return · **rep counted here** | Hip above knee ≥ 0.86× shin length | +8 + perfect-round 6 |
 
+Take the lunge (the groups left are the keyframes plus the form reminders):
+
+| Keyframe / group | Criterion | Score |
+|---|---|---|
+| ① Stance | Both legs extended ≥ 145° | +4 |
+| ② Start | Front knee bend ≤ 146° | +11 |
+| ③ Count | Front knee bend ≤ 152° | +11 |
+| ④ Both legs | Knee angle of the straighter leg ≤ 158° | +14 |
+| ⑤ Return · **rep counted here** | Rise 60% of the way back from this rep’s deepest point, or 8° above it | +8 + perfect-round 6 |
+| Form reminder | Back knee close to the floor (spoken only, never costs reps) | Back-knee height off the floor ≤ 0.66× shin |
+
+> Each segment also carries its own extra criteria, for example the squat’s first segment adds “Also required: face the camera,
+> trunk tilt ≤ 20°”, its count segment adds “Full depth (earns the depth points): hip above knee ≤ 0.4× shin length · anything
+> shallower is just a wobble: > 0.74× shin length”, and its last segment adds “Shortest rep: ≥ 0.48 s”; the lunge’s first segment
+> adds “stand side-on to the camera, trunk tilt ≤ 32°” and its reminders include “keep your knees from caving in”.
+
 > That group and the progress bar **share one data source** (`criteriaModel()` in `app.js`: the same segments, the same icons and the
 > same “points per keyframe” table `stagePoints()`), so what the modal says a segment wants and pays can never drift from what you
 > see on screen — `tests/test-app.mjs` checks the segment count, the icons, the per-segment scores and the round total.
-
-The remaining groups are the “counting rules / posture required / form reminders” below. Take the lunge (the numbers are the constants in the code):
-
-| Group | Threshold | Rule |
-|---|---|---|
-| Counting | Counts as one rep (relaxed mode) | Front knee bend ≤ 152° |
-| Counting | Both knees must bend (the straighter leg) | ≤ 158°, or 12° below your own standing angle |
-| Counting | Full depth (earns full depth points) | Front knee bend ≤ 128° |
-| Counting | Back to the start position (rep ends) | Rise 60% of the way back from this rep’s deepest point, or 8° above it |
-| Counting | Shortest rep time | ≥ 0.45 s |
-| Posture | Standing position | Trunk tilt ≤ 52°, knee height off the floor ≥ 0.28× torso, hip height ≥ 0.55× torso |
-| Form reminder | Back knee close to the floor (spoken only, never costs reps) | Back-knee height off the floor ≤ 0.66× shin |
 
 > **These numbers are not a separate write-up — they are read out of the constants the detector actually uses** (see `src/specs.js`):
 > the hand-written detectors read the threshold tables `SQUAT / LUNGE / PUSHUP / BRIDGE / PLANK`, the generic engines read each
@@ -542,7 +554,7 @@ Open the ⚙️ settings modal from the top-right corner of the exercise page �
 | Language | 中文 / English (takes effect immediately, switching exercise names and form steps along with it) |
 | Pose model | Lite (smoother, the default) / Full (more accurate; the first switch has to download one more model file, and it's offline after that) |
 | Sound | 🔊 Voice count · 🎵 Sound FX · 🎶 Music |
-| Video & tracking | 🪞 Mirror · ✅ Strict mode · 🦴 Skeleton · 📐 Angles · 🐞 Metrics |
+| Video & tracking | 🪞 Mirror · 🦴 Skeleton · 📐 Angles · 🐞 Metrics |
 
 Click outside the modal, or press `Esc` or `G`, to close it.
 
@@ -673,7 +685,7 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 > a “go lower” cue and fewer points. Only “you barely bent your elbows” (never below 146°) counts for nothing and stays silent.
 > **The “count” segment in the progress-bar chain is the counting moment**: the elbows reaching 138° (or the shoulder dropping far enough) lights
 > it, the final “back at the top” segment lights last, and the whole chain completing *is* the rep being counted —
-> `tests/test-detectors.mjs` verifies that per exercise. Strict mode (available in the settings) is what requires full depth.
+> `tests/test-detectors.mjs` verifies that per exercise. There is no strict mode: that segment is the one and only counting rule.
 
 > **It counts even when the camera can't see the floor (camera-angle compensation)**: with a laptop sitting on a desk and looking down,
 > you simply can't see the chest touching the floor in the frame, and the 2D projection makes the elbow angle **read straighter than it really is**
@@ -881,7 +893,7 @@ npm test                       # run all six suites (1614 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / matching structure of the Chinese and English READMEs
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
-npm run test:specs             # the counting thresholds shown in the modal must equal the lines the detectors actually use
+npm run test:specs             # the keyframe criteria shown in the modal must equal the lines the detectors actually use
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
 npm run test:page              # page wiring self-check (DOM ids / module imports / static assets / exercise catalogue and category lists)
 npm run test:app               # integration test that loads the real app.js with a minimal DOM stub
@@ -890,11 +902,11 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
-| `tests/test-detectors.mjs` | 283 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
-| `tests/test-engines.mjs` | 158 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
+| `tests/test-detectors.mjs` | 284 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
+| `tests/test-engines.mjs` | 156 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 848 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 354 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 366 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-app.mjs` | 370 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 
@@ -950,8 +962,8 @@ motion-fitness-game/
     `enterHoldMs` / `exitHoldMs` are the jitter tolerances; `PUSHUP.elbowFull` 106 / `PUSHUP.looseElbow` 124;
     `BRIDGE.upRise` 0.22 and `minRepMs` 700; `PLANK.bodyStraight` 142;
   - `HoldDetector.graceMs`: the grace period for timed exercises (default 1200ms).
-  - **Relaxed vs strict**: `DetectorBase.strict` defaults to `false` (roughly doing the movement counts; poor form only triggers a spoken correction plus a quality discount);
-    the **✅ Strict mode** switch in the settings modal changes the criteria to “only a full-depth rep counts”.
+  - **One relaxed tier only**: `DetectorBase` no longer has a `strict` switch at all (roughly doing the movement counts; poor form
+    only triggers a spoken correction plus a quality discount); the one counting rule left is that the keyframe chain on the progress bar is fully lit.
 
 After changing anything, run `npm test` — the tests have the standard range of motion for these exercises baked in, so they'll tell you right away if you've tightened things too far.
 

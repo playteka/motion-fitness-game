@@ -396,13 +396,17 @@ console.log('\n[2] 箭步蹲计数');
   ok('仍然提示后膝/下沉', r.cues.some((c) => c.code === 'lungeDepth' || c.code === 'backknee'));
 }
 {
-  // 严格模式（界面上的“严格”开关）：必须沉到位才算有效次数
+  // ===== 用户要求取消严格模式：只剩这一档宽松 =====
+  // 即使调用方还传 { strict: true }（老代码/老设置），识别器也不再有任何严格档，
+  // 浅一点的动作照样算一次，只是出声纠正 + 深度分打折。
   const det = fresh('lunge', { strict: true });
   const r = makeRunner(det);
   r.run(repeat(lungeMix(0.55), 1800, 5));
-  ok('严格模式：浅箭步蹲不计有效次数', det.validReps === 0, `实际 ${det.validReps}`);
-  atLeast('严格模式：浅箭步蹲被记为半程', det.partialReps, 4);
-  ok('严格模式：提示下沉不够', r.cues.some((c) => c.code === 'lungeDepth'));
+  ok('取消严格模式：浅箭步蹲照样计有效次数', det.validReps >= 4, `实际 ${det.validReps}`);
+  ok('取消严格模式：识别器上已经不存在 strict 开关', det.strict === undefined, String(det.strict));
+  ok('浅一点也照样出声纠正（只提醒不扣次数）',
+    r.cues.some((c) => c.code === 'lungeDepth' || c.code === 'backknee'),
+    r.cues.map((c) => c.code).join(','));
 }
 {
   // ===== 用户反馈：「箭步蹲计次又太松了」=====
@@ -423,11 +427,12 @@ console.log('\n[2] 箭步蹲计数');
   atLeast('后腿弯得少一点但仍然弯了：照样计次', det.validReps, 3);
 }
 {
-  // 越严的开关（严格模式）不能让「两条腿都弯」这条要求失效：还是不计有效次数
+  // 「两条腿都要弯」这条要求与模式无关：宽容档也一样拦（它是判据的一部分，不是质量分）
   const det = fresh('lunge', { strict: true });
   const r = makeRunner(det);
   r.run(repeat(lungeMix(1, 0.15), 1800, 3));
-  ok('严格模式下同样要求两条腿都弯', det.validReps === 0, `实际 ${det.validReps}`);
+  ok('只动前腿时照样不计有效次数（无论传什么选项）', det.validReps === 0, `实际 ${det.validReps}`);
+  ok('只动前腿时提示「两条腿都要弯」', r.cues.some((c) => c.code === 'bothKnees'), r.cues.map((c) => c.code).join(','));
 }
 {
   // 抖动宽容：站姿/踏步时的**真正轻微晃动**（膝盖几乎没弯）不能变成碎碎念
@@ -546,17 +551,20 @@ console.log('\n[3] 俯卧撑计数');
   ok('顶位只有 138°（几乎不伸直）连续 6 次也计 6 次', det2.validReps === 6, `实际 ${det2.validReps}`);
 }
 {
-  // 默认宽松 / 可选严格：面板上的“严格”开关必须真的改变判据
-  ok('默认宽松（跟界面默认一致）', fresh('squat').strict === false && fresh('lunge').strict === false);
-  ok('传 strict: true 才严格', fresh('squat', { strict: true }).strict === true);
-  const loose = fresh('pushup');
-  const strict = fresh('pushup', { strict: true });
-  // 肘弯到 128°：宽松计次（计数线 135°），严格不计（满分深度 118°）
+  // 用户要求取消严格模式：判据只有一套（宽松），传什么选项都一样
+  ok('识别器上没有 strict 开关了（严格模式已取消）',
+    fresh('squat').strict === undefined && fresh('lunge').strict === undefined
+    && fresh('pushup', { strict: true }).strict === undefined);
+  const a = fresh('pushup');
+  const b = fresh('pushup', { strict: true });
+  const rA = makeRunner(a);
+  // 肘弯到 128°：宽松档就计次（计数线 138°，深度分按实际深度给）
   const shallow = repeat(pushupMix(() => 0, { botElbow: 128 }), 1400, 3);
-  makeRunner(loose).run(shallow);
-  makeRunner(strict).run(shallow);
-  ok('放一半多：宽松计次、严格不计次', loose.validReps === 3 && strict.validReps === 0,
-    `宽松 ${loose.validReps} / 严格 ${strict.validReps}`);
+  rA.run(shallow);
+  makeRunner(b).run(shallow);
+  ok('放一半多也算一次（宽松是唯一一档，传 strict 也不再改变判据）',
+    a.validReps === 3 && b.validReps === 3, `${a.validReps} / ${b.validReps}`);
+  ok('浅一点的次数质量分更低（深度分照旧打折）', rA.reps[0].quality < 100, String(rA.reps[0].quality));
 }
 
 {

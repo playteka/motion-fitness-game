@@ -6,8 +6,8 @@
  *   ② 一个随时间来回变化的量（metric）：膝角 / 肘角 / 髋角 / 踝角 / 髋抬起 / 离地高度 / 左右交替 / 左右转体
  *   ③ 进度：progress = (up − v) / (up − down)，0 = 起始位置，1 = 到位
  * 计数规则与最初 6 个动作完全一致（用户反馈「大体做到就计次数，动作不标准用语音纠正」）：
- *   - progress 峰值 ≥ bottomP：到位
- *   - 宽松模式（默认）下峰值 ≥ looseP 就算一次；严格模式要求 ≥ bottomP
+ *   - progress 峰值 ≥ bottomP：到位（拿满深度分）
+ *   - 峰值 ≥ looseP 就算一次（**只有这一种宽松模式**，严格模式已按用户要求取消）
  *   - 峰值 < ignoreP：只是晃了一下 —— 不计数、也不出声
  *   - 用时过短 → 半程 + 「太快了」；幅度不够 → 半程 + 「再做大一点」
  *   - 跳跃类额外要求真的离地（脚离开地面线）
@@ -451,7 +451,9 @@ class BendRepDetector extends DetectorBase {
     if (peak < this.ignoreP) return; // 只是晃了一下
 
     const deepEnough = peak >= this.bottomP;
-    const looseEnough = !this.strict && peak >= this.looseP;
+    // 只有宽松模式（用户要求取消严格模式）：峰值到「计次线」就算一次，
+    // 深度不够只是分数打折 + 出声纠正，不再有「必须沉到底」的第二种模式。
+    const looseEnough = peak >= this.looseP;
 
     if (!deepEnough && !looseEnough) {
       this.partialReps += 1;

@@ -205,7 +205,7 @@ class SquatDetector extends DetectorBase {
 
   finish(f, now, aborted) {
     const dur = now - this.repStartAt;
-    const deepEnough = this.depthOk || (!this.strict && this.minRatio <= SQUAT.looseRatio);
+    const deepEnough = this.depthOk || this.minRatio <= SQUAT.looseRatio;
     this.stage = 'up';
     this.phase = 'up';
     this.repStartAt = 0;
@@ -250,7 +250,7 @@ export const LUNGE = {
   // 三档膝角：enter 开始算这一轮 → loose 宽松计数线 → down 拿标准深度分。
   standKnee: 142,     // 「回到站姿」的参考门槛（实际跟着用户自己的站姿走，见 standLine）
   enterKnee: 146,     // 「开始这一轮」的参考门槛（实际还会跟 standLine 一起放宽）
-  downKnee: 128,      // 「沉到底」阶段（拿整轮满分奖励 / 严格模式的深度）
+  downKnee: 128,      // 「沉到底」阶段（拿整轮满分奖励的深度）
   // 宽松计数线：前膝弯到 152°（≈ 从站直弯下去 25° 以上）就算一次 ——
   // 用户反馈「即使膝关节没有 90° 也应该计次，大体做到位就行」。
   looseKnee: 152,
@@ -472,15 +472,13 @@ class LungeDetector extends DetectorBase {
     this.bendSince = 0;
     this.upSince = 0;
 
-    // 宽松模式：前膝弯进 countLine（默认 152°，比站姿弯 25° 以上）就算一次 ——
-    // **不要求前膝 90°**，只要动作大体做到位就计次数（用户明确要求）。
-    // 沉得不够的，只提示“下沉不够 / 后膝再低一点”，不再把次数吃掉。
-    // 严格模式：既要深度达标，又要真的沉到 downKnee 以内。
+    // 只有一个宽松档（用户要求取消严格模式）：前膝弯进 countLine（默认 152°，比站姿弯 25° 以上）就算一次 ——
+    // **不要求前膝 90°**，只要动作大体做到位就计次数。
+    // 沉得不够的，只提示“下沉不够 / 后膝再低一点”，不再把次数吃掉；深度分照旧按深度打折。
     const bentEnough = this.topLine - this.minFront;   // 这一轮比自己站直时弯了多少度
     // 两条腿都要弯：只看前膝的话，前腿点一下就凑一次（用户反馈「计次太松」）
     const bothOk = this.minBoth <= this.bothLine;
-    const deepEnough = (!this.strict && this.minFront <= this.countLine)
-      || (this.depthOk && (!this.strict || this.minFront <= LUNGE.downKnee));
+    const deepEnough = this.minFront <= this.countLine || this.depthOk;
     if (bentEnough < LUNGE.minBend) {
       // 只是晃了一下：连半程都不记，也不出声
       this.reject('moreRange', `${Math.round(bentEnough)}°`);
@@ -586,7 +584,7 @@ export const PUSHUP = {
    * 不至于卡在「肘 ≤ 127°」那一格上永远点不亮后面。
    */
   dropMin: 0.14,      // 沉这么多 = 算「身体接近地面」，宽松模式可以计次（原来 0.20）
-  dropFull: 0.30,     // 沉这么多 = 深度给满分（严格模式下也认这个深度，原来 0.40）
+  dropFull: 0.30,     // 沉这么多 = 深度给满分（唯一的满深度线，原来 0.40）
   dropStart: 0.08,    // 沉这么多 = 认为「这一轮开始了」（肘角读数被压平时靠这一路起头）
   dropDecay: 0.01,    // 顶位基准的缓慢回落（跟着用户姿势漂移，不会一直卡在最高点）
 };
@@ -746,20 +744,12 @@ class PushupDetector extends DetectorBase {
     const bodyOk = this.minBody >= PUSHUP.bodyStraightMin;
     // 深度两路证据：肘角压到位，**或者**肩膀确实沉下去接近地面了。
     // 后者专治「摄像头看不到胸口贴地」——斜视角下肘角读数被压直，只看肘角会漏判。
-    const elbowLine = this.strict ? PUSHUP.elbowFull : PUSHUP.looseElbow;
+    const elbowLine = PUSHUP.looseElbow;
     const deepEnough = this.minElbow <= PUSHUP.elbowFull || this.drop >= PUSHUP.dropFull;
-    // 严格模式仍然要求「深度确实到位」，不允许只沉一点的半程蒙混过关
-    const looseEnough = !this.strict
-      && (this.minElbow <= elbowLine || this.drop >= PUSHUP.dropMin);
+    // 只有一个宽松档（用户要求取消严格模式）：肘角读够 或 肩膀沉到线就算一次
+    const looseEnough = this.minElbow <= elbowLine || this.drop >= PUSHUP.dropMin;
 
-    // 计数放宽：身体不够直也照样算一次，只是要出声纠正、分数打折（严格模式才拦）
-    if (this.strict && !bodyOk) {
-      this.partialReps += 1;
-      this.cue('body', null, 'warn', now, 3000);
-      this.emit({ type: 'rep', valid: false, reason: 'body' });
-      this.nextCycle(now);
-      return;
-    }
+    // 计数放宽：身体不够直也照样算一次，只是要出声纠正、分数打折（不再有「不直就不算」的严格档）
     if (!deepEnough && !looseEnough) {
       this.partialReps += 1;
       this.reject('depth', `${Math.round(this.minElbow)}°/${elbowLine}°·${this.drop.toFixed(2)}/${PUSHUP.dropMin}`);

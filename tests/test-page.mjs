@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 页面接线自检（无浏览器依赖）。
  *
  * 检查那些“Node 里跑不到、但一打开浏览器就炸”的问题：
@@ -347,7 +347,7 @@ console.log('\n[4] 动作库与界面一致性');
   for (const meta of EXERCISES) {
     const ex = localizedExercise(meta.id);
     let det = null;
-    try { det = createDetector(ex.id, { strict: true }); } catch (e) { det = null; }
+    try { det = createDetector(ex.id); } catch (e) { det = null; }
     ok(`createDetector('${ex.id}') 可用`, !!det && det.meta.id === ex.id);
     if (det) {
       const snap = det.snapshot();

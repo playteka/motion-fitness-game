@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 通用识别引擎（engines.js）的自动化测试。
  *
  * 6 个经典动作由 exercises.js 里手写的识别器负责（见 test-detectors.mjs），
@@ -339,14 +339,14 @@ console.log('\n[0] 引擎与目录');
 
   // 直接 new 引擎与工厂给的结果必须一致（同一份配置、同一个状态机）
   const pairs = [
-    ['lungeBack', new BendRepDetector(EXERCISE_MAP.lungeBack, { strict: false })],
-    ['deadBug', new AltRepDetector(EXERCISE_MAP.deadBug, { strict: false })],
-    ['burpee', new SequenceRepDetector(EXERCISE_MAP.burpee, { strict: false })],
-    ['sidePlank', new PoseHoldDetector(EXERCISE_MAP.sidePlank, { strict: false })],
+    ['lungeBack', new BendRepDetector(EXERCISE_MAP.lungeBack)],
+    ['deadBug', new AltRepDetector(EXERCISE_MAP.deadBug)],
+    ['burpee', new SequenceRepDetector(EXERCISE_MAP.burpee)],
+    ['sidePlank', new PoseHoldDetector(EXERCISE_MAP.sidePlank)],
   ];
   for (const [id, direct] of pairs) {
     ok(`直接构造 ${direct.constructor.name}（${id}）可用`, typeof direct.snapshot === 'function');
-    const viaFactory = createDetector(id, { strict: false });
+    const viaFactory = createDetector(id);
     for (const r of [makeRunner(direct), makeRunner(viaFactory)]) {
       if (id === 'burpee') {
         r.run([{ pose: LOST, ms: 200 }, { pose: BURPEE_STAND, ms: 700 }, { pose: BURPEE_CROUCH, ms: 500 },
@@ -359,12 +359,12 @@ console.log('\n[0] 引擎与目录');
       `直接 ${direct.validReps} / 工厂 ${viaFactory.validReps}`);
   }
 
-  // 严格开关：默认宽松（跟界面默认一致）
-  ok('默认宽松', createDetector('lungeBack').strict === false
-    && new BendRepDetector(EXERCISE_MAP.lungeBack, {}).strict === false);
-  ok('传 strict: true 才严格', createDetector('lungeBack', { strict: true }).strict === true
-    && createDetector('deadBug', { strict: true }).strict === true
-    && new PoseHoldDetector(EXERCISE_MAP.sidePlank, { strict: true }).strict === true);
+  // 严格模式已按用户要求取消：识别器上不再有这个开关，传了也不会生效
+  ok('识别器上没有 strict 开关（严格模式已取消）',
+    createDetector('lungeBack').strict === undefined
+    && createDetector('lungeBack', { strict: true }).strict === undefined
+    && new BendRepDetector(EXERCISE_MAP.lungeBack, { strict: true }).strict === undefined
+    && new PoseHoldDetector(EXERCISE_MAP.sidePlank, { strict: true }).strict === undefined);
 
   // 每个动作都能建出识别器（目录与引擎表不能脱节）
   const broken = [];
@@ -573,40 +573,40 @@ console.log('\n[1] bend 引擎：一次循环一次数');
 }
 
 /* ------------------------------------------------------------------ *
- * [2] bend 引擎：宽松 vs 严格
+ * [2] bend 引擎：只有一个宽松档（严格模式已按用户要求取消）
  * ------------------------------------------------------------------ */
 
-console.log('\n[2] bend 引擎：宽松 vs 严格');
+console.log('\n[2] bend 引擎：只有宽松档');
 {
-  // 只蹲到一半：峰值进度 ≈ 0.78 —— 宽松算一次，严格（要求 0.85）不算
+  // 只蹲到一半：峰值进度 ≈ 0.78 ≥ 计次线 0.65 → 算一次（深度分低一些）
   const shallow = repeat(kneeCycle(118), 1800, 4);
-  const loose = createDetector('lungeBack');
-  const rLoose = makeRunner(loose);
-  rLoose.run(shallow);
-  const strict = createDetector('lungeBack', { strict: true });
-  const rStrict = makeRunner(strict);
-  rStrict.run(shallow);
-  ok('半程向后箭步蹲：宽松模式算 4 次', loose.validReps === 4, `实际 ${loose.validReps}`);
-  ok('半程向后箭步蹲：严格模式一次都不算', strict.validReps === 0, `实际 ${strict.validReps}`);
-  ok('半程向后箭步蹲：严格模式记成 4 个半程', strict.partialReps === 4, `实际 ${strict.partialReps}`);
-  ok('半程向后箭步蹲：严格模式提示「再做大一点」', hasCue(rStrict, 'moreRange'), cuesOf(rStrict).join(','));
-  ok('半程向后箭步蹲：严格模式的半程原因是幅度不够',
-    badReasons(rStrict).every((x) => x === 'range'), badReasons(rStrict).join(','));
+  const det = createDetector('lungeBack');
+  const r = makeRunner(det);
+  r.run(shallow);
+  ok('半程向后箭步蹲：照样算 4 次（宽松是唯一一档）', det.validReps === 4, `实际 ${det.validReps}`);
+  ok('半程向后箭步蹲：不记半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+  // 传 strict 也不再有任何变化：选项已被忽略
+  const alt = createDetector('lungeBack', { strict: true });
+  makeRunner(alt).run(shallow);
+  ok('传 strict: true 也还是宽松档（开关已取消）', alt.validReps === det.validReps,
+    `${alt.validReps} vs ${det.validReps}`);
+  void r;
 }
 {
-  // 俯卧撑类的同一档差异（肘只弯到 130°）
+  // 俯卧撑类同一档：肘只弯到 130° 也算一次，只是质量分低
   const shallow = repeat(pushupCycle(130), 1500, 4);
-  const loose = createDetector('pushupWide');
-  const rLoose = makeRunner(loose);
-  rLoose.run(shallow);
-  const strict = createDetector('pushupWide', { strict: true });
-  const rStrict = makeRunner(strict);
-  rStrict.run(shallow);
-  ok('半程宽距俯卧撑：宽松算次、严格不算', loose.validReps === 4 && strict.validReps === 0,
-    `宽松 ${loose.validReps} / 严格 ${strict.validReps}`);
-  ok('半程宽距俯卧撑：严格模式记成半程并提示幅度',
-    strict.partialReps === 4 && hasCue(rStrict, 'moreRange'),
-    `半程 ${strict.partialReps} / 提示 ${cuesOf(rStrict).join(',')}`);
+  const det = createDetector('pushupWide');
+  const r = makeRunner(det);
+  r.run(shallow);
+  ok('半程宽距俯卧撑：算 4 次', det.validReps === 4, `实际 ${det.validReps}`);
+  ok('半程宽距俯卧撑：不算半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+  // 深度进分数：做满的峰值更高 → 质量分更高
+  const deep = createDetector('pushupWide');
+  const rDeep = makeRunner(deep);
+  rDeep.run(repeat(pushupCycle(95), 1500, 4));
+  ok('做得深的那一次质量分更高（深度分照旧区分质量）',
+    rDeep.reps[0].quality > r.reps[0].quality,
+    `${rDeep.reps[0].quality} vs ${r.reps[0].quality}`);
 }
 
 /* ------------------------------------------------------------------ *
@@ -843,7 +843,7 @@ console.log('\n[6] alt 引擎：左右交替');
 console.log('\n[7] twist 引擎：左右转体');
 {
   // 目录里没有动作用 twist 引擎，用手工 meta 直接构造（amount 0.16、minRepMs 260）
-  const det = new TwistRepDetector(TWIST_META, { strict: false });
+  const det = new TwistRepDetector(TWIST_META);
   const r = makeFrameRunner(det);
   const tw = (v) => seatedFrame({ wristTwist: v });
   r.run([{ f: tw(0.30), ms: 300 }, { f: tw(-0.30), ms: 300 }, { f: tw(0.30), ms: 300 },
@@ -855,7 +855,7 @@ console.log('\n[7] twist 引擎：左右转体');
     r.reps.every((x) => x.valid === true) && det.validReps === 4);
 }
 {
-  const det = new TwistRepDetector(TWIST_META, { strict: false });
+  const det = new TwistRepDetector(TWIST_META);
   const r = makeFrameRunner(det);
   const tw = (v) => seatedFrame({ wristTwist: v });
   r.run([{ f: tw(0.05), ms: 300 }, { f: tw(-0.06), ms: 300 }, { f: tw(0.04), ms: 300 }]);
@@ -863,7 +863,7 @@ console.log('\n[7] twist 引擎：左右转体');
   ok('俄罗斯转体：幅度不够时进度条仍有反馈（但不是 0）', det.depthPct > 0, `depthPct=${det.depthPct}`);
 }
 {
-  const det = new TwistRepDetector(TWIST_META, { strict: false });
+  const det = new TwistRepDetector(TWIST_META);
   const r = makeFrameRunner(det);
   r.run([{ f: { wristTwist: 0.4, torsoIncl: 10, hipClear: 1.4 }, ms: 900 }]);
   ok('俄罗斯转体：没坐在地上时被门控拦住',
@@ -1035,11 +1035,11 @@ console.log('\n[10] 垃圾帧 / 丢帧');
 
   // 五个通用引擎：ok:true 但字段全是垃圾 / 缺字段，也不能崩
   const engines = [
-    ['bend', new BendRepDetector(EXERCISE_MAP.lungeBack, { strict: false })],
-    ['alt', new AltRepDetector(EXERCISE_MAP.deadBug, { strict: false })],
-    ['twist', new TwistRepDetector(TWIST_META, { strict: false })],
-    ['sequence', new SequenceRepDetector(EXERCISE_MAP.burpee, { strict: false })],
-    ['hold', new PoseHoldDetector(EXERCISE_MAP.sidePlank, { strict: false })],
+    ['bend', new BendRepDetector(EXERCISE_MAP.lungeBack)],
+    ['alt', new AltRepDetector(EXERCISE_MAP.deadBug)],
+    ['twist', new TwistRepDetector(TWIST_META)],
+    ['sequence', new SequenceRepDetector(EXERCISE_MAP.burpee)],
+    ['hold', new PoseHoldDetector(EXERCISE_MAP.sidePlank)],
   ];
   const junk = [];
   const frames = [

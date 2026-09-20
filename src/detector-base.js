@@ -16,9 +16,8 @@ import { getStepPlan } from './steps.js';
 export class DetectorBase {
   constructor(meta, opts = {}) {
     this.meta = meta;
-    // 默认「宽松」：跟界面默认一致——大体做到了就计次数，动作不标准只用语音纠正。
-    // 想严格（必须沉到位才算一次）时由 App 传 { strict: true }。
-    this.strict = opts.strict === true;
+    // 只有一种宽松模式（用户明确要求「取消严格模式」后再也没有开关）：
+    // 大体做到了就计次数，动作不标准只用语音纠正 + 质量分打折。
     this.plan = getStepPlan(meta.id, meta);
     this.reps = 0;
     this.validReps = 0;

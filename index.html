@@ -295,7 +295,6 @@
           <h3 class="modal-group-title" data-i18n="settings.cameraGroup"></h3>
           <div class="toggle-grid">
             <button class="toggle" id="btnMirror" type="button" aria-pressed="true" data-i18n="ui.mirror"></button>
-            <button class="toggle" id="btnStrict" type="button" aria-pressed="true" data-i18n="ui.strict"></button>
             <button class="toggle" id="btnSkeleton" type="button" aria-pressed="true" data-i18n="ui.skeleton"></button>
             <button class="toggle" id="btnAngles" type="button" aria-pressed="true" data-i18n="ui.angles"></button>
             <button class="toggle" id="btnDebug" type="button" aria-pressed="false" data-i18n="ui.debug"></button>
@@ -335,14 +334,10 @@
 
         <div class="modal-group">
           <h3 class="modal-group-title" data-i18n="exercise.judgeGroup"></h3>
-          <div class="toggle-grid">
-            <button class="toggle" id="btnStrictEx" type="button" aria-pressed="true" data-i18n="ui.strict"></button>
-          </div>
-          <p class="modal-hint" data-i18n="exercise.strictHint"></p>
           <p class="modal-hint" id="exerciseJudge"></p>
         </div>
 
-        <!-- 计次技术指标：数值由 src/specs.js 从识别器真正使用的常量里取 -->
+        <!-- 关键帧判据与判分：逐格数值由 src/specs.js 从识别器真正使用的常量里取 -->
         <div class="modal-group">
           <h3 class="modal-group-title" data-i18n="exercise.specGroup"></h3>
           <p class="modal-hint" data-i18n="exercise.specLead"></p>

@@ -380,18 +380,15 @@ console.log('\n[1b] 运动设定弹窗');
   ok('侧栏摘要跟着更新', elements.get('targetReadout').textContent.includes(String(before + 4)),
     elements.get('targetReadout').textContent);
 
-  // 严格模式：弹窗与配置弹窗是同一个开关，必须双向同步
-  const strictBtn = elements.get('btnStrict');
-  const strictEx = elements.get('btnStrictEx');
-  strictBtn.setAttribute('aria-pressed', 'false');
-  api.state.settings.strict = false;
-  strictBtn.dispatch('click');
-  ok('在配置弹窗里打开严格模式后，运动设定里也是打开的',
-    strictEx.getAttribute('aria-pressed') === 'true', String(strictEx.getAttribute('aria-pressed')));
-  strictEx.dispatch('click');
-  ok('在运动设定里点严格模式，等同于点配置弹窗里那个开关',
-    strictBtn.getAttribute('aria-pressed') === 'false' && api.state.settings.strict === false,
-    `strict=${api.state.settings.strict}`);
+  // 严格模式已按用户要求取消：设置弹窗与运动设定里都不该再有这个开关
+  ok('设置弹窗里没有严格模式按钮了', elements.get('btnStrict') === undefined
+    && !html.includes('id="btnStrict"'));
+  ok('运动设定里没有严格模式按钮了', elements.get('btnStrictEx') === undefined
+    && !html.includes('id="btnStrictEx"'));
+  ok('设置项里也没有 strict 这个状态', api.state.settings.strict === undefined,
+    String(api.state.settings.strict));
+  ok('识别器上不再有 strict 开关（判据只剩宽松这一档）',
+    api.state.detector.strict === undefined, String(api.state.detector.strict));
 
   // 关闭方式：✕、点背景、Esc
   elements.get('btnCloseExercise').dispatch('click');
@@ -399,11 +396,16 @@ console.log('\n[1b] 运动设定弹窗');
   elements.get('btnExerciseInline').dispatch('click');
   ok('侧栏「设定目标」卡片里的按钮也能打开', elements.get('exerciseModal').hidden === false);
 
-  // ===== 计次技术指标：把识别器真正用的数值显示给用户 =====
+  // ===== 关键帧判据与判分：把识别器真正用的数值显示给用户 =====
   // 关键帧那一组里带线条图标（SVG 里有坐标数字），做数值断言前先把图标去掉，免得误命中坐标
   const specHtml = () => elements.get('exerciseSpecs').innerHTML.replace(/<svg[\s\S]*?<\/svg>/g, '');
-  ok('运动设定里列出了计次判据分组', specHtml().includes('计次判据'), specHtml().slice(0, 120));
-  ok('俯卧撑：列出肘角计次线（≤138°）', specHtml().includes('138'), specHtml().slice(0, 240));
+  // ===== 用户要求：判据完全挂在关键帧上，弹窗里不再有单独的「计次判据 / 姿势要求」两组 =====
+  ok('运动设定里第一组是关键帧与判分', specHtml().includes('关键帧与判分'), specHtml().slice(0, 120));
+  ok('不再有单独的「计次判据（做到什么程度算一次）」分组',
+    !specHtml().includes('计次判据'), specHtml().slice(0, 200));
+  ok('不再有单独的「姿势要求」分组（并进第一格的关键帧里）',
+    !specHtml().includes('姿势要求（不满足就不进入判定）'), specHtml().slice(0, 200));
+  ok('俯卧撑：肘角计次线（≤138°）挂在关键帧上', specHtml().includes('138'), specHtml().slice(0, 240));
   ok('俯卧撑：列出肩膀下沉量这条第二路证据（0.14）', specHtml().includes('0.14'), specHtml().slice(0, 200));
   ok('俯卧撑：列出俯撑姿势门控（躯干倾角 ≥ 32°）', specHtml().includes('≥ 32'), specHtml().slice(0, 300));
   ok('指标行带上了单位（×躯干长 / °）',
