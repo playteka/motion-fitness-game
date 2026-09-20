@@ -155,6 +155,18 @@ console.log('\n[3] 静态资源与模型文件');
   }
   ok('两种语言的提示条文案都不超过 130 字（折 2 行以内）', overlong.length === 0, overlong.join(', '));
 
+  // 判定进度条：铺满视频底边的大部分，图标要够大（不然看不清姿态）
+  const barBlock = /\.criteria-bar\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+  const barWidthPct = Number(/width:\s*min\([^,]+,\s*([\d.]+)%\)/.exec(barBlock)?.[1]);
+  ok('判定进度条铺满视频底边的大部分（≥90%）', barWidthPct >= 90, `width=${barWidthPct}%`);
+  const iconBlock = /\.criteria-icon\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+  const iconH = Number(/height:\s*clamp\((\d+)px/.exec(iconBlock)?.[1]
+    ?? /height:\s*(\d+)px/.exec(iconBlock)?.[1]);
+  ok('进度条图标够大（高度 ≥55px，姿态才看得清）', iconH >= 55, `height=${iconH}px`);
+  ok('图标等比缩放（有 max-width，不会被拉变形）', /max-width:/.test(iconBlock));
+  ok('进度条出现时底部提示条会让位（不会两块叠在一起）',
+    /\.stage\.has-criteria \.pose-hint\s*\{[^}]*bottom:/.test(css));
+
   // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面
   const stageAt = html.indexOf('id="stage"');
   const toolbarAt = html.indexOf('class="stage-toolbar"');
