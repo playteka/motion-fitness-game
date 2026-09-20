@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 通用识别引擎（engines.js）的自动化测试。
  *
  * 6 个经典动作由 exercises.js 里手写的识别器负责（见 test-detectors.mjs），
@@ -317,7 +317,7 @@ console.log('\n[0] 引擎与目录');
   // createDetector(id) 必须按目录条目的 engine 字段选出对应的通用引擎
   const expected = {
     pushupWide: BendRepDetector, pushupDiamond: BendRepDetector, squatSumo: BendRepDetector,
-    bulgarianSplitSquat: BendRepDetector, lungeBack: BendRepDetector, crunch: BendRepDetector,
+    lungeBack: BendRepDetector, lungeBack: BendRepDetector, crunch: BendRepDetector,
     reverseCrunch: BendRepDetector, lyingLegRaise: BendRepDetector, squatJump: BendRepDetector,
     lungeJump: BendRepDetector, boxJump: BendRepDetector,
     deadBug: AltRepDetector, mountainClimber: AltRepDetector,
@@ -339,7 +339,7 @@ console.log('\n[0] 引擎与目录');
 
   // 直接 new 引擎与工厂给的结果必须一致（同一份配置、同一个状态机）
   const pairs = [
-    ['bulgarianSplitSquat', new BendRepDetector(EXERCISE_MAP.bulgarianSplitSquat, { strict: false })],
+    ['lungeBack', new BendRepDetector(EXERCISE_MAP.lungeBack, { strict: false })],
     ['deadBug', new AltRepDetector(EXERCISE_MAP.deadBug, { strict: false })],
     ['burpee', new SequenceRepDetector(EXERCISE_MAP.burpee, { strict: false })],
     ['sidePlank', new PoseHoldDetector(EXERCISE_MAP.sidePlank, { strict: false })],
@@ -360,9 +360,9 @@ console.log('\n[0] 引擎与目录');
   }
 
   // 严格开关：默认宽松（跟界面默认一致）
-  ok('默认宽松', createDetector('bulgarianSplitSquat').strict === false
-    && new BendRepDetector(EXERCISE_MAP.bulgarianSplitSquat, {}).strict === false);
-  ok('传 strict: true 才严格', createDetector('bulgarianSplitSquat', { strict: true }).strict === true
+  ok('默认宽松', createDetector('lungeBack').strict === false
+    && new BendRepDetector(EXERCISE_MAP.lungeBack, {}).strict === false);
+  ok('传 strict: true 才严格', createDetector('lungeBack', { strict: true }).strict === true
     && createDetector('deadBug', { strict: true }).strict === true
     && new PoseHoldDetector(EXERCISE_MAP.sidePlank, { strict: true }).strict === true);
 
@@ -391,16 +391,17 @@ console.log('\n[0] 引擎与目录');
 
 console.log('\n[1] bend 引擎：一次循环一次数');
 {
-  // 保加利亚分腿蹲（单侧屈膝）：up 165 → down 100，宽松线 0.55、静默线 0.45
-  const det = createDetector('bulgarianSplitSquat');
+  // 向后箭步蹲（单侧屈膝）：up 165 → down 105，宽松线 0.55、静默线 0.45
+  // 注意：下面这些角度是按「进度 = (165 − 膝角) / 60」换算的，换动作要一起改
+  const det = createDetector('lungeBack');
   const r = makeRunner(det);
   r.run(repeat(kneeCycle(75), 1800, 4));
-  ok('分腿蹲：4 个完整循环 = 4 次', det.validReps === 4, `实际 ${det.validReps}`);
-  ok('分腿蹲：没有半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
-  ok('分腿蹲：每次有效次数都带序号与质量分',
+  ok('向后箭步蹲：4 个完整循环 = 4 次', det.validReps === 4, `实际 ${det.validReps}`);
+  ok('向后箭步蹲：没有半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
+  ok('向后箭步蹲：每次有效次数都带序号与质量分',
     r.reps.filter((x) => x.valid).length === 4
     && r.reps.filter((x) => x.valid).every((x, i) => x.index === i + 1 && x.quality > 0 && x.duration > 0));
-  ok('分腿蹲：回到起始位置后进度归零', det.depthPct <= 5, `depthPct=${det.depthPct}`);
+  ok('向后箭步蹲：回到起始位置后进度归零', det.depthPct <= 5, `depthPct=${det.depthPct}`);
 }
 {
   // 相扑深蹲：门控是 standWide（双腿分开），正面站姿才过
@@ -485,19 +486,19 @@ console.log('\n[1] bend 引擎：一次循环一次数');
 
 console.log('\n[2] bend 引擎：宽松 vs 严格');
 {
-  // 只蹲到一半：峰值进度 ≈ 0.55~0.65 —— 宽松算一次，严格不算
-  const shallow = repeat(kneeCycle(110), 1800, 4);
-  const loose = createDetector('bulgarianSplitSquat');
+  // 只蹲到一半：峰值进度 ≈ 0.78 —— 宽松算一次，严格（要求 0.85）不算
+  const shallow = repeat(kneeCycle(118), 1800, 4);
+  const loose = createDetector('lungeBack');
   const rLoose = makeRunner(loose);
   rLoose.run(shallow);
-  const strict = createDetector('bulgarianSplitSquat', { strict: true });
+  const strict = createDetector('lungeBack', { strict: true });
   const rStrict = makeRunner(strict);
   rStrict.run(shallow);
-  ok('半程分腿蹲：宽松模式算 4 次', loose.validReps === 4, `实际 ${loose.validReps}`);
-  ok('半程分腿蹲：严格模式一次都不算', strict.validReps === 0, `实际 ${strict.validReps}`);
-  ok('半程分腿蹲：严格模式记成 4 个半程', strict.partialReps === 4, `实际 ${strict.partialReps}`);
-  ok('半程分腿蹲：严格模式提示「再做大一点」', hasCue(rStrict, 'moreRange'), cuesOf(rStrict).join(','));
-  ok('半程分腿蹲：严格模式的半程原因是幅度不够',
+  ok('半程向后箭步蹲：宽松模式算 4 次', loose.validReps === 4, `实际 ${loose.validReps}`);
+  ok('半程向后箭步蹲：严格模式一次都不算', strict.validReps === 0, `实际 ${strict.validReps}`);
+  ok('半程向后箭步蹲：严格模式记成 4 个半程', strict.partialReps === 4, `实际 ${strict.partialReps}`);
+  ok('半程向后箭步蹲：严格模式提示「再做大一点」', hasCue(rStrict, 'moreRange'), cuesOf(rStrict).join(','));
+  ok('半程向后箭步蹲：严格模式的半程原因是幅度不够',
     badReasons(rStrict).every((x) => x === 'range'), badReasons(rStrict).join(','));
 }
 {
@@ -522,8 +523,8 @@ console.log('\n[2] bend 引擎：宽松 vs 严格');
 
 console.log('\n[3] bend 引擎：晃动与过快的边界');
 {
-  // 只晃了一下（峰值进度 ≈ 0.37，介于 enterP 0.32 与 ignoreP 0.45 之间）：不计次数、不记半程、也不出声
-  const det = createDetector('bulgarianSplitSquat');
+  // 只晃了一下（峰值进度 ≈ 0.42，介于 enterP 0.32 与 ignoreP 0.45 之间）：不计次数、不记半程、也不出声
+  const det = createDetector('lungeBack');
   const r = makeRunner(det);
   r.run(repeat(kneeCycle(140), 1600, 4));
   ok('轻微晃动：不计有效次数', det.validReps === 0, `实际 ${det.validReps}`);
@@ -539,7 +540,7 @@ console.log('\n[3] bend 引擎：晃动与过快的边界');
 }
 {
   // 幅度够但快得不像人：只记半程 + 「太快了」
-  const det = createDetector('bulgarianSplitSquat');
+  const det = createDetector('lungeBack');
   const r = makeRunner(det);
   r.run(repeat(kneeCycle(95), 380, 6));
   ok('过快：不计有效次数', det.validReps === 0, `实际 ${det.validReps}`);
@@ -549,9 +550,9 @@ console.log('\n[3] bend 引擎：晃动与过快的边界');
 }
 {
   // 幅度卡在宽松线与静默线之间：不算次数，但要出声纠正（不留「既不计也不提示」的空档）
-  const det = createDetector('bulgarianSplitSquat');
+  const det = createDetector('lungeBack');
   const r = makeRunner(det);
-  r.run(repeat(kneeCycle(130), 1600, 4));
+  r.run(repeat(kneeCycle(133), 1600, 4));
   ok('幅度不足：宽松模式也不计次数', det.validReps === 0, `实际 ${det.validReps}`);
   atLeast('幅度不足：记成半程', det.partialReps, 3);
   ok('幅度不足：提示「再做大一点」', hasCue(r, 'moreRange'), cuesOf(r).join(','));
@@ -942,7 +943,7 @@ console.log('\n[10] 垃圾帧 / 丢帧');
 
   // 五个通用引擎：ok:true 但字段全是垃圾 / 缺字段，也不能崩
   const engines = [
-    ['bend', new BendRepDetector(EXERCISE_MAP.bulgarianSplitSquat, { strict: false })],
+    ['bend', new BendRepDetector(EXERCISE_MAP.lungeBack, { strict: false })],
     ['alt', new AltRepDetector(EXERCISE_MAP.deadBug, { strict: false })],
     ['twist', new TwistRepDetector(TWIST_META, { strict: false })],
     ['sequence', new SequenceRepDetector(EXERCISE_MAP.burpee, { strict: false })],

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 识别逻辑的自动化测试。
  *
  * 做法：用合成骨架“演”出标准动作与各种常见错误动作，跑完整识别管线
@@ -1286,7 +1286,6 @@ function calibOnce(cal, lm, now) {
       lunge: 'side',
       lungeBack: 'side',
       lungeJump: 'side',
-      bulgarianSplitSquat: 'side',
       standingForwardFold: 'side',
       pushup: 'pushup',
       pushupWide: 'pushup',

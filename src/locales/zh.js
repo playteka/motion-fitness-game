@@ -324,11 +324,6 @@ export default {
       cameraHint: '正对摄像头，双脚打开约 1.5 倍肩宽、脚尖外展',
       goal: '双腿外展，臀部下蹲到大腿接近水平',
     },
-    bulgarianSplitSquat: {
-      name: '保加利亚分腿蹲',
-      cameraHint: '侧对摄像头，后脚搭在椅子或台阶上',
-      goal: '后脚抬高，前腿屈膝下沉到 90° 左右',
-    },
     lungeBack: {
       name: '向后箭步蹲',
       cameraHint: '侧对摄像头，前后脚分开站',

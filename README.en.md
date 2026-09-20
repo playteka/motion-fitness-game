@@ -1,8 +1,8 @@
-# Motion Fitness Game
+﻿# Motion Fitness Game
 
 [中文](README.md) · [English](README.en.md)
 
-A small fitness game that uses an ordinary webcam for motion tracking: **22 exercises** split into five categories — **Upper body / Lower body / Core / Full body / Stretching**,
+A small fitness game that uses an ordinary webcam for motion tracking: **21 exercises** split into five categories — **Upper body / Lower body / Core / Full body / Stretching**,
 with a home page where you pick an exercise by category and start training right away; **rep exercises count reps automatically and timed exercises time themselves**,
 and **scoring runs form step by form step** — every form step you hit instantly earns points, rings a chime, and is spoken aloud.
 
@@ -30,7 +30,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - [Settings modal (language / model / sound)](#settings-modal-language--model--sound)
 - [Pre-workout calibration](#pre-workout-calibration)
 - [How to use it (camera angle matters)](#how-to-use-it-camera-angle-matters)
-- [Exercise library overview (22 exercises)](#exercise-library-overview-22-exercises)
+- [Exercise library overview (21 exercises)](#exercise-library-overview-21-exercises)
 - [Scoring rules](#scoring-rules)
 - [Languages](#languages)
 - [Can't fit into the outline or getting no response? Four checks](#cant-fit-into-the-outline-or-getting-no-response-four-checks)
@@ -44,7 +44,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 
 ## Feature highlights
 
-- **Exercise home page (five categories)**: you land on a wall of exercises split into **Upper body (3) · Lower body (7) · Core (6) · Full body (5) · Stretching (2)**,
+- **Exercise home page (five categories)**: you land on a wall of exercises split into **Upper body (3) · Lower body (6) · Core (6) · Full body (5) · Stretching (2)**,
   and each exercise is one card (icon + name + reps/timed + target + judging basis), with a search box as well. Click a card to open its exercise page, and the 🏠 icon in the top-left corner brings you back any time.
   “Jump Squat” is listed in two categories at once (either card opens the same exercise).
 - **Exercise page + settings modal**: the exercise page has ⚙️ Settings in the top-right corner, and the modal collects **language, detection model, sound effects, spoken counting and background music**
@@ -495,7 +495,7 @@ Take the lunge (the numbers are the constants in the code):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (836 assertions in the suite).
+> exactly on the detector's own progress line (794 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -525,7 +525,7 @@ The first line of “Form steps” on the exercise page spells out how to stand 
   a quantity that isn't compressed in a front view; and only a front-on view shows whether your knees are caving inward and whether your left and right sides are symmetric.
 
 - Stand **2–3 m (6–10 ft)** away from the camera with your **whole body in frame** (head to feet);
-- **Lunge / Bulgarian Split Squat**: stand sideways to the camera so your ankles, knees, hips and shoulders are all visible at once;
+- **Lunge / Reverse Lunge**: stand sideways to the camera so your ankles, knees, hips and shoulders are all visible at once;
 - **Push-up / Plank / Mountain Climber**: your body runs perpendicular to the lens, with both hands and both feet inside the frame;
 - **Glute Bridge / Crunch / Lying Leg Raise / Dead Bug / Side Plank**: lying down, sideways to the camera, with your shoulders, hips, knees and ankles all visible at once;
 - **Stretching**: for Standing Forward Fold, stand up straight sideways to the camera; for Seated Forward Fold, sit on the floor sideways to the camera;
@@ -540,7 +540,7 @@ Calibration only checks that you're in position — it never counts reps or awar
 
 ---
 
-## Exercise library overview (22 exercises)
+## Exercise library overview (21 exercises)
 
 | Category | Exercise (icon) | Type | Judging basis | Default target |
 |---|---|---|---|---|
@@ -549,7 +549,6 @@ Calibration only checks that you're in position — it never counts reps or awar
 | 💪 Upper body | Diamond Push-Up 💎 | Reps | Elbow bend | 10 reps |
 | 🦵 Lower body | Bodyweight Squat 🏋️ | Reps | Knee bend (front-on depth) | 15 reps |
 | 🦵 Lower body | Sumo Squat 🤼 | Reps | Knee bend | 15 reps |
-| 🦵 Lower body | Bulgarian Split Squat 🦵 | Reps | Knee bend | 12 reps |
 | 🦵 Lower body | Forward Lunge 🚶 | Reps | Front knee angle + back knee height | 16 reps |
 | 🦵 Lower body | Reverse Lunge ↩️ | Reps | Knee bend | 16 reps |
 | 🦵 Lower body | Glute Bridge 🌉 | Reps | Hip lift height | 15 reps |
@@ -685,7 +684,7 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 
 ### About the exercises that are not in this list
 
-> This version of the exercise library was trimmed to the 22 exercises on the given list, and Static Glute Bridge isn't one of them — if you want it back,
+> This version of the exercise library was trimmed to the 21 exercises on the given list, and Static Glute Bridge isn't one of them — if you want it back,
 > copy the `bridge` entry in `src/catalog.js`, change `kind` to `'hold'`, and run `npm test` once more
 > (the detection engine and the scoring plan are both already there — see [Tuning scores and thresholds yourself](#tuning-scores-and-thresholds-yourself)).
 
@@ -695,7 +694,7 @@ On top of the 5 hand-written plans above, the remaining exercises share 8 **fami
 
 | Family plan | Used by | Step structure |
 |---|---|---|
-| Standing bend | Sumo Squat, Bulgarian Split Squat, Reverse Lunge | Set up → bend your knees and sink → hit the target range → drive back to standing |
+| Standing bend | Sumo Squat, Reverse Lunge | Set up → bend your knees and sink → hit the target range → drive back to standing |
 | Prone bend | Wide / Diamond Push-Up | Set up in one straight line → bend your elbows and lower → reach the target depth → press back up |
 | Supine lift | Crunch, Reverse Crunch, Lying Leg Raise | Lie down → start the movement → lift all the way → lower back under control |
 | Alternating | Dead Bug, Mountain Climber | Get into position → first tuck/extend → switch sides → keep the rhythm |
@@ -822,8 +821,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
 | `tests/test-detectors.mjs` | 265 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 836 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 335 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
+| `tests/test-specs.mjs` | 794 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 21 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
+| `tests/test-page.mjs` | 323 | DOM wiring, module imports and exports, static assets, the category lists of all 21 exercises and the completeness of their scoring plans |
 | `tests/test-app.mjs` | 318 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
@@ -838,7 +837,7 @@ motion-fitness-game/
 ├─ src/
 │  ├─ i18n.js            ★ i18n core (t / setLang / applyI18n)
 │  ├─ locales/           ★ the two locale files: zh.js / en.js
-│  ├─ catalog.js         ★ the exercise library: five categories + 22 exercises (icon, type, engine, thresholds, judging basis)
+│  ├─ catalog.js         ★ the exercise library: five categories + 21 exercises (icon, type, engine, thresholds, judging basis)
 │  ├─ geometry.js        geometry and signal processing (angles, One Euro smoothing)
 │  ├─ metrics.js         per-frame exercise metrics (joint angles, hip lift, floor clearance, body straightness…)
 │  ├─ steps.js           ★ the scored form steps per exercise (condition + points + hint key)

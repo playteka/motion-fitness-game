@@ -69,7 +69,7 @@ const e = (id, icon, cats, opts) => ({
 });
 
 /* ------------------------------------------------------------------ *
- * 动作库：上肢 3 / 下肢 7 / 核心 6 / 全身 5 / 拉伸 2（共 22 个动作）
+ * 动作库：上肢 3 / 下肢 6 / 核心 6 / 全身 5 / 拉伸 2（共 21 个动作）
  * ------------------------------------------------------------------ */
 
 export const EXERCISES = [
@@ -93,10 +93,6 @@ export const EXERCISES = [
   e('squatSumo', '🤼', 'lower', {
     plan: 'repStand', view: 'front', posture: 'stand', judge: 'knee', target: 15,
     params: bend({ metric: 'kneeBent', gate: 'standWide', up: 168, down: 95, minRepMs: 480 }),
-  }),
-  e('bulgarianSplitSquat', '🦵', 'lower', {
-    plan: 'repStand', posture: 'stand', judge: 'knee', target: 12,
-    params: bend({ metric: 'kneeBent', gate: 'stand', up: 165, down: 100, minRepMs: 520 }),
   }),
   e('lunge', '🚶', 'lower', {
     engine: 'builtin', plan: 'lunge', posture: 'stand', judge: 'knee', target: 16,

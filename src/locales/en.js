@@ -322,11 +322,6 @@ export default {
       cameraHint: 'Face the camera with your feet about 1.5 shoulder-widths apart and your toes turned out',
       goal: 'Knees out wide, sink down until your thighs are near horizontal',
     },
-    bulgarianSplitSquat: {
-      name: 'Bulgarian Split Squat',
-      cameraHint: 'Stand side-on to the camera with your back foot on a chair or a step',
-      goal: 'Back foot raised, bend your front knee and sink to about 90°',
-    },
     lungeBack: {
       name: 'Reverse Lunge',
       cameraHint: 'Stand side-on to the camera with your feet split front and back',

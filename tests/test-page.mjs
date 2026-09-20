@@ -257,16 +257,16 @@ console.log('\n[3] 静态资源与模型文件');
 console.log('\n[4] 动作库与界面一致性');
 {
   const { CATEGORIES } = await import('../src/catalog.js');
-  // 动作库就是约定的 22 个动作（用户明确给定清单，多一个少一个都算回归）
+  // 动作库就是约定的动作清单（用户明确给定清单，多一个少一个都算回归）
   const EXPECT = {
     upper: ['pushup', 'pushupWide', 'pushupDiamond'],
-    lower: ['squat', 'squatSumo', 'bulgarianSplitSquat', 'lunge', 'lungeBack', 'bridge', 'squatJump'],
+    lower: ['squat', 'squatSumo', 'lunge', 'lungeBack', 'bridge', 'squatJump'],
     core: ['plank', 'sidePlank', 'deadBug', 'crunch', 'reverseCrunch', 'lyingLegRaise'],
     full: ['burpee', 'mountainClimber', 'boxJump', 'squatJump', 'lungeJump'],
     stretch: ['standingForwardFold', 'seatedForwardFold'],
   };
   const expectIds = [...new Set(Object.values(EXPECT).flat())];
-  ok('动作库就是约定的 22 个动作',
+  ok('动作库就是约定的 21 个动作',
     EXERCISES.map((x) => x.id).sort().join(',') === expectIds.sort().join(','),
     `实际 ${EXERCISES.length} 个：${EXERCISES.map((x) => x.id).join(',')}`);
   for (const [cat, ids] of Object.entries(EXPECT)) {
