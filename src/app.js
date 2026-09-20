@@ -427,11 +427,97 @@ function closeSettings() {
 
 function exerciseSettingsOpen() { return !$('exerciseModal').hidden; }
 
-/** 把当前动作的「计次技术指标」渲染进运动设定弹窗（数值来自识别器真正使用的常量） */function renderExerciseSpecs() {
+/**
+ * 这个动作的判定进度条模型：显示用的格子、图标、每格能拿多少分。
+ * **进度条和运动设定弹窗共用这一份**（弹窗里列的关键帧必须与画面上的一模一样）。
+ */
+function criteriaModel(id) {
+  const ex = localizedExercise(id);
+  const ctx = {
+    id,
+    posture: ex.posture,
+    kind: ex.kind,
+    plan: ex.plan,
+    gate: EXERCISE_MAP[id]?.params?.gate,
+    // 引擎量的是哪个指标：图标要用它决定「画成哪一类姿势」（例如开合跳要画正面开合的姿势）
+    metric: EXERCISE_MAP[id]?.params?.metric,
+    stages: specStages(id),
+  };
+  // 画出来一模一样的格子留一格就够（计时类动作里两条姿势要求常常画的是同一个姿势）
+  const stages = uniqueStages(ctx.stages, ctx);
+  const icons = stages.map((s) => iconSVG(s, ctx));
+  // **得分分配到关键帧**：每个关键帧能拿多少分（整轮满分奖励记在最后一格，计时类的每秒分也是）
+  const scored = stagePoints(id);
+  const max = stages.map((s) => {
+    const idx = ctx.stages.indexOf(s);
+    const row = idx >= 0 ? scored[idx] : null;
+    return {
+      points: row ? row.points : 0,
+      bonus: row ? row.bonus : 0,
+      perSecond: row ? row.perSecond : 0,
+    };
+  });
+  // 步骤 id → 第几格：界面按这个把「这一步加到的分」记到对应格子上
+  const stepStage = {};
+  for (const def of (getStepPlan(id)?.steps || [])) {
+    const fullIdx = stageIndexForStep(id, def.id);
+    stepStage[def.id] = fullIdx >= 0 ? stages.indexOf(ctx.stages[fullIdx]) : -1;
+  }
+  return { ctx, stages, icons, max, stepStage };
+}
+
+const ROUND_NUM = ['①', '②', '③', '④', '⑤', '⑥', '⑦'];
+
+/**
+ * 运动设定弹窗最上面那组：**这个动作的关键帧 + 每格判据 + 每格分数**。
+ *
+ * 用户要求「把对应动作的关键帧判别标准以及对应的判分标准列出来」——
+ * 所以这里逐格列出：图标、序号+短标签、判定标准（就是画面上进度条的判据）、这一格能拿多少分，
+ * 最后一格标出「计次那一刻」（计时类是「开始计时」）。数据与进度条同源（criteriaModel）。
+ */
+function keyframeRowsHtml(id) {
+  const { stages, icons, max } = criteriaModel(id);
+  const isHold = localizedExercise(id).kind === 'hold';
+  const parts = [];
+  let total = 0;
+  stages.forEach((stage, i) => {
+    const { short, cond } = stageText(stage);
+    const row = max[i] || { points: 0, bonus: 0, perSecond: 0 };
+    total += row.points + row.bonus;
+    const isMoment = i === stages.length - 1;
+    const pts = [
+      row.points > 0 ? `+${row.points}` : '',
+      row.bonus > 0 ? `+${row.bonus} ${t('spec.roundBonus')}` : '',
+      row.perSecond > 0 ? `+${row.perSecond}${t('spec.perSecondSuffix')}` : '',
+    ].filter(Boolean).join(' ');
+    parts.push(
+      '<div class="spec-row spec-kf">'
+      + `<span class="spec-kf-icon">${icons[i] || ''}</span>`
+      + `<span class="spec-name">${esc(`${ROUND_NUM[i] || `(${i + 1})`} ${short}`)}`
+      + (isMoment ? `<span class="spec-badge">${esc(t(isHold ? 'spec.holdMoment' : 'spec.countMoment'))}</span>` : '')
+      + '</span>'
+      + `<span class="spec-cond">${esc(cond)}</span>`
+      + (pts ? `<span class="spec-pts">${esc(pts)}</span>` : '')
+      + '</div>',
+    );
+  });
+  parts.push(`<div class="spec-note-full">${esc(t('spec.keyframesNote', {
+    n: stages.length,
+    total,
+    every: t('spec.everyFrameNeeded'),
+  }))}</div>`);
+  return '<div class="spec-group spec-keyframes">'
+    + `<div class="spec-group-title">${esc(t('spec.group.keyframes'))}</div>`
+    + parts.join('')
+    + '</div>';
+}
+
+/** 把当前动作的「关键帧 + 计次技术指标」渲染进运动设定弹窗（数值来自识别器真正使用的常量） */
+function renderExerciseSpecs() {
   const box = $('exerciseSpecs');
   if (!box) return;
   const { groups } = exerciseSpecs(state.exerciseId);
-  const parts = [];
+  const parts = [keyframeRowsHtml(state.exerciseId)];
   for (const g of groups) {
     parts.push('<div class="spec-group">');
     parts.push(`<div class="spec-group-title">${esc(t(g.titleKey))}</div>`);
@@ -714,40 +800,14 @@ function onStageResize() {
 
 /** 按当前动作重建进度条（换动作 / 重新校准时调用） */
 function buildCriteriaBar() {
-  const ex = localizedExercise(state.exerciseId);
-  const ctx = {
-    id: state.exerciseId,
-    posture: ex.posture,
-    kind: ex.kind,
-    plan: ex.plan,
-    gate: EXERCISE_MAP[state.exerciseId]?.params?.gate,
-    // 引擎量的是哪个指标：图标要用它决定「画成哪一类姿势」（例如开合跳要画正面开合的姿势）
-    metric: EXERCISE_MAP[state.exerciseId]?.params?.metric,
-    stages: specStages(state.exerciseId),
-  };
-  // 画出来一模一样的格子留一格就够（计时类动作里两条姿势要求常常画的是同一个姿势）
-  state.criteriaStages = uniqueStages(ctx.stages, ctx);
-  state.criteriaIcons = state.criteriaStages.map((s) => iconSVG(s, ctx));
+  // 与运动设定弹窗共用同一份模型：弹窗里列的关键帧 = 画面上显示的格子（不会各说一套）
+  const { ctx, stages, icons, max, stepStage } = criteriaModel(state.exerciseId);
+  state.criteriaStages = stages;
+  state.criteriaIcons = icons;
   state.criteriaContext = ctx;
-  state.criteriaPts = new Array(state.criteriaStages.length).fill(0);
-  // **得分分配到关键帧**：每个关键帧能拿多少分（整轮满分奖励记在最后一格，计时类的每秒分也是）
-  const scored = stagePoints(state.exerciseId);
-  state.criteriaMax = state.criteriaStages.map((s) => {
-    const idx = ctx.stages.indexOf(s);
-    const row = idx >= 0 ? scored[idx] : null;
-    return {
-      points: row ? row.points : 0,
-      bonus: row ? row.bonus : 0,
-      perSecond: row ? row.perSecond : 0,
-    };
-  });
-  // 步骤 id → 第几格：界面按这个把「这一步加到的分」记到对应格子上
-  state.criteriaStepStage = {};
-  for (const def of (getStepPlan(state.exerciseId)?.steps || [])) {
-    const fullIdx = stageIndexForStep(state.exerciseId, def.id);
-    const shown = fullIdx >= 0 ? state.criteriaStages.indexOf(ctx.stages[fullIdx]) : -1;
-    state.criteriaStepStage[def.id] = shown;
-  }
+  state.criteriaMax = max;
+  state.criteriaStepStage = stepStage;
+  state.criteriaPts = new Array(stages.length).fill(0);
   // **只在换动作时建一次 DOM**：之后每一帧只改 class 和数字。
   // 为什么：以前每次「点亮一格 / 加分」都重建整条 innerHTML —— 元素被换掉，
   // 过渡和弹出动画（呼吸、对勾、分数弹出）就从头再放一遍，看起来就是「进度条一直在抖」。

@@ -494,7 +494,26 @@ keyboard, so the two most common choices should not force you to tap a screen.
 The exercise-settings modal of every exercise lists **the rules the detector is using right now**: how far a rep has to go to count,
 what counts as full depth, what is treated as a mere wobble, where the rep has to return to, and what posture is required.
 
-Take the lunge (the numbers are the constants in the code):
+**The first group in the modal is “🎬 Keyframes and scoring”**: it walks the **segments of the progress bar** one by one —
+the segment's **line icon**, its number + short label, **the criterion for that segment** (the very line the bar uses), and
+**how many points that segment is worth**. The last segment carries a green badge marking the **“rep counted here”** moment
+(for timed exercises, **“timer starts”**), and a closing line reads “N segments … the segment scores plus the perfect-round
+bonus add up to X points per round”.
+
+Take the squat (the numbers are the constants in the code, one row per segment on screen):
+
+| Keyframe | Criterion | Score |
+|---|---|---|
+| ① Stance | Hip above knee ≥ 0.86× shin length | +4 |
+| ② Start | Hip above knee ≤ 0.78× shin length | +6 |
+| ③ Count | Hip above knee ≤ 0.62× shin length | +21 (sink 7 + parallel 14) |
+| ④ Return · **rep counted here** | Hip above knee ≥ 0.86× shin length | +8 + perfect-round 6 |
+
+> That group and the progress bar **share one data source** (`criteriaModel()` in `app.js`: the same segments, the same icons and the
+> same “points per keyframe” table `stagePoints()`), so what the modal says a segment wants and pays can never drift from what you
+> see on screen — `tests/test-app.mjs` checks the segment count, the icons, the per-segment scores and the round total.
+
+The remaining groups are the “counting rules / posture required / form reminders” below. Take the lunge (the numbers are the constants in the code):
 
 | Group | Threshold | Rule |
 |---|---|---|
@@ -875,7 +894,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-engines.mjs` | 158 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 848 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 354 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 355 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-app.mjs` | 366 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 

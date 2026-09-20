@@ -741,10 +741,18 @@ export default {
 
   spec: {
     group: {
+      keyframes: '🎬 关键帧与判分（画面上进度条的格子）',
       count: '计次判据（做到什么程度算一次）',
       posture: '姿势要求（不满足就不进入判定）',
       advice: '姿态提醒（只出声纠正，不吃次数）',
     },
+    countMoment: '计次那一刻',
+    holdMoment: '开始计时',
+    roundBonus: '整轮满分',
+    perSecondSuffix: '/秒',
+    keyframesNote: '共 {n} 格：{every} 最后一格点亮的那一刻就是计上一次（计时类是开始计时），'
+      + '这一格也就是「所有关键帧都做完」的收尾。每格分数加起来 + 整轮满分 = 每轮 {total} 分。',
+    everyFrameNeeded: '每一格都是计次必须满足的条件，顺序就是判定顺序；',
     unit: {
       deg: '°',
       torso: '×躯干长',

@@ -740,10 +740,19 @@ export default {
 
   spec: {
     group: {
+      keyframes: '🎬 Keyframes and scoring (the segments on the progress bar)',
       count: 'Counting rules (how far a rep has to go to count)',
       posture: 'Posture required (otherwise nothing is judged)',
       advice: 'Form reminders (spoken only, never costs reps)',
     },
+    countMoment: 'rep counted here',
+    holdMoment: 'timer starts',
+    roundBonus: 'perfect round',
+    perSecondSuffix: '/s',
+    keyframesNote: '{n} segments: {every} the moment the last one lights up is the moment the rep is counted '
+      + '(for timed exercises, when the timer starts) — that segment is also what closes “all keyframes done”. '
+      + 'The segment scores plus the perfect-round bonus add up to {total} points per round.',
+    everyFrameNeeded: 'every segment is a condition the rep must meet, in judging order;',
     unit: {
       deg: '°',
       torso: '× torso length',

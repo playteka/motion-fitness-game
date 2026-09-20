@@ -400,13 +400,54 @@ console.log('\n[1b] 运动设定弹窗');
   ok('侧栏「设定目标」卡片里的按钮也能打开', elements.get('exerciseModal').hidden === false);
 
   // ===== 计次技术指标：把识别器真正用的数值显示给用户 =====
-  const specHtml = () => elements.get('exerciseSpecs').innerHTML;
+  // 关键帧那一组里带线条图标（SVG 里有坐标数字），做数值断言前先把图标去掉，免得误命中坐标
+  const specHtml = () => elements.get('exerciseSpecs').innerHTML.replace(/<svg[\s\S]*?<\/svg>/g, '');
   ok('运动设定里列出了计次判据分组', specHtml().includes('计次判据'), specHtml().slice(0, 120));
   ok('俯卧撑：列出肘角计次线（≤138°）', specHtml().includes('138'), specHtml().slice(0, 240));
   ok('俯卧撑：列出肩膀下沉量这条第二路证据（0.14）', specHtml().includes('0.14'), specHtml().slice(0, 200));
   ok('俯卧撑：列出俯撑姿势门控（躯干倾角 ≥ 32°）', specHtml().includes('≥ 32'), specHtml().slice(0, 300));
   ok('指标行带上了单位（×躯干长 / °）',
     specHtml().includes('躯干长') && specHtml().includes('°'), specHtml().slice(0, 200));
+
+  // ===== 关键帧 + 判分标准：用户要求「把对应动作的关键帧判别标准以及对应的判分标准列出来」 =====
+  {
+    const { specStages: stagesOf, stagePoints } = await import('../src/specs.js');
+    const { uniqueStages: uniq } = await import('../src/icons.js');
+    const { EXERCISE_MAP: EXMAP } = await import('../src/catalog.js');
+    api.selectExercise('pushup');
+    const raw = elements.get('exerciseSpecs').innerHTML;
+    ok('弹窗第一组就是「关键帧与判分」', /spec-group spec-keyframes[\s\S]*关键帧与判分/.test(raw), raw.slice(0, 90));
+    const meta = EXMAP.pushup;
+    const ctx = {
+      id: 'pushup', posture: meta.posture, kind: meta.kind, plan: meta.plan,
+      gate: meta.params?.gate, metric: meta.params?.metric, stages: stagesOf('pushup'),
+    };
+    const shown = uniq(ctx.stages, ctx);
+    const kfRows = (raw.match(/spec-row spec-kf/g) || []).length;
+    ok('关键帧格数 = 画面上进度条的格数（同一份数据）', kfRows === shown.length, `${kfRows} vs ${shown.length}`);
+    ok('每一格都画了那个关键帧的线条图标',
+      (raw.match(/spec-kf-icon"><svg class="criteria-icon"/g) || []).length === shown.length,
+      String((raw.match(/spec-kf-icon"><svg class="criteria-icon"/g) || []).length));
+    ok('俯卧撑：四格的分数 5 / 7 / 14 / 8 都列出来了',
+      ['+5', '+7', '+14', '+8'].every((x) => raw.includes(x)), raw.slice(0, 400));
+    ok('俯卧撑：整轮满分 6 分标在最后一格上', raw.includes('+6 整轮满分'), raw.slice(-400));
+    ok('最后一格标出「计次那一刻」', raw.includes('计次那一刻'), raw.slice(0, 300));
+    ok('说明里写了每轮总分（5+7+14+8+6 = 40）', raw.includes('每轮 40 分'),
+      (raw.match(/共 \d+ 格[\s\S]{0,150}/) || [''])[0]);
+    ok('弹窗里的关键帧判据就是进度条格子上的判据（肘角 146°/138° 都在）',
+      raw.includes('146') && raw.includes('138'), raw.slice(0, 400));
+    ok('分数与 stagePoints 一致（弹窗不会自己编一套：5 / 7 / 14 / 8 + 满轮 6 = 40）',
+      stagePoints('pushup').map((r) => r.points).join(',') === '5,7,14,8'
+      && stagePoints('pushup')[3].bonus === 6
+      && stagePoints('pushup').reduce((n, r) => n + r.points + r.bonus, 0) === 40,
+      stagePoints('pushup').map((r) => `${r.points}+${r.bonus}`).join(' '));
+    // 计时类：最后一格是「开始计时」，并列出每秒加分
+    api.selectExercise('plank');
+    const holdRaw = elements.get('exerciseSpecs').innerHTML;
+    ok('平板支撑：最后一格标「开始计时」（计时类没有「计次那一刻」）',
+      holdRaw.includes('开始计时') && !holdRaw.includes('计次那一刻'), holdRaw.slice(0, 200));
+    ok('平板支撑：列出每秒加分（+1/秒）', holdRaw.includes('+1/秒'), holdRaw.slice(-300));
+  }
 
   api.selectExercise('lunge');
   ok('切到箭步蹲后指标跟着换', specHtml().includes('152') && !specHtml().includes('135'),
