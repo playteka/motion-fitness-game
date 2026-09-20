@@ -44,7 +44,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 ## Feature highlights
 
 - **Exercise home page (five categories)**: you land on a wall of exercises split into **Upper body (3) · Lower body (7) · Core (6) · Full body (5) · Stretching (2)**,
-  and each exercise is one card (icon + name + reps/timed + target + judging basis), with a search box as well. Click a card to open its exercise page, and “Back to home” in the top-left corner brings you back any time.
+  and each exercise is one card (icon + name + reps/timed + target + judging basis), with a search box as well. Click a card to open its exercise page, and the 🏠 icon in the top-left corner brings you back any time.
   “Jump Squat” is listed in two categories at once (either card opens the same exercise).
 - **Exercise page + settings modal**: the exercise page has ⚙️ Settings in the top-right corner, and the modal collects **language, detection model, sound effects, spoken counting and background music**
   together with mirror, strict mode, skeleton, angles and metrics toggles — no more hunting for buttons all over the screen.
@@ -364,8 +364,8 @@ The search box at the top finds exercises by name directly (type “push” or �
 - Click any card → you go to its **exercise page** (camera + form-step checklist + scoring + goal setting + records).
   The exercise page has its own address: `#/ex/<id>` (for example `#/ex/bridge`), so **a refresh keeps you on the same exercise**,
   **the browser Back button returns to the home page**, and you can bookmark the link.
-- “Back to home” in the top-left corner of the exercise page returns you to the wall; the top-right corner has
-  🎯 **Exercise settings** (this exercise only) next to ⚙️ **Settings** (global).
+- The 🏠 icon in the top-left corner of the exercise page (its tooltip and screen-reader name is “Back to home”, shortcut `H`) returns you to the wall; the top-right corner has
+  🎯 **Exercise settings** (this exercise only) next to ⚙️ **Settings** (global) — all three are icon buttons, so the top bar carries no text buttons and stays narrow on small screens.
 - **🎯 Exercise settings** (shown on the exercise page only, side by side with ⚙️): one modal gathers this exercise's target and
   judging rules — the set target (number box plus preset buttons), the counting rule (relaxed / strict, the very same switch as in ⚙️),
   this exercise's **judging basis**, its **camera hint**, and the **📐 counting thresholds** below.
@@ -689,7 +689,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all six suites (1340 cases)
+npm test                       # run all six suites (1347 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / matching structure of the Chinese and English READMEs
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -706,7 +706,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 377 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; both languages are complete |
 | `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 247 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-app.mjs` | 254 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 

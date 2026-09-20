@@ -17,7 +17,11 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <button class="ghost-btn" id="btnHome" type="button" data-i18n="home.back" hidden></button>
+        <!-- 返回主页：与 🎯 / ⚙️ 一样是图标按钮，文字含义放在 title / aria-label 里（快捷键 H） -->
+        <button class="icon-btn" id="btnHome" type="button" hidden
+                data-i18n-title="home.back" data-i18n-aria="home.back">
+          <span aria-hidden="true">🏠</span>
+        </button>
         <!-- 运动设定：只出现在动作页，管「这个动作」的目标与判据 -->
         <button class="icon-btn" id="btnExercise" type="button" hidden
                 data-i18n-title="exercise.open" data-i18n-aria="exercise.open">

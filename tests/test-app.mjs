@@ -306,6 +306,37 @@ console.log('\n[1b] 运动设定弹窗');
     return ex >= 0 && st >= 0 && ex < st;
   })(), '两个图标不在同一个顶栏动作区里');
 
+  // 「返回主页」也是图标按钮：不再有可见文字，含义放在 title / aria-label 上（快捷键 H）
+  const homeBtn = elements.get('btnHome');
+  ok('返回主页是图标按钮（.icon-btn + 图标，不再是文字按钮）', (() => {
+    const tag = html.match(/<button[^>]*id="btnHome"[^>]*>/)?.[0] || '';
+    const body = html.slice(html.indexOf('id="btnHome"'), html.indexOf('</button>', html.indexOf('id="btnHome"')));
+    return /class="icon-btn"/.test(tag) && /aria-hidden="true"/.test(body) && !/data-i18n="/.test(tag);
+  })(), html.match(/<button[^>]*id="btnHome"[^>]*>/)?.[0]);
+  ok('返回主页图标挂在顶栏最左边（在 🎯 与 ⚙️ 之前）', (() => {
+    const bar = html.slice(html.indexOf('class="topbar-actions"'), html.indexOf('</header>'));
+    const h = bar.indexOf('id="btnHome"');
+    return h >= 0 && h < bar.indexOf('id="btnExercise"') && h < bar.indexOf('id="btnSettings"');
+  })());
+  ok('返回主页图标有无障碍名称（走 data-i18n-aria / title，随语言切换）',
+    (homeBtn.attributes['data-i18n-aria'] || '') === 'home.back'
+    && (homeBtn.attributes['data-i18n-title'] || '') === 'home.back',
+    JSON.stringify({ aria: homeBtn.attributes['data-i18n-aria'], title: homeBtn.attributes['data-i18n-title'] }));
+
+  const { t: tBack } = await import('../src/i18n.js');
+  const backZh = tBack('home.back');
+  api.changeLang('en');
+  const backEn = tBack('home.back');
+  api.changeLang('zh');
+  ok('返回主页图标的无障碍名称随语言切换（中文 → 英文）',
+    backZh === '返回主页' && /back/i.test(backEn) && !/[\u4e00-\u9fff]/.test(backEn), `${backZh} → ${backEn}`);
+
+  ok('返回主页图标在动作页可见', homeBtn.hidden === false);
+  homeBtn.dispatch('click');
+  ok('点图标能回主页', api.state.homeMode === true, String(api.state.homeMode));
+  ok('回主页后图标自己隐藏', homeBtn.hidden === true);
+  api.openExercise('pushup');
+
   elements.get('btnExercise').dispatch('click');
   ok('点图标打开运动设定弹窗', elements.get('exerciseModal').hidden === false);
   ok('弹窗标题是当前动作', elements.get('exerciseName').textContent.includes('俯卧撑'),
