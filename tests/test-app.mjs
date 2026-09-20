@@ -793,12 +793,20 @@ console.log('\n[6] 火柴人开关');
       texts.some((x) => /^髋\s+\d+°$/.test(x) && Number(/(\d+)°/.exec(x)[1]) > 0), texts.join(' | '));
     ok('仰卧抬腿：同时标出膝角（用来看腿有没有绷直）',
       texts.some((x) => x.includes('膝')), texts.join(' | '));
+    // 用户要求：躯干倾角也要像「髋」「膝」那样显示在画面上
+    ok('仰卧抬腿：标出「躯干 xx°」（用户要求显示躯干倾角）',
+      texts.some((x) => /^躯干\s+\d+°$/.test(x)), texts.join(' | '));
+    ok('躯干倾角是合理读数（0~90°，0=直立 / 90=水平）',
+      texts.some((x) => /^躯干\s+(\d+)°$/.test(x) && Number(/^躯干\s+(\d+)°$/.exec(x)[1]) <= 90),
+      texts.join(' | '));
     // 别的动作一样叫「髋」——全应用只有一种叫法，不做特例
     texts.length = 0;
     api.renderer.draw({ landmarks, frame, exerciseId: 'squat', status: 'ok' });
     ok('深蹲也标「髋」（和应用里其它动作同一套叫法）',
       texts.some((x) => x.startsWith('髋')), texts.join(' | '));
-    // 没有角度判据的动作（跳跃离地）不标角度，避免画面全是数字
+    ok('深蹲：同样标出「躯干 xx°」',
+      texts.some((x) => /^躯干\s+\d+°$/.test(x)), texts.join(' | '));
+    // 没有角度判据的动作（跳跃离地、开合距离）不标角度，避免画面全是数字
     texts.length = 0;
     api.renderer.draw({ landmarks, frame, exerciseId: 'jumpingJack', status: 'ok' });
     ok('判据不是关节角的动作（开合跳）不标角度', texts.length === 0, texts.join(' | '));

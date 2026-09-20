@@ -237,6 +237,8 @@ export default {
     bodyVisible: '全身',
     legsVisible: '双腿可见',
     trunkLean: '躯干倾角',
+    // 画面上的角度标注用短名（和「髋 / 膝」一个长度，胶囊不会宽到互相压住）
+    trunk: '躯干',
     knee: '膝',
     elbow: '肘',
     hip: '髋',

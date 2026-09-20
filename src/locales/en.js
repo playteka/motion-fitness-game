@@ -235,6 +235,8 @@ export default {
     bodyVisible: 'Full body',
     legsVisible: 'Both legs visible',
     trunkLean: 'Trunk lean',
+    // Short name for the on-screen angle label (same length as “Hip / Knee”, so the pills never overlap)
+    trunk: 'Trunk',
     knee: 'Knee',
     elbow: 'Elbow',
     hip: 'Hip',

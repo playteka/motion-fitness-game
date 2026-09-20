@@ -294,6 +294,30 @@ console.log('\n[3] 静态资源与模型文件');
   ok('判据不是关节角的动作不标角度（开合跳/波比跳/跳跃类不占画面）',
     !/jumpingJack:|burpee:/.test(focusBlock));
 
+  /* ---- 躯干倾角：用户要求「要在画面上显示躯干倾角的度数，类似『髋』『膝』的度数显示方法」 ---- */
+  ok('躯干倾角用和髋 / 膝同一套画法（同一个 drawAngles 里画，不是另做的浮层）',
+    /if \(showsTrunkAngle\(exerciseId\) && Number\.isFinite\(frame\.torsoIncl\)\)/.test(renderSrc));
+  ok('躯干倾角垂直于躯干方向让开一段（站立标在躯干侧面、躺姿标在身体上方，不会和关节标签叠住）',
+    /const sm = mid\(ls, rs\)[\s\S]*?const ax = sm\.x - hm\.x[\s\S]*?let nx = -ay \/ len/.test(renderSrc)
+    && /if \(ny > 0\)/.test(renderSrc));
+  ok('躯干倾角用短名文案（和「髋 / 膝」一个长度，胶囊不会宽到互相压住）',
+    /t\('debug\.trunk'\)/.test(renderSrc) && !/debug\.trunkLean/.test(renderSrc));
+  ok('两种语言都有「躯干 / Trunk」这个词条',
+    Object.values(LOCALES).every((L) => !!L.debug && typeof L.debug.trunk === 'string'
+      && L.debug.trunk === (L === LOCALES.en ? 'Trunk' : '躯干')),
+    Object.entries(LOCALES).map(([k, L]) => `${k}:${L.debug?.trunk}`).join(','));
+  {
+    // 规则：凡是画面上标了关节角的动作，都跟着标躯干倾角；不标角度的动作一个数字都不多
+    const { showsTrunkAngle } = await import('../src/render.js');
+    const judged = EXERCISES.filter((m) => showsTrunkAngle(m.id)).map((m) => m.id);
+    const clean = EXERCISES.filter((m) => !showsTrunkAngle(m.id)).map((m) => m.id);
+    ok(`标关节角的 ${judged.length} 个动作都会在画面上标出躯干倾角`,
+      judged.every((id) => new RegExp(`\\b${id}:`).test(focusBlock)), judged.join(', '));
+    ok('不标角度的动作（开合跳 / 波比跳 / 体前屈）不会多出一个躯干数字',
+      clean.length > 0 && clean.every((id) => !new RegExp(`\\b${id}:`).test(focusBlock)), clean.join(', '));
+    ok('躯干倾角覆盖了全部「角度判定」的动作（18 个）', judged.length === 18, String(judged.length));
+  }
+
   // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面
   const stageAt = html.indexOf('id="stage"');
   const toolbarAt = html.indexOf('class="stage-toolbar"');

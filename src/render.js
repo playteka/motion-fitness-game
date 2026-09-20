@@ -29,7 +29,8 @@ const OUTLINE_COLORS = {
  * 每个动作重点关注的关节（用于角度标注）：判据是哪个关节角，就在画面上标哪个角，
  * 让用户一边做一边能看到「离判决线还有多远」。
  * 判据不是关节角的动作（跳跃离地、开合距离、整套顺序、计时保持…）不标，免得画面全是数字。
- */const FOCUS = {
+ */
+export const FOCUS = {
   squat: ['knee', 'hip'],
   squatSumo: ['knee', 'hip'],
   squatJump: ['knee', 'hip'],
@@ -50,6 +51,19 @@ const OUTLINE_COLORS = {
   mountainClimber: ['knee', 'hip'],
   boxJump: ['knee', 'hip'],
 };
+
+/**
+ * 「躯干倾角」要不要标在画面上。
+ *
+ * 用户要求：「要在画面上显示躯干倾角的度数，类似『髋』『膝』的度数显示方法」。
+ * 规则就跟着「髋 / 膝」走 —— **凡是在画面上标了关节角的动作（FOCUS 里有条目的），都再加一个躯干倾角**：
+ * 这 18 个动作的判据里本来就都有躯干倾角（站立 ≤52°、俯撑 ≥32°、仰卧 ≥36°、前折 ≥55°…），
+ * 标出来正好能对着判决线看；而开合跳、波比跳、体前屈这些「判据不是角度」的动作仍旧一个数字都不标，
+ * 画面不会变成一串数字。
+ */
+export function showsTrunkAngle(exerciseId) {
+  return (FOCUS[exerciseId] || []).length > 0;
+}
 
 export class PoseRenderer {
   constructor(canvas) {
@@ -212,6 +226,8 @@ export class PoseRenderer {
     const side = frame.side === 'R' ? 'R' : 'L';
     const P = (i) => landmarks[i];
     const items = [];
+    /** 两个关键点的中点（躯干倾角标在躯干中段，不会和「身体直线」的肩点标签叠在一起） */
+    const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
     const S = { L: LM.L_SHOULDER, R: LM.R_SHOULDER };
     const E = { L: LM.L_ELBOW, R: LM.R_ELBOW };
@@ -231,6 +247,31 @@ export class PoseRenderer {
     }
     if (focus.includes('shoulder') && Number.isFinite(frame.bodyStraight)) {
       items.push({ at: P(S[side]), text: `${t('debug.bodyStraight')} ${Math.round(frame.bodyStraight)}°` });
+    }
+    // 躯干倾角：和「髋」「膝」一模一样的画法（深色胶囊 + 度数），只是要不要标由下面的规则决定。
+    // 锚点取躯干中段（肩中点 ↔ 髋中点的中点），并**垂直于躯干方向往外让开一段**：
+    // 站立时让到躯干侧面、躺姿时让到身体上方 —— 这样不管哪种姿势都不会和标在关节上的
+    // 「髋 / 膝 / 身体直线」胶囊压在一起（那三个都贴着关键点画）。
+    if (showsTrunkAngle(exerciseId) && Number.isFinite(frame.torsoIncl)) {
+      const ls = P(LM.L_SHOULDER);
+      const rs = P(LM.R_SHOULDER);
+      const lh = P(LM.L_HIP);
+      const rh = P(LM.R_HIP);
+      if (ls && rs && lh && rh) {
+        const sm = mid(ls, rs);
+        const hm = mid(lh, rh);
+        const ax = sm.x - hm.x;
+        const ay = sm.y - hm.y;
+        const len = Math.hypot(ax, ay) || 1;
+        let nx = -ay / len;
+        let ny = ax / len;
+        if (ny > 0) { nx = -nx; ny = -ny; }   // 统一偏向上方：躺姿时标在身体上侧，不会贴到进度条那边
+        const gapPx = base * 24;
+        items.push({
+          at: { x: (sm.x + hm.x) / 2 + (nx * gapPx) / W, y: (sm.y + hm.y) / 2 + (ny * gapPx) / H },
+          text: `${t('debug.trunk')} ${Math.round(frame.torsoIncl)}°`,
+        });
+      }
     }
 
     ctx.save();
