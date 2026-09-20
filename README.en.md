@@ -378,7 +378,14 @@ The search box at the top finds exercises by name directly (type “push” or �
   judging rules — the set target (number box plus preset buttons), this exercise's **judging basis**, its **camera hint**,
   and the **📐 keyframe criteria and scoring** group below (one row per keyframe with its criterion and its points).
   The “② Set target” card in the side panel keeps just a one-line target readout, and its button opens the same modal.
-- An exercise that belongs to two categories (Jump Squat) appears in both blocks, and either card opens the same exercise.
+- An exercise can belong to several categories at once (list more than one in `cats` and it shows up in each block, with every card
+  opening the same exercise); today each of the 22 exercises belongs to exactly one category.
+
+**The two big numbers in the top-left corner**: the **rep count** (or the **seconds** for timed exercises) sits at the top, and the
+**score sits directly underneath it** — the user asked for “the score to be near the count, for example below it, and in a different
+font colour”, so the score is **gold (`--score`)**, unlike the white count and the teal goal-progress ring, and you can tell at a
+glance which number is the score. The count and the score **share one pulse animation**: a counted rep, form-step points and the
++1-per-second tick all make both numbers jump together. The ring in the bottom-right corner now shows **only the set goal progress (%)**.
 
 ## 🟩 Judgement progress bar (the chain of line icons that lights up segment by segment)
 
@@ -543,7 +550,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2035 assertions in the suite).
+> exactly on the detector's own progress line (2043 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -910,8 +917,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 284 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
 | `tests/test-engines.mjs` | 158 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 851 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 354 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 370 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-page.mjs` | 359 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour” |
+| `tests/test-app.mjs` | 373 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, and the layout assertion that the score sits directly under the count |
 
 ---
 

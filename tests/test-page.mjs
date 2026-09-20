@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 页面接线自检（无浏览器依赖）。
  *
  * 检查那些“Node 里跑不到、但一打开浏览器就炸”的问题：
@@ -201,6 +201,23 @@ console.log('\n[3] 静态资源与模型文件');
     && /paint-order="stroke"/.test(fs.readFileSync(path.join(ROOT, 'src/icons.js'), 'utf8')));
   ok('正在等的那一格：琥珀粗描边 + 呼吸动画',
     /border:\s*2px solid #fbbf24/.test(segCurrent) && /animation:/.test(segCurrent));
+
+  // 用户要求：分数要放在和次数靠近的地方（次数下方），而且字体要换个颜色
+  const scoreBlock = /(?:^|\n)\.hud-score\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+  const scoreVar = /color:\s*var\((--[\w-]+)\)/.exec(scoreBlock)?.[1];
+  const scoreColor = scoreVar && new RegExp(`${scoreVar}:\\s*([^;]+);`).exec(css)?.[1].trim();
+  const textColor = /--text:\s*([^;]+);/.exec(css)?.[1].trim();
+  const accentColor = /--accent:\s*([^;]+);/.exec(css)?.[1].trim();
+  ok('分数用专属颜色变量（和次数的白色、进度的青色都不是同一个颜色）',
+    scoreVar === '--score' && !!scoreColor && scoreColor !== textColor && scoreColor !== accentColor,
+    `${scoreVar}=${scoreColor} vs --text=${textColor} / --accent=${accentColor}`);
+  ok('分数不再绝对定位在进度环底下（改成跟着次数排）', !/position:\s*absolute/.test(scoreBlock));
+  ok('分数字号够大（≥22px，紧挨着次数也看得清）',
+    Number(/font-size:\s*(\d+)px/.exec(scoreBlock)?.[1]) >= 22,
+    /font-size:\s*(\d+)px/.exec(scoreBlock)?.[1]);
+  ok('分数变了会跳一下（.hud-score.pop）', /\.hud-score\.pop\s*\{[^}]*transform/.test(css));
+  ok('窄屏也压得住（小屏规则里给了分数的字号）',
+    /@media[^{]*\{\s*[\s\S]*?\.hud-score\s*\{[^}]*font-size/.test(css));
   ok('动效敏感用户会关掉呼吸/弹跳动画', /prefers-reduced-motion/.test(css));
 
   /* ---- 一组结束后的两个手势圆环（退出 / 再做一次） ---- */

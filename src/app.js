@@ -1353,12 +1353,22 @@ function setCueLine(text, level = '') {
   el.className = 'cue-line' + (level ? ' ' + level : '');
 }
 
-function pulseValue() {
-  const el = $('hudValue');
+/** 数值跳一下：次数和分数共用一套（用户要求分数紧贴次数显示，两个数一起跳才像一组） */
+function pulseEl(el) {
+  if (!el) return;
   el.classList.remove('pop');
   void el.offsetWidth;
   el.classList.add('pop');
   setTimeout(() => el.classList.remove('pop'), 160);
+}
+
+function pulseValue() {
+  pulseEl($('hudValue'));
+}
+
+/** 分数变化时（要领加分 / 每秒加分 / 计上一次）也跳一下 */
+function pulseScore() {
+  pulseEl($('hudScore'));
 }
 
 /* ------------------------------------------------------------------ *
@@ -1390,6 +1400,7 @@ function announceHoldCount(det, ex, now) {
   state.holdCountAt = now;
   audio.sayTime(n * 1000);   // 「5 秒」/「10 秒」…（语音开关关掉时自然不出声）
   pulseValue();              // 屏幕上的秒数同时跳一下，听不见也看得见
+  pulseScore();              // 计时类每秒 +1 分，分数跟着一起跳
   return true;
 }
 
@@ -1946,6 +1957,7 @@ function handleEvents(events, now = performance.now()) {
       // 每一步要领达标：立刻响铃 + 加分飘字，第一次完成时还用语音念出要领
       audio.step(ev.index, ev.total);
       showScorePop(`+${ev.points}`);
+      pulseScore();
       if (!state.saidSteps.has(ev.id)) {
         state.saidSteps.add(ev.id);
         // 和「5 秒 / 10 秒」读秒撞在同一帧时，让读秒先说：两句叠在一起谁都听不清
@@ -1955,8 +1967,10 @@ function handleEvents(events, now = performance.now()) {
     } else if (ev.type === 'bonus') {
       audio.bonus();
       showScorePop(`${t('ui.stepsAllDone')} +${ev.points}`, 'bonus');
+      pulseScore();
     } else if (ev.type === 'points') {
       audio.scoreTick();
+      pulseScore();
       checkScoreMilestone(ev.score);
     } else if (ev.type === 'rep') {
       // 一次动作结束（有效或半程）→ 进度条**点亮最后一格**并保持 0.65 秒（让用户看到「这一轮走完了」），
@@ -1971,6 +1985,7 @@ function handleEvents(events, now = performance.now()) {
       renderCriteriaBar(now);
       if (ev.valid) {
         pulseValue();
+        pulseScore();
         audio.rep(det.validReps);
         // **每做一个都报数**（用户明确要求）：报数用 force 打断上一句，不会被吞掉
         audio.sayRep(det.validReps);

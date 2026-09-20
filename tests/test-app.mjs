@@ -617,6 +617,18 @@ console.log('\n[3] 动作 → 计分 → 音效与界面');
   ok('HUD 分数与检测器一致',
     elements.get('hudScore').textContent === `${det.score} 分`,
     `${elements.get('hudScore').textContent} vs ${det.score}`);
+  // 用户要求：分数要放在和次数靠近的地方（次数下方），并且用不同的颜色
+  {
+    const hudLeft = /<div class="hud-left">([\s\S]*?)<div class="hud-ring"/.exec(html)?.[1] || '';
+    ok('分数（#hudScore）和次数（#hudValue）在同一个 hud-left 区块里',
+      hudLeft.includes('id="hudValue"') && hudLeft.includes('id="hudScore"'), hudLeft.slice(0, 120));
+    ok('分数就排在次数下方（次数 → 分数 → 目标/提示）',
+      hudLeft.indexOf('id="hudValue"') < hudLeft.indexOf('id="hudScore"')
+      && hudLeft.indexOf('id="hudScore"') < hudLeft.indexOf('id="hudSub"'),
+      hudLeft.slice(0, 200));
+    ok('分数不再挂在右下角的目标进度环下面（环里只剩百分比）',
+      html.indexOf('id="hudScore"') < html.indexOf('class="hud-ring"'));
+  }
 
   // 现在流程是「校准 → 开始 → 计数」：校准阶段不计数、不计分
   const before = det.score;

@@ -11,6 +11,8 @@
   --good: #4ade80;
   --warn: #fbbf24;
   --bad: #f87171;
+  /* 分数专用色：和次数（白色）、目标进度（青色）都不是一个颜色，一眼能分出「哪个是分」 */
+  --score: #ffd166;
   --radius: 16px;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
 }
@@ -297,21 +299,24 @@ kbd {
   font-size: 17px;
   font-variant-numeric: tabular-nums;
 }
+/* 分数：紧贴次数下方、单独一种颜色（金色）——
+   用户要求「分数要放在和次数靠近的地方，比如在次数下方，而且要字体要用不同的颜色」 */
 .hud-score {
-  position: absolute;
-  left: 50%;
-  bottom: -6px;
-  transform: translateX(-50%);
-  white-space: nowrap;
-  background: rgba(9, 16, 26, 0.8);
-  border: 1px solid rgba(52, 229, 196, 0.45);
+  display: inline-block;
+  margin-top: 3px;
+  padding: 2px 13px;
   border-radius: 999px;
-  padding: 2px 12px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--accent);
+  background: rgba(9, 16, 26, 0.6);
+  border: 1px solid rgba(255, 209, 102, 0.42);
+  color: var(--score);
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 18px rgba(255, 209, 102, 0.45);
+  transition: transform 0.12s ease;
 }
+.hud-score.pop { transform: scale(1.16); }
 
 /* 要领计分清单 */
 .steps-card { border-color: rgba(52, 229, 196, 0.28); }
@@ -1421,6 +1426,7 @@ kbd {
   .app { padding: 12px; }
   .brand-text p { display: none; }
   .hud-value { font-size: 54px; }
+  .hud-score { font-size: 20px; }
   .hud-ring { width: 84px; height: 84px; }
   .exercise-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .ex-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
