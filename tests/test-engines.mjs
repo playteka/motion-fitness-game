@@ -479,7 +479,7 @@ console.log('\n[1] bend 引擎：一次循环一次数');
       det.progress >= 0.85, `progress=${det.progress?.toFixed(2)}`);
   }
   {
-    // 抬到一半多（133°）：不到计数线（122°），不算次数，但要出声（不留无声空档）
+    // 抬到一半多（133°）：不到计数线（105°），不算次数，但要出声（不留无声空档）
     const det = createDetector('lyingLegRaise');
     const r = makeFrameRunner(det);
     r.run(repeatF((p) => supineFrame({
@@ -488,6 +488,37 @@ console.log('\n[1] bend 引擎：一次循环一次数');
     ok('仰卧抬腿：只抬到 133°（不到计数线）不算次数', det.validReps === 0, `实际 ${det.validReps}`);
     atLeast('仰卧抬腿：抬不够记成半程', det.partialReps, 3);
     ok('仰卧抬腿：抬不够会提示「幅度再大一点」', hasCue(r, 'moreRange'), cuesOf(r).join(','));
+  }
+  {
+    // 用户要求：胯部大概到 90° 就可以计次，但不要太严格 ——
+    //   抬到 100°（离垂直 10°）算一次；抬到 118°（差得远）不算，只提示
+    const near = createDetector('lyingLegRaise');
+    const rNear = makeFrameRunner(near);
+    rNear.run(repeatF((p) => supineFrame({
+      hipAngle: 178 + (100 - 178) * Math.sin(Math.PI * p), kneeAngle: 176,
+    }), 1400, 4));
+    ok('仰卧抬腿：抬到胯部 100°（离垂直 10°）就计次（宽容到 105° 以内）',
+      near.validReps === 4, `实际 ${near.validReps}`);
+    ok('仰卧抬腿：抬到 100° 不误记半程', near.partialReps === 0, `实际 ${near.partialReps}`);
+    const far = createDetector('lyingLegRaise');
+    const rFar = makeFrameRunner(far);
+    rFar.run(repeatF((p) => supineFrame({
+      hipAngle: 178 + (118 - 178) * Math.sin(Math.PI * p), kneeAngle: 176,
+    }), 1400, 4));
+    ok('仰卧抬腿：只抬到 118°（差得还远）不计次', far.validReps === 0, `实际 ${far.validReps}`);
+    ok('仰卧抬腿：只抬到 118° 会提示「幅度再大一点」', hasCue(rFar, 'moreRange'), cuesOf(rFar).join(','));
+  }
+  {
+    // 用户要求：腿放平、胯部接近 180° 就能开始下一次，也不要太严格 ——
+    //   放回 160°（离躺平 18°）这一轮就该结算并计次，不会因为没完全放平而不算
+    const det = createDetector('lyingLegRaise');
+    const r = makeFrameRunner(det);
+    r.run(repeatF((p) => supineFrame({
+      hipAngle: 160 + (95 - 160) * Math.sin(Math.PI * p), kneeAngle: 176,
+    }), 1400, 4));
+    ok('仰卧抬腿：只放回到 160°（接近放平）也能结算，4 个循环 = 4 次',
+      det.validReps === 4, `实际 ${det.validReps}`);
+    ok('仰卧抬腿：放回不彻底也不会记半程', det.partialReps === 0, `实际 ${det.partialReps}`);
   }
   {
     // 膝盖弯着抬：髋角一样能凑到 90°，所以要**出声**提醒「腿要绷直」，但仍然计次（只提醒不拦）

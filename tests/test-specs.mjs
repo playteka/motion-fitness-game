@@ -390,11 +390,14 @@ console.log('\n[8] 判定进度条（画面上一格一格点亮的那条判据�
       st.length === 4 && st[0].kind === 'gate' && st[1].metric === 'hip' && st[2].metric === 'hip'
       && st[st.length - 1].kind === 'finish',
       JSON.stringify(st.map((s) => `${s.metric}:${s.kind}`)));
-    ok('仰卧抬腿：三个度数 = 开始 151° → 计次 122° → 放回 166°（角度一路变小再回到躺平）',
-      st[1].value === 151 && st[2].value === 122 && st[3].item.value === 166,
+    ok('仰卧抬腿：三个度数 = 开始 151° → 计次 105° → 放回 158°（角度一路变小再回到躺平）',
+      st[1].value === 151 && st[2].value === 105 && st[3].item.value === 158,
       JSON.stringify(st.map((s) => `${s.op}${s.value}/${s.item?.value}`)));
-    ok('仰卧抬腿：计数线比「抬到垂直」宽松（122° 就算一次，104° 才算满深度）',
-      st[2].value === 122 && meta.params.bottomP === 0.85, `count=${st[2].value} bottomP=${meta.params.bottomP}`);
+    ok('仰卧抬腿：计次线在「胯部约 90°」上留了宽容（105°，离垂直 15° 以内就算一次）',
+      st[2].value === 105, String(st[2].value));
+    ok('仰卧抬腿：放平就能开始下一次（回位线 158°，离躺平还有 22° 也算回到起始位）',
+      st[3].item.value === 158 && meta.params.backP === 0.24,
+      `back=${st[3].item.value} backP=${meta.params.backP}`);
     // 「腿要绷直」是建议项：弹窗里列出来的就是识别器真正用的那条宽容线（130°，用户要求不要太严格）
     const advice = exerciseSpecs('lyingLegRaise').groups.find((g) => g.titleKey === 'spec.group.advice');
     const legRow = (advice?.items || []).find((it) => it.labelKey === 'spec.adviceLegStraight');
@@ -620,8 +623,8 @@ console.log('\n[10] 关键帧线条图标');
     const gate = icons[0].pose.params;
     ok('仰卧抬腿：起始格画的是「躺平 + 腿伸直」（不是躺着屈膝的臀桥/卷腹姿势）',
       icons[0].builder === 'lie' && gate.hip >= 176 && gate.knee >= 172, JSON.stringify(gate));
-    ok('仰卧抬腿：抬起两格的髋角就是判据里的角度（151° / 122°），越抬越高',
-      icons[1].pose.criterion.hip === 151 && icons[2].pose.criterion.hip === 122
+    ok('仰卧抬腿：抬起两格的髋角就是判据里的角度（151° / 105°），越抬越高',
+      icons[1].pose.criterion.hip === 151 && icons[2].pose.criterion.hip === 105
       && icons[1].pose.params.hip > icons[2].pose.params.hip,
       JSON.stringify(icons.map((ic) => ic.pose.params.hip)));
     ok('仰卧抬腿：放回那一格带向下箭头（一眼看出是「控制着放回去」，也避免和起始格重样）',
