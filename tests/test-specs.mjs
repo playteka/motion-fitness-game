@@ -15,8 +15,11 @@
 import { createDetector, EXERCISES } from '../src/exercises.js';
 import { EXERCISE_MAP } from '../src/catalog.js';
 import {
-  exerciseSpecs, specKeys, roundFor, specTextRows,
+  exerciseSpecs, specKeys, roundFor, specTextRows, specStages, stageText, stageHolds, SPEC_METRICS,
 } from '../src/specs.js';
+import { toMetric, LandmarkSmoother } from '../src/geometry.js';
+import { computeFrame } from '../src/metrics.js';
+import { standingPose, ASPECT } from './synthetic-pose.mjs';
 import { GATE_LIMITS, ADVISORY_LIMITS } from '../src/engines.js';
 import { HOLD_PRIME_MS, HOLD_GRACE_MS } from '../src/detector-base.js';
 import { SQUAT, LUNGE, PUSHUP, BRIDGE, PLANK } from '../src/exercises.js';
@@ -307,6 +310,115 @@ console.log('\n[7] 姿态提醒阈值来自 ADVISORY_LIMITS');
   ok('站姿类：上身前倾提醒 = ADVISORY_LIMITS.stand.trunkLean',
     squatAdvice.some((it) => it.metricKey === 'metric.trunk' && it.value === ADVISORY_LIMITS.stand.trunkLean));
   ok('提醒都标了「只出声不扣次数」', [...prone, ...squatAdvice].every((it) => it.noteKey === 'spec.note.adviceOnly'));
+}
+
+/* ------------------------------------------------------------------ *
+ * 8. 判定进度条：格子里的数值 = 真实阈值，而且真的会一格一格点亮
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8] 判定进度条（画面上一格一格点亮的那条判据链）');
+{
+  for (const id of ALL) {
+    const st = specStages(id);
+    ok(`${id}：有 1~6 格`, st.length >= 1 && st.length <= 6, `实际 ${st.length} 格`);
+    ok(`${id}：每一格都能实时判断（指标可解析）`,
+      st.every((s) => typeof SPEC_METRICS[s.metric] === 'function'), JSON.stringify(st.map((s) => s.metric)));
+    ok(`${id}：每一格都有短标签与判据文字`,
+      st.every((s) => {
+        const tx = stageText(s);
+        return !!tx.short && tx.short !== s.shortKey && !!tx.cond;
+      }), JSON.stringify(st.map((s) => stageText(s).short)));
+    ok(`${id}：格子里的阈值就是弹窗里列出的阈值`,
+      st.every((s) => Number.isFinite(s.value) && itemsOf(id).some((it) => it.metricKey === `metric.${s.metric}`
+        && it.op === s.op && it.value === s.value)), JSON.stringify(st.map((s) => `${s.metric}${s.op}${s.value}`)));
+    ok(`${id}：进度条里没有「越走越倒退」的收尾/时间类判据`,
+      !st.some((s) => ['spec.backLine', 'spec.wobble', 'spec.minRep', 'spec.giveUp'].includes(s.item.labelKey)));
+  }
+
+  // 用户举的例子：箭步蹲应该是 站姿 → 开始(146°) → 计次(152°) → 双腿 → 满分(128°)
+  const lunge = specStages('lunge');
+  ok('箭步蹲进度条：站姿 → 146° → 152° → 双腿 → 128°',
+    lunge.length === 5
+    && lunge[0].metric === 'kneeExtended' && lunge[0].value === 145
+    && lunge[1].metric === 'frontKnee' && lunge[1].value === 146
+    && lunge[2].metric === 'frontKnee' && lunge[2].value === 152
+    && lunge[3].metric === 'straighterKnee' && lunge[3].value === 158
+    && lunge[4].metric === 'frontKnee' && lunge[4].value === 128,
+    JSON.stringify(lunge.map((s) => `${s.metric}${s.op}${s.value}`)));
+  const squat = specStages('squat');
+  ok('深蹲进度条：站姿 0.86 → 开始 0.78 → 计次 0.62 → 满分 0.40',
+    squat.map((s) => s.value).join(',') === '0.86,0.78,0.62,0.4', squat.map((s) => s.value).join(','));
+  ok('跳跃类动作的进度条包含「起跳」这一格',
+    specStages('squatJump').some((s) => s.metric === 'lift' && s.value === 0.035),
+    JSON.stringify(specStages('squatJump').map((s) => s.metric)));
+  ok('俯卧撑的进度条包含「肩膀下沉量」这一格',
+    specStages('pushup').some((s) => s.metric === 'shoulderDrop' && s.value === PUSHUP.dropMin));
+}
+
+/* ------------------------------------------------------------------ *
+ * 9. 进度条真的会随姿势一格格前进（合成骨架驱动，走的和真机同一条管线）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格');
+{
+  const sp = standingPose;
+  const tm = toMetric;
+  const cf = computeFrame;
+  const LS = LandmarkSmoother;
+  const A = ASPECT;
+  /** 造一帧（与真机同一条管线：toMetric → computeFrame） */
+  const frameOf = (landmarks, t = 1000) => {
+    const smoother = new LS();
+    let f = { ok: false };
+    for (let i = 0; i < 6; i++) f = cf(tm(smoother.apply(landmarks.map((p) => ({ ...p, v: p.visibility })), i / 30), A), null, t + i * 33, false, null);
+    return f;
+  };
+  const squatFrame = (knee) => frameOf(sp({
+    knee, lean: 6 + (178 - knee) * 0.28, armDown: (178 - knee) * 0.45, ankleX: 1.0, view: 'front',
+  }));
+
+  /** 走一个姿势序列，返回进度条到过的最大格 */
+  const walk = (frames) => {
+    const det = createDetector('squat');
+    const stages = specStages('squat');
+    let idx = -1;
+    for (const f of frames) {
+      for (let i = idx + 1; i < stages.length; i++) {
+        if (!stageHolds(stages[i], f, det)) break;
+        idx = i;
+      }
+    }
+    return idx;
+  };
+
+  const deep = [178, 170, 160, 150, 140, 130, 120, 110, 100, 90, 80, 75].map(squatFrame);
+  ok('深蹲一路蹲下去：进度条走到最后一格（满分）', walk(deep) === specStages('squat').length - 1, `到第 ${walk(deep) + 1} 格`);
+  const shallow = [178, 172, 168, 165, 162, 160, 158].map(squatFrame);
+  ok('只蹲一点点：进度条停在前面几格，不会跳到满分', walk(shallow) <= 1, `到第 ${walk(shallow) + 1} 格`);
+  ok('站着不动：进度条只点亮「站姿」这一格', walk([178, 178, 178].map(squatFrame)) === 0,
+    `到第 ${walk([178, 178, 178].map(squatFrame)) + 1} 格`);
+
+  // 丢失跟踪（frame.ok = false）时任何一格都不该点
+  ok('没识别到人时不点亮任何一格',
+    !stageHolds(specStages('squat')[0], { ok: false }, createDetector('squat')));
+
+  // 箭步蹲：两条腿都弯才能过「双腿」那一格（真实阈值 158°）
+  const lungeStages = specStages('lunge');
+  const fake = (frontKnee, backKnee, kneeExtended = 175) => ({
+    ok: true,
+    perSide: { L: { knee: frontKnee }, R: { knee: backKnee } },
+    kneeExtended,
+  });
+  ok('箭步蹲：前膝 130°、后膝 150° 时「双腿」这一格过得了',
+    stageHolds(lungeStages[3], fake(130, 150), createDetector('lunge')));
+  ok('箭步蹲：前膝 130° 但后膝几乎伸直（172°）时「双腿」这一格过不了',
+    !stageHolds(lungeStages[3], fake(130, 172), createDetector('lunge')));
+  ok('箭步蹲：站着不动时连「开始」那一格都过不了',
+    !stageHolds(lungeStages[1], fake(175, 175), createDetector('lunge')));
+  ok('箭步蹲：蹲到 90° 时最后一格（满分 128°）过得了',
+    stageHolds(lungeStages[4], fake(90, 95), createDetector('lunge')));
+  ok('箭步蹲：只到 140° 时最后一格过不了',
+    !stageHolds(lungeStages[4], fake(140, 140), createDetector('lunge')));
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

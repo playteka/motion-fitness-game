@@ -502,6 +502,117 @@ kbd {
 .pose-hint.bad { border-color: rgba(248, 113, 113, 0.55); color: #ffd5d5; }
 .pose-hint.good { border-color: rgba(74, 222, 128, 0.5); color: #d6ffe4; }
 
+/* ---- 判定进度条：贴在画面底部，每识别到一个判据就点亮一格 ---- */
+.criteria-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  width: min(560px, 84%);
+  padding: 8px 12px 9px;
+  border-radius: 13px;
+  background: rgba(8, 15, 26, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  z-index: 5;
+  pointer-events: none;
+}
+.criteria-bar[hidden] { display: none; }
+.criteria-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.criteria-title {
+  font-size: 11.5px;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+}
+.criteria-earned {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--accent);
+  min-height: 16px;
+}
+.criteria-earned.show { animation: criteriaPop 1.1s ease-out forwards; }
+@keyframes criteriaPop {
+  0% { opacity: 0; transform: translateY(5px) scale(0.9); }
+  25% { opacity: 1; transform: translateY(0) scale(1.12); }
+  70% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-6px) scale(1); }
+}
+.criteria-track { display: flex; gap: 5px; }
+.criteria-seg {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 4px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.criteria-seg-index {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--muted);
+  line-height: 1;
+}
+.criteria-seg-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #cfe0f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* 已经识别到的格子：亮绿 + 勾 */
+.criteria-seg.done {
+  background: rgba(74, 222, 128, 0.18);
+  border-color: rgba(74, 222, 128, 0.6);
+}
+.criteria-seg.done .criteria-seg-label { color: #d8ffe6; }
+.criteria-seg.done .criteria-seg-index::after { content: ' ✓'; color: #4ade80; }
+/* 正在等的那一格：琥珀色描边，一眼看出「下一步做什么」 */
+.criteria-seg.current {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: rgba(251, 191, 36, 0.7);
+  transform: translateY(-2px);
+}
+.criteria-seg.current .criteria-seg-label { color: #ffe9b8; }
+.criteria-seg.just { animation: segPop 0.55s cubic-bezier(0.2, 0.8, 0.3, 1); }
+@keyframes segPop {
+  0% { transform: scale(0.86); }
+  45% { transform: scale(1.09); }
+  100% { transform: scale(1); }
+}
+.criteria-seg-pts {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #ffe066;
+  line-height: 1;
+  min-height: 11px;
+}
+.criteria-cond {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #dbe9ff;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.criteria-bar.all-done { border-color: rgba(74, 222, 128, 0.55); }
+
+/* 进度条出现时，把底部提示条往上让一格，避免两块叠在一起 */
+.stage.has-criteria .pose-hint { bottom: 96px; }
+
 /* 建议项没达标（不拦人）与更柔和的提示配色 */
 .calib-item.soft { opacity: 0.72; }
 .calib-hint.soft { color: #cfe4f7; }

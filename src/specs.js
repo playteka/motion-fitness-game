@@ -24,7 +24,7 @@
  */
 
 import { EXERCISE_MAP } from './catalog.js';
-import { GATE_LIMITS, SEQ_STAGE_LIMITS, ADVISORY_LIMITS } from './engines.js';
+import { GATE_LIMITS, SEQ_STAGE_LIMITS, ADVISORY_LIMITS, SIDE_METRICS } from './engines.js';
 import { HORIZONTAL_TILT } from './metrics.js';
 import { HOLD_PRIME_MS, HOLD_GRACE_MS } from './detector-base.js';
 import { t } from './i18n.js';
@@ -132,6 +132,7 @@ function bendSpecs(meta) {
   if (p.flight) {
     count.push(item({
       labelKey: 'spec.flight',
+      metricKey: 'metric.lift',
       op: 'gte',
       value: roundFor(Number.isFinite(p.flightMin) ? p.flightMin : 0.035, LIFT),
       unit: LIFT,
@@ -464,6 +465,202 @@ export function specKeys(id) {
     }
   }
   return [...out];
+}
+
+/* ------------------------------------------------------------------ *
+ * 判定进度条：把判据按「识别顺序」摊成几步，画面上一格一格点亮
+ * ------------------------------------------------------------------ */
+
+/**
+ * 判据里的 metricKey → 当前帧（必要时结合识别器内部状态）里的数值。
+ *
+ * 进度条靠它逐帧判断「这一步过了没有」。同一个表也用于测试，
+ * 保证画面上点亮的那一格和识别器真正判定的是同一个量。
+ */
+export const SPEC_METRICS = {
+  knee: (f) => f.kneeAngle,
+  kneeBent: (f) => f.kneeBent,
+  kneeExtended: (f) => f.kneeExtended,
+  elbow: (f) => f.elbowAngle,
+  hip: (f) => f.hipAngle,
+  ankle: (f) => f.ankleAngle,
+  body: (f) => f.bodyStraight,
+  trunk: (f) => f.torsoIncl,
+  torsoIncl: (f) => f.torsoIncl,
+  shoulderClear: (f) => f.shoulderClear,
+  kneeClear: (f) => f.kneeClear,
+  hipClear: (f) => f.hipClear,
+  wristClear: (f) => f.wristClearMin,
+  wristClearMin: (f) => f.wristClearMin,
+  hipRise: (f) => f.hipRise,
+  hipAboveKnee: (f) => f.hipAboveKnee,
+  armRaised: (f) => f.armRaised,
+  kneeSpread: (f) => f.kneeSpread,
+  ankleSpread: (f) => f.ankleSpread,
+  hipLineDevAbs: (f) => Math.abs(f.hipLineDev),
+  valgus: (f) => f.valgus,
+  // 识别器内部状态（不是当帧指标）：跳跃离地高度、俯卧撑的肩膀下沉量
+  lift: (f, det) => det?.lift,
+  shoulderDrop: (f, det) => det?.drop,
+  // 左右两条腿各自的膝角（箭步蹲用）
+  frontKnee: (f) => Math.min(...sideValues(f, 'knee')),
+  straighterKnee: (f) => Math.max(...sideValues(f, 'knee')),
+  // 左右交替类：正在做的那一侧 / 另一侧
+  oneSide: (f, det) => (det?.cmp === 'gt' ? Math.max(...sideValues(f, det?.metricName)) : Math.min(...sideValues(f, det?.metricName))),
+  otherSide: (f, det) => (det?.cmp === 'gt' ? Math.min(...sideValues(f, det?.metricName)) : Math.max(...sideValues(f, det?.metricName))),
+};
+
+function sideValues(f, metric) {
+  const read = SIDE_METRICS[metric] || SIDE_METRICS.knee;
+  return ['L', 'R'].map((s) => read(f, s)).filter(Number.isFinite);
+}
+
+/** 判据行能不能实时判断（时间类、纯文字类不算） */
+const isLiveItem = (it) => !!it && !!it.metricKey && !!SPEC_METRICS[it.metricKey.replace('metric.', '')]
+  && Number.isFinite(it.value) && it.op !== undefined;
+
+/**
+ * 不进进度条的条目：
+ *   - 收尾条件（回到起始位）——那是「这一轮结束」，进度条在结算时就归零了，放进去只会闪一下；
+ *   - 「只是晃了一下」是**否定**条件，方向正好相反；
+ *   - 时间类（最短用时 / 最长时限 / 计时宽容）在画面上没法「看着一格一格走」。
+ */
+const NOT_A_STAGE = new Set([
+  'spec.backLine', 'spec.wobble', 'spec.minRep', 'spec.giveUp',
+  'spec.holdPrime', 'spec.holdGrace', 'spec.seqWindow', 'spec.altHold', 'spec.altGap',
+]);
+
+const isStageItem = (it) => isLiveItem(it) && !NOT_A_STAGE.has(it.labelKey);
+
+/** 判据文字用的比较：op 是「值要满足的方向」 */
+export function stageHolds(stage, frame, det) {
+  const read = SPEC_METRICS[stage.metric];
+  if (!read || !frame || !frame.ok) return false;
+  const v = read(frame, det);
+  if (!Number.isFinite(v)) return false;
+  const k = stage.k / 100;   // 一点的宽容：识别抖动时不至于卡在临界线上来回跳
+  switch (stage.op) {
+    case 'lte': return v <= stage.value + k;
+    case 'gte': return v >= stage.value - k;
+    case 'lt': return v < stage.value + k;
+    case 'gt': return v > stage.value - k;
+    case 'range': return v >= stage.value - k && v <= stage.value2 + k;
+    default: return false;
+  }
+}
+
+/** 进度条上一格的短标签（先按「标签 + 指标」精确匹配，再退回只按标签） */
+const SHORT_LABEL = {
+  // 计时类：同一个标签下有好几条姿势要求，按指标区分，进度条上才不会三格都写「俯撑」
+  'spec.plankHard|trunk': 'spec.short.holdPlank',
+  'spec.plankHard|shoulderClear': 'spec.short.lift',
+  'spec.plankHard|wristClear': 'spec.short.hands',
+  'spec.pose.sideLying|torsoIncl': 'spec.short.side',
+  'spec.pose.sideLying|shoulderClear': 'spec.short.lift',
+  'spec.pose.sideLying|hipClear': 'spec.short.hip',
+  'spec.pose.sideLying|wristClearMin': 'spec.short.hands',
+  'spec.pose.standFold|torsoIncl': 'spec.short.fold',
+  'spec.pose.standFold|hipClear': 'spec.short.hip',
+  'spec.pose.seatedFold|hipClear': 'spec.short.seat',
+  'spec.pose.seatedFold|torsoIncl': 'spec.short.fold',
+  'spec.enterLine': 'spec.short.start',
+  'spec.lungeEnter': 'spec.short.start',
+  'spec.pushupEnter': 'spec.short.start',
+  'spec.squatEnter': 'spec.short.start',
+  'spec.countLine': 'spec.short.count',
+  'spec.bottomLine': 'spec.short.full',
+  'spec.bothKnees': 'spec.short.both',
+  'spec.flight': 'spec.short.jump',
+  'spec.bridgeDown': 'spec.short.down',
+  'spec.shoulderDrop': 'spec.short.drop',
+  'spec.seq1': 'spec.short.stand',
+  'spec.seq2': 'spec.short.crouch',
+  'spec.seq3': 'spec.short.holdPlank',
+  'spec.seq4': 'spec.short.jump',
+  'spec.altOn': 'spec.short.work',
+  'spec.altOff': 'spec.short.rest',
+  'spec.plankHard': 'spec.short.holdPlank',
+  'spec.plankSoft': 'spec.short.line',
+  'spec.plankKnee': 'spec.short.knee',
+  'spec.holdPrime': 'spec.short.holdTime',
+  'spec.startStance': 'spec.short.stance',
+  'spec.viewFront': 'spec.short.stance',
+  'spec.viewSide': 'spec.short.stance',
+  'spec.pose.stand': 'spec.short.stand',
+  'spec.pose.standWide': 'spec.short.stand',
+  'spec.pose.prone': 'spec.short.prone',
+  'spec.pose.supine': 'spec.short.supine',
+  'spec.pose.supineLow': 'spec.short.supine',
+  'spec.pose.sideLying': 'spec.short.side',
+  'spec.pose.standFold': 'spec.short.fold',
+  'spec.pose.seatedFold': 'spec.short.fold',
+  'spec.bridgeSupine': 'spec.short.supine',
+  'spec.postureKeep': 'spec.short.pose',
+  'spec.pushupPose': 'spec.short.prone',
+};
+
+const STAGE_TOLERANCE = { deg: 2, torso: 0.03, shin: 0.05, lift: 0.01, s: 0.05, count: 0.5 };
+
+function toStage(it, extra = {}) {
+  const metric = it.metricKey.replace('metric.', '');
+  return {
+    shortKey: SHORT_LABEL[`${it.labelKey}|${metric}`] || SHORT_LABEL[it.labelKey] || 'spec.short.step',
+    metric,
+    op: it.op,
+    value: it.value,
+    value2: it.value2,
+    unit: it.unit,
+    k: STAGE_TOLERANCE[it.unit] ?? 0.02,
+    item: it,
+    ...extra,
+  };
+}
+
+/**
+ * 某个动作的判定进度条阶段。
+ *
+ * 顺序 = 识别器真正的判定顺序：先「站/趴到位」（姿势门控），
+ * 再依次是 开始这一轮 → 计入一次 → 双腿/离地等附加条件 → 深度到位。
+ * 每一格都带**真实阈值**，用户在外面就能看到「差在哪一格」。
+ */
+export function specStages(id) {
+  const meta = EXERCISE_MAP[id];
+  const { groups } = exerciseSpecs(id);
+  const count = groups.find((g) => g.titleKey === 'spec.group.count');
+  const posture = groups.find((g) => g.titleKey === 'spec.group.posture');
+  const stages = [];
+
+  // ① 姿势要求：计人类的动作只要第一条（站直 / 俯撑 / 仰卧…）；
+  //    计时类动作没有「往复」过程，姿势的每一条就是一个台阶（撑起来 → 身体水平 → 手贴地），都收进来。
+  const poseItems = (posture?.items || []).filter(isLiveItem);
+  const isHold = meta?.kind === 'hold';
+  const poseTake = isHold ? poseItems.slice(0, 4) : poseItems.slice(0, 1);
+  for (const it of poseTake) stages.push(toStage(it, { pose: true }));
+
+  // ② 计次判据里能实时判断的条目，按识别器检查顺序
+  for (const it of count?.items || []) {
+    if (!isStageItem(it)) continue;
+    stages.push(toStage(it));
+  }
+
+  // 去重（同一格指标 + 同一阈值只留一条），并限制长度，画面上别太挤
+  const seen = new Set();
+  const out = [];
+  for (const s of stages) {
+    const sig = `${s.metric}|${s.op}|${s.value}|${s.value2 ?? ''}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push(s);
+  }
+  return out.slice(0, 6);
+}
+
+/** 进度条每一格的显示文字（短标签 + 判据），调试与测试都用它 */
+export function stageText(stage) {
+  return {
+    short: t(stage.shortKey),
+    cond: specCondition(stage.item),
+  };
 }
 
 /* ------------------------------------------------------------------ *

@@ -306,9 +306,20 @@ export class AudioKit {
     }
   }
 
+  /**
+   * 判定进度条前进一格：比「要领得分音」更轻的一声，逐级升高。
+   * 和要领音可能同一帧一起响，所以音量压小、时值压短，避免叠在一起太吵。
+   */
+  criteria(index = 0, total = 4) {
+    const scale = [659.25, 783.99, 880.0, 1046.5, 1174.66, 1318.51];
+    const i = Math.max(0, Math.min(index, scale.length - 1));
+    this.tone({ freq: scale[i], dur: 0.06, type: 'sine', gain: 0.085 });
+    // 最后一格：补一个高八度，听起来像「这一轮判据全过了」
+    if (index >= total - 1) this.tone({ freq: scale[i] * 2, dur: 0.16, type: 'sine', gain: 0.07, delay: 0.06 });
+  }
+
   /** 整轮要领全部完成 */
-  bonus() {
-    [784, 988, 1319].forEach((f, i) => this.tone({ freq: f, dur: 0.2, type: 'triangle', gain: 0.16, delay: i * 0.08 }));
+  bonus() {    [784, 988, 1319].forEach((f, i) => this.tone({ freq: f, dur: 0.2, type: 'triangle', gain: 0.16, delay: i * 0.08 }));
   }
 
   /** 计时类动作每秒的轻点，音量很小，只为“还在计分”的持续反馈 */

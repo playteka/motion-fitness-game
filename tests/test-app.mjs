@@ -1137,6 +1137,124 @@ console.log('\n[8] 运动前校准流程');
 }
 
 /* ------------------------------------------------------------------ *
+ * 判定进度条（画面上那条一格一格点亮的判据链）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8b] 判定进度条');
+{
+  const { toMetric: tm, LandmarkSmoother: LS } = await import('../src/geometry.js');
+  const { computeFrame: cf } = await import('../src/metrics.js');
+  const { ASPECT: A, standingPose: sp } = await import('./synthetic-pose.mjs');
+  const { specStages } = await import('../src/specs.js');
+  const api = windowStub.__mfg;
+
+  const frameOf = (knee) => {
+    const sm = new LS();
+    const lm = sp({ knee, lean: 6 + (178 - knee) * 0.28, armDown: (178 - knee) * 0.45, ankleX: 1.0, view: 'front' });
+    let f = { ok: false };
+    for (let i = 0; i < 6; i++) {
+      f = cf(tm(sm.apply(lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), i / 30), A), null, 900 + i * 33, false, null);
+    }
+    return f;
+  };
+  const segs = () => elements.get('criteriaTrack').children;
+  const segHtml = () => elements.get('criteriaTrack').innerHTML;
+  /** 桩 DOM 不会解析 innerHTML，所以按字符串数格子（真实浏览器里就是子元素） */
+  const segCount = () => (segHtml().match(/<div class="[^"]*" data-i="/g) || []).length;
+  const segAt = (i) => (segHtml().match(new RegExp(`<div class="[^"]*" data-i="${i}"[^>]*>`)) || [''])[0];
+
+  // 主页上不该出现
+  api.showHome();
+  ok('主页上不显示判定进度条', elements.get('criteriaBar').hidden === true);
+
+  api.openExercise('squat');
+  ok('校准阶段不显示判定进度条（还没开始计数）', elements.get('criteriaBar').hidden === true);
+
+  // 直接切到「训练中」，并备好这个动作的进度条
+  api.buildCriteriaBar();
+  api.state.session = 'running';
+  api.renderCriteriaBar();
+  const squatStages = specStages('squat');
+  ok('训练中显示判定进度条', elements.get('criteriaBar').hidden === false);
+  ok('进度条格数 = 这个动作的判据步数', segCount() === squatStages.length,
+    `${segCount()} vs ${squatStages.length}`);
+  ok('第一格是「站姿」', segHtml().includes('站姿'), segHtml().slice(0, 160));
+  ok('标题是「判定进度」', elements.get('criteriaTitle').textContent === '判定进度',
+    elements.get('criteriaTitle').textContent);
+
+  // 站着不动：只点亮「站姿」这一格
+  api.updateCriteria(frameOf(178), [], 1000);
+  ok('站着时点亮「站姿」这一格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
+  ok('下一格显示的是「开始」的判据文字（真实阈值 0.78）',
+    elements.get('criteriaCond').textContent.includes('0.78'), elements.get('criteriaCond').textContent);
+  ok('「站姿」那一格标记为已完成', /class="[^"]*done[^"]*" data-i="0"/.test(segAt(0)), segAt(0));
+  ok('「开始」那一格标记为正在等（current）', /class="[^"]*current[^"]*" data-i="1"/.test(segAt(1)), segAt(1));
+
+  // 一路蹲下去：进度条一格一格往前走
+  const walked = [];
+  for (const knee of [170, 160, 150, 140, 130, 120, 110, 100, 90, 80, 75]) {
+    api.updateCriteria(frameOf(knee), [], 1100 + knee);
+    walked.push(api.state.criteriaIdx);
+  }
+  ok('蹲下去时进度条只前进不后退（单调）',
+    walked.every((v, i) => i === 0 || v >= walked[i - 1]), walked.join(','));
+  ok('蹲到底时走到最后一格（满分深度）', api.state.criteriaIdx === squatStages.length - 1,
+    `${api.state.criteriaIdx + 1}/${squatStages.length}`);
+  ok('全部点亮后提示「判据全过」', elements.get('criteriaCond').textContent.includes('全过'),
+    elements.get('criteriaCond').textContent);
+  ok('最后一格也标记已完成', /class="[^"]*done[^"]*" data-i="\d+"/.test(segAt(squatStages.length - 1)),
+    segAt(squatStages.length - 1));
+
+  // 一步真的加了分 → 标在格子上，并飘一下「刚拿到 +N」
+  api.resetCriteriaProgress();
+  api.updateCriteria(frameOf(178), [], 2000);
+  api.updateCriteria(frameOf(100), [{ type: 'step', points: 7, index: 1, total: 5, labelKey: 'x' }], 2100);
+  ok('这一步加到的分标在格子上',
+    segHtml().includes('+7'), segHtml());
+  ok('同时给出「刚拿到 +N」的反馈',
+    elements.get('criteriaEarned').textContent.includes('+7'), elements.get('criteriaEarned').textContent);
+
+  // 一次动作结束 → 进度条收回起点
+  api.handleEvents([{ type: 'rep', valid: true, index: 1, quality: 90, duration: 900 }]);
+  ok('做完一次动作后进度条收回起点', api.state.criteriaIdx === -1, String(api.state.criteriaIdx));
+  api.renderCriteriaBar();
+  ok('收回后第一格不再是 done', !/class="[^"]*done[^"]*" data-i="0"/.test(segAt(0)), segAt(0));
+
+  // 换动作 → 格子跟着换（判据不同）
+  api.openExercise('lunge');
+  api.state.session = 'running';
+  api.buildCriteriaBar();
+  api.renderCriteriaBar();
+  ok('换到箭步蹲后进度条重建（格数跟着判据链走、下一格是站姿 145°）',
+    segCount() === specStages('lunge').length && elements.get('criteriaCond').textContent.includes('145'),
+    `${segCount()} 格 / ${elements.get('criteriaCond').textContent}`);
+  api.updateCriteria({
+    ok: true, perSide: { L: { knee: 175 }, R: { knee: 175 } }, kneeExtended: 175,
+  }, [], 3000);
+  ok('箭步蹲站着时只点亮「站姿」格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
+  api.updateCriteria({
+    ok: true, perSide: { L: { knee: 120 }, R: { knee: 150 } }, kneeExtended: 150,
+  }, [], 3100);
+  ok('箭步蹲蹲到 120°（两条腿都弯）后走到「满分」那一格',
+    api.state.criteriaIdx === specStages('lunge').length - 1, String(api.state.criteriaIdx));
+
+  // 后腿不弯时，卡在「双腿」那一格（进度条会提示差在哪）
+  api.resetCriteriaProgress();
+  api.updateCriteria({ ok: true, perSide: { L: { knee: 120 }, R: { knee: 172 } }, kneeExtended: 172 }, [], 3200);
+  ok('后腿几乎伸直时卡在「双腿」那一格',
+    api.state.criteriaIdx === 2, String(api.state.criteriaIdx));
+  ok('并提示差在哪一格（较直那条腿的膝角 ≤ 158°）',
+    elements.get('criteriaCond').textContent.includes('158'), elements.get('criteriaCond').textContent);
+
+  // 回主页 → 进度条隐藏
+  api.showHome();
+  ok('回主页后进度条隐藏', elements.get('criteriaBar').hidden === true);
+  api.openExercise('squat');
+  api.stopSession('user');
+  api.showHome();
+}
+
+/* ------------------------------------------------------------------ *
  * 语音播报的健壮性（浏览器不给被取消的那句触发 onend 时不能永久哑掉）
  * ------------------------------------------------------------------ */
 

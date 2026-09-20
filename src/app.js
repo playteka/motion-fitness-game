@@ -13,7 +13,7 @@ import { PoseEngine, Camera } from './pose-engine.js';
 import { PoseRenderer } from './render.js';
 import { AudioKit, TRACKS, getTrack, DEFAULT_TRACK } from './audio.js';
 import { Calibrator, requiredView } from './calibration.js';
-import { exerciseSpecs, specCondition } from './specs.js';
+import { exerciseSpecs, specCondition, specStages, stageHolds, stageText } from './specs.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
 } from './i18n.js';
@@ -95,6 +95,11 @@ const state = {
   lastEncourageHint: '',      // 屏幕上刚显示过的激励语（不重复）
   coachAt: -Infinity, // 语音教练上一次说话的时间（全局节流；-Infinity = 还没说过）
   coachSig: '',     // 上一次念的那句话（同一句短时间内不重复）
+  // ---- 判定进度条（画面上那条一格一格点亮的判据链）----
+  criteriaStages: [],   // 当前动作的阶段（见 specs.js 的 specStages）
+  criteriaIdx: -1,      // 已经识别到的最后一格；-1 = 还没开始
+  criteriaJust: -1,     // 刚刚点亮的那一格（用于播放「跳一下」动画）
+  criteriaPts: [],      // 每一格上显示的分（那一步真的加了分才写）
 };
 
 /** 收集控制台错误，供 ?probe=1 自检输出 */
@@ -398,8 +403,7 @@ function closeSettings() {
 
 function exerciseSettingsOpen() { return !$('exerciseModal').hidden; }
 
-/** 把当前动作的「计次技术指标」渲染进运动设定弹窗（数值来自识别器真正使用的常量） */
-function renderExerciseSpecs() {
+/** 把当前动作的「计次技术指标」渲染进运动设定弹窗（数值来自识别器真正使用的常量） */function renderExerciseSpecs() {
   const box = $('exerciseSpecs');
   if (!box) return;
   const { groups } = exerciseSpecs(state.exerciseId);
@@ -454,6 +458,105 @@ function closeExerciseSettings() {
   if (modal) modal.hidden = true;
 }
 
+/* ------------------------------------------------------------------ *
+ * 判定进度条：把判据摊成几步，每识别到一个姿态就点亮一格
+ *
+ * 每一格都是识别器真正用的阈值（见 specs.js 的 specStages），顺序就是判定顺序：
+ *   站姿/俯撑到位 → 开始这一轮 → 计入一次 → 双腿/离地等附加条件 → 深度到位
+ * 一格点亮时：轻响一声 + 该格闪一下；如果这一步同时加了分，格子上显示 +N。
+ * 每完成一次动作（rep 事件）就把进度条收回起点，下一轮重新一格一格走过去。
+ * ------------------------------------------------------------------ */
+
+/** 按当前动作重建进度条（换动作 / 重新校准时调用） */
+function buildCriteriaBar() {
+  state.criteriaStages = specStages(state.exerciseId);
+  state.criteriaPts = new Array(state.criteriaStages.length).fill(0);
+  resetCriteriaProgress();
+  renderCriteriaBar();
+}
+
+/** 把进度收回起点（每一次动作之后都调用） */
+function resetCriteriaProgress() {
+  state.criteriaIdx = -1;
+  state.criteriaJust = -1;
+  for (let i = 0; i < state.criteriaPts.length; i++) state.criteriaPts[i] = 0;
+}
+
+/** 某一格现在满足了没 */
+function criteriaHolds(stage, frame) {
+  return stageHolds(stage, frame, state.detector);
+}
+
+/**
+ * 每帧推进：只看「下一格」，所以必须按顺序一格一格走，不会跳格。
+ * events 是这一帧识别器抛出的事件，用来把刚加到的分标在对应格子上。
+ */
+function updateCriteria(frame, events, now) {
+  const stages = state.criteriaStages;
+  if (!stages.length) return;
+  let advanced = -1;
+  for (let i = state.criteriaIdx + 1; i < stages.length; i++) {
+    if (!criteriaHolds(stages[i], frame)) break;
+    state.criteriaIdx = i;
+    advanced = i;
+  }
+  // 这一帧加到的分（要领得分 / 满分奖励）：标在刚点亮的那一格上
+  const earned = (events || []).reduce((n, ev) => n + (Number.isFinite(ev.points) ? ev.points : 0), 0);
+  if (advanced >= 0) {
+    state.criteriaJust = advanced;
+    audio.criteria(advanced, stages.length);
+    if (earned > 0) state.criteriaPts[advanced] = earned;
+  } else if (earned > 0) {
+    // 分数落在没有前进的那一帧（例如要领步骤比判据链先达标）：标在已经点亮的那一格上
+    const at = Math.max(0, state.criteriaIdx);
+    state.criteriaPts[at] = (state.criteriaPts[at] || 0) + earned;
+  }
+  if (earned > 0) {
+    const el = $('criteriaEarned');
+    if (el) {
+      el.textContent = `${t('spec.barScore')} +${earned}`;
+      el.classList.remove('show');
+      // 重新触发一次动画（读一次 offsetWidth）
+      void el.offsetWidth;
+      el.classList.add('show');
+    }
+  }
+  renderCriteriaBar();
+}
+
+/** 画进度条（只有状态变化时才真的改 DOM，避免每帧重排） */
+function renderCriteriaBar() {
+  const bar = $('criteriaBar');
+  const track = $('criteriaTrack');
+  if (!bar || !track) return;
+  const stages = state.criteriaStages;
+  const show = stages.length > 0 && !state.homeMode && state.session === 'running';
+  $('stage').classList.toggle('has-criteria', show);
+  bar.hidden = !show;
+  if (!show) return;
+
+  // 状态没变就不动 DOM
+  const sig = [state.exerciseId, state.criteriaIdx, state.criteriaJust, state.criteriaPts.join(',')].join('|');
+  if (track.dataset.sig !== sig) {
+    track.dataset.sig = sig;
+    track.innerHTML = stages.map((st, i) => {
+      const done = i <= state.criteriaIdx;
+      const cls = `criteria-seg${done ? ' done' : ''}${i === state.criteriaIdx + 1 ? ' current' : ''}${i === state.criteriaJust ? ' just' : ''}`;
+      const pts = state.criteriaPts[i] > 0 ? `+${state.criteriaPts[i]}` : '';
+      return `<div class="${cls}" data-i="${i}" data-done="${done ? 1 : 0}">`
+        + `<span class="criteria-seg-index">${i + 1}</span>`
+        + `<span class="criteria-seg-label">${esc(stageText(st).short)}</span>`
+        + `<span class="criteria-seg-pts">${pts}</span></div>`;
+    }).join('');
+    $('criteriaTitle').textContent = t('spec.barTitle');
+  }
+
+  const allDone = state.criteriaIdx >= stages.length - 1;
+  bar.classList.toggle('all-done', allDone);
+  const next = allDone ? null : stages[state.criteriaIdx + 1];
+  $('criteriaCond').textContent = allDone ? t('spec.barDone') : stageText(next).cond;
+}
+
 function selectExercise(id) {
   if (!EXERCISES.some((e) => e.id === id)) return;
   if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
@@ -489,6 +592,7 @@ function selectExercise(id) {
   $('targetInput').value = String(state.target);
   buildTargetChips();
   renderExerciseSettings();
+  buildCriteriaBar();          // 判定进度条：换成这个动作的判据链
   $('summaryCard').hidden = true;
   state.stepSig = '';
   state.saidSteps = new Set();
@@ -516,6 +620,7 @@ function toCalibration({ silent = false, afterSet = false } = {}) {
   state.session = 'calibrating';
   state.autoStart = true;
   state.afterSet = afterSet;
+  resetCriteriaProgress();   // 回到校准：进度条从起点等着
   // 新阶段开始：让语音教练可以立刻开口（不受上一阶段的节流限制）
   state.coachAt = -Infinity;
   state.coachSig = '';
@@ -955,6 +1060,7 @@ function updateButtons() {
   if (rc) rc.disabled = calibrating;
   const card = $('calibCard');
   if (card) card.hidden = !calibrating;
+  renderCriteriaBar();   // 判定进度条只在「训练中」出现，跟着会话状态显示/隐藏
 }
 
 /* ------------------------------------------------------------------ *
@@ -1283,6 +1389,8 @@ function handleEvents(events) {
       audio.scoreTick();
       checkScoreMilestone(ev.score);
     } else if (ev.type === 'rep') {
+      // 一次动作结束（有效或半程）→ 进度条收回起点，下一轮重新一格一格走过去
+      resetCriteriaProgress();
       if (ev.valid) {
         pulseValue();
         audio.rep(det.validReps);
@@ -1418,6 +1526,7 @@ function loop() {
     if (counting) {
       const events = feedDetector(frame, now);
       handleEvents(events);
+      updateCriteria(frame, events, now);
     }
     renderCalibration(null);
     updateStatusHint(frame, now);
@@ -1942,5 +2051,6 @@ window.__mfg = {
   setTarget, changeLang, refreshForLang,
   buildHome, showHome, showWorkout, openExercise, openSettings, closeSettings,
   openExerciseSettings, closeExerciseSettings, renderExerciseSettings,
+  buildCriteriaBar, updateCriteria, resetCriteriaProgress, renderCriteriaBar,
   buildMusicTracks, selectMusicTrack,
 };
