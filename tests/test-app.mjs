@@ -1459,11 +1459,63 @@ console.log('\n[8c] 一组结束后的手势圆环');
   api.updateGesture(palmsAt(at('exit').x, at('exit').y, 0.1), 42000);
   ok('手被身体挡住（可见度低）时不算手掌在圆环里', api.gestureState.exit.p === 0);
 
-  // 人走开 → 圆环收起来（回到「站好就自动开始」的老规矩）
+  // 人走开 → 圆环留着（卧姿类动作做完时人本来就不在站立轮廓里，不能因此收掉）
   api.state.afterSet = true;
   api.calibrationStep({ ok: false }, 50000);
-  ok('人走开（或离开轮廓）后圆环自动收起', shown() === false);
+  ok('人不在轮廓里（卧姿类做完）时圆环也留着，不会一闪就没',
+    elements.get('gestureRings').hidden === false);
   api.showHome();
+}
+
+/* ------------------------------------------------------------------ *
+ * 所有动作做完一组都要给出「退出 / 再做一次」
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8d] 每个动作做完一组都有两个圆环');
+{
+  const api = windowStub.__mfg;
+  const { EXERCISES } = await import('../src/exercises.js');
+  const ringsShown = () => elements.get('gestureRings').hidden === false;
+  const bad = [];
+  for (const ex of EXERCISES) {
+    api.openExercise(ex.id);
+    api.state.settings.mirror = false;
+    api.state.session = 'running';
+    // 造一点成绩（计数类给次数、计时类给已计时），模拟「做完一组」
+    api.state.detector.validReps = 1;
+    api.state.detector.holdMs = 1000;
+    api.stopSession('goal');
+    if (!ringsShown()) bad.push(`${ex.id}:没显示`);
+    if (elements.get('ringExitLabel').textContent !== '退出'
+      || elements.get('ringRetryLabel').textContent !== '再做一次') bad.push(`${ex.id}:文案`);
+    // 结束之后再跑几帧校准（卧姿类动作这时人不在站立轮廓里）：圆环不能被收掉
+    api.state.afterSet = true;
+    api.calibrationStep({ ok: false }, 90000);
+    if (!ringsShown()) bad.push(`${ex.id}:闪没了`);
+    api.hideGestureRings();
+  }
+  ok(`全部 ${EXERCISES.length} 个动作（计数 + 计时）做完一组都显示两个圆环`, bad.length === 0, bad.join(', '));
+
+  // 计时类动作也一样（用户要求「所有运动」）：平板支撑做满时间 → 结束 → 圆环
+  api.openExercise('plank');
+  api.state.session = 'running';
+  api.state.detector.holdMs = api.state.target * 1000;
+  api.stopSession('goal');
+  ok('计时类（平板支撑）做完也显示两个圆环', ringsShown() === true);
+
+  // 手动点「结束本组」同样给选择
+  api.openExercise('squat');
+  api.state.session = 'running';
+  api.state.detector.validReps = 3;
+  api.stopSession('user');
+  ok('手动结束本组同样显示两个圆环', ringsShown() === true);
+
+  // 开始下一组就收起来（选择已经发生 / 不需要了）
+  api.beginCountdown();
+  ok('开始下一组时圆环收起（3-2-1 倒计时干净的）', ringsShown() === false);
+  api.finishCountdown();
+  api.showHome();
+  ok('回主页后圆环收起', ringsShown() === false);
 }
 
 /* ------------------------------------------------------------------ *

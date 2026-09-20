@@ -857,16 +857,20 @@ kbd {
 .gesture-hint {
   position: absolute;
   left: 50%;
-  top: 6%;
+  top: 14px;   /* 和校准提示条同一个位置：圆环出来时校准提示条会让位，画面上方只留一条提示 */
   transform: translateX(-50%);
   z-index: 7;
-  padding: 6px 14px;
-  border-radius: 999px;
-  background: rgba(8, 15, 26, 0.8);
-  border: 1px solid rgba(56, 189, 248, 0.45);
+  max-width: 88%;
+  padding: 8px 16px;
+  border-radius: 12px;
+  background: rgba(8, 15, 26, 0.86);
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.22);
   color: #dcf2ff;
   font-size: 14px;
   font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
   pointer-events: none;
 }
 @media (max-width: 560px) {

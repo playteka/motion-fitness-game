@@ -458,6 +458,9 @@ The moment a set finishes (the goal was reached, or you tapped “end this set�
 are all reset and the same set starts again immediately). Right after training your hands are sweaty and far from the
 keyboard, so the two most common choices should not force you to tap a screen.
 
+- **Every exercise behaves the same**: rep exercises (squat, push-up, glute bridge …) and timed ones (plank, side plank, both
+  forward folds) all bring up the two rings when a set ends, whether it ended by reaching the goal or because you tapped
+  “end this set” — no exercise leaves you without a choice.
 - **How to use it**: put **either palm** (left or right hand) in the **middle** of a ring and hold for **3 seconds** — the ring
   fills up **clockwise from 12 o'clock** and turns green, and the moment it is full the action fires. Pull your hand away early
   and the progress falls back.
@@ -467,8 +470,11 @@ keyboard, so the two most common choices should not force you to tap a screen.
   and `R` (reset the counters).
 - **With a mirrored preview the palm position is mirrored too**: in mirror mode the picture you see is flipped while the rings are
   not, so the judgement follows the mirror setting — you never reach left and trigger the right-hand action.
-- **Walk out of the frame and the rings go away**: once you leave the camera the rings disappear and the usual “stand in the outline
-  and it starts by itself” rule takes over. When you come back into the outline the automatic start resumes instead of waiting for a gesture.
+- **The rings are never swallowed because “you are not inside the outline”**: after a lying exercise (glute bridge, crunch, plank,
+  seated forward fold) you are not standing in the outline at all, and the rings stay put instead of flashing away.
+  They only go away when **a new set really starts** (automatic or by tapping start), when you switch exercise, or when you go home.
+- **While the rings are up the top of the screen carries exactly one prompt** (“hold your palm in the middle of a circle for
+  3 seconds”): the calibration banner steps aside so the two messages never fight for the same spot.
 - **Only one can fire**: the two rings keep their own timers, and whichever reaches 3 seconds first wins (resting a hand on one ring
   never triggers the other).
 
@@ -823,7 +829,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 794 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 21 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 323 | DOM wiring, module imports and exports, static assets, the category lists of all 21 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 318 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-app.mjs` | 323 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 

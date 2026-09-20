@@ -921,10 +921,10 @@ function renderCriteriaBar(now = performance.now()) {
 
 function selectExercise(id) {
   if (!EXERCISES.some((e) => e.id === id)) return;
-  hideGestureRings();   // 换动作：上一组的手势圆环不该留着
   if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
     stopSession('switch');
   }
+  hideGestureRings();   // 换动作：上一组的手势圆环不该留着（必须在 stopSession 之后收）
   state.exerciseId = id;
   state.settings.exerciseId = id;
   const ex = localizedExercise(id);
@@ -1348,11 +1348,11 @@ function stopSession(reason = 'user') {
   const wasActive = state.session === 'running' || state.session === 'paused' || state.session === 'countdown';
   state.session = 'calibrating';
   releaseWakeLock();
-  if (!wasActive) { updateButtons(); return; }
+  if (!wasActive) { updateButtons(); offerSetChoices(); return; }
 
   const det = state.detector;
   const ex = localizedExercise(state.exerciseId);
-  if (!det) { updateButtons(); return; }
+  if (!det) { updateButtons(); offerSetChoices(); return; }
 
   const isHold = ex.kind === 'hold';
   const value = isHold ? Math.round(det.holdMs / 1000) : det.validReps;
@@ -1398,6 +1398,18 @@ function stopSession(reason = 'user') {
   // 但这一轮不再自动开始（autoStart: false），给用户留出休息和小结的时间。
   toCalibration({ silent: false, afterSet: true });
   // 手上都是汗、离键盘远：一组做完直接把「退出 / 再做一次」摆成两个手势圆环
+  offerSetChoices();
+}
+
+/**
+ * 一组结束后提供的两个选择（退出 / 再做一次）。
+ *
+ * **所有动作都是这条路**：计数的、计时的（平板支撑 / 侧平板 / 体前屈）都一样 ——
+ * 只要是在动作页上结束了一组，就把两个圆环摆出来，用户可以把手掌停在圆环里选，
+ * 也可以直接点。只在主页上不摆（那儿根本没有「这一组」）。
+ */
+function offerSetChoices() {
+  if (state.homeMode || !state.detector) return;
   showGestureRings();
 }
 
@@ -1550,7 +1562,9 @@ function renderCalibration(calib) {
 function renderCalibPrompt(calib) {
   const box = $('calibPrompt');
   if (!box) return;
-  if (!calib) {
+  // 一组做完、两个手势圆环摆出来的时候，画面上方只留一条提示（手势怎么用）——
+  // 这时候再喊「站进虚线轮廓」会和圆环抢注意力，也占同一块位置
+  if (!calib || gestureState.visible) {
     if (!box.hidden) box.hidden = true;
     return;
   }
@@ -1596,11 +1610,11 @@ function calibrationStep(frame, now) {
 
   // 一组结束后先休息：停在原地不自动开始（提示条会写明要自己点「开始训练」）；
   // 一旦从画面里消失（站起来走开、喝水），自动开始立刻重新装填，再站好就又会自动开始。
+  // 注意：这里**不再顺手收起手势圆环** —— 卧姿类动作（臀桥 / 卷腹 / 平板 / 坐姿体前屈）做完时
+  // 人本来就不在「站立轮廓」里，如果按「离开轮廓」就收圆环，这些动作做完根本选不了。
+  // 圆环只在「真的要开始下一组」或用户选择/换动作/回主页时才收。
   const lost = !calib.checks.length || (calib.checks[0].id === 'visible' && !calib.checks[0].ok);
-  if (state.afterSet && lost) {
-    state.afterSet = false;
-    hideGestureRings();   // 人已经走开了：圆环收起来，回来时按老规矩自动开始
-  }
+  if (state.afterSet && lost) state.afterSet = false;
 
   // 全身识别完成（七项全部达标并保持住）
   if (calib.done && state.session === 'calibrating') {
@@ -2450,7 +2464,7 @@ boot();
 // 调试/自动化测试用的内部句柄（页面本身不依赖它）
 window.__mfg = {
   state, engine, camera, audio, renderer,
-  selectExercise, startSession, pauseSession, resumeSession, stopSession, toCalibration,
+  selectExercise, startSession, pauseSession, resumeSession, stopSession, toCalibration, beginCountdown,
   feedDetector, handleEvents, updateHud, renderSteps, renderDebug, updatePipelineStatus,
   calibrationStep, renderCalibration, syncFullscreenSupport, finishCountdown, updateStatusHint,
   setTarget, changeLang, refreshForLang,
