@@ -1,12 +1,12 @@
 # 体感健身游戏 · Motion Fitness Game
 
-[中文](README.md) · [English](README.en.md) · [Español](README.es.md) · [Français](README.fr.md)
+[中文](README.md) · [English](README.en.md)
 
 用普通摄像头做动作识别的健身小游戏：**22 个动作**分成 **上肢 / 下肢 / 核心 / 全身 / 拉伸** 五大类，
 主页按分类挑选动作，进去就能练；**计数类自动数次数、计时类自动计时**，
 并且**按「动作要领」一步一步计分**——每达成一个要领就立刻加分、响铃、用语音念出要领。
 
-界面支持 **中文 / English / Español / Français** 四种语言，点右上角的 **⚙️ 设置**随时切换（语言、识别模型、音效、背景音乐都在里面）。
+界面支持 **中文 / English** 两种语言，点右上角的 **⚙️ 设置**随时切换（语言、识别模型、音效、背景音乐都在里面）。
 
 纯前端实现，MediaPipe 姿态模型与 wasm 全部放在本地 `vendor/` 目录，**不联网、不上传画面**。
 
@@ -412,7 +412,7 @@ PORT=8080 node preview-server.js
 
 | 分组 | 项目 |
 |---|---|
-| 语言 | 中文 / English / Español / Français（立即生效，动作名与要领一起切换） |
+| 语言 | 中文 / English（立即生效，动作名与要领一起切换） |
 | 识别模型 | 轻量（流畅，默认）／完整（更准，首次切换需要多下载一份模型，之后离线可用） |
 | 声音 | 🔊 语音报数 · 🎵 音效 · 🎶 背景音乐 |
 | 画面与识别 | 🪞 镜像 · ✅ 严格模式 · 🦴 火柴人 · 📐 角度 · 🐞 识别指标 |
@@ -616,19 +616,21 @@ PORT=8080 node preview-server.js
 
 ## 多语言
 
-界面内置四种语言，⚙️ 设置 里的 **语言** 下拉框随时切换，选择会被记住：
+界面内置中文和英文两种语言，⚙️ 设置 里的 **语言** 下拉框随时切换，选择会被记住：
 
 | 语言 | 代码 | 词条文件 |
 |---|---|---|
 | 中文 | `zh` | `src/locales/zh.js` |
 | English | `en` | `src/locales/en.js` |
-| Español | `es` | `src/locales/es.js` |
-| Français | `fr` | `src/locales/fr.js` |
 
-首次打开时会按浏览器语言自动选择（中文 / 英文 / 西班牙文 / 法文，其它语言回退到英文）。
+首次打开时会按浏览器语言自动选择（中文用中文，其余语言一律回退到英文）。
 
-**新增一种语言**：复制 `src/locales/en.js` 改成新语言，在 `src/i18n.js` 里 import 并加进 `LOCALES`，
+> 之前还做过西班牙文和法文，为了方便开发已经移除（只保留中英两种）。
+> 想再加语言时按下面的步骤走就行，词条结构是现成的。
+
+**新增一种语言**：复制 `src/locales/en.js` 改成新语言，在 `src/i18n.js` 里 import 并加进 `LOCALES` 与 `LANG_ORDER`，
 再跑一次 `npm run test:i18n` —— 测试会逐条检查缺键、漏翻、占位符与数组长度，保证不会漏。
+⚙️ 设置里的语言下拉框会自动多出一项；`tests/test-i18n.mjs` 里的 README 对比清单需要手工加一行。
 
 ---
 
@@ -696,8 +698,8 @@ PORT=8080 node preview-server.js
 ## 测试
 
 ```bash
-npm test                       # 六套测试一起跑（1356 项）
-npm run test:i18n              # 多语言：缺键 / 漏翻 / 占位符 / 数组长度 / 源码残留中文 / 四份 README 结构
+npm test                       # 六套测试一起跑（1340 项）
+npm run test:i18n              # 多语言：缺键 / 漏翻 / 占位符 / 数组长度 / 源码残留中文 / 中英两份 README 结构
 npm run test:detectors         # 五个手写识别器的识别与计分逻辑（合成骨架驱动）
 npm run test:engines           # 通用识别引擎（屈伸 / 左右交替 / 转体 / 多段动作 / 计时 + 姿势门控）
 npm run test:specs             # 「计次技术指标」：弹窗显示的数字必须等于识别器真正使用的判定线
@@ -708,12 +710,12 @@ npm run test:app               # 最小 DOM 桩加载真实 app.js 的集成测�
 
 | 测试文件 | 项数 | 覆盖内容 |
 |---|---|---|
-| `tests/test-i18n.mjs` | 32 | 四种语言键结构一致、无漏翻、占位符与数组长度一致、源码里无写死中文、四份文档结构一致 |
+| `tests/test-i18n.mjs` | 18 | 中英两种语言键结构一致、无漏翻、占位符与数组长度一致、源码里无写死中文、中英两份文档结构一致 |
 | `tests/test-detectors.mjs` | 247 | 五个手写识别器的标准/错误动作计数、计时、要领得分与顺序，斜机位下的深度判据，以及运动前校准的判定 |
 | `tests/test-engines.mjs` | 141 | 通用引擎：一次循环一次数、宽松 vs 严格、晃动与过快的边界、姿势门控、跳跃离地、左右交替、整套动作、计时暂停恢复 |
-| `tests/test-specs.mjs` | 379 | 把弹窗里的数值喂回识别器：必须正好落在它自己的计次线上；姿势门控数值与判定用的同一张表；22 个动作都有指标；四种语言文案齐全 |
+| `tests/test-specs.mjs` | 377 | 把弹窗里的数值喂回识别器：必须正好落在它自己的计次线上；姿势门控数值与判定用的同一张表；22 个动作都有指标；两种语言文案齐全 |
 | `tests/test-page.mjs` | 310 | DOM 接线、模块导入导出、静态资源、22 个动作的分类清单与计分方案完整性 |
-| `tests/test-app.mjs` | 247 | 真实 `app.js` 的启动、主页渲染、运动设定（含计次技术指标）与设置两个弹窗、校准流程、切动作、计分、音效、结算、多语言切换 |
+| `tests/test-app.mjs` | 247 | 真实 `app.js` 的启动、主页渲染、运动设定（含计次技术指标）与设置两个弹窗、校准流程、切动作、计分、音效、结算、中英切换 |
 
 ---
 
@@ -726,7 +728,7 @@ motion-fitness-game/
 ├─ preview-server.js     零依赖本地服务器（http://127.0.0.1:4174）
 ├─ src/
 │  ├─ i18n.js            ★ 多语言内核（t / setLang / applyI18n）
-│  ├─ locales/           ★ zh.js / en.js / es.js / fr.js 四份词条
+│  ├─ locales/           ★ zh.js / en.js 两份词条（中英）
 │  ├─ catalog.js         ★ 动作库：五大分类 + 22 个动作（图标、类型、引擎、阈值、判定依据）
 │  ├─ geometry.js        几何与信号处理（角度、One Euro 平滑）
 │  ├─ metrics.js         每帧动作指标（关节角、髋抬起量、离地高度、身体直线度…）
@@ -751,9 +753,9 @@ motion-fitness-game/
 
 1. 在 `src/catalog.js` 的 `EXERCISES` 里加一条，例如
    `e('myMove', '🔧', ['core'], { plan: 'repSupine', posture: 'supine', judge: 'clear', target: 15, params: bend({ metric: 'kneeClear', gate: 'supineLow', up: 0.15, down: 0.85 }) })`；
-2. 在四份 `src/locales/*.js` 的 `ex` 里补上 `myMove: { name, cameraHint, goal }`
+2. 在两份 `src/locales/*.js` 的 `ex` 里补上 `myMove: { name, cameraHint, goal }`
    （要领与注意事项会自动套用所属「族」的模板，想单独写就加 `howto` / `tips`）；
-3. 跑 `npm test` —— 测试会检查五类清单、四种语言的文案、每个动作的识别器与计分方案是否齐全。
+3. 跑 `npm test` —— 测试会检查五类清单、中英两种语言的文案、每个动作的识别器与计分方案是否齐全。
 
 - **改分值或要领文案**：编辑 `src/steps.js`（结构与分值）与 `src/locales/*.js`（文案）。
   每个步骤就是一个 `{ id, labelKey, points, check, hint }`；`check(frame, det)` 返回 `true` 即表示这一步达成。

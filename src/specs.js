@@ -452,7 +452,7 @@ export function exerciseSpecs(id) {
   return { id, engine: meta.engine, groups };
 }
 
-/** 面板里出现过的全部 i18n 键（测试用：四种语言都必须有） */
+/** 面板里出现过的全部 i18n 键（测试用：每种语言都必须有） */
 export function specKeys(id) {
   const out = new Set();
   for (const g of exerciseSpecs(id).groups) {

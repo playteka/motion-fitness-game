@@ -153,7 +153,7 @@ console.log('\n[3] 静态资源与模型文件');
       if (text.length > 130) overlong.push(`${lang}.${key}=${text.length} 字`);
     }
   }
-  ok('四语言的提示条文案都不超过 130 字（折 2 行以内）', overlong.length === 0, overlong.join(', '));
+  ok('两种语言的提示条文案都不超过 130 字（折 2 行以内）', overlong.length === 0, overlong.join(', '));
 
   // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面
   const stageAt = html.indexOf('id="stage"');
@@ -210,8 +210,9 @@ console.log('\n[4] 动作库与界面一致性');
   ok('每个动作都有图标', EXERCISES.every((x) => !!x.icon));
   ok('每个动作都归属至少一个分类', EXERCISES.every((x) => x.cats.length >= 1));
   ok('计时类动作都写了秒数单位', EXERCISES.filter((x) => x.kind === 'hold').every((x) => x.unitKey === 'ui.secondsUnit'));
-  ok('四种语言都已注册', LANG_ORDER.length === 4 && LANG_ORDER.every((l) => !!LOCALES[l]),
-    LANG_ORDER.join(','));
+  ok('中英两种语言都已注册', LANG_ORDER.length === 2 && LANG_ORDER.join() === 'zh,en'
+    && LANG_ORDER.every((l) => !!LOCALES[l]) && !LOCALES.es && !LOCALES.fr,
+  `${LANG_ORDER.join(',')} / ${Object.keys(LOCALES).join(',')}`);
   for (const meta of EXERCISES) {
     const ex = localizedExercise(meta.id);
     let det = null;
@@ -223,7 +224,7 @@ console.log('\n[4] 动作库与界面一致性');
       ok(`${ex.name} 有动作要领文案（≥3 条要领 + ≥2 条提示）`, ex.howto.length >= 3 && ex.tips.length >= 2,
         `${ex.howto.length}/${ex.tips.length}`);
       ok(`${ex.name} 有名称、机位提示与单位`, !!ex.name && !!ex.cameraHint && !!ex.unit);
-      ok(`${ex.name} 动作名称不是键名（四种语言都有文案）`, LANG_ORDER.every((l) => {
+      ok(`${ex.name} 动作名称不是键名（两种语言都有文案）`, LANG_ORDER.every((l) => {
         setLang(l, { persist: false });
         const n = localizedExercise(ex.id).name;
         return !!n && n !== `ex.${ex.id}.name`;
@@ -256,7 +257,7 @@ console.log('\n[5] 要领计分方案');
     ok(`${ex.name} 每一步都有文案键、分值与判定函数`,
       plan.steps.every((s) => typeof s.labelKey === 'string' && s.labelKey.length > 2
         && Number.isFinite(s.points) && s.points > 0 && typeof s.check === 'function'));
-    ok(`${ex.name} 每一步的文案键都能取到四种语言的文案`,
+    ok(`${ex.name} 每一步的文案键都能取到两种语言的文案`,
       plan.steps.every((s) => LANG_ORDER.every((l) => {
         setLang(l, { persist: false });
         return t(s.labelKey) !== s.labelKey;

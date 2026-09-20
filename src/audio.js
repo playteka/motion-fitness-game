@@ -3,7 +3,7 @@
  * 全部使用浏览器内置能力（WebAudio / SpeechSynthesis），不依赖任何外部资源。
  *
  * 语音内容一律走 i18n 词条；数字直接交给 TTS 用对应语言朗读
- * （zh-CN / en-US / es-ES / fr-FR 都能正确读出阿拉伯数字）。
+ * （zh-CN / en-US 都能正确读出阿拉伯数字）。
  */
 
 import { t, getMeta } from './i18n.js';

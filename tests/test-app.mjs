@@ -757,14 +757,16 @@ console.log('\n[7] 多语言切换');
     elements.get('stepHint').textContent);
   ok('切到英文后界面统计标签是英文', !/[\u4e00-\u9fff]/.test(elements.get('statScore').textContent));
 
-  for (const lang of ['es', 'fr']) {
-    api.changeLang(lang);
-    const name = elements.get('hudName').textContent;
-    const howto = elements.get('howtoList').innerHTML;
-    const cjk = /[\u4e00-\u9fff]/.test(elements.get('stepList').innerHTML + name + elements.get('stepHint').textContent);
-    ok(`切到 ${lang} 后界面没有中文残留`, !cjk, `${name} | ${elements.get('stepHint').textContent.slice(0, 60)}`);
-    ok(`切到 ${lang} 后动作文案与中文不同`, !!name && name !== zhName && howto !== zhHowto, name);
-  }
+  // 语言只保留中文和英文（西语 / 法语已移除）
+  const { LANG_ORDER: ORDER, getLang, LOCALES: DICTS } = await import('../src/i18n.js');
+  ok('只注册了中文和英文两种语言', ORDER.join() === 'zh,en' && Object.keys(DICTS).join() === 'zh,en',
+    `${ORDER.join()} / ${Object.keys(DICTS).join()}`);
+  ok('语言下拉框里也只有两项', elements.get('langSel').children.length === 2,
+    String(elements.get('langSel').children.length));
+  api.changeLang('es');
+  api.changeLang('fr');
+  ok('切到已移除的语言无效：仍停留在英文', getLang() === 'en', getLang());
+  ok('已移除的语言目录确实不存在', !DICTS.es && !DICTS.fr);
 
   // 切换语言不应该丢掉已经拿到的分
   api.changeLang('zh');

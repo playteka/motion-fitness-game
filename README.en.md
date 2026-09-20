@@ -1,12 +1,12 @@
 # Motion Fitness Game
 
-[中文](README.md) · [English](README.en.md) · [Español](README.es.md) · [Français](README.fr.md)
+[中文](README.md) · [English](README.en.md)
 
 A small fitness game that uses an ordinary webcam for motion tracking: **22 exercises** split into five categories — **Upper body / Lower body / Core / Full body / Stretching**,
 with a home page where you pick an exercise by category and start training right away; **rep exercises count reps automatically and timed exercises time themselves**,
 and **scoring runs form step by form step** — every form step you hit instantly earns points, rings a chime, and is spoken aloud.
 
-The interface ships in **中文 / English / Español / Français**, switchable any time from **⚙️ Settings** in the top-right corner (language, detection model, sound effects and background music all live in there).
+The interface ships in **中文 / English**, switchable any time from **⚙️ Settings** in the top-right corner (language, detection model, sound effects and background music all live in there).
 
 It's pure front end: the MediaPipe pose model and wasm all live in the local `vendor/` directory, so **nothing goes online and no video is ever uploaded**.
 
@@ -403,7 +403,7 @@ Open the ⚙️ settings modal from the top-right corner of the exercise page �
 
 | Group | Items |
 |---|---|
-| Language | 中文 / English / Español / Français (takes effect immediately, switching exercise names and form steps along with it) |
+| Language | 中文 / English (takes effect immediately, switching exercise names and form steps along with it) |
 | Pose model | Lite (smoother, the default) / Full (more accurate; the first switch has to download one more model file, and it's offline after that) |
 | Sound | 🔊 Voice count · 🎵 Sound FX · 🎶 Music |
 | Video & tracking | 🪞 Mirror · ✅ Strict mode · 🦴 Skeleton · 📐 Angles · 🐞 Metrics |
@@ -607,19 +607,21 @@ Both sound effects and voice can be turned off with one click in the ⚙️ Sett
 
 ## Languages
 
-Four languages are built into the interface. Switch any time with the **Language** dropdown in the top-right corner — your choice is remembered:
+Chinese and English are built into the interface. Switch any time with the **Language** dropdown in the top-right corner — your choice is remembered:
 
 | Language | Code | Locale file |
 |---|---|---|
 | 中文 | `zh` | `src/locales/zh.js` |
 | English | `en` | `src/locales/en.js` |
-| Español | `es` | `src/locales/es.js` |
-| Français | `fr` | `src/locales/fr.js` |
 
-The first time you open it, the language is picked from your browser language (Chinese / English / Spanish / French; anything else falls back to English).
+The first time you open it, the language is picked from your browser language (Chinese for Chinese, everything else falls back to English).
 
-**Adding a language**: copy `src/locales/en.js` and translate it, import it in `src/i18n.js` and add it to `LOCALES`,
+> Spanish and French used to be included as well; they were removed to keep development light (Chinese and English only).
+> The entry structure is still there, so adding a language back is just the steps below.
+
+**Adding a language**: copy `src/locales/en.js` and translate it, import it in `src/i18n.js` and add it to `LOCALES` and `LANG_ORDER`,
 then run `npm run test:i18n` again — the test checks every entry for missing keys, untranslated strings, placeholders and array lengths, so nothing slips through.
+The language dropdown in ⚙️ Settings picks it up automatically; the README list in `tests/test-i18n.mjs` needs one manual line.
 
 ---
 
@@ -687,8 +689,8 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all six suites (1356 cases)
-npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / README structure of all four files
+npm test                       # run all six suites (1340 cases)
+npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / matching structure of the Chinese and English READMEs
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
 npm run test:specs             # the counting thresholds shown in the modal must equal the lines the detectors actually use
@@ -699,12 +701,12 @@ npm run test:app               # integration test that loads the real app.js wit
 
 | Test file | Cases | Coverage |
 |---|---|---|
-| `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
+| `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
 | `tests/test-detectors.mjs` | 247 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, plus the pre-workout calibration checks |
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 379 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; all four languages are complete |
+| `tests/test-specs.mjs` | 377 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; both languages are complete |
 | `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 247 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
+| `tests/test-app.mjs` | 247 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 
@@ -717,7 +719,7 @@ motion-fitness-game/
 ├─ preview-server.js     zero-dependency local server (http://127.0.0.1:4174)
 ├─ src/
 │  ├─ i18n.js            ★ i18n core (t / setLang / applyI18n)
-│  ├─ locales/           ★ the four locale files: zh.js / en.js / es.js / fr.js
+│  ├─ locales/           ★ the two locale files: zh.js / en.js
 │  ├─ catalog.js         ★ the exercise library: five categories + 22 exercises (icon, type, engine, thresholds, judging basis)
 │  ├─ geometry.js        geometry and signal processing (angles, One Euro smoothing)
 │  ├─ metrics.js         per-frame exercise metrics (joint angles, hip lift, floor clearance, body straightness…)
@@ -742,9 +744,9 @@ motion-fitness-game/
 
 1. Add one entry to `EXERCISES` in `src/catalog.js`, for example
    `e('myMove', '🔧', ['core'], { plan: 'repSupine', posture: 'supine', judge: 'clear', target: 15, params: bend({ metric: 'kneeClear', gate: 'supineLow', up: 0.15, down: 0.85 }) })`;
-2. Add `myMove: { name, cameraHint, goal }` to the `ex` block of all four `src/locales/*.js` files
+2. Add `myMove: { name, cameraHint, goal }` to the `ex` block of both `src/locales/*.js` files
    (the form steps and tips automatically fall back to the template of the “family” it belongs to — add `howto` / `tips` if you want to write your own);
-3. Run `npm test` — the tests check the five category lists, the copy in all four languages, and that every exercise has both a detector and a complete scoring plan.
+3. Run `npm test` — the tests check the five category lists, the copy in both languages, and that every exercise has both a detector and a complete scoring plan.
 
 - **Change point values or form-step wording**: edit `src/steps.js` (structure and points) and `src/locales/*.js` (wording).
   Each step is one `{ id, labelKey, points, check, hint }`; when `check(frame, det)` returns `true`, that step counts as hit.

@@ -262,26 +262,22 @@ console.log('\n[5c] 界面上最终看到的文字');
   ok('英文：没有残留中文', !/[\u4e00-\u9fff]/.test(
     ALL.map((id) => specTextRows(id).map((r) => r.group + r.name + r.cond + r.note).join('')).join(''),
   ));
-  for (const lang of ['es', 'fr']) {
-    setLang(lang, { persist: false });
-    const text = ALL.map((id) => specTextRows(id).map((r) => r.group + r.name + r.cond + r.note).join('')).join('');
-    ok(`${lang}：指标文案全部翻译过（无中文残留、无键名泄漏）`,
-      !/[\u4e00-\u9fff]/.test(text) && !/spec\.|metric\./.test(text), text.slice(0, 100));
-  }
   setLang('zh', { persist: false });
+  ok('中文：指标文案无键名泄漏',
+    !/spec\.|metric\./.test(ALL.map((id) => specTextRows(id).map((r) => r.group + r.name + r.cond + r.note).join('')).join('')));
 }
 
 /* ------------------------------------------------------------------ *
- * 6. 文案键：四种语言都必须取得到
+ * 6. 文案键：每种语言都必须取得到
  * ------------------------------------------------------------------ */
 
-console.log('\n[6] 所有指标文案键在四种语言里都存在');
+console.log('\n[6] 所有指标文案键在中英两种语言里都存在');
 {
   const keys = new Set(['spec.unit.deg', 'spec.unit.torso', 'spec.unit.shin', 'spec.unit.lift', 'spec.unit.s', 'spec.unit.count',
     'exercise.specGroup', 'exercise.specLead']);
   for (const id of ALL) for (const k of specKeys(id)) keys.add(k);
   const dicts = Object.fromEntries(LANG_ORDER.map((l) => [l, new Set(localeKeys(l))]));
-  const missing = { zh: [], en: [], es: [], fr: [] };
+  const missing = { zh: [], en: [] };
   for (const k of keys) {
     for (const l of LANG_ORDER) if (!dicts[l].has(k)) missing[l].push(k);
   }
@@ -289,7 +285,9 @@ console.log('\n[6] 所有指标文案键在四种语言里都存在');
     ok(`${l}：${keys.size} 个指标文案键都在`, missing[l].length === 0, missing[l].slice(0, 8).join(', '));
   }
   ok('指标文案键数量合理（不是只写了一两条）', keys.size >= 60, `实际 ${keys.size}`);
-  ok('四语言键数量一致', LOCALES.zh && dicts.zh.size === dicts.en.size && dicts.zh.size === dicts.es.size);
+  ok('中英两种语言的键数量一致', !!LOCALES.zh && dicts.zh.size === dicts.en.size, `${dicts.zh.size} vs ${dicts.en.size}`);
+  ok('语言目录只有中英两种', LANG_ORDER.join() === 'zh,en' && Object.keys(LOCALES).join() === 'zh,en',
+    `${LANG_ORDER.join()} / ${Object.keys(LOCALES).join()}`);
 }
 
 /* ------------------------------------------------------------------ *

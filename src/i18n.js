@@ -13,17 +13,15 @@
 
 import zh from './locales/zh.js';
 import en from './locales/en.js';
-import es from './locales/es.js';
-import fr from './locales/fr.js';
 
-export const LOCALES = { zh, en, es, fr };
-export const LANG_ORDER = ['zh', 'en', 'es', 'fr'];
+export const LOCALES = { zh, en };
+export const LANG_ORDER = ['zh', 'en'];
 
 const STORE_KEY = 'mfg.lang.v1';
 let current = 'zh';
 const listeners = new Set();
 
-/** 根据浏览器语言挑选默认语言 */
+/** 根据浏览器语言挑选默认语言（目前只有中文和英文，其余语言一律回退到英文） */
 export function detectLang() {
   try {
     const saved = localStorage.getItem(STORE_KEY);
@@ -31,9 +29,6 @@ export function detectLang() {
   } catch { /* ignore */ }
   const nav = (typeof navigator !== 'undefined' && (navigator.language || navigator.userLanguage) || 'en').toLowerCase();
   if (nav.startsWith('zh')) return 'zh';
-  if (nav.startsWith('es')) return 'es';
-  if (nav.startsWith('fr')) return 'fr';
-  if (nav.startsWith('en')) return 'en';
   return 'en';
 }
 

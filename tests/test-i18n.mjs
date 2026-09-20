@@ -1,7 +1,7 @@
 /**
  * 多语言自检。
  *
- *   1) 四种语言的键结构必须完全一致（缺键 / 多键都会失败）
+ *   1) 两种语言的键结构必须完全一致（缺键 / 多键都会失败）
  *   2) 除中文外的语言不允许残留中日韩字符（说明漏翻，直接抄了中文）
  *   3) 除中文外的语言不允许与中文原文完全相同的长文案（说明没翻）
  *   4) 占位符 {xxx} 必须一一对应（翻译时漏掉占位符会让界面显示成 {deg}）
@@ -18,13 +18,11 @@ import { fileURLToPath } from 'node:url';
 
 import zh from '../src/locales/zh.js';
 import en from '../src/locales/en.js';
-import es from '../src/locales/es.js';
-import fr from '../src/locales/fr.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const LOCALES = { zh, en, es, fr };
+const LOCALES = { zh, en };
 const only = process.argv[2];
-const langs = only ? [only] : ['zh', 'en', 'es', 'fr'];
+const langs = only ? [only] : ['zh', 'en'];
 
 let passed = 0;
 const failures = [];
@@ -146,11 +144,11 @@ console.log('\n[6] 源码里不允许残留写死的中文');
 }
 }
 
-/* ---------- 7. 四份 README 结构一致 ---------- */
+/* ---------- 7. 中英两份 README 结构一致 ---------- */
 if (!only) {
-console.log('\n[7] 四份 README 结构一致');
+console.log('\n[7] 中英两份 README 结构一致');
 {
-  const files = { zh: 'README.md', en: 'README.en.md', es: 'README.es.md', fr: 'README.fr.md' };
+  const files = { zh: 'README.md', en: 'README.en.md' };
   const stats = {};
   let missing = false;
   for (const [lang, name] of Object.entries(files)) {
@@ -164,7 +162,7 @@ console.log('\n[7] 四份 README 结构一致');
     //   1) 顶部的语言切换链接 [中文](README.md)
     //   2) 语言自称「中文」（语言列表、词条表里必须原样保留）
     //   3) 服务器启动输出行 —— preview-server.js 真的会打印这一行中文，
-    //      四份文档都如实引用，属于「引用真实输出」而不是漏翻
+    //      英文文档也如实引用，属于「引用真实输出」而不是漏翻
     const txt = fs.readFileSync(full, 'utf8')
       .replace(/\[中文\]\(README\.md\)/g, '[ZH](README.md)')
       .replace(/体感健身游戏预览地址：[^\n]*/g, '[SERVER_OUTPUT]')
@@ -182,17 +180,19 @@ console.log('\n[7] 四份 README 结构一致');
   }
   if (!missing) {
     const base = stats.zh;
-    ok('四份 README 标题数量一致', ['en', 'es', 'fr'].every((l) => stats[l].headings === base.headings),
-      ['zh', 'en', 'es', 'fr'].map((l) => `${l}:${stats[l].headings}`).join(' '));
-    ok('四份 README 代码块数量一致（安装命令没被弄丢）',
-      ['en', 'es', 'fr'].every((l) => stats[l].fences === base.fences),
-      ['zh', 'en', 'es', 'fr'].map((l) => `${l}:${stats[l].fences}`).join(' '));
-    ok('四份 README 表格行数一致（计分表没被删行）',
-      ['en', 'es', 'fr'].every((l) => stats[l].tableRows === base.tableRows),
-      ['zh', 'en', 'es', 'fr'].map((l) => `${l}:${stats[l].tableRows}`).join(' '));
-    ok('四份 README 目录条目数一致', ['en', 'es', 'fr'].every((l) => stats[l].toc === base.toc),
-      ['zh', 'en', 'es', 'fr'].map((l) => `${l}:${stats[l].toc}`).join(' '));
-    ok('四份 README 都有四个语言互链', Object.values(stats).every((s) => s.links === 4),
+    const others = ['en'];
+    const label = (l) => `${l}:${stats[l].headings}`;
+    ok('两份 README 标题数量一致', others.every((l) => stats[l].headings === base.headings),
+      ['zh', 'en'].map(label).join(' '));
+    ok('两份 README 代码块数量一致（安装命令没被弄丢）',
+      others.every((l) => stats[l].fences === base.fences),
+      ['zh', 'en'].map((l) => `${l}:${stats[l].fences}`).join(' '));
+    ok('两份 README 表格行数一致（计分表没被删行）',
+      others.every((l) => stats[l].tableRows === base.tableRows),
+      ['zh', 'en'].map((l) => `${l}:${stats[l].tableRows}`).join(' '));
+    ok('两份 README 目录条目数一致', others.every((l) => stats[l].toc === base.toc),
+      ['zh', 'en'].map((l) => `${l}:${stats[l].toc}`).join(' '));
+    ok('两份 README 都有两个语言互链', Object.values(stats).every((s) => s.links === 2),
       Object.values(stats).map((s) => `${s.name}:${s.links}`).join(' '));
 
     // 目录锚点必须能在本文件里找到对应标题。
@@ -208,12 +208,11 @@ console.log('\n[7] 四份 README 结构一致');
       const bad = links.filter((a) => !headings.has(a));
       ok(`${name} 的 ${links.length} 个目录锚点都指向真实标题`, bad.length === 0, bad.join(', '));
     }
-    ok('三份译本没有残留中文',
-      ['en', 'es', 'fr'].every((l) => stats[l].cjk === 0),
-      ['en', 'es', 'fr'].filter((l) => stats[l].cjk).map((l) => `${stats[l].name}:${stats[l].cjk} 处`).join(' '));
-    ok('三份译本篇幅接近原文（没有大段漏译）',
-      ['en', 'es', 'fr'].every((l) => stats[l].bytes > base.bytes * 0.6),
-      ['zh', 'en', 'es', 'fr'].map((l) => `${l}:${Math.round(stats[l].bytes / 1024)}KB`).join(' '));
+    ok('英文文档没有残留中文',
+      stats.en.cjk === 0, `${stats.en.cjk} 处`);
+    ok('英文文档篇幅接近原文（没有大段漏译）',
+      stats.en.bytes > base.bytes * 0.6,
+      ['zh', 'en'].map((l) => `${l}:${Math.round(stats[l].bytes / 1024)}KB`).join(' '));
   }
 }
 }

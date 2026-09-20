@@ -3,7 +3,7 @@
   "version": "3.0.0",
   "private": true,
   "type": "module",
-  "description": "体感健身游戏 / Motion fitness game：22 个动作（上肢/下肢/核心/全身/拉伸 五大类）的摄像头识别、计数与计时，按动作要领逐步计分，纯前端离线可用，支持中/英/西/法四语言",
+  "description": "体感健身游戏 / Motion fitness game：22 个动作（上肢/下肢/核心/全身/拉伸 五大类）的摄像头识别、计数与计时，按动作要领逐步计分，纯前端离线可用，支持中文 / 英文两种语言",
   "scripts": {
     "start": "node preview-server.js",
     "test": "node tests/test-i18n.mjs && node tests/test-detectors.mjs && node tests/test-engines.mjs && node tests/test-specs.mjs && node tests/test-page.mjs && node tests/test-app.mjs",
