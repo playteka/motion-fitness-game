@@ -84,6 +84,10 @@ export default {
     clearConfirm: 'Clear all workout history and best scores?',
 
     stepsNote: 'Work through the form steps one at a time: hit a step and you instantly get points, a chime, and a checkmark. Complete every step in the round and you get a full-marks bonus.',
+    gestureExit: 'Exit',
+    gestureRetry: 'One more set',
+    gestureHint: 'Hold your palm in the middle of a circle for 3 seconds: left = exit, right = one more set (tapping works too)',
+    gestureVoice: 'Hold your palm inside a circle for three seconds to go back home, or to do one more set.',
     criteriaPtsMax: 'Up to +{n} points on this keyframe',
     criteriaPtsPerSec: 'Plus +{n} point per second while you hold',
     criteriaPtsGot: 'Already earned +{n} points here',

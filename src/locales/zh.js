@@ -84,6 +84,10 @@ export default {
     clearConfirm: '确定清空所有训练记录与最佳成绩吗？',
 
     stepsNote: '照着要领一步步做：每达成一步就立刻加分、响铃、打勾；整轮要领全部完成还有满分奖励。',
+    gestureExit: '退出',
+    gestureRetry: '再做一次',
+    gestureHint: '把手掌放进圆环中央，保持 3 秒：左＝退出，右＝再做一次（也可以直接点）',
+    gestureVoice: '把手掌放进圆圈里保持三秒，就能选择退出，或者再来一组。',
     criteriaPtsMax: '这一格最高 +{n} 分',
     criteriaPtsPerSec: '坚持每秒再 +{n} 分',
     criteriaPtsGot: '这一格已拿到 +{n} 分',

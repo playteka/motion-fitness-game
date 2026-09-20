@@ -7,7 +7,7 @@ import {
   EXERCISES, EXERCISE_MAP, createDetector, localizedExercise, exerciseUnit,
   localizedCategories, localizedByCategory,
 } from './exercises.js';
-import { LandmarkSmoother, toMetric, clamp } from './geometry.js';
+import { LandmarkSmoother, toMetric, clamp, LM } from './geometry.js';
 import { computeFrame } from './metrics.js';
 import { PoseEngine, Camera } from './pose-engine.js';
 import { PoseRenderer } from './render.js';
@@ -340,6 +340,8 @@ function showHome({ syncRoute = true } = {}) {
   if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
     stopSession('switch');
   }
+  // 注意顺序：stopSession 会摆出手势圆环，所以收起来这一步必须在它之后
+  hideGestureRings();
   // 主页上不校准也不计数：摄像头可以留着预热，但不能在浏览动作时偷偷开始一组
   state.homeMode = true;
   state.session = 'idle';
@@ -474,6 +476,227 @@ function openExerciseSettings() {
 function closeExerciseSettings() {
   const modal = $('exerciseModal');
   if (modal) modal.hidden = true;
+}
+
+/* ------------------------------------------------------------------ *
+ * 手势圆环：一组做完之后，把手掌放到圆环中央保持 3 秒就触发
+ *
+ * 为什么要有它：一组做完后人还站在镜头前，手上都是汗/离键盘很远，
+ * 「退出」和「再做一次」这两个最常用的选择不该逼用户去点屏幕。
+ * 所以一组结束后直接在画面上摆两个大圆环（左：退出，右：再做一次），
+ * 手掌（左右手都行）停在圆环中央 → 圆环**顺时针**走满一圈并转成绿色 → 触发。
+ * 3 秒是刻意选的：抬手、经过、犹豫都不会误触，鼠标点一下同样有效。
+ * ------------------------------------------------------------------ */
+
+/** 两个圆环的位置（舞台内的比例）—— 与 index.html 里的按钮元素一一对应
+ *  y = 0.52 是量过的：圆环下沿留在判定进度条（画在画面底部）上方，手机上也不会压住它 */
+const GESTURE_RINGS = {
+  exit: { x: 0.32, y: 0.52, labelKey: 'ui.gestureExit', timerId: 'ringExitTimer' },
+  retry: { x: 0.68, y: 0.52, labelKey: 'ui.gestureRetry', timerId: 'ringRetryTimer' },
+};
+/** 圆环直径 = 舞台宽度的这个比例（CSS 里 width: 20% 必须与它一致） */
+const RING_SIZE = 0.20;
+/** 手掌要落在圆心这个半径内才算「在圆环中央」（约环半径的 60%，边缘擦过不算） */
+const RING_HIT = 0.06;
+/** 手掌要保持多久 */
+const GESTURE_HOLD_MS = 3000;
+/** 识别会抖：短暂离开这么久以内不清零（但也不再累积） */
+const GESTURE_GRACE_MS = 300;
+
+/** 手势圆环的运行时状态（进度 0~1、进入时刻、最后在里面的一刻） */
+const gestureState = {
+  visible: false,
+  exit: { p: 0, since: 0, lastInside: 0, done: false },
+  retry: { p: 0, since: 0, lastInside: 0, done: false },
+};
+
+/** 圆环的圆心（舞台内的比例 → 像素） */
+function ringCenter(key, stageW, stageH) {
+  const r = GESTURE_RINGS[key];
+  return { x: r.x * stageW, y: r.y * stageH };
+}
+
+/**
+ * 手掌在画面里的位置（舞台像素坐标，已经考虑镜像）。
+ *
+ * 用**手腕 + 食指 + 小指 + 拇指**的平均点当「手掌中心」：只用手腕的话，
+ * 手掌伸进圆环时手腕可能还在环外，判定会明显偏。
+ */
+function palmPoints(landmarks, stageW, stageH, mirror) {
+  if (!landmarks || !landmarks.length) return [];
+  const palm = (w, i, pk, th) => {
+    const pts = [w, i, pk, th].filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)
+      && (p.visibility === undefined || p.visibility >= 0.4));
+    if (pts.length < 2) return null;
+    const cx = pts.reduce((n, p) => n + p.x, 0) / pts.length;
+    const cy = pts.reduce((n, p) => n + p.y, 0) / pts.length;
+    return { x: (mirror ? 1 - cx : cx) * stageW, y: cy * stageH };
+  };
+  return [
+    palm(landmarks[LM.L_WRIST], landmarks[LM.L_INDEX], landmarks[LM.L_PINKY], landmarks[LM.L_THUMB]),
+    palm(landmarks[LM.R_WRIST], landmarks[LM.R_INDEX], landmarks[LM.R_PINKY], landmarks[LM.R_THUMB]),
+  ].filter(Boolean);
+}
+
+/** 舞台的像素尺寸（没有布局信息时按 16:9 的默认值兜底，测试桩里也能跑） */
+function stageSize() {
+  const stage = $('stage');
+  const w = stage?.clientWidth || 0;
+  const h = stage?.clientHeight || 0;
+  if (w > 0 && h > 0) return { w, h };
+  return { w: 1280, h: 720 };
+}
+
+/** 摆好两个圆环的位置（一处定义：位置和大小都来自 GESTURE_RINGS / RING_SIZE） */
+function layoutGestureRings() {
+  for (const key of Object.keys(GESTURE_RINGS)) {
+    const el = $(key === 'exit' ? 'ringExit' : 'ringRetry');
+    if (!el) continue;
+    el.style.left = `${GESTURE_RINGS[key].x * 100}%`;
+    el.style.top = `${GESTURE_RINGS[key].y * 100}%`;
+    el.style.width = `${RING_SIZE * 100}%`;
+  }
+}
+
+function ringEl(key) { return $(key === 'exit' ? 'ringExit' : 'ringRetry'); }
+
+/** 一组做完 → 亮出两个圆环，并提示怎么用（语音 + 屏幕上方的提示条） */
+function showGestureRings({ speak = true } = {}) {
+  const box = $('gestureRings');
+  if (!box) return;
+  layoutGestureRings();
+  const labels = ['exit', 'retry'];
+  for (const key of labels) {
+    const el = ringEl(key);
+    const st = gestureState[key];
+    st.p = 0; st.since = 0; st.lastInside = 0; st.done = false;
+    el?.classList.remove('dwelling', 'done');
+    const label = $(key === 'exit' ? 'ringExitLabel' : 'ringRetryLabel');
+    if (label) label.textContent = t(GESTURE_RINGS[key].labelKey);
+    const timer = $(GESTURE_RINGS[key].timerId);
+    if (timer) timer.textContent = '';
+    paintRing(key, 0);
+  }
+  box.hidden = false;
+  const hint = $('gestureHint');
+  if (hint) {
+    hint.textContent = t('ui.gestureHint');
+    hint.hidden = false;
+  }
+  gestureState.visible = true;
+  // 语音提示晚一点念：紧接着上一句「本组成绩」说会被听成一句，等它念完再说怎么用手势
+  if (speak) {
+    setTimeout(() => {
+      if (gestureState.visible) audio.say(t('ui.gestureVoice'), { rate: 1.05 });
+    }, 2600);
+  }
+}
+
+function hideGestureRings() {
+  const box = $('gestureRings');
+  if (box) box.hidden = true;
+  const hint = $('gestureHint');
+  if (hint) hint.hidden = true;
+  gestureState.visible = false;
+  for (const key of ['exit', 'retry']) {
+    const st = gestureState[key];
+    st.p = 0; st.since = 0; st.lastInside = 0; st.done = false;
+    ringEl(key)?.classList.remove('dwelling', 'done');
+  }
+}
+
+/** 圆环的进度：顺时针走满一圈（dashoffset 从满到 0） */
+function paintRing(key, p) {
+  const el = ringEl(key);
+  if (!el) return;
+  const circle = el.querySelector?.('.ring-fill');
+  const clamped = clamp(p, 0, 1);
+  if (circle) circle.style.strokeDashoffset = String(326.7 * (1 - clamped));
+  const st = gestureState[key];
+  el.classList.toggle('dwelling', clamped > 0.001 && !st.done);
+  if (st.done) el.classList.add('done');
+}
+
+/** 手掌在不在这个圆环的中央 */
+function handInRing(palms, key, size) {
+  const c = ringCenter(key, size.w, size.h);
+  const hit = RING_HIT * size.w;
+  return palms.some((p) => Math.hypot(p.x - c.x, p.y - c.y) <= hit);
+}
+
+/**
+ * 每帧更新两个圆环的进度。返回这一帧是否触发了某个动作（触发时圆环已经收起来）。
+ * 只要有一只手停在圆环中央满 GESTURE_HOLD_MS 就触发；两只手各停一个环也行。
+ */
+function updateGesture(landmarks, now) {
+  if (!gestureState.visible) return null;
+  const size = stageSize();
+  const palms = palmPoints(landmarks, size.w, size.h, state.settings.mirror);
+  let fired = null;
+  for (const key of ['exit', 'retry']) {
+    const st = gestureState[key];
+    if (st.done) continue;
+    const inside = handInRing(palms, key, size);
+    if (inside) {
+      st.lastInside = now;
+      if (!st.since) st.since = now;
+      st.p = clamp((now - st.since) / GESTURE_HOLD_MS, 0, 1);
+    } else if (now - st.lastInside > GESTURE_GRACE_MS) {
+      st.since = 0;
+      st.p = Math.max(0, st.p - 0.06);   // 轻轻退回去，看得出「手离开了」
+    }
+    paintRing(key, st.p);
+    const timer = $(GESTURE_RINGS[key].timerId);
+    if (timer) {
+      const left = Math.max(0, GESTURE_HOLD_MS - (now - st.since)) / 1000;
+      timer.textContent = st.p > 0.02 && st.p < 1 ? `${left.toFixed(1)}s` : '';
+    }
+    if (st.p >= 1) {
+      st.done = true;
+      paintRing(key, 1);
+      fired = key;
+    }
+  }
+  if (fired) triggerGesture(fired);
+  return fired;
+}
+
+/** 触发某个圆环（手势停满 3 秒，或者用户直接点它） */
+function triggerGesture(key) {
+  audio.milestone();
+  hideGestureRings();
+  if (key === 'exit') {
+    audio.say(t('ui.gestureExit'), { rate: 1.1, force: true });
+    showHome();
+  } else {
+    audio.say(t('ui.gestureRetry'), { rate: 1.1, force: true });
+    retrySet();
+  }
+}
+
+/** 「再做一次」：把这一组的计数全部清零，然后马上重新开始这一组 */
+function retrySet() {
+  hideGestureRings();
+  const det = ensureDetector();
+  det?.reset();                 // 次数 / 分数 / 要领清单 / 每轮进度全部清零
+  state.afterSet = false;       // 又来一组了：不再是「刚做完一组在休息」的状态
+  state.elapsedMs = 0;
+  state.goalHit = false;
+  state.saidSteps = new Set();
+  state.lastScoreMilestone = 0;
+  state.stepSig = '';
+  state.celebrateUntil = 0;
+  $('celebrate').hidden = true;
+  $('scorePop').className = 'score-pop';
+  resetCriteriaProgress();
+  updateHud();
+  renderCriteriaBar();
+  beginCountdown();
+}
+
+/** 舞台尺寸变化（横竖屏切换、全屏）时把圆环重新摆一次 */
+function onStageResize() {
+  if (gestureState.visible) layoutGestureRings();
 }
 
 /* ------------------------------------------------------------------ *
@@ -698,6 +921,7 @@ function renderCriteriaBar(now = performance.now()) {
 
 function selectExercise(id) {
   if (!EXERCISES.some((e) => e.id === id)) return;
+  hideGestureRings();   // 换动作：上一组的手势圆环不该留着
   if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
     stopSession('switch');
   }
@@ -1035,6 +1259,7 @@ function startSession() {
  */
 function beginCountdown() {
   try { audio.unlock(); } catch { /* 音频初始化失败不影响开始训练 */ }
+  hideGestureRings();   // 要开始新的一组了，圆环先收起来
   const det = ensureDetector();
   // 注意：不重置计数与得分。识别从选好动作那一刻就开始反馈，
   // 开始一组只是开始计时/记一组，方便用户先摆好姿势拿到要领分。
@@ -1172,6 +1397,8 @@ function stopSession(reason = 'user') {
   // 一组结束后回到校准阶段：下一组开始前重新确认站位与机位，
   // 但这一轮不再自动开始（autoStart: false），给用户留出休息和小结的时间。
   toCalibration({ silent: false, afterSet: true });
+  // 手上都是汗、离键盘远：一组做完直接把「退出 / 再做一次」摆成两个手势圆环
+  showGestureRings();
 }
 
 function requestWakeLock() {
@@ -1370,7 +1597,10 @@ function calibrationStep(frame, now) {
   // 一组结束后先休息：停在原地不自动开始（提示条会写明要自己点「开始训练」）；
   // 一旦从画面里消失（站起来走开、喝水），自动开始立刻重新装填，再站好就又会自动开始。
   const lost = !calib.checks.length || (calib.checks[0].id === 'visible' && !calib.checks[0].ok);
-  if (state.afterSet && lost) state.afterSet = false;
+  if (state.afterSet && lost) {
+    state.afterSet = false;
+    hideGestureRings();   // 人已经走开了：圆环收起来，回来时按老规矩自动开始
+  }
 
   // 全身识别完成（七项全部达标并保持住）
   if (calib.done && state.session === 'calibrating') {
@@ -1697,6 +1927,11 @@ function loop() {
     onGoalReached();
   }
 
+  // 手势圆环（一组做完后的「退出 / 再做一次」）：识别到的手掌停在圆环中央满 3 秒就触发
+  if (gestureState.visible) {
+    updateGesture(res ? res.landmarks : null, now);
+  }
+
   // 实时指标（调试用）
   renderDebug(frame);
 
@@ -1851,6 +2086,7 @@ function refreshForLang() {
   if (state.calib) renderCalibration(state.calib);
   buildHome();        // 主页分类/动作名也要跟着换语言
   buildMusicTracks(); // 曲子名也要跟着换语言
+  if (gestureState.visible) showGestureRings({ speak: false });   // 圆环上的字也要跟着换
   setCueLine('');
 }
 
@@ -1880,6 +2116,11 @@ function bindUI() {
     startCamera();
   });
   $('btnStart').addEventListener('click', () => startSession());
+  // 一组做完的两个手势圆环：用手掌停 3 秒是主路径，鼠标/触屏点一下同样有效
+  $('ringExit')?.addEventListener('click', () => triggerGesture('exit'));
+  $('ringRetry')?.addEventListener('click', () => triggerGesture('retry'));
+  window.addEventListener('resize', onStageResize);
+  document.addEventListener('fullscreenchange', onStageResize);
   $('btnPause').addEventListener('click', () => (state.session === 'paused' ? resumeSession() : pauseSession()));
   $('btnStop').addEventListener('click', () => stopSession('user'));
   $('btnResetReps').addEventListener('click', () => {
@@ -2217,5 +2458,7 @@ window.__mfg = {
   openExerciseSettings, closeExerciseSettings, renderExerciseSettings,
   buildCriteriaBar, updateCriteria, resetCriteriaProgress, renderCriteriaBar,
   showCriteriaTip, hideCriteriaTip,
+  showGestureRings, hideGestureRings, updateGesture, triggerGesture, retrySet,
+  gestureState, GESTURE_RINGS, GESTURE_HOLD_MS, RING_HIT,
   buildMusicTracks, selectMusicTrack,
 };

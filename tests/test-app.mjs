@@ -81,7 +81,12 @@ class El {
   dispatch(type, ev = {}) { for (const fn of this.listeners[type] || []) fn({ preventDefault() {}, target: this, ...ev }); }
   setAttribute(k, v) { this.attributes[k] = String(v); if (k === 'class') this.className = String(v); }
   getAttribute(k) { return this.attributes[k] ?? null; }
-  querySelector() { return null; }
+  querySelector(sel) {
+    // 桩 DOM：给需要的子元素（例如圆环的 .ring-fill）稳定地返回同一个桩，便于断言它的样式
+    const key = `_q${sel}`;
+    if (!this[key]) this[key] = new El('div', '');
+    return this[key];
+  }
   querySelectorAll() { return []; }
   getBoundingClientRect() { return { width: 1280, height: 720, left: 0, top: 0 }; }
   focus() {}
@@ -1339,6 +1344,125 @@ console.log('\n[8b] 判定进度条');
   ok('回主页后进度条隐藏', elements.get('criteriaBar').hidden === true);
   api.openExercise('squat');
   api.stopSession('user');
+  api.showHome();
+}
+
+/* ------------------------------------------------------------------ *
+ * 手势圆环：一组结束后的「退出 / 再做一次」（手掌停在圆环中央 3 秒）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8c] 一组结束后的手势圆环');
+{
+  const api = windowStub.__mfg;
+  const { LM } = await import('../src/geometry.js');
+  const { ASPECT: A, standingPose: sp } = await import('./synthetic-pose.mjs');
+
+  /** 造一份 33 点骨架，把「左手/右手」的手腕+食指+小指+拇指放到指定位置（归一化坐标） */
+  const palmsAt = (x, y, visibility = 1) => {
+    const lm = sp({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility }));
+    for (const w of [LM.L_WRIST, LM.R_WRIST]) {
+      for (const off of [0, 2, 4, 6]) {          // 手腕 / 小指 / 食指 / 拇指
+        lm[w + off] = { x, y, z: 0, visibility };
+      }
+    }
+    return lm;
+  };
+  const at = (key) => api.GESTURE_RINGS[key];
+  const ring = (key) => elements.get(key === 'exit' ? 'ringExit' : 'ringRetry');
+  const shown = () => elements.get('gestureRings').hidden === false;
+
+  api.openExercise('squat');
+  api.state.session = 'running';
+  api.state.settings.mirror = false;   // 前面的用例把镜像打开了，这里从明确的初始状态开始
+  ok('训练中（还没做完一组）不显示手势圆环', shown() === false);
+
+  // 做完一组 → 圆环出现（左＝退出，右＝再做一次），并给出用法提示
+  api.state.target = 1;
+  api.state.detector.validReps = 1;
+  api.stopSession('goal');
+  ok('一组做完后出现两个手势圆环', shown() === true
+    && elements.get('gestureRings').hidden === false);
+  ok('左圆环写「退出」、右圆环写「再做一次」',
+    elements.get('ringExitLabel').textContent === '退出'
+    && elements.get('ringRetryLabel').textContent === '再做一次',
+    `${elements.get('ringExitLabel').textContent} / ${elements.get('ringRetryLabel').textContent}`);
+  ok('画面上给出「手掌放进圆环保持 3 秒」的提示',
+    elements.get('gestureHint').hidden === false
+    && elements.get('gestureHint').textContent.includes('3 秒'),
+    elements.get('gestureHint').textContent);
+  ok('两个圆环按 GESTURE_RINGS 的比例摆位（和手势判定用同一份坐标）',
+    ring('exit').style.left === `${at('exit').x * 100}%` && ring('retry').style.top === `${at('retry').y * 100}%`,
+    `${ring('exit').style.left}/${ring('retry').style.left}`);
+
+  // 手掌不在圆环里 → 不累积
+  api.updateGesture(palmsAt(0.5, 0.56), 1000);
+  ok('手掌在两个圆环之间时进度为 0', api.gestureState.exit.p === 0 && api.gestureState.retry.p === 0,
+    `${api.gestureState.exit.p}/${api.gestureState.retry.p}`);
+
+  // 手掌停在「再做一次」圆环中央 → 顺时针进度按时间走
+  api.updateGesture(palmsAt(at('retry').x, at('retry').y), 1000);
+  api.updateGesture(palmsAt(at('retry').x, at('retry').y), 2000);
+  const p1 = api.gestureState.retry.p;
+  api.updateGesture(palmsAt(at('retry').x, at('retry').y), 2500);
+  const p2 = api.gestureState.retry.p;
+  ok('手掌停在圆环中央时进度随时间前进（0.33 → 0.5）',
+    Math.abs(p1 - 1 / 3) < 0.02 && Math.abs(p2 - 0.5) < 0.02, `${p1.toFixed(2)} → ${p2.toFixed(2)}`);
+  ok('识别到手掌时圆环进入「正在蓄力」状态（变色）',
+    (api.updateGesture(palmsAt(at('retry').x, at('retry').y), 2600), ring('retry').classList.contains('dwelling')));
+  ok('圆环里显示还剩几秒',
+    elements.get('ringRetryTimer').textContent.endsWith('s'), elements.get('ringRetryTimer').textContent);
+
+  // 手离开 → 宽限期内不清零，超过宽限后进度退回
+  api.updateGesture(palmsAt(0.5, 0.56), 2700);
+  ok('手掌刚移开时不清零（给识别抖动留宽限）', api.gestureState.retry.p > 0.4);
+  let guard = 0;
+  while (api.gestureState.retry.p > 0 && guard < 200) { api.updateGesture(palmsAt(0.5, 0.56), 3100 + guard * 40); guard += 1; }
+  ok('手掌移开后进度退回 0（不会误触）', api.gestureState.retry.p === 0, String(api.gestureState.retry.p));
+
+  // 停满 3 秒 = 再做一次：计数器清零 + 立刻重新开始这一组
+  api.state.detector.validReps = 3;
+  api.state.detector.score = 21;
+  api.updateGesture(palmsAt(at('retry').x, at('retry').y), 10000);
+  api.updateGesture(palmsAt(at('retry').x, at('retry').y), 12000);
+  api.updateGesture(palmsAt(at('retry').x, at('retry').y), 13001);
+  ok('手掌停满 3 秒触发「再做一次」：计数与分数清零',
+    api.state.detector.validReps === 0 && api.state.detector.score === 0,
+    `${api.state.detector.validReps} / ${api.state.detector.score}`);
+  ok('触发后立刻重新开始这一组（进入 3-2-1）', api.state.session === 'countdown', api.state.session);
+  ok('触发后圆环收起来', shown() === false);
+  api.finishCountdown();
+
+  // 退出：停满 3 秒 → 回到主页
+  api.stopSession('goal');
+  ok('一组做完后圆环又出现', shown() === true);
+  api.updateGesture(palmsAt(at('exit').x, at('exit').y), 20000);
+  api.updateGesture(palmsAt(at('exit').x, at('exit').y), 22000);
+  api.updateGesture(palmsAt(at('exit').x, at('exit').y), 23001);
+  ok('手掌停满 3 秒触发「退出」：回到主页', api.state.homeMode === true);
+  ok('退出后圆环收起来', shown() === false);
+
+  // 镜像预览：画面是翻过来的，圆环没有翻 → 判定必须跟着翻，否则手势会反
+  api.openExercise('squat');
+  api.state.settings.mirror = true;
+  api.state.session = 'running';
+  api.stopSession('goal');
+  api.updateGesture(palmsAt(1 - at('exit').x, at('exit').y), 30000);
+  api.updateGesture(palmsAt(1 - at('exit').x, at('exit').y), 31000);
+  ok('镜像预览下，手掌位置跟着镜像（否则左右会反）', api.gestureState.exit.p > 0.3,
+    String(api.gestureState.exit.p));
+  api.state.settings.mirror = false;
+  api.hideGestureRings();
+
+  // 手被挡住（visibility 很低）不算
+  api.stopSession('goal');
+  api.updateGesture(palmsAt(at('exit').x, at('exit').y, 0.1), 40000);
+  api.updateGesture(palmsAt(at('exit').x, at('exit').y, 0.1), 42000);
+  ok('手被身体挡住（可见度低）时不算手掌在圆环里', api.gestureState.exit.p === 0);
+
+  // 人走开 → 圆环收起来（回到「站好就自动开始」的老规矩）
+  api.state.afterSet = true;
+  api.calibrationStep({ ok: false }, 50000);
+  ok('人走开（或离开轮廓）后圆环自动收起', shown() === false);
   api.showHome();
 }
 

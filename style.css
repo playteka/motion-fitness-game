@@ -776,6 +776,107 @@ kbd {
   100% { opacity: 0; transform: translate(-50%, -46px) scale(1); }
 }
 
+/* ---- 一组结束后的手势圆环：手掌停在圆环中央 3 秒 = 顺时针走满一圈并触发 ----
+   位置由 JS 设（和 app.js 里的 GESTURE_RINGS 同一份比例），这里只管样子 */
+.gesture-rings {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;   /* 空白处不挡鼠标，只有圆环本身可点 */
+}
+.ring-btn {
+  position: absolute;
+  width: 20%;
+  max-width: 190px;
+  min-width: 92px;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(6, 12, 20, 0.42);
+  cursor: pointer;
+  pointer-events: auto;
+  animation: ringIn 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.4);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+@keyframes ringIn {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.ring-btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.ring-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);   /* 从 12 点开始 → 顺时针走 */
+}
+.ring-track { fill: none; stroke: rgba(148, 163, 184, 0.35); stroke-width: 7; }
+.ring-fill {
+  fill: none;
+  stroke: rgba(56, 189, 248, 0.55);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-dasharray: 326.7;     /* 2πr，r = 52 */
+  stroke-dashoffset: 326.7;    /* 全空：还没识别到手掌 */
+  transition: stroke 0.18s linear;
+}
+/* 手掌在圆环中央：顺时针走出来 + 变绿（越接近 3 秒越亮） */
+.ring-btn.dwelling {
+  background: rgba(8, 30, 22, 0.5);
+  box-shadow: 0 0 26px rgba(74, 222, 128, 0.35);
+}
+.ring-btn.dwelling .ring-fill {
+  stroke: #4ade80;
+  filter: drop-shadow(0 0 8px rgba(74, 222, 128, 0.85));
+}
+.ring-btn.done { background: rgba(34, 197, 94, 0.35); box-shadow: 0 0 34px rgba(74, 222, 128, 0.7); }
+.ring-btn.done .ring-fill { stroke: #22c55e; }
+.ring-label {
+  position: relative;
+  font-size: clamp(15px, 1.7vw, 22px);
+  font-weight: 800;
+  color: #e6f1ff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+}
+.ring-timer {
+  position: absolute;
+  bottom: 20%;
+  font-size: clamp(13px, 1.2vw, 17px);
+  font-weight: 800;
+  color: #fde047;
+  opacity: 0;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+}
+.ring-btn.dwelling .ring-timer { opacity: 1; }
+.gesture-hint {
+  position: absolute;
+  left: 50%;
+  top: 6%;
+  transform: translateX(-50%);
+  z-index: 7;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(8, 15, 26, 0.8);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #dcf2ff;
+  font-size: 14px;
+  font-weight: 700;
+  pointer-events: none;
+}
+@media (max-width: 560px) {
+  .ring-btn { width: 26%; min-width: 78px; }
+  .gesture-hint { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ring-btn { animation: none; }
+}
+
 .countdown {
   position: absolute;
   inset: 0;

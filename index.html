@@ -108,6 +108,27 @@
                   data-i18n-title="ui.fullscreen" data-i18n-aria="ui.fullscreen">
             <span class="stage-btn-icon" aria-hidden="true">⛶</span>
           </button>
+          <!-- 一组结束后的两个手势圆环：把手掌放到圆环中央保持 3 秒就触发（鼠标点也行） -->
+          <div class="gesture-rings" id="gestureRings" hidden>
+            <button class="ring-btn" id="ringExit" type="button">
+              <svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+                <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+                <circle class="ring-fill" cx="60" cy="60" r="52"></circle>
+              </svg>
+              <span class="ring-label" id="ringExitLabel"></span>
+              <span class="ring-timer" id="ringExitTimer"></span>
+            </button>
+            <button class="ring-btn" id="ringRetry" type="button">
+              <svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+                <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+                <circle class="ring-fill" cx="60" cy="60" r="52"></circle>
+              </svg>
+              <span class="ring-label" id="ringRetryLabel"></span>
+              <span class="ring-timer" id="ringRetryTimer"></span>
+            </button>
+          </div>
+          <div class="gesture-hint" id="gestureHint" hidden></div>
+
           <div class="countdown" id="countdown" hidden><span id="countdownNum">3</span></div>
           <div class="celebrate" id="celebrate" hidden><div class="celebrate-inner"><span id="celebrateText"></span></div></div>
         </div>

@@ -203,6 +203,29 @@ console.log('\n[3] 静态资源与模型文件');
     /border:\s*2px solid #fbbf24/.test(segCurrent) && /animation:/.test(segCurrent));
   ok('动效敏感用户会关掉呼吸/弹跳动画', /prefers-reduced-motion/.test(css));
 
+  /* ---- 一组结束后的两个手势圆环（退出 / 再做一次） ---- */
+  const ringsHtml = /id="gestureRings"/.test(html);
+  ok('画面上有手势圆环容器 + 两个圆环 + 用法提示',
+    ringsHtml && /id="ringExit"/.test(html) && /id="ringRetry"/.test(html)
+    && /id="gestureHint"/.test(html) && /id="ringExitLabel"/.test(html) && /id="ringRetryLabel"/.test(html));
+  ok('两个圆环是按钮（鼠标/触屏点一下也能用，不是只能靠手势）',
+    /<button[^>]*id="ringExit"/.test(html) && /<button[^>]*id="ringRetry"/.test(html));
+  const appSrc = read('src/app.js');
+  ok('圆环从 12 点开始顺时针走（rotate(-90deg)）', /\.ring-svg\s*\{[^}]*rotate\(-90deg\)/.test(css));
+  ok('圆环进度用 stroke-dashoffset 表示，dasharray = 2πr（r=52 → 326.7）',
+    /stroke-dasharray:\s*326\.7/.test(css) && /stroke-dashoffset/.test(css));
+  ok('手掌在环里时圆环变色（.dwelling 变绿 + 外发光）',
+    /\.ring-btn\.dwelling\s+\.ring-fill\s*\{[^}]*stroke:\s*#4ade80/.test(css));
+  ok('触发瞬间整环填满并高亮（.done）', /\.ring-btn\.done\s*\.ring-fill\s*\{[^}]*#22c55e/.test(css));
+  // 握持 3 秒 + 「圆环直径 / 命中半径」是跨文件常量，这里锁住两处一致
+  ok('保持时间 = 3 秒（用户要求）', /GESTURE_HOLD_MS\s*=\s*3000/.test(appSrc));
+  ok('圆环直径 20% 与 CSS 的 width 一致（同一份比例，不会一处改一处忘）',
+    /RING_SIZE\s*=\s*0\.20/.test(appSrc) && /\.ring-btn\s*\{[^}]*width:\s*20%/.test(css));
+  ok('两个圆环的左右位置在 app.js 里一处定义（左退出 / 右再做一次）',
+    /exit:\s*\{\s*x:\s*0\.\d+/.test(appSrc) && /retry:\s*\{\s*x:\s*0\.\d+/.test(appSrc)
+    && /ui\.gestureExit/.test(appSrc) && /ui\.gestureRetry/.test(appSrc));
+  ok('手势判定要考虑镜像预览（否则左右手会反）', /mirror\s*\?\s*1\s*-\s*cx/.test(appSrc));
+
   // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面
   const stageAt = html.indexOf('id="stage"');
   const toolbarAt = html.indexOf('class="stage-toolbar"');

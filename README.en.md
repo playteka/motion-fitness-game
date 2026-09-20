@@ -26,6 +26,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - [Running and accessing the app](#running-and-accessing-the-app)
 - [Camera permissions](#camera-permissions)
 - [Home page and exercise page](#home-page-and-exercise-page)
+- [🖐 Gesture rings after a set (exit / one more set)](#-gesture-rings-after-a-set-exit--one-more-set)
 - [Settings modal (language / model / sound)](#settings-modal-language--model--sound)
 - [Pre-workout calibration](#pre-workout-calibration)
 - [How to use it (camera angle matters)](#how-to-use-it-camera-angle-matters)
@@ -450,6 +451,27 @@ Take the lunge (each segment holds the real threshold from the code):
   box, and walks synthetic poses through the bar to prove it advances segment by segment and that a shallow movement never
   reaches the last segment.
 
+## 🖐 Gesture rings after a set (exit / one more set)
+
+The moment a set finishes (the goal was reached, or you tapped “end this set”), **two big rings** appear on the video:
+**left = “Exit”** (back to the exercise home page) and **right = “One more set”** (reps, score and the form-step checklist
+are all reset and the same set starts again immediately). Right after training your hands are sweaty and far from the
+keyboard, so the two most common choices should not force you to tap a screen.
+
+- **How to use it**: put **either palm** (left or right hand) in the **middle** of a ring and hold for **3 seconds** — the ring
+  fills up **clockwise from 12 o'clock** and turns green, and the moment it is full the action fires. Pull your hand away early
+  and the progress falls back.
+- **The 3 seconds are deliberate**: raising a hand, walking past, or hesitating never triggers it. The hit zone in the middle of
+  a ring is about 60% of the ring's radius, so brushing the edge does not count.
+- **Tapping the ring with a mouse or finger works just as well** (same chime), and the keyboard still has `Esc` (end this set)
+  and `R` (reset the counters).
+- **With a mirrored preview the palm position is mirrored too**: in mirror mode the picture you see is flipped while the rings are
+  not, so the judgement follows the mirror setting — you never reach left and trigger the right-hand action.
+- **Walk out of the frame and the rings go away**: once you leave the camera the rings disappear and the usual “stand in the outline
+  and it starts by itself” rule takes over. When you come back into the outline the automatic start resumes instead of waiting for a gesture.
+- **Only one can fire**: the two rings keep their own timers, and whichever reaches 3 seconds first wins (resting a hand on one ring
+  never triggers the other).
+
 ## 📐 Counting thresholds (inside the exercise-settings modal)
 
 The exercise-settings modal of every exercise lists **the rules the detector is using right now**: how far a rep has to go to count,
@@ -801,8 +823,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 265 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 836 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 325 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 298 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-page.mjs` | 335 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
+| `tests/test-app.mjs` | 318 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 
