@@ -258,6 +258,14 @@ const LUNGE = {
   enterHoldMs: 200,
   exitHoldMs: 100,
   bothBentMax: 162,   // 两条腿都算「弯」的门槛放宽（原来 150）
+  /**
+   * 计次门槛：**两条腿都要有弯曲度**（用户反馈「箭步蹲计次太松了」）。
+   * 单看前膝的话，只要前腿点一下就能凑一次；这里额外要求「较直的那条腿」
+   * 也弯到 bothBentNeeded 以内，或者比用户自己站直时弯下去 bothDrop 度。
+   * 取两者中更严的那个，读数被压缩（站直只有 140°）的人也不会被卡死。
+   */
+  bothBentNeeded: 158,
+  bothDrop: 12,
   backKneeCue: 0.66,  // 后膝太高 → 提示（后膝离地高度 / 小腿长）
   backKneeDrop: 0.66, // 深度达标要求（原来 0.58，要求后膝几乎贴地太严）
   minRepMs: 450,      // 一次有效箭步蹲的最短用时（原来 750/520）
@@ -273,6 +281,7 @@ class LungeDetector extends DetectorBase {
     this.bendSince = 0;
     this.upSince = 0;
     this.minFront = 180;
+    this.minBoth = 180;
     this.minBackDrop = 9;
     this.depthOk = false;
     this.lastFrontSide = null;
@@ -332,6 +341,15 @@ class LungeDetector extends DetectorBase {
    */
   get countLine() { return LUNGE.looseKnee; }
 
+  /**
+   * 「两条腿都弯了」的判定线：**较直的那条腿**（后腿）也得弯到这条线以内。
+   * 绝对门槛 158° 与「比自己站直时弯下去 12°」取更严的那个 ——
+   * 后者让读数被压缩的人同样能计次，前者防止站得很直的人靠一点点抖动凑数。
+   */
+  get bothLine() {
+    return Math.min(LUNGE.bothBentNeeded, this.topLine - LUNGE.bothDrop);
+  }
+
   rememberStraight(v, now) {
     if (!Number.isFinite(v)) return;
     this._straight.push({ t: now, v });
@@ -387,6 +405,7 @@ class LungeDetector extends DetectorBase {
             this.stage = 'descending';
             this.repStartAt = this.bendSince;
             this.minFront = bent;
+            this.minBoth = bothBent;
             this.minBackDrop = back.drop;
             this.depthOk = false;
             this.frontSide = front.s;
@@ -400,6 +419,8 @@ class LungeDetector extends DetectorBase {
       case 'descending':
       case 'bottom': {
         this.minFront = Math.min(this.minFront, bent);
+        // 两条腿同时最弯的那一帧：较直的那条腿弯到多少度（计次要看它）
+        this.minBoth = Math.min(this.minBoth, bothBent);
         if (front.s === this.frontSide) this.minBackDrop = Math.min(this.minBackDrop, back.drop);
         if (bothBent <= LUNGE.bothBentMax && back.drop <= LUNGE.backKneeDrop) this.depthOk = true;
         if (this.stage === 'descending' && bent <= LUNGE.downKnee && bothBent <= LUNGE.bothBentMax) {
@@ -427,6 +448,7 @@ class LungeDetector extends DetectorBase {
       { key: 'debug.diag.stage', value: this.stage },
       { key: 'debug.diag.standLine', value: Math.round(this.standLine) },
       { key: 'debug.diag.repMin', value: Math.round(this.minFront) },
+      { key: 'debug.diag.bothMin', value: `${Math.round(this.minBoth)}/${Math.round(this.bothLine)}` },
       { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
       ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
     ];
@@ -445,11 +467,22 @@ class LungeDetector extends DetectorBase {
     // 沉得不够的，只提示“下沉不够 / 后膝再低一点”，不再把次数吃掉。
     // 严格模式：既要深度达标，又要真的沉到 downKnee 以内。
     const bentEnough = this.topLine - this.minFront;   // 这一轮比自己站直时弯了多少度
+    // 两条腿都要弯：只看前膝的话，前腿点一下就凑一次（用户反馈「计次太松」）
+    const bothOk = this.minBoth <= this.bothLine;
     const deepEnough = (!this.strict && this.minFront <= this.countLine)
       || (this.depthOk && (!this.strict || this.minFront <= LUNGE.downKnee));
     if (bentEnough < LUNGE.minBend) {
       // 只是晃了一下：连半程都不记，也不出声
       this.reject('moreRange', `${Math.round(bentEnough)}°`);
+      return;
+    }
+    if (!bothOk) {
+      // 两腿都要沉：只有前腿弯下去不算一次（用户明确要求「两个膝盖都有一定弯曲度」）
+      this.partialReps += 1;
+      this.reject('bothKnees', `${Math.round(this.minBoth)}°/${Math.round(this.bothLine)}°`);
+      this.cue('bothKnees', null, 'warn', now, 8000);
+      this.emit({ type: 'rep', valid: false, reason: 'bothKnees' });
+      this.nextCycle(now);
       return;
     }
     if (!deepEnough) {
@@ -531,6 +564,18 @@ const PUSHUP = {
   minRepMs: 260,      // 用时下限（只滤手抖）
   maxRepMs: 9000,     // 一轮最长时限：超时强制结算，不吞次数
   bodyStraightMin: 138,
+  /**
+   * 肩膀下沉量（单位：躯干长，见 metrics.js 的 shoulderClear）。
+   *
+   * 摄像头摆在桌面上斜着往下拍时，画面里**看不到胸口贴地**，2D 投影还会把肘角
+   * 压得比真实更“直”（实测同一次俯卧撑在不同机位下相差 20° 以上），于是肘角判据
+   * 经常判不出深度。这里补一路与肘角无关的深度证据：撑起时肩离地约 0.9~1.2 个躯干长，
+   * 压到底时只剩 0.3~0.5 —— 只要肩膀整体沉下去这么多，就认为身体确实接近地面了。
+   */
+  dropMin: 0.20,      // 沉这么多 = 算「身体接近地面」，宽松模式可以计次
+  dropFull: 0.40,     // 沉这么多 = 深度给满分（严格模式下也认这个深度）
+  dropStart: 0.10,    // 沉这么多 = 认为「这一轮开始了」（肘角读数被压平时靠这一路起头）
+  dropDecay: 0.01,    // 顶位基准的缓慢回落（跟着用户姿势漂移，不会一直卡在最高点）
 };
 
 class PushupDetector extends DetectorBase {
@@ -546,6 +591,9 @@ class PushupDetector extends DetectorBase {
     this.topBase = PUSHUP.elbowUp;
     this._recent = [];
     this._recentAt = undefined;
+    // 肩膀下沉量（第二路深度证据，见 PUSHUP.dropMin）
+    this.clearBase = 0;
+    this.minClear = 9;
   }
   onLost() { this.stage = 'up'; this.repStartAt = 0; }
   onNewCycle() { this.cycleLowered = false; }
@@ -569,6 +617,15 @@ class PushupDetector extends DetectorBase {
     return Math.min(this.topLine - PUSHUP.returnTol, PUSHUP.elbowUp - PUSHUP.returnTol);
   }
 
+  /** 这一轮肩膀总共往下沉了多少（躯干长为单位）；负值当 0 处理 */
+  get drop() { return Math.max(0, this.clearBase - this.minClear); }
+
+  /** 肩膀已经明显沉下去了：肘角读数被机位压平时，靠这一路认出「开始做了」 */
+  get sankEnough() { return this.drop >= PUSHUP.dropStart; }
+
+  /** 深度够不够（两路证据取其一：肘角压下去了，或者肩膀确实沉到接近地面） */
+  get deepByDrop() { return this.drop >= PUSHUP.dropMin; }
+
   /** 计数诊断（🐞 面板显示）：结算线 / 本轮最小肘角 / 跟踪到的顶位 / 上次为什么没计上 */
   diag() {
     return [
@@ -576,6 +633,7 @@ class PushupDetector extends DetectorBase {
       { key: 'debug.diag.backLine', value: Math.round(this.backLine) },
       { key: 'debug.diag.repMin', value: Math.round(this.minElbow) },
       { key: 'debug.diag.topBase', value: Math.round(this.topLine) },
+      { key: 'debug.diag.drop', value: `${this.drop.toFixed(2)}/${PUSHUP.dropMin}` },
       { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
       ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
     ];
@@ -617,15 +675,24 @@ class PushupDetector extends DetectorBase {
       case 'up':
         this.rememberElbow(elbow, now);
         this.topBase = clamp(Math.max(elbow, this.topBase - 0.2), 90, 179);
+        // 撑起的顶位：肩离地高度的基准（掉头回升后会跟着漂移，见 dropDecay）
+        if (Number.isFinite(f.shoulderClear)) {
+          this.clearBase = Math.max(f.shoulderClear, this.clearBase - PUSHUP.dropDecay);
+          // 顶位上「本轮最低点」就是当前高度：让 drop 表示「相对顶位沉了多少」，
+          // 否则上一轮的 minClear 会残留下来，一站回顶位就被当成已经沉下去了。
+          this.minClear = f.shoulderClear;
+        }
         // 起步：相对自己的顶位弯下去 enterDrop 度，或者已经到达计数线（135°），
-        // 这样「手肘伸不直」的人也能被认出来
-        if (elbow <= Math.max(this.topLine - PUSHUP.enterDrop, PUSHUP.looseElbow)) {
+        // 这样「手肘伸不直」的人也能被认出来；再或者**肩膀已经明显沉下去了**
+        // —— 摄像头斜着往下拍时肘角读数会被压平，只能靠肩膀的高度起头。
+        if (elbow <= Math.max(this.topLine - PUSHUP.enterDrop, PUSHUP.looseElbow) || this.sankEnough) {
           this.stage = 'descending';
           this.repStartAt = now;
           this.minElbow = elbow;
           this.minBody = f.bodyStraight;
           this.maxSag = f.hipLineDev;
           this.minSag = f.hipLineDev;
+          this.minClear = f.shoulderClear;
         }
         break;
       case 'descending':
@@ -634,9 +701,17 @@ class PushupDetector extends DetectorBase {
         this.minBody = Math.min(this.minBody, f.bodyStraight);
         this.maxSag = Math.max(this.maxSag, f.hipLineDev);
         this.minSag = Math.min(this.minSag, f.hipLineDev);
+        // 一路记「肩膀最低沉到哪」，结算时用它当第二路深度证据
+        if (Number.isFinite(f.shoulderClear)) this.minClear = Math.min(this.minClear, f.shoulderClear);
         if (elbow <= PUSHUP.elbowDown && this.stage === 'descending') this.stage = 'bottom';
-        // 回到「自己的顶位」附近就算推起来了
-        if (elbow >= this.backLine) this.finish(f, now, false);
+        // 回到「自己的顶位」附近、并且肩膀确实抬回起点高度，就算推起来了。
+        // 只看肘角不够：肩膀沉了但肘角读数几乎没变时（斜机位），
+        // 会在进入的下一帧就被判成「太快」，真正做的一轮反而被吞掉。
+        // 注意这里的「抬回起点」看的是**当前**肩高（不是本轮最低点）。
+        const backUp = !Number.isFinite(f.shoulderClear)
+          || (this.clearBase - f.shoulderClear) <= PUSHUP.dropStart;
+        const pushedUp = elbow >= this.backLine && backUp;
+        if (pushedUp) this.finish(f, now, false);
         else if (now - this.repStartAt > PUSHUP.maxRepMs) this.finish(f, now, false);
         break;
       default:
@@ -648,15 +723,21 @@ class PushupDetector extends DetectorBase {
     const dur = now - this.repStartAt;
     this.stage = 'up';
     this.repStartAt = 0;
-    // 只是晃了一下（比自己的顶位弯得还不够 12°）：连半程都不记，也不出声
-    if (this.topLine - this.minElbow < PUSHUP.minBend) {
-      this.reject('moreRange', `${Math.round(this.topLine - this.minElbow)}°`);
+    // 只是晃了一下（比自己的顶位弯得还不够 12°，肩膀也没沉下去）：
+    // 连半程都不记，也不出声
+    if (this.topLine - this.minElbow < PUSHUP.minBend && !this.sankEnough) {
+      this.reject('moreRange', `${Math.round(this.topLine - this.minElbow)}°/${this.drop.toFixed(2)}`);
       return;
     }
     const full = this.minElbow <= PUSHUP.elbowFull;
     const bodyOk = this.minBody >= PUSHUP.bodyStraightMin;
-    const deepEnough = this.minElbow <= PUSHUP.elbowFull;
-    const looseEnough = !this.strict && this.minElbow <= PUSHUP.looseElbow;
+    // 深度两路证据：肘角压到位，**或者**肩膀确实沉下去接近地面了。
+    // 后者专治「摄像头看不到胸口贴地」——斜视角下肘角读数被压直，只看肘角会漏判。
+    const elbowLine = this.strict ? PUSHUP.elbowFull : PUSHUP.looseElbow;
+    const deepEnough = this.minElbow <= PUSHUP.elbowFull || this.drop >= PUSHUP.dropFull;
+    // 严格模式仍然要求「深度确实到位」，不允许只沉一点的半程蒙混过关
+    const looseEnough = !this.strict
+      && (this.minElbow <= elbowLine || this.drop >= PUSHUP.dropMin);
 
     // 计数放宽：身体不够直也照样算一次，只是要出声纠正、分数打折（严格模式才拦）
     if (this.strict && !bodyOk) {
@@ -668,7 +749,7 @@ class PushupDetector extends DetectorBase {
     }
     if (!deepEnough && !looseEnough) {
       this.partialReps += 1;
-      this.reject('depth', `${Math.round(this.minElbow)}°/${PUSHUP.looseElbow}°`);
+      this.reject('depth', `${Math.round(this.minElbow)}°/${elbowLine}°·${this.drop.toFixed(2)}/${PUSHUP.dropMin}`);
       this.cue('depth', null, 'warn', now, 3000);
       this.emit({ type: 'rep', valid: false, reason: 'depth' });
       this.nextCycle(now);
@@ -688,8 +769,9 @@ class PushupDetector extends DetectorBase {
     this.validReps += 1;
     this.reps = this.validReps;
     this.cycleHadValidRep = true;
-    // 质量分按「下放深度」给：压到 elbowFull 以内满分，只到宽松线就少一截
-    const depthGain = this.minElbow <= PUSHUP.elbowFull ? 30
+    // 质量分按「下放深度」给：压到 elbowFull 以内（或肩膀沉到接近地面）满分，
+    // 只到宽松线就少一截 —— 摄像头看不到贴地时按肩膀下沉量给同样的分。
+    const depthGain = this.minElbow <= PUSHUP.elbowFull || this.drop >= PUSHUP.dropFull ? 30
       : this.minElbow <= 124 ? 24
         : this.minElbow <= 130 ? 18 : 12;
     const quality = clamp(Math.round(56 + depthGain + (this.minBody > 165 ? 10 : bodyOk ? 5 : 0)), 0, 100);

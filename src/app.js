@@ -326,7 +326,9 @@ function showHome({ syncRoute = true } = {}) {
   $('homeView').hidden = false;
   $('workoutView').hidden = true;
   $('btnHome').hidden = true;
+  $('btnExercise').hidden = true;   // 运动设定只在动作页出现
   closeSettings();
+  closeExerciseSettings();
   buildHome();
   updateButtons();
   if (syncRoute) setRoute('#/');
@@ -340,6 +342,8 @@ function showWorkout() {
   $('homeView').hidden = true;
   $('workoutView').hidden = false;
   $('btnHome').hidden = false;
+  $('btnExercise').hidden = false;   // 动作页才有「运动设定」
+  renderExerciseSettings();
 }
 
 /** 从主页点进某个动作（进入训练页） */
@@ -384,6 +388,42 @@ function closeSettings() {
   if (modal) modal.hidden = true;
 }
 
+/* ------------------------------------------------------------------ *
+ * 运动设定弹窗（只出现在动作页：目标 / 判定方式 / 机位提示）
+ * ------------------------------------------------------------------ */
+
+function exerciseSettingsOpen() { return !$('exerciseModal').hidden; }
+
+/** 把当前动作的资料刷进弹窗与侧栏摘要（目标、判定依据、机位） */
+function renderExerciseSettings() {
+  const ex = localizedExercise(state.exerciseId);
+  const unit = ex.unit || '';
+  $('exerciseName').textContent = `${ex.icon} ${ex.name}`;
+  $('exerciseJudge').textContent = `🎯 ${t('exercise.judgeBy', { what: ex.judgeText })}`
+    + (ex.rough ? ` · ${t('exercise.rough')}` : '');
+  $('exerciseCamera').textContent = `📹 ${ex.cameraHint}`;
+  $('targetUnit').textContent = unit;
+  $('targetReadout').textContent = `${t('exercise.target')}: ${state.target} ${unit}`;
+  const strictBtn = $('btnStrictEx');
+  if (strictBtn) strictBtn.setAttribute('aria-pressed', String(!!state.settings.strict));}
+
+function openExerciseSettings() {
+  const modal = $('exerciseModal');
+  if (!modal) return;
+  renderExerciseSettings();
+  modal.hidden = false;
+  // 让读屏软件念出弹窗标题（文案走 i18n，这里只做无障碍关联）
+  const title = $('exerciseTitle');
+  if (title) title.textContent = t('exercise.title');
+  const first = modal.querySelector('button');
+  if (first) first.focus({ preventScroll: true });
+}
+
+function closeExerciseSettings() {
+  const modal = $('exerciseModal');
+  if (modal) modal.hidden = true;
+}
+
 function selectExercise(id) {
   if (!EXERCISES.some((e) => e.id === id)) return;
   if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
@@ -418,6 +458,7 @@ function selectExercise(id) {
   $('tipList').innerHTML = ex.tips.map((x) => `<li>${x}</li>`).join('');
   $('targetInput').value = String(state.target);
   buildTargetChips();
+  renderExerciseSettings();
   $('summaryCard').hidden = true;
   state.stepSig = '';
   state.saidSteps = new Set();
@@ -484,6 +525,7 @@ function setTarget(v) {
   state.settings.targets[state.exerciseId] = n;
   $('targetInput').value = String(n);
   saveSettings();
+  renderExerciseSettings();
   updateHud();
 }
 
@@ -1573,11 +1615,12 @@ function bindUI() {
     if (camera.active) await reloadModel();
   });
 
-  // [按钮 id, 设置键, 应用函数, 点击后要不要提示一句话]
+  // [按钮 id（同一个开关可能有多个按钮，数组里列出来即可）, 设置键, 应用函数, 点击后要不要提示一句话]
   const toggles = [
     ['btnMirror', 'mirror', (v) => {
       $('stage').classList.toggle('mirror', v);
       state.calibrator?.setMirror(v); // 左右方向提示要跟着镜像走
+      renderer.mirror = v;            // 画布上的角度文字要反向抵消，否则是镜像字
     }, null],
     ['btnVoice', 'voice', (v) => {
       audio.voiceOn = v;
@@ -1598,7 +1641,8 @@ function bindUI() {
       applyMusic();          // 主页上不放背景音乐，回到动作页才播
       if (v) audio.unlock();
     }, (v) => setCueLine(t(v ? 'status.musicOn' : 'status.musicOff'))],
-    ['btnStrict', 'strict', (v) => {
+    // 「严格模式」在配置弹窗和运动设定弹窗里各有一个按钮：共用同一个状态与处理函数
+    [['btnStrict', 'btnStrictEx'], 'strict', (v) => {
       if (state.detector) state.detector.strict = v;
     }, (v) => setCueLine(t(v ? 'status.strictOn' : 'status.strictOff'))],
     ['btnAngles', 'showAngles', (v) => { renderer.showAngles = v; }, null],
@@ -1609,18 +1653,21 @@ function bindUI() {
     }, (v) => setCueLine(t(v ? 'status.skeletonOn' : 'status.skeletonOff'))],
     ['btnDebug', 'debug', (v) => { if (!v) $('debugLine').hidden = true; }, null],
   ];
-  for (const [id, key, apply, announce] of toggles) {
-    const btn = $(id);
-    btn.setAttribute('aria-pressed', String(!!state.settings[key]));
+  for (const [ids, key, apply, announce] of toggles) {
+    const btns = (Array.isArray(ids) ? ids : [ids]).map((id) => $(id)).filter(Boolean);
+    const press = (v) => { for (const b of btns) b.setAttribute('aria-pressed', String(!!v)); };
+    press(!!state.settings[key]);
     apply(state.settings[key]);
-    btn.addEventListener('click', () => {
-      const v = !(btn.getAttribute('aria-pressed') === 'true');
-      btn.setAttribute('aria-pressed', String(v));
-      state.settings[key] = v;
-      saveSettings();
-      apply(v);
-      if (announce) announce(v);
-    });
+    for (const btn of btns) {
+      btn.addEventListener('click', () => {
+        const v = !(btn.getAttribute('aria-pressed') === 'true');
+        press(v);              // 同一个开关的其它按钮一起更新
+        state.settings[key] = v;
+        saveSettings();
+        apply(v);
+        if (announce) announce(v);
+      });
+    }
   }
   audio.voiceOn = state.settings.voice;
   audio.sfxOn = state.settings.sfx;
@@ -1632,6 +1679,11 @@ function bindUI() {
   $('btnSettings').addEventListener('click', () => openSettings());
   $('btnCloseSettings').addEventListener('click', () => closeSettings());
   $('settingsBackdrop').addEventListener('click', () => closeSettings());
+  // 运动设定：顶栏图标 + 侧栏「设定目标」卡片里的按钮，两处都打开同一个弹窗
+  $('btnExercise').addEventListener('click', () => openExerciseSettings());
+  $('btnExerciseInline').addEventListener('click', () => openExerciseSettings());
+  $('btnCloseExercise').addEventListener('click', () => closeExerciseSettings());
+  $('exerciseBackdrop').addEventListener('click', () => closeExerciseSettings());
   $('exSearch').addEventListener('input', (e) => {
     homeQuery = e.target.value || '';
     buildHome();
@@ -1702,6 +1754,7 @@ function bindUI() {
     }
     if (e.key === 'Escape') {
       // 弹窗优先关闭；其次是结束本组
+      if (exerciseSettingsOpen()) { closeExerciseSettings(); return; }
       if (settingsOpen()) { closeSettings(); return; }
       stopSession('user');
       return;
@@ -1833,7 +1886,10 @@ function boot() {
   updateHud();
   updatePipelineStatus();
   requestAnimationFrame(loop);
-  if (state.settings.mirror) $('stage').classList.add('mirror');
+  if (state.settings.mirror) {
+    $('stage').classList.add('mirror');
+    renderer.mirror = true;   // 角度标签跟着反向，避免出现镜像文字
+  }
 
   if (location.protocol === 'file:') {
     setCueLine(t('status.fileProtocol'), 'warn');
@@ -1855,5 +1911,6 @@ window.__mfg = {
   calibrationStep, renderCalibration, syncFullscreenSupport, finishCountdown, updateStatusHint,
   setTarget, changeLang, refreshForLang,
   buildHome, showHome, showWorkout, openExercise, openSettings, closeSettings,
+  openExerciseSettings, closeExerciseSettings, renderExerciseSettings,
   buildMusicTracks, selectMusicTrack,
 };

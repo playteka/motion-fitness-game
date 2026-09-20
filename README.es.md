@@ -360,7 +360,12 @@ Con el buscador de arriba puedes encontrar un ejercicio directamente por su nomb
 - Pulsa cualquier tarjeta → entras en la **página del ejercicio** (cámara + lista de pasos de la técnica + puntuación + ajuste del objetivo + registros).
   La página del ejercicio tiene su propia dirección: `#/ex/<id>` (por ejemplo `#/ex/bridge`), así que **al recargar sigues en el mismo ejercicio**,
   **el botón Atrás del navegador vuelve al inicio** y puedes guardar el enlace en favoritos.
-- Con «Volver al inicio», arriba a la izquierda de la página del ejercicio, vuelves al muro de ejercicios; arriba a la derecha está ⚙️ **Ajustes**.
+- Con «Volver al inicio», arriba a la izquierda de la página del ejercicio, vuelves al muro de ejercicios; arriba a la derecha están
+  🎯 **Ajustes del ejercicio** (solo para este ejercicio) junto a ⚙️ **Ajustes** (globales).
+- **🎯 Ajustes del ejercicio** (solo aparece en la página del ejercicio, al lado de ⚙️): una ventana reúne el objetivo y los criterios
+  de este ejercicio — la meta de la serie (casilla numérica y valores rápidos), el criterio de conteo (relajado / estricto, el mismo
+  interruptor que en ⚙️), además del **criterio de detección** y la **posición de la cámara** de este ejercicio. La tarjeta
+  «② Fija el objetivo» del panel lateral se queda con una línea de resumen y su botón abre esta misma ventana.
 - Un ejercicio que pertenece a dos categorías (la sentadilla con salto) aparece en los dos bloques, pero al entrar es el mismo ejercicio.
 
 ## Ventana de ajustes (idioma / modelo / sonido)
@@ -375,6 +380,10 @@ Pulsa ⚙️ arriba a la derecha de la página del ejercicio y se abre la ventan
 | Imagen y detección | 🪞 Espejo · ✅ Modo estricto · 🦴 Esqueleto · 📐 Ángulos · 🐞 Métricas |
 
 Puedes cerrarla pulsando fuera de la ventana o con `Esc` y `G`.
+
+> **Las etiquetas de ángulo nunca salen en espejo**: con la vista 🪞 espejo activada, el vídeo y el lienzo se voltean
+> de izquierda a derecha, y con ellos se invertirían también las etiquetas «Rodilla 132°» / «Codo 118°» dibujadas en el lienzo.
+> El renderizador se voltea a su vez para compensarlo, así que los ángulos siguen leyéndose bien con el espejo activado.
 
 ---
 
@@ -466,6 +475,17 @@ En la sentadilla se usa la **vista frontal** y la profundidad se mide con «cuá
 | ⑥ Empuja con el pie de delante y vuelve de pie | Las dos piernas se estiran otra vez (tienes que haber bajado antes) | +8 |
 | 🎁 Todos los pasos de la ronda | Los 6 pasos anteriores completados en la misma ronda | +6 |
 
+> **La zancada no exige una rodilla delantera a 90°**: basta con flexionar la rodilla de delante hasta **152°** (unos 20° desde
+> la posición de pie), y las líneas `enter`/`exit` se adaptan a **lo recto que estés tú de pie** — si tus lecturas vienen comprimidas
+> (de pie solo marcas 140°) no se cuentan cosas raras, y quien baja mucho tampoco pierde repeticiones.
+
+> **La zancada exige que se flexionen *las dos* rodillas (no vale solo pinchar con la de delante)**: si solo se mira la rodilla
+> delantera, un amago de la pierna de delante ya suma una repetición. Ahora también se vigila la **pierna más estirada (la de atrás)**:
+> tiene que flexionarse hasta **158°** o menos (o al menos **12°** por debajo de lo recto que estés tú de pie, lo que sea más exigente)
+> para que la repetición sea válida. Si solo se mueve la pierna de delante, se registra como parcial y la voz avisa «Flexiona las dos
+> piernas: la de atrás también tiene que bajar». Una pierna de atrás que se flexiona menos pero de verdad se flexiona sigue contando.
+> La línea «Ambas rodillas (atrás/línea)» del panel 🐞 muestra el valor medido y la línea de esta ronda.
+
 ### Flexión (40 puntos por ronda)
 
 | Paso | Condición | Puntos |
@@ -480,6 +500,15 @@ En la sentadilla se usa la **vista frontal** y la profundidad se mide con «cuá
 > (antes había que llegar a 124° y volver hasta 152°). Hundir la lumbar, levantar el trasero o no estar perfectamente alineado solo provocan **una corrección por voz y un descuento de calidad** — ya no te quitan repeticiones;
 > una repetición poco profunda también cuenta, pero recibes el aviso «baja un poco más» y menos puntos. Solo «casi no has flexionado» (nunca por debajo de 146°) no cuenta nada y no dice nada.
 > El modo estricto (en los ajustes) es el que exige la profundidad completa.
+
+> **Cuenta aunque la cámara no vea el suelo (compensación del ángulo de cámara)**: con el portátil sobre la mesa mirando hacia abajo,
+> en la imagen no se ve el pecho tocando el suelo, y además la proyección 2D hace que el ángulo del codo **se lea más estirado de lo
+> que está en realidad** (una repetición completa puede marcar solo 140°). Por eso la flexión tiene una segunda prueba de profundidad
+> independiente del codo: **cuánto han bajado los hombros** (unos 1,2 veces la longitud del torso arriba y alrededor de 0,5 abajo).
+> Con bajar los hombros **0,20 veces la longitud del torso** ya se considera que «el cuerpo se acercó de verdad al suelo» y cuenta;
+> con **0,40** se obtiene la puntuación completa, y hasta «la repetición ha empezado» puede detectarse por el descenso de los hombros.
+> Basta con que se cumpla una de las dos pruebas, así que cualquier altura de cámara sirve. El panel 🐞 muestra el valor
+> «Caída de hombros» en directo.
 
 ### Puente de glúteos (39 puntos por ronda)
 
@@ -627,7 +656,7 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cinco suites juntas (934 pruebas)
+npm test                       # las cinco suites juntas (965 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino escrito a fuego en el código / estructura de los cuatro README
 npm run test:detectors         # lógica de detección y puntuación de los cinco detectores escritos a mano (con esqueletos sintéticos)
 npm run test:engines           # motores de reconocimiento genéricos (flexión-extensión / alternancia / giro / movimiento por fases / cronómetro + control de postura)
@@ -639,10 +668,10 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | Archivo de prueba | N.º de pruebas | Cobertura |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
-| `tests/test-detectors.mjs` | 240 | Conteo, cronómetro, puntos por paso y orden de puntuación de los cinco detectores escritos a mano, tanto con el ejercicio bien hecho como con todo tipo de errores, además de las comprobaciones de la calibración previa |
+| `tests/test-detectors.mjs` | 247 | Conteo, cronómetro, puntos por paso y orden de puntuación de los cinco detectores escritos a mano, tanto con el ejercicio bien hecho como con todo tipo de errores, el criterio de profundidad con la cámara inclinada, además de las comprobaciones de la calibración previa |
 | `tests/test-engines.mjs` | 141 | Motores genéricos: un ciclo y una repetición, permisivo frente a estricto, los límites del balanceo y de la velocidad excesiva, control de postura, despegue del suelo en los saltos, alternancia de lados, secuencia completa y pausa y reanudación del cronómetro |
 | `tests/test-page.mjs` | 310 | Cableado del DOM, importación y exportación de módulos, recursos estáticos, lista de categorías de los 22 ejercicios e integridad de los planes de puntuación |
-| `tests/test-app.mjs` | 211 | Arranque del `app.js` real, renderizado de la página de inicio, ventana de ajustes, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
+| `tests/test-app.mjs` | 235 | Arranque del `app.js` real, renderizado de la página de inicio, las ventanas de ajustes del ejercicio y de ajustes generales, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
 
 ---
 

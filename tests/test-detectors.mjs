@@ -145,8 +145,11 @@ const lungeBottom = {
   back: { thighUp: 195, shinUp: 100 },
   lean: 8, armDown: 10, elbow: 168,
 };
-/** depth=1 为完整下沉，depth<1 模拟“只蹲了一半”的箭步蹲 */
-function lungeMix(depth = 1) {
+/**
+ * depth=1 为完整下沉，depth<1 模拟“只蹲了一半”的箭步蹲。
+ * backScale<1 模拟“后腿几乎不参与”（只有前腿在动）—— 用户反馈的「计次太松」那种做法。
+ */
+function lungeMix(depth = 1, backScale = 1) {
   const bottom = {
     hip: { x: lungeBottom.hip.x, y: lerp(lungeStanding.hip.y, lungeBottom.hip.y, depth) },
     front: {
@@ -154,8 +157,8 @@ function lungeMix(depth = 1) {
       shinUp: lerp(lungeStanding.front.shinUp, lungeBottom.front.shinUp, depth),
     },
     back: {
-      thighUp: lerp(lungeStanding.back.thighUp, lungeBottom.back.thighUp, depth),
-      shinUp: lerp(lungeStanding.back.shinUp, lungeBottom.back.shinUp, depth),
+      thighUp: lerp(lungeStanding.back.thighUp, lungeBottom.back.thighUp, depth * backScale),
+      shinUp: lerp(lungeStanding.back.shinUp, lungeBottom.back.shinUp, depth * backScale),
     },
   };
   return (p) => {
@@ -181,15 +184,33 @@ function lungeMix(depth = 1) {
 
 const pushupTop = { hip: { x: 1.0, y: 0.68 }, bodyTilt: 63, elbow: 172, armDown: 0, sag: 0 };
 const pushupBottom = { hip: { x: 1.0, y: 0.80 }, bodyTilt: 80, elbow: 85, armDown: -30, sag: 0 };
+
+/**
+ * 身体下沉幅度与「肘能弯到多深」的耦合系数（0~1）。
+ *
+ * 真俯卧撑里肩离地高度就是肘屈曲决定的：手撑在地上、肘只弯一点，身体就只下去一点。
+ * 所以这里用连杆几何算系数（肩高 ∝ cos(屈肘角/2)），让「放一半」的姿势**身体也只下去一半**。
+ * 不这么建模的话，只放一半的姿势会被画成和标准俯卧撑一样沉到底，
+ * 于是「肩膀下沉量」这路判据在测试里完全没有区分度（真机上并非如此）。
+ */
+function pushupDepthFactor(botElbow) {
+  const shoulderHeight = (e) => Math.cos((((180 - e) / 2) * Math.PI) / 180);
+  const straight = shoulderHeight(pushupTop.elbow);
+  const full = shoulderHeight(pushupBottom.elbow);
+  return Math.max(0, Math.min(1, (straight - shoulderHeight(botElbow)) / Math.max(1e-3, straight - full)));
+}
+
 function pushupMix(sagFn = () => 0, opts = {}) {
   const botElbow = opts.botElbow ?? pushupBottom.elbow;   // 抬高点 = 只放一半
   const topElbow = opts.topElbow ?? pushupTop.elbow;      // 压低点 = 手臂伸不直（真机常见）
+  const depth = pushupDepthFactor(botElbow);
   return (p) => {
     const s = Math.sin(Math.PI * p);
+    const body = s * depth;   // 身体实际下沉的比例（跟肘的深度走）
     return pronePose({
-      hip: { x: lerp(pushupTop.hip.x, pushupBottom.hip.x, s), y: lerp(pushupTop.hip.y, pushupBottom.hip.y, s) },
-      bodyTilt: lerp(pushupTop.bodyTilt, pushupBottom.bodyTilt, s),
-      elbow: lerp(topElbow, botElbow, s),
+      hip: { x: lerp(pushupTop.hip.x, pushupBottom.hip.x, body), y: lerp(pushupTop.hip.y, pushupBottom.hip.y, body) },
+      bodyTilt: lerp(pushupTop.bodyTilt, pushupBottom.bodyTilt, body),
+      elbow: lerp(topElbow, botElbow, s),   // 肘角本身仍然按参数弯到底（这是被测的输入信号）
       armDown: lerp(pushupTop.armDown, pushupBottom.armDown, s),
       sag: sagFn(p),
     });
@@ -368,6 +389,31 @@ console.log('\n[2] 箭步蹲计数');
   ok('严格模式：提示下沉不够', r.cues.some((c) => c.code === 'lungeDepth'));
 }
 {
+  // ===== 用户反馈：「箭步蹲计次又太松了」=====
+  // 只点一下前腿、后腿根本没弯，不该算一次。现在要求**两个膝盖都有一定弯曲度**
+  //（较直的那条腿也要弯到 bothLine 以内），否则记为半程并语音提示「两条腿都要弯」。
+  const det = fresh('lunge');
+  const r = makeRunner(det);
+  r.run(repeat(lungeMix(1, 0.15), 1800, 4));
+  ok('只有前腿弯、后腿不参与：不计有效次数', det.validReps === 0, `实际 ${det.validReps}`);
+  atLeast('只有前腿弯：记为半程', det.partialReps, 3);
+  ok('提示「两条腿都要弯下去」', r.cues.some((c) => c.code === 'bothKnees'), r.cues.map((c) => c.code).join(','));
+}
+{
+  // 放宽的大前提不能丢：后腿参与度低一些、但确实弯了，仍然算一次
+  const det = fresh('lunge');
+  const r = makeRunner(det);
+  r.run(repeat(lungeMix(1, 0.6), 1800, 4));
+  atLeast('后腿弯得少一点但仍然弯了：照样计次', det.validReps, 3);
+}
+{
+  // 越严的开关（严格模式）不能让「两条腿都弯」这条要求失效：还是不计有效次数
+  const det = fresh('lunge', { strict: true });
+  const r = makeRunner(det);
+  r.run(repeat(lungeMix(1, 0.15), 1800, 3));
+  ok('严格模式下同样要求两条腿都弯', det.validReps === 0, `实际 ${det.validReps}`);
+}
+{
   // 抖动宽容：站姿/踏步时的**真正轻微晃动**（膝盖几乎没弯）不能变成碎碎念
   const det = fresh('lunge');
   const r = makeRunner(det);
@@ -495,6 +541,29 @@ console.log('\n[3] 俯卧撑计数');
   makeRunner(strict).run(shallow);
   ok('放一半多：宽松计次、严格不计次', loose.validReps === 3 && strict.validReps === 0,
     `宽松 ${loose.validReps} / 严格 ${strict.validReps}`);
+}
+
+{
+  // ===== 用户反馈的真实机位问题 =====
+  // 摄像头摆在桌面上斜着往下拍时，画面里根本看不到「胸口贴地」，
+  // 而且 2D 投影会把肘角读得比真实更「直」——最弯也只读到 140°。
+  // 只看肘角的话这一组一次都记不上（连「开始做」都触发不了）。
+  // 现在「肩膀下沉量」是独立的一路证据，必须能把这种机位下的俯卧撑认出来。
+  const cameraAngle = (p) => {
+    const s = Math.sin(Math.PI * p);
+    return pronePose({
+      hip: { x: lerp(pushupTop.hip.x, pushupBottom.hip.x, s), y: lerp(pushupTop.hip.y, pushupBottom.hip.y, s) },
+      bodyTilt: lerp(pushupTop.bodyTilt, pushupBottom.bodyTilt, s),
+      elbow: lerp(152, 140, s),   // 读出来的肘角：几乎全程都「很直」
+      armDown: lerp(pushupTop.armDown, pushupBottom.armDown, s),
+      sag: 0,
+    });
+  };
+  const det = fresh('pushup');
+  const r = makeRunner(det);
+  r.run(repeat(cameraAngle, 1500, 5));
+  atLeast('斜机位把肘角读数压平时，靠肩膀下沉量也能计次', det.validReps, 4);
+  ok('斜机位下不会把真做的次数记成半程', det.partialReps === 0, `实际 ${det.partialReps}`);
 }
 
 /* ------------------------------------------------------------------ *

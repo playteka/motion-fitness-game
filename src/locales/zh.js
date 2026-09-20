@@ -252,7 +252,9 @@ export default {
       backLine: '结算线',
       repMin: '本轮最小',
       topBase: '跟踪顶位',
+      drop: '肩下沉量',
       standLine: '站姿线',
+      bothMin: '双腿最弯(后膝/线)',
       startValue: '起始值(自/参考)',
       peak: '本轮峰值',
       hold: '已计时',
@@ -628,6 +630,21 @@ export default {
     recent: '最近练过',
   },
 
+  exercise: {
+    open: '运动设定',
+    title: '运动设定',
+    close: '关闭',
+    lead: '这些设定只对当前这个动作生效',
+    targetGroup: '🎯 目标设定',
+    target: '本组目标',
+    judgeGroup: '⚖️ 判定方式',
+    strictHint: '严格模式：半程动作不算有效次数；宽松模式：动作大体做到就算一次。',
+    judgeBy: '判定依据：{what}',
+    rough: '粗略判定',
+    cameraGroup: '📹 机位与画面',
+    camera: '机位提示：{what}',
+  },
+
   settings: {
     title: '设置',
     close: '关闭',
@@ -669,6 +686,7 @@ export default {
     valgus: '膝盖别内扣，向外打开对准脚尖',
     lean: '上身保持直立，不要前倾或歪斜',
     pose: '姿势偏离了要领，先调整再继续',
+    bothKnees: '两条腿都要弯下去：后腿也要屈膝下沉',
   },
 
   fam: {
@@ -741,6 +759,7 @@ export default {
       backknee: '后膝再往下沉，接近地面',
       lean: '上身保持直立，别前倾',
       lungeDepth: '沉得更低一些：前膝约 90°、后膝接近地面',
+      bothKnees: '两条腿都要弯下去：后腿也要屈膝下沉，别只点一下前腿',
       tempo: '慢一点，下沉和起身都要控制住',
       alternate: '换另一条腿在前，左右交替练',
     },

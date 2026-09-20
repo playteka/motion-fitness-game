@@ -250,7 +250,9 @@ export default {
       backLine: 'Return line',
       repMin: 'This rep min',
       topBase: 'Tracked top',
+      drop: 'Shoulder drop',
       standLine: 'Standing line',
+      bothMin: 'Both knees (back/line)',
       startValue: 'Start (yours/ref)',
       peak: 'This rep peak',
       hold: 'Held',
@@ -627,6 +629,22 @@ export default {
     recent: 'Recently trained',
   },
 
+  /* ---------------- Per-exercise settings ---------------- */
+  exercise: {
+    open: 'Exercise settings',
+    title: 'Exercise settings',
+    close: 'Close',
+    lead: 'These settings apply to the current exercise only',
+    targetGroup: '🎯 Target',
+    target: 'Set target',
+    judgeGroup: '⚖️ Counting rule',
+    strictHint: 'Strict: half reps do not count. Relaxed: a roughly completed rep counts.',
+    judgeBy: 'Judged by: {what}',
+    rough: 'Rough judgement',
+    cameraGroup: '📹 Camera placement',
+    camera: 'Camera hint: {what}',
+  },
+
   /* ---------------- Settings ---------------- */
   settings: {
     title: 'Settings',
@@ -671,6 +689,7 @@ export default {
     valgus: 'Don’t let your knees cave in — push them out over your toes',
     lean: 'Keep your torso upright — don’t lean or tilt forward',
     pose: 'Your form has drifted off the target — fix it before you continue',
+    bothKnees: 'Bend both legs — the back leg has to bend and sink down too',
   },
 
   /* ---------------- Movement-family form templates ---------------- */
@@ -733,6 +752,7 @@ export default {
       backknee: 'Sink your back knee lower, close to the floor',
       lean: 'Keep your torso upright — don’t lean forward',
       lungeDepth: 'Sink lower: front knee around 90°, back knee close to the floor',
+      bothKnees: 'Bend both legs: the back leg has to bend and sink too, not just a quick dip of the front leg',
       tempo: 'Slow down — control both the sink and the way up',
       alternate: 'Switch legs — alternate sides each rep',
     },

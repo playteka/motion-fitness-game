@@ -41,6 +41,11 @@ export class PoseRenderer {
     this.ctx = canvas.getContext('2d');
     this.showAngles = true;
     this.showSkeleton = true;
+    /**
+     * 画面是否左右镜像。镜像时视频和画布都被 CSS `scaleX(-1)` 翻过来，
+     * 于是画布上画出来的文字也会跟着反着写 —— 角度标签必须再翻一次才读得通。
+     */
+    this.mirror = false;
   }
 
   resize(w, h) {
@@ -220,11 +225,17 @@ export class PoseRenderer {
       const x = it.at.x * W;
       const y = it.at.y * H - base * 14;
       const w = ctx.measureText(it.text).width + base * 10;
+      ctx.save();
+      // 平移到标签中心；镜像画面下再水平翻一次，抵消 CSS 的 scaleX(-1)，
+      // 否则「膝 132°」会显示成左右颠倒的乱码。
+      ctx.translate(x, y);
+      if (this.mirror) ctx.scale(-1, 1);
       ctx.fillStyle = 'rgba(8,16,28,0.72)';
-      roundRect(ctx, x - w / 2, y - base * 8, w, base * 16, base * 5);
+      roundRect(ctx, -w / 2, -base * 8, w, base * 16, base * 5);
       ctx.fill();
       ctx.fillStyle = '#dff7ff';
-      ctx.fillText(it.text, x, y);
+      ctx.fillText(it.text, 0, 0);
+      ctx.restore();
     }
     ctx.restore();
   }

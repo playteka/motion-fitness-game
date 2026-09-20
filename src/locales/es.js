@@ -249,7 +249,9 @@ export default {
       backLine: 'Línea de retorno',
       repMin: 'Mínimo de esta rep',
       topBase: 'Tope medido',
+      drop: 'Caída de hombros',
       standLine: 'Línea de pie',
+      bothMin: 'Ambas rodillas (atrás/línea)',
       startValue: 'Inicio (tuyo/ref)',
       peak: 'Pico de esta rep',
       hold: 'Cronometrado',
@@ -626,6 +628,22 @@ export default {
     recent: 'Últimos entrenados',
   },
 
+  /* ---------------- Ajustes del ejercicio ---------------- */
+  exercise: {
+    open: 'Ajustes del ejercicio',
+    title: 'Ajustes del ejercicio',
+    close: 'Cerrar',
+    lead: 'Estos ajustes solo se aplican al ejercicio actual',
+    targetGroup: '🎯 Objetivo',
+    target: 'Meta de la serie',
+    judgeGroup: '⚖️ Criterio de conteo',
+    strictHint: 'Estricto: las repeticiones a medias no cuentan. Relajado: una repetición más o menos completa sí cuenta.',
+    judgeBy: 'Se mide por: {what}',
+    rough: 'Conteo aproximado',
+    cameraGroup: '📹 Colocación de la cámara',
+    camera: 'Cámara: {what}',
+  },
+
   /* ---------------- Ajustes ---------------- */
   settings: {
     title: 'Ajustes',
@@ -670,6 +688,7 @@ export default {
     valgus: 'No metas las rodillas hacia dentro: ábrelas hacia la punta de los pies',
     lean: 'Mantén el torso recto, sin inclinarte ni ladearte',
     pose: 'La postura se ha desviado: corrígela y sigue',
+    bothKnees: 'Flexiona las dos piernas: la de atrás también tiene que bajar',
   },
 
   /* ---------------- Técnica por familia de ejercicios ---------------- */
@@ -732,6 +751,7 @@ export default {
       backknee: 'Baja más la rodilla de atrás, hasta casi el suelo',
       lean: 'Mantén el torso recto, sin inclinarte hacia delante',
       lungeDepth: 'Baja más: rodilla de delante a unos 90° y la de atrás cerca del suelo',
+      bothKnees: 'Flexiona las dos piernas: la de atrás también tiene que bajar, no solo un toque de la de delante',
       tempo: 'Más despacio: controla la bajada y la subida',
       alternate: 'Cambia de pierna: alterna izquierda y derecha',
     },

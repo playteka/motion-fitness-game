@@ -364,7 +364,12 @@ The search box at the top finds exercises by name directly (type “push” or �
 - Click any card → you go to its **exercise page** (camera + form-step checklist + scoring + goal setting + records).
   The exercise page has its own address: `#/ex/<id>` (for example `#/ex/bridge`), so **a refresh keeps you on the same exercise**,
   **the browser Back button returns to the home page**, and you can bookmark the link.
-- “Back to home” in the top-left corner of the exercise page returns you to the wall; ⚙️ **Settings** is in the top-right corner.
+- “Back to home” in the top-left corner of the exercise page returns you to the wall; the top-right corner has
+  🎯 **Exercise settings** (this exercise only) next to ⚙️ **Settings** (global).
+- **🎯 Exercise settings** (shown on the exercise page only, side by side with ⚙️): one modal gathers this exercise's target and
+  judging rules — the set target (number box plus preset buttons), the counting rule (relaxed / strict, the very same switch as in ⚙️),
+  plus this exercise's **judging basis** and **camera hint**. The “② Set target” card in the side panel keeps just a one-line
+  target readout, and its button opens the same modal.
 - An exercise that belongs to two categories (Jump Squat) appears in both blocks, and either card opens the same exercise.
 
 ## Settings modal (language / model / sound)
@@ -379,6 +384,10 @@ Open the ⚙️ settings modal from the top-right corner of the exercise page �
 | Video & tracking | 🪞 Mirror · ✅ Strict mode · 🦴 Skeleton · 📐 Angles · 🐞 Metrics |
 
 Click outside the modal, or press `Esc` or `G`, to close it.
+
+> **Angle labels are never mirrored**: with 🪞 mirror preview on, both the video and the canvas are flipped left-to-right,
+> which would also flip the “Knee 132°” / “Elbow 118°” labels drawn on the canvas. The renderer flips itself back the other way,
+> so joint angle readouts stay readable while mirroring is on.
 
 ---
 
@@ -470,6 +479,16 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 | ⑥ Drive through your front foot back to standing | Both legs straight again (after first sinking down) | +8 |
 | 🎁 All form steps complete for the round | All 6 steps above hit within the same round | +6 |
 
+> **A lunge doesn't require a 90° front knee**: bending the front knee to **152°** (about 20° down from standing) already counts, and
+> the `enter`/`exit` lines both follow **how straight you personally stand** — compressed readings (standing tall reading only 140°)
+> don't cause bogus counts, and deep squatters don't lose reps. The “too fast” check only applies to rounds where you really sank down.
+
+> **A lunge requires *both* knees to bend (no front-leg-only dipping)**: watching the front knee alone lets a quick front-leg dip score a rep.
+> The detector now also tracks the **straighter leg (the back one)**: it has to bend to **158°** or less (or at least **12°** below how straight
+> you personally stand, whichever is stricter) for the rep to be valid. Moving only the front leg is logged as a partial rep and the voice coach
+> says “Bend both legs: the back leg has to bend and sink too”. A back leg that bends less but genuinely bends still counts — the lenient baseline stands.
+> The 🐞 panel's “Both knees (back/line)” line shows this round's measured value and the line.
+
 ### Push-up (40 points per round)
 
 | Form step | How it's judged | Points |
@@ -488,6 +507,14 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 > (it used to require reaching 124° and returning all the way to 152°). A sagging or piked hip and a body that isn’t perfectly straight only trigger a **spoken correction plus a quality discount** — they no longer eat your reps;
 > a shallow rep still counts but you get a “go lower” cue and fewer points. Only “you barely bent your elbows” (never below 146°) counts for nothing and stays silent.
 > Strict mode (available in the settings) is what requires full depth.
+
+> **It counts even when the camera can't see the floor (camera-angle compensation)**: with a laptop sitting on a desk and looking down,
+> you simply can't see the chest touching the floor in the frame, and the 2D projection makes the elbow angle **read straighter than it really is**
+> (even a full rep may only read 140°). So push-ups now have a second depth signal that doesn't depend on the elbow:
+> **how far the shoulders dropped** (about 1.2× torso length at the top, down to roughly 0.5 at the bottom). A shoulder drop of
+> **0.20× torso length** already counts as “the body really did get close to the floor”, **0.40×** earns full depth credit, and even
+> “this rep has started” can be triggered by the shoulder drop. Either signal is enough, so any camera height works.
+> The 🐞 panel shows the live “Shoulder drop” value.
 
 ### Glute Bridge (39 points per round)
 
@@ -635,7 +662,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all five suites (934 cases)
+npm test                       # run all five suites (965 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / README structure of all four files
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -647,10 +674,10 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
-| `tests/test-detectors.mjs` | 240 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, plus the pre-workout calibration checks |
+| `tests/test-detectors.mjs` | 247 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, plus the pre-workout calibration checks |
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 211 | Startup with the real `app.js`, home-page rendering, the settings modal, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
+| `tests/test-app.mjs` | 235 | Startup with the real `app.js`, home-page rendering, both the exercise-settings and settings modals, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
 
 ---
 

@@ -92,11 +92,14 @@ for (const id of htmlIds) elements.set(id, new El('div', id));
 elements.get('video').tagName = 'VIDEO';
 const ctxCounts = {
   stroke: 0, fill: 0, arc: 0, moveTo: 0, lineTo: 0, quadraticCurveTo: 0, fillText: 0,
+  translate: 0, scale: 0, scaleX: null,
   strokeStyle: null, globalAlpha: null, lineWidth: null,
 };
 const ctxStub = {
   clearRect() {}, beginPath() {}, closePath() {}, save() {}, restore() {}, setLineDash() {},
   arcTo() {},
+  translate() { ctxCounts.translate += 1; },
+  scale(x) { ctxCounts.scale += 1; ctxCounts.scaleX = x; },
   moveTo() { ctxCounts.moveTo += 1; },
   lineTo() { ctxCounts.lineTo += 1; },
   quadraticCurveTo() { ctxCounts.quadraticCurveTo += 1; },
@@ -280,6 +283,87 @@ if (app) {
   ok('要领清单已渲染', elements.get('stepList').innerHTML.includes('step-item'));
   ok('没有运行时错误横幅', !documentStub.documentElement.dataset.error,
     documentStub.documentElement.dataset.error);
+}
+
+/* ------------------------------------------------------------------ *
+ * 运动设定弹窗（目标 / 判定方式 / 机位，只出现在动作页）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[1b] 运动设定弹窗');
+{
+  const api = windowStub.__mfg;
+  api.showHome();
+  ok('主页上「运动设定」图标隐藏（只在动作页出现）',
+    elements.get('btnExercise').hidden === true);
+  ok('主页时运动设定弹窗是关着的', elements.get('exerciseModal').hidden === true);
+
+  api.openExercise('pushup');
+  ok('动作页显示「运动设定」图标', elements.get('btnExercise').hidden === false);
+  ok('顶栏上「运动设定」与「配置」并排（同一个 topbar-actions 里）', (() => {
+    const bar = html.slice(html.indexOf('class="topbar-actions"'), html.indexOf('</header>'));
+    const ex = bar.indexOf('id="btnExercise"');
+    const st = bar.indexOf('id="btnSettings"');
+    return ex >= 0 && st >= 0 && ex < st;
+  })(), '两个图标不在同一个顶栏动作区里');
+
+  elements.get('btnExercise').dispatch('click');
+  ok('点图标打开运动设定弹窗', elements.get('exerciseModal').hidden === false);
+  ok('弹窗标题是当前动作', elements.get('exerciseName').textContent.includes('俯卧撑'),
+    elements.get('exerciseName').textContent);
+  ok('弹窗里显示判定依据', elements.get('exerciseJudge').textContent.includes('判定依据'),
+    elements.get('exerciseJudge').textContent);
+  ok('弹窗里显示机位提示', elements.get('exerciseCamera').textContent.includes('侧对摄像头'),
+    elements.get('exerciseCamera').textContent);
+  ok('弹窗里的目标值跟当前目标一致',
+    elements.get('targetInput').value === String(api.state.target),
+    `${elements.get('targetInput').value} vs ${api.state.target}`);
+  ok('弹窗里列出目标预设',
+    elements.get('targetChips').children.length > 0,
+    `实际 ${elements.get('targetChips').children.length} 个`);
+
+  // 目标改动要实时同步到侧栏摘要
+  const before = api.state.target;
+  elements.get('targetInput').value = String(before + 4);
+  elements.get('targetInput').dispatch('change', { target: elements.get('targetInput') });
+  ok('弹窗里改目标立即生效', api.state.target === before + 4, `${before} → ${api.state.target}`);
+  ok('侧栏摘要跟着更新', elements.get('targetReadout').textContent.includes(String(before + 4)),
+    elements.get('targetReadout').textContent);
+
+  // 严格模式：弹窗与配置弹窗是同一个开关，必须双向同步
+  const strictBtn = elements.get('btnStrict');
+  const strictEx = elements.get('btnStrictEx');
+  strictBtn.setAttribute('aria-pressed', 'false');
+  api.state.settings.strict = false;
+  strictBtn.dispatch('click');
+  ok('在配置弹窗里打开严格模式后，运动设定里也是打开的',
+    strictEx.getAttribute('aria-pressed') === 'true', String(strictEx.getAttribute('aria-pressed')));
+  strictEx.dispatch('click');
+  ok('在运动设定里点严格模式，等同于点配置弹窗里那个开关',
+    strictBtn.getAttribute('aria-pressed') === 'false' && api.state.settings.strict === false,
+    `strict=${api.state.settings.strict}`);
+
+  // 关闭方式：✕、点背景、Esc
+  elements.get('btnCloseExercise').dispatch('click');
+  ok('点 ✕ 关闭运动设定弹窗', elements.get('exerciseModal').hidden === true);
+  elements.get('btnExerciseInline').dispatch('click');
+  ok('侧栏「设定目标」卡片里的按钮也能打开', elements.get('exerciseModal').hidden === false);
+  elements.get('exerciseBackdrop').dispatch('click');
+  ok('点背景关闭', elements.get('exerciseModal').hidden === true);
+  elements.get('btnExercise').dispatch('click');
+  // 注意：dispatch 一次 keydown 会顺带触发「首次手势解锁音频」那个一次性的监听器
+  //（它用完就把 pointerdown / keydown / touchstart 上的自己都摘掉），
+  // 所以这里把三种事件的监听器列表原样还原，别影响后面 [10] 的用例。
+  const gestureSnapshot = {};
+  for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
+    gestureSnapshot[ev] = [...(documentStub._listeners[ev] || [])];
+  }
+  documentStub.dispatch('keydown', { key: 'Escape' });
+  for (const [ev, list] of Object.entries(gestureSnapshot)) documentStub._listeners[ev] = list;
+  ok('Esc 优先关掉运动设定弹窗', elements.get('exerciseModal').hidden === true);
+
+  api.showHome();
+  ok('返回主页时运动设定弹窗自动关闭且图标隐藏',
+    elements.get('exerciseModal').hidden === true && elements.get('btnExercise').hidden === true);
 }
 
 /* ------------------------------------------------------------------ *
@@ -529,6 +613,32 @@ console.log('\n[6] 火柴人开关');
   ok('关闭火柴人后完全不画骨架线条（含地面参考线）', off.lineTo === 0, `lineTo=${off.lineTo}`);
   ok('关闭火柴人后不画关节点', off.arc === 0, `arc=${off.arc}`);
   ok('关闭火柴人后仍在绘制角度标注（各自独立开关）', off.fillText >= 1, `fillText=${off.fillText}`);
+
+  // ===== 镜像预览下的角度文字 =====
+  // 开启镜像时视频和画布都被 CSS scaleX(-1) 翻转，画在画布上的「膝 132°」会变成镜像字。
+  // 所以绘制角度标签时必须自己再翻一次（translate 到标签中心后 scale(-1, 1)）抵消掉。
+  api.renderer.mirror = false;
+  resetCtxCounts();
+  api.renderer.draw({ landmarks, frame, exerciseId: 'squat', status: 'ok' });
+  const plain = { ...ctxCounts };
+  ok('不镜像时角度标签不做水平翻转', plain.scale === 0, `scale 调用 ${plain.scale} 次`);
+
+  api.renderer.mirror = true;
+  resetCtxCounts();
+  api.renderer.draw({ landmarks, frame, exerciseId: 'squat', status: 'ok' });
+  const mirrored = { ...ctxCounts };
+  ok('镜像时角度标签水平翻转抵消（不再是镜像字）',
+    mirrored.scaleX === -1 && mirrored.translate >= 1 && mirrored.fillText >= 1,
+    `scaleX=${mirrored.scaleX} translate=${mirrored.translate} fillText=${mirrored.fillText}`);
+  // 打开/关闭镜像按钮要真的把标志位传给渲染器
+  const mirrorBtn = elements.get('btnMirror');
+  mirrorBtn.setAttribute('aria-pressed', 'true');
+  mirrorBtn.dispatch('click');
+  ok('关掉镜像后渲染器标志位跟着关', api.renderer.mirror === false);
+  mirrorBtn.dispatch('click');
+  ok('打开镜像后渲染器标志位跟着开', api.renderer.mirror === true);
+  // 两次点击后回到默认（镜像开着），后面的用例继续按原状态跑
+  ok('镜像开关与设置项保持一致', api.state.settings.mirror === true && api.renderer.mirror === true);
 
   // 按钮联动
   api.renderer.showSkeleton = true;

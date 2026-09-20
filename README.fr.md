@@ -365,7 +365,12 @@ Le champ de recherche au-dessus permet de trouver un exercice par son nom (par e
 - Clique sur n'importe quelle carte → tu arrives sur la **page de l'exercice** (caméra + liste des étapes techniques + score + réglage de l'objectif + historique).
   La page de l'exercice a sa propre adresse : `#/ex/<id>` (par exemple `#/ex/bridge`) : **un rafraîchissement te laisse sur le même exercice**,
   **le bouton Retour du navigateur ramène à l'accueil** et tu peux mettre le lien en favori.
-- « Retour à l'accueil » en haut à gauche de la page d'exercice ramène au mur d'exercices ; en haut à droite se trouve ⚙️ **Réglages**.
+- « Retour à l'accueil » en haut à gauche de la page d'exercice ramène au mur d'exercices ; en haut à droite se trouvent
+  🎯 **Réglages de l'exercice** (uniquement pour cet exercice) à côté de ⚙️ **Réglages** (globaux).
+- **🎯 Réglages de l'exercice** (affiché seulement sur la page d'exercice, à côté de ⚙️) : une fenêtre rassemble l'objectif et les
+  critères de cet exercice — l'objectif de la série (champ numérique et valeurs rapides), le critère de comptage (souple / strict,
+  exactement le même interrupteur que dans ⚙️), ainsi que le **critère de détection** et le **placement de la caméra** de l'exercice.
+  La carte « ② Fixe l'objectif » du panneau latéral ne garde qu'une ligne de résumé, et son bouton ouvre cette même fenêtre.
 - Les exercices qui appartiennent à deux catégories (comme « Squats sautés ») apparaissent dans les deux blocs : en cliquant, c'est toujours le même exercice.
 
 ## Fenêtre de réglages (langue / modèle / son)
@@ -380,6 +385,10 @@ Le ⚙️ en haut à droite de la page d'exercice ouvre la fenêtre de réglages
 | Image et détection | 🪞 Miroir · ✅ Mode strict · 🦴 Squelette · 📐 Angles · 🐞 Métriques |
 
 Clique en dehors de la fenêtre, ou appuie sur `Esc` ou `G`, pour la fermer.
+
+> **Les étiquettes d'angle ne partent jamais en miroir** : avec l'aperçu 🪞 miroir activé, la vidéo et le canevas sont retournés
+> de gauche à droite, et les étiquettes « Genou 132° » / « Coude 118° » dessinées sur le canevas le seraient aussi. Le moteur de rendu
+> se retourne à son tour pour compenser, donc les angles restent lisibles même avec le miroir activé.
 
 ---
 
@@ -472,6 +481,17 @@ Le squat se filme **de face** ; la profondeur se juge sur le rapport « écart d
 | ⑥ Pousse sur le pied avant pour revenir debout | Les deux jambes se retendent (après être descendu) | +8 |
 | 🎁 Toutes les étapes de la série validées | Les 6 étapes ci-dessus validées dans la même série | +6 |
 
+> **La fente n'exige pas un genou avant à 90°** : plier le genou avant jusqu'à **152°** (environ 20° depuis la position debout)
+> suffit déjà à compter une répétition, et les lignes `enter`/`exit` suivent **l'angle que tu atteins toi-même debout** — des mesures
+> compressées (140° debout seulement) ne provoquent pas de comptage fantaisiste, et ceux qui descendent bas ne perdent pas de répétitions.
+
+> **La fente exige que *les deux* genoux se plient (pas seulement un petit coup du genou avant)** : en ne regardant que le genou avant,
+> un simple mouvement de la jambe avant suffisait à valider une répétition. Le détecteur surveille maintenant aussi la **jambe la plus
+> tendue (celle de derrière)** : elle doit se plier jusqu'à **158°** ou moins (ou au moins **12°** sous ton angle debout, le plus strict
+> des deux) pour que la répétition soit valide. Si seule la jambe avant bouge, c'est compté comme répétition partielle et la voix annonce
+> « Plie les deux jambes : la jambe arrière doit aussi descendre ». Une jambe arrière qui se plie moins mais qui se plie vraiment compte
+> toujours. La ligne « Deux genoux (arrière/ligne) » du panneau 🐞 affiche la valeur mesurée et la ligne de la série.
+
 ### Pompe (40 points par série au maximum)
 
 | Étape technique | Condition de validation | Points |
@@ -486,6 +506,15 @@ Le squat se filme **de face** ; la profondeur se juge sur le rapport « écart d
 > (avant, il fallait descendre à 124° et remonter jusqu’à 152°). Le bas du dos qui s’affaisse, les fesses relevées ou un alignement imparfait ne déclenchent plus qu’**une correction vocale et une réduction du score** — ils ne te retirent plus de répétitions ;
 > une répétition peu profonde compte aussi, mais tu reçois le conseil « descends un peu plus » et moins de points. Seul « tu n’as presque pas plié les coudes » (jamais sous 146°) ne compte rien et reste silencieux.
 > Le mode strict (dans les réglages) est celui qui exige la profondeur complète.
+
+> **Ça compte même si la caméra ne voit pas le sol (compensation de l'angle de caméra)** : avec un ordinateur portable posé sur le
+> bureau et incliné vers le bas, la poitrine qui touche le sol n'est pas visible dans l'image, et la projection 2D fait **lire l'angle
+> du coude plus tendu qu'il ne l'est** (une répétition complète peut n'afficher que 140°). Les pompes ont donc une deuxième preuve de
+> profondeur, indépendante du coude : **de combien les épaules sont descendues** (environ 1,2 fois la longueur du tronc en haut, et
+> à peu près 0,5 en bas). Une descente des épaules de **0,20 fois la longueur du tronc** suffit pour considérer que « le corps s'est
+> vraiment approché du sol » et compter ; **0,40** donne le score complet, et même « la répétition a commencé » peut être déclenché
+> par la descente des épaules. Une seule des deux preuves suffit, donc toutes les hauteurs de caméra conviennent. Le panneau 🐞
+> affiche la valeur « Descente des épaules » en direct.
 
 ### Pont fessier (39 points par série au maximum)
 
@@ -633,7 +662,7 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les cinq suites d'un coup (934 tests)
+npm test                       # les cinq suites d'un coup (965 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources / structure des quatre README
 npm run test:detectors         # détection et logique de score des cinq détecteurs écrits à la main (squelettes synthétiques)
 npm run test:engines           # moteurs de détection génériques (flexion / alternance / rotation / plusieurs phases / chrono + garde de posture)
@@ -645,10 +674,10 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | Fichier de test | Nombre de tests | Contenu couvert |
 |---|---|---|
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
-| `tests/test-detectors.mjs` | 240 | Comptage, chronométrage, points par étape et ordre de validation des cinq détecteurs écrits à la main (mouvements corrects comme erronés), ainsi que la logique de validation du calibrage |
+| `tests/test-detectors.mjs` | 247 | Comptage, chronométrage, points par étape et ordre de validation des cinq détecteurs écrits à la main (mouvements corrects comme erronés), le critère de profondeur avec une caméra inclinée, ainsi que la logique de validation du calibrage |
 | `tests/test-engines.mjs` | 141 | Moteurs génériques : une répétition par cycle, souple vs strict, cas limites des balancements et des mouvements trop rapides, garde de posture, décollage des pieds, alternance gauche-droite, enchaînement complet, pause et reprise du chrono |
 | `tests/test-page.mjs` | 310 | Câblage du DOM, imports et exports de modules, ressources statiques, catalogue des 22 exercices par catégorie et exhaustivité des barèmes |
-| `tests/test-app.mjs` | 211 | Démarrage du vrai `app.js`, rendu de la page d'accueil, fenêtre de réglages, déroulé du calibrage, changement d'exercice, score, sons, bilan, changement de langue |
+| `tests/test-app.mjs` | 235 | Démarrage du vrai `app.js`, rendu de la page d'accueil, les fenêtres de réglages de l'exercice et de réglages généraux, déroulé du calibrage, changement d'exercice, score, sons, bilan, changement de langue |
 
 ---
 

@@ -749,6 +749,16 @@ kbd {
   cursor: pointer;
 }
 .mini-btn:hover { color: var(--bad); border-color: var(--bad); }
+/* 侧栏里只留一行目标摘要，完整设定在「运动设定」弹窗里 */
+.card-title-row .mini-btn:hover { color: var(--accent); border-color: var(--accent); }
+.target-readout {
+  margin: 8px 0 0;
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.exercise-head { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
 
 .live-stats {
   display: grid;

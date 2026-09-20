@@ -18,6 +18,11 @@
       </div>
       <div class="topbar-actions">
         <button class="ghost-btn" id="btnHome" type="button" data-i18n="home.back" hidden></button>
+        <!-- 运动设定：只出现在动作页，管「这个动作」的目标与判据 -->
+        <button class="icon-btn" id="btnExercise" type="button" hidden
+                data-i18n-title="exercise.open" data-i18n-aria="exercise.open">
+          <span aria-hidden="true">🎯</span>
+        </button>
         <button class="icon-btn" id="btnSettings" type="button"
                 data-i18n-title="home.openSettings" data-i18n-aria="home.openSettings">
           <span aria-hidden="true">⚙️</span>
@@ -140,14 +145,11 @@
         </section>
 
         <section class="card">
-          <h2 class="card-title" data-i18n="ui.step2"></h2>
-          <div class="target-row">
-            <button class="step-btn" id="tMinus" type="button">−</button>
-            <input id="targetInput" type="number" min="1" max="999" step="1" value="15" />
-            <button class="step-btn" id="tPlus" type="button">＋</button>
-            <span class="target-unit" id="targetUnit"></span>
+          <div class="card-title-row">
+            <h2 class="card-title" data-i18n="ui.step2"></h2>
+            <button class="mini-btn" id="btnExerciseInline" type="button" data-i18n="exercise.open"></button>
           </div>
-          <div class="chips" id="targetChips"></div>
+          <p class="target-readout" id="targetReadout"></p>
         </section>
 
         <section class="card">
@@ -263,6 +265,51 @@
             <button class="toggle" id="btnAngles" type="button" aria-pressed="true" data-i18n="ui.angles"></button>
             <button class="toggle" id="btnDebug" type="button" aria-pressed="false" data-i18n="ui.debug"></button>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 运动设定弹窗（只对当前动作生效） ================= -->
+  <div class="modal" id="exerciseModal" hidden>
+    <div class="modal-backdrop" id="exerciseBackdrop"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="exerciseTitle">
+      <div class="modal-head">
+        <h2 id="exerciseTitle" data-i18n="exercise.title"></h2>
+        <button class="icon-btn" id="btnCloseExercise" type="button"
+                data-i18n-title="exercise.close" data-i18n-aria="exercise.close">
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <p class="exercise-head" id="exerciseName"></p>
+        <p class="modal-hint" data-i18n="exercise.lead"></p>
+
+        <div class="modal-group">
+          <h3 class="modal-group-title" data-i18n="exercise.targetGroup"></h3>
+          <div class="target-row">
+            <button class="step-btn" id="tMinus" type="button">−</button>
+            <input id="targetInput" type="number" min="1" max="999" step="1" value="15"
+                   data-i18n-aria="exercise.target" />
+            <button class="step-btn" id="tPlus" type="button">＋</button>
+            <span class="target-unit" id="targetUnit"></span>
+          </div>
+          <div class="chips" id="targetChips"></div>
+        </div>
+
+        <div class="modal-group">
+          <h3 class="modal-group-title" data-i18n="exercise.judgeGroup"></h3>
+          <div class="toggle-grid">
+            <button class="toggle" id="btnStrictEx" type="button" aria-pressed="true" data-i18n="ui.strict"></button>
+          </div>
+          <p class="modal-hint" data-i18n="exercise.strictHint"></p>
+          <p class="modal-hint" id="exerciseJudge"></p>
+        </div>
+
+        <div class="modal-group">
+          <h3 class="modal-group-title" data-i18n="exercise.cameraGroup"></h3>
+          <p class="modal-hint" id="exerciseCamera"></p>
         </div>
       </div>
     </div>

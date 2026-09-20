@@ -251,7 +251,9 @@ export default {
       backLine: 'Ligne de retour',
       repMin: 'Minimum de cette rép.',
       topBase: 'Sommet mesuré',
+      drop: 'Descente des épaules',
       standLine: 'Ligne debout',
+      bothMin: 'Deux genoux (arrière/ligne)',
       startValue: 'Départ (toi/réf.)',
       peak: 'Pic de cette rép.',
       hold: 'Chrono',
@@ -628,6 +630,22 @@ export default {
     recent: 'Faits récemment',
   },
 
+  /* ---------------- Réglages de l'exercice ---------------- */
+  exercise: {
+    open: 'Réglages de l\'exercice',
+    title: 'Réglages de l\'exercice',
+    close: 'Fermer',
+    lead: 'Ces réglages ne concernent que l\'exercice en cours',
+    targetGroup: '🎯 Objectif',
+    target: 'Objectif de la série',
+    judgeGroup: '⚖️ Critère de comptage',
+    strictHint: 'Strict : les répétitions partielles ne comptent pas. Souple : un mouvement à peu près complet compte.',
+    judgeBy: 'Critère : {what}',
+    rough: 'Détection approximative',
+    cameraGroup: '📹 Placement de la caméra',
+    camera: 'Caméra : {what}',
+  },
+
   /* ---------------- Réglages ---------------- */
   settings: {
     title: 'Réglages',
@@ -672,6 +690,7 @@ export default {
     valgus: 'Les genoux ne rentrent pas : ouvre-les dans l’axe des pieds',
     lean: 'Garde le buste droit, ne te penche pas en avant',
     pose: 'Ta position s’écarte des consignes : corrige avant de continuer',
+    bothKnees: 'Plie les deux jambes : la jambe arrière doit aussi descendre',
   },
 
   /* ---------------- Consignes par famille d'exercices ---------------- */
@@ -734,6 +753,7 @@ export default {
       backknee: 'Descends encore le genou arrière, près du sol',
       lean: 'Garde le buste droit, ne te penche pas en avant',
       lungeDepth: 'Descends plus bas : genou avant à 90°, genou arrière près du sol',
+      bothKnees: 'Plie les deux jambes : la jambe arrière doit aussi descendre, pas juste un petit coup de la jambe avant',
       tempo: 'Ralentis : contrôle aussi bien la descente que la remontée',
       alternate: 'Change de jambe devant, alterne gauche et droite',
     },
