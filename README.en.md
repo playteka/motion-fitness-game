@@ -376,7 +376,7 @@ The search box at the top finds exercises by name directly (type “push” or �
 
 While you train, a **judgement progress bar** sits at the bottom of the video: this exercise's criteria are laid out as
 segments, and **every recognised pose lights up one more segment** — so you can see at a glance what has already been
-recognised and what is still missing. Each completed rep sends the bar back to the start, and the next rep walks it again.
+recognised and what is still missing. **Every completed rep resets it to zero**, and the next rep walks it again from the top.
 
 Take the lunge (each segment holds the real threshold from the code):
 
@@ -391,6 +391,10 @@ Take the lunge (each segment holds the real threshold from the code):
 - **How a segment lights up**: only the *next* segment is checked, so the bar has to be walked in order and never skips;
   segments that are lit never go back out. When the last one lights, the bar turns green and reads “Every rule for this
   rep is met”.
+- **A completed rep resets the bar to zero**: a rep is only finished when you are back in the start position, so after the
+  reset the bar **stays empty for 0.65 s** (it flashes green and reads “✓ Rep done — bar reset, starting over”) before the
+  Stance segment starts lighting up again. Without that pause the Stance segment would light up in the very same frame and
+  the reset would be invisible. A partial rep (one that didn't count) ends the rep too, and resets the bar the same way.
 - **Matching feedback**: lighting a segment plays a light chime that rises step by step (the last one adds an octave); and
   if that step **actually earned points** (a form-step score or the perfect-round bonus) the points are printed on that
   segment and a “Just earned +N” floats up. Points only appear when the detector really awards them — the bar never
@@ -723,7 +727,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all six suites (1494 cases)
+npm test                       # run all six suites (1503 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / matching structure of the Chinese and English READMEs
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -740,7 +744,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 500 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; the judgement progress bar is walked through with synthetic poses (a shallow movement never reaches the full-depth segment); both languages are complete |
 | `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 278 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar, the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-app.mjs` | 287 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar, the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 

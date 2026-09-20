@@ -610,6 +610,18 @@ kbd {
 }
 .criteria-bar.all-done { border-color: rgba(74, 222, 128, 0.55); }
 
+/* 一次动作完成：进度条清零并闪一下，让「从头开始」看得见 */
+.criteria-bar.reset {
+  border-color: rgba(74, 222, 128, 0.6);
+  animation: criteriaReset 0.6s ease-out;
+}
+.criteria-bar.reset .criteria-cond { color: #d8ffe6; }
+@keyframes criteriaReset {
+  0% { transform: translateX(-50%) scale(1.02); box-shadow: 0 0 22px rgba(74, 222, 128, 0.45); }
+  60% { transform: translateX(-50%) scale(1); }
+  100% { transform: translateX(-50%) scale(1); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); }
+}
+
 /* 进度条出现时，把底部提示条往上让一格，避免两块叠在一起 */
 .stage.has-criteria .pose-hint { bottom: 96px; }
 

@@ -100,7 +100,11 @@ const state = {
   criteriaIdx: -1,      // 已经识别到的最后一格；-1 = 还没开始
   criteriaJust: -1,     // 刚刚点亮的那一格（用于播放「跳一下」动画）
   criteriaPts: [],      // 每一格上显示的分（那一步真的加了分才写）
+  criteriaClearUntil: 0, // 刚清零后的展示期结束时间（这段时间进度条保持空的）
 };
+
+/** 一次动作完成后，进度条保持「空的」多久（让清零看得见） */
+const CRITERIA_CLEAR_MS = 650;
 
 /** 收集控制台错误，供 ?probe=1 自检输出 */
 function captureConsole() {
@@ -475,11 +479,24 @@ function buildCriteriaBar() {
   renderCriteriaBar();
 }
 
-/** 把进度收回起点（每一次动作之后都调用） */
-function resetCriteriaProgress() {
+/**
+ * 把进度收回起点。
+ *
+ * 一次动作做完时会调用它：**进度条清零、下一轮从头开始**。
+ * 注意留了一小段「清零展示时间」（CRITERIA_CLEAR_MS）—— 因为动作是在回到起始姿势的那一刻
+ * 才算完成的，如果立刻重新判定，「站姿」那一格会在同一帧又亮起来，用户看起来就像没清零。
+ * 这段时间里进度条保持空的，之后再从站姿重新一格一格走。
+ */
+function resetCriteriaProgress({ holdMs = 0, now = performance.now() } = {}) {
   state.criteriaIdx = -1;
   state.criteriaJust = -1;
+  state.criteriaClearUntil = holdMs > 0 ? now + holdMs : 0;
   for (let i = 0; i < state.criteriaPts.length; i++) state.criteriaPts[i] = 0;
+}
+
+/** 进度条是不是正处在「刚清零」的展示期 */
+function criteriaCleared(now = performance.now()) {
+  return now < state.criteriaClearUntil;
 }
 
 /** 某一格现在满足了没 */
@@ -494,23 +511,9 @@ function criteriaHolds(stage, frame) {
 function updateCriteria(frame, events, now) {
   const stages = state.criteriaStages;
   if (!stages.length) return;
-  let advanced = -1;
-  for (let i = state.criteriaIdx + 1; i < stages.length; i++) {
-    if (!criteriaHolds(stages[i], frame)) break;
-    state.criteriaIdx = i;
-    advanced = i;
-  }
-  // 这一帧加到的分（要领得分 / 满分奖励）：标在刚点亮的那一格上
+
+  // 这一帧加到的分（要领得分 / 满分奖励）先处理：清零展示期里也不能丢掉分数反馈
   const earned = (events || []).reduce((n, ev) => n + (Number.isFinite(ev.points) ? ev.points : 0), 0);
-  if (advanced >= 0) {
-    state.criteriaJust = advanced;
-    audio.criteria(advanced, stages.length);
-    if (earned > 0) state.criteriaPts[advanced] = earned;
-  } else if (earned > 0) {
-    // 分数落在没有前进的那一帧（例如要领步骤比判据链先达标）：标在已经点亮的那一格上
-    const at = Math.max(0, state.criteriaIdx);
-    state.criteriaPts[at] = (state.criteriaPts[at] || 0) + earned;
-  }
   if (earned > 0) {
     const el = $('criteriaEarned');
     if (el) {
@@ -521,11 +524,33 @@ function updateCriteria(frame, events, now) {
       el.classList.add('show');
     }
   }
-  renderCriteriaBar();
+
+  // 刚清零的那一小段时间里不再判定，让「清零」这件事看得见
+  if (criteriaCleared(now)) {
+    renderCriteriaBar(now);
+    return;
+  }
+
+  let advanced = -1;
+  for (let i = state.criteriaIdx + 1; i < stages.length; i++) {
+    if (!criteriaHolds(stages[i], frame)) break;
+    state.criteriaIdx = i;
+    advanced = i;
+  }
+  if (advanced >= 0) {
+    state.criteriaJust = advanced;
+    audio.criteria(advanced, stages.length);
+    if (earned > 0) state.criteriaPts[advanced] = earned;
+  } else if (earned > 0) {
+    // 分数落在没有前进的那一帧（例如要领步骤比判据链先达标）：标在已经点亮的那一格上
+    const at = Math.max(0, state.criteriaIdx);
+    state.criteriaPts[at] = (state.criteriaPts[at] || 0) + earned;
+  }
+  renderCriteriaBar(now);
 }
 
 /** 画进度条（只有状态变化时才真的改 DOM，避免每帧重排） */
-function renderCriteriaBar() {
+function renderCriteriaBar(now = performance.now()) {
   const bar = $('criteriaBar');
   const track = $('criteriaTrack');
   if (!bar || !track) return;
@@ -535,8 +560,12 @@ function renderCriteriaBar() {
   bar.hidden = !show;
   if (!show) return;
 
+  // 刚清零：进度条保持空的，并闪一下提示「这一轮完成，重新开始」
+  const cleared = criteriaCleared(now);
+  bar.classList.toggle('reset', cleared);
+
   // 状态没变就不动 DOM
-  const sig = [state.exerciseId, state.criteriaIdx, state.criteriaJust, state.criteriaPts.join(',')].join('|');
+  const sig = [state.exerciseId, state.criteriaIdx, state.criteriaJust, state.criteriaPts.join(','), cleared ? 'c' : ''].join('|');
   if (track.dataset.sig !== sig) {
     track.dataset.sig = sig;
     track.innerHTML = stages.map((st, i) => {
@@ -552,9 +581,11 @@ function renderCriteriaBar() {
   }
 
   const allDone = state.criteriaIdx >= stages.length - 1;
-  bar.classList.toggle('all-done', allDone);
+  bar.classList.toggle('all-done', allDone && !cleared);
   const next = allDone ? null : stages[state.criteriaIdx + 1];
-  $('criteriaCond').textContent = allDone ? t('spec.barDone') : stageText(next).cond;
+  $('criteriaCond').textContent = cleared
+    ? t('spec.barCleared')
+    : (allDone ? t('spec.barDone') : stageText(next).cond);
 }
 
 function selectExercise(id) {
@@ -1367,7 +1398,7 @@ function pickEncourageHint(seed) {
   return line === state.lastEncourageHint ? list[(Math.abs(Math.round(seed)) + 1) % list.length] : line;
 }
 
-function handleEvents(events) {
+function handleEvents(events, now = performance.now()) {
   const det = state.detector;
   if (!det) return;
   const running = state.session === 'running';
@@ -1389,8 +1420,9 @@ function handleEvents(events) {
       audio.scoreTick();
       checkScoreMilestone(ev.score);
     } else if (ev.type === 'rep') {
-      // 一次动作结束（有效或半程）→ 进度条收回起点，下一轮重新一格一格走过去
-      resetCriteriaProgress();
+      // 一次动作结束（有效或半程）→ 进度条清零，下一轮从头开始
+      resetCriteriaProgress({ holdMs: CRITERIA_CLEAR_MS, now });
+      renderCriteriaBar(now);
       if (ev.valid) {
         pulseValue();
         audio.rep(det.validReps);
@@ -1525,7 +1557,7 @@ function loop() {
     // ---- 训练中：正常识别与计数 ----
     if (counting) {
       const events = feedDetector(frame, now);
-      handleEvents(events);
+      handleEvents(events, now);
       updateCriteria(frame, events, now);
     }
     renderCalibration(null);

@@ -777,6 +777,7 @@ export default {
     barTitle: 'Judgement progress',
     barScore: 'Just earned',
     barDone: 'Every rule for this rep is met',
+    barCleared: '✓ Rep done — bar reset, starting over',
     short: {
       stance: 'Stance',
       stand: 'Stand',

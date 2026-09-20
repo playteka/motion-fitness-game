@@ -1214,11 +1214,34 @@ console.log('\n[8b] 判定进度条');
   ok('同时给出「刚拿到 +N」的反馈',
     elements.get('criteriaEarned').textContent.includes('+7'), elements.get('criteriaEarned').textContent);
 
-  // 一次动作结束 → 进度条收回起点
-  api.handleEvents([{ type: 'rep', valid: true, index: 1, quality: 90, duration: 900 }]);
-  ok('做完一次动作后进度条收回起点', api.state.criteriaIdx === -1, String(api.state.criteriaIdx));
-  api.renderCriteriaBar();
-  ok('收回后第一格不再是 done', !/class="[^"]*done[^"]*" data-i="0"/.test(segAt(0)), segAt(0));
+  // 一次动作结束 → 进度条清零，并且**看得见地**保持空的，然后从头再走
+  api.state.criteriaIdx = 0;
+  api.updateCriteria(frameOf(178), [], 5000);
+  api.updateCriteria(frameOf(80), [], 5100);
+  ok('这轮先把进度走到最后一格', api.state.criteriaIdx === squatStages.length - 1,
+    String(api.state.criteriaIdx));
+  api.handleEvents([{ type: 'rep', valid: true, index: 1, quality: 90, duration: 900 }], 5200);
+  ok('做完一次动作后进度条清零', api.state.criteriaIdx === -1, String(api.state.criteriaIdx));
+  ok('清零后写着「这一轮完成、下一轮重新开始」',
+    elements.get('criteriaCond').textContent.includes('清零'), elements.get('criteriaCond').textContent);
+  ok('清零瞬间按钮/进度条有清零动画标记', elements.get('criteriaBar').classList.contains('reset'),
+    String(elements.get('criteriaBar').classList.contains('reset')));
+  // 站在起始姿势（判据其实已满足）也不该立刻重新点亮
+  api.updateCriteria(frameOf(178), [], 5300);
+  ok('清零展示期内就算姿势符合，也不立刻重新点亮', api.state.criteriaIdx === -1,
+    String(api.state.criteriaIdx));
+  ok('清零展示期内所有格子都是空的', !/class="[^"]*done[^"]*" data-i="0"/.test(segAt(0)), segAt(0));
+  // 展示期过去 → 从站姿重新开始
+  api.updateCriteria(frameOf(178), [], 6000);
+  ok('展示期过后从头开始（先点亮站姿）', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
+  ok('重新开始后不再显示「清零」提示',
+    !elements.get('criteriaCond').textContent.includes('清零'), elements.get('criteriaCond').textContent);
+  ok('清零标记也撤掉了', elements.get('criteriaBar').classList.contains('reset') === false);
+  // 半程动作也算「一次动作结束」，同样清零
+  api.updateCriteria(frameOf(120), [], 6100);
+  ok('（前置）半程前进度已经走了一段', api.state.criteriaIdx > 0, String(api.state.criteriaIdx));
+  api.handleEvents([{ type: 'rep', valid: false, reason: 'depth' }], 6200);
+  ok('半程动作结束后同样清零', api.state.criteriaIdx === -1, String(api.state.criteriaIdx));
 
   // 换动作 → 格子跟着换（判据不同）
   api.openExercise('lunge');

@@ -778,6 +778,7 @@ export default {
     barTitle: '判定进度',
     barScore: '刚拿到',
     barDone: '这一轮的判据全过了',
+    barCleared: '✓ 这一轮完成，进度条清零，下一轮重新开始',
     short: {
       stance: '站姿',
       stand: '站立',
