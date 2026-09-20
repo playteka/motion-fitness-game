@@ -29,8 +29,7 @@ const OUTLINE_COLORS = {
  * 每个动作重点关注的关节（用于角度标注）：判据是哪个关节角，就在画面上标哪个角，
  * 让用户一边做一边能看到「离判决线还有多远」。
  * 判据不是关节角的动作（跳跃离地、开合距离、整套顺序、计时保持…）不标，免得画面全是数字。
- */
-const FOCUS = {
+ */const FOCUS = {
   squat: ['knee', 'hip'],
   squatSumo: ['knee', 'hip'],
   squatJump: ['knee', 'hip'],
@@ -51,20 +50,6 @@ const FOCUS = {
   mountainClimber: ['knee', 'hip'],
   boxJump: ['knee', 'hip'],
 };
-
-/**
- * 个别动作的指标在界面上的叫法不同：仰卧抬腿判的是**腰腿夹角**，
- * 用户习惯直接叫它「胯」（同一个数字，换个更口语的名字）——
- * 骨架上的标注和 🐞 面板都用它，别的动作不受影响。
- */
-const ANGLE_LABEL = {
-  lyingLegRaise: { hip: 'debug.crotch' },
-};
-
-/** 某个角在界面上该用哪个文案键（没写特殊叫法就用默认键） */
-export function angleLabelKey(exerciseId, kind, fallbackKey) {
-  return ANGLE_LABEL[exerciseId]?.[kind] || fallbackKey;
-}
 
 export class PoseRenderer {
   constructor(canvas) {
@@ -236,16 +221,16 @@ export class PoseRenderer {
     const A = { L: LM.L_ANKLE, R: LM.R_ANKLE };
 
     if (focus.includes('knee') && Number.isFinite(frame.kneeAngle)) {
-      items.push({ at: P(K[side]), text: `${t(angleLabelKey(exerciseId, 'knee', 'debug.knee'))} ${Math.round(frame.kneeAngle)}°` });
+      items.push({ at: P(K[side]), text: `${t('debug.knee')} ${Math.round(frame.kneeAngle)}°` });
     }
     if (focus.includes('elbow') && Number.isFinite(frame.elbowAngle)) {
-      items.push({ at: P(E[side]), text: `${t(angleLabelKey(exerciseId, 'elbow', 'debug.elbow'))} ${Math.round(frame.elbowAngle)}°` });
+      items.push({ at: P(E[side]), text: `${t('debug.elbow')} ${Math.round(frame.elbowAngle)}°` });
     }
     if (focus.includes('hip') && Number.isFinite(frame.hipAngle)) {
-      items.push({ at: P(Hp[side]), text: `${t(angleLabelKey(exerciseId, 'hip', 'debug.hip'))} ${Math.round(frame.hipAngle)}°` });
+      items.push({ at: P(Hp[side]), text: `${t('debug.hip')} ${Math.round(frame.hipAngle)}°` });
     }
     if (focus.includes('shoulder') && Number.isFinite(frame.bodyStraight)) {
-      items.push({ at: P(S[side]), text: `${t(angleLabelKey(exerciseId, 'shoulder', 'debug.bodyStraight'))} ${Math.round(frame.bodyStraight)}°` });
+      items.push({ at: P(S[side]), text: `${t('debug.bodyStraight')} ${Math.round(frame.bodyStraight)}°` });
     }
 
     ctx.save();

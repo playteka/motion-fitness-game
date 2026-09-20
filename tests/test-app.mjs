@@ -732,19 +732,17 @@ console.log('\n[6] 火柴人开关');
     api.renderer.showAngles = true;
     texts.length = 0;
     api.renderer.draw({ landmarks: lie, frame: lieFrame, exerciseId: 'lyingLegRaise', status: 'ok' });
-    ok('仰卧抬腿：画面上标出「胯」（腰腿夹角，用户习惯的叫法）',
-      texts.some((x) => x.includes('胯')), texts.join(' | '));
+    ok('仰卧抬腿：画面上标出「髋」（腰腿夹角，判据那个数字）',
+      texts.some((x) => x.startsWith('髋')), texts.join(' | '));
     ok('仰卧抬腿：标出的就是判据那个数字（0~180°）',
-      texts.some((x) => /胯\s+\d+°/.test(x) && Number(/(\d+)°/.exec(x)[1]) > 0), texts.join(' | '));
-    ok('仰卧抬腿：画面上不出现「腰部角度」这种啰嗦写法',
-      !texts.some((x) => x.includes('腰部角度')), texts.join(' | '));
+      texts.some((x) => /^髋\s+\d+°$/.test(x) && Number(/(\d+)°/.exec(x)[1]) > 0), texts.join(' | '));
     ok('仰卧抬腿：同时标出膝角（用来看腿有没有绷直）',
       texts.some((x) => x.includes('膝')), texts.join(' | '));
-    // 别的动作仍然叫「髋」——不要把所有动作都改名
+    // 别的动作一样叫「髋」——全应用只有一种叫法，不做特例
     texts.length = 0;
     api.renderer.draw({ landmarks, frame, exerciseId: 'squat', status: 'ok' });
-    ok('深蹲仍然标「髋」而不是「胯」',
-      texts.some((x) => x.startsWith('髋')) && !texts.some((x) => x.includes('胯')), texts.join(' | '));
+    ok('深蹲也标「髋」（和应用里其它动作同一套叫法）',
+      texts.some((x) => x.startsWith('髋')), texts.join(' | '));
     // 没有角度判据的动作（跳跃离地）不标角度，避免画面全是数字
     texts.length = 0;
     api.renderer.draw({ landmarks, frame, exerciseId: 'jumpingJack', status: 'ok' });

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 通用识别引擎（engines.js）的自动化测试。
  *
  * 6 个经典动作由 exercises.js 里手写的识别器负责（见 test-detectors.mjs），
@@ -490,14 +490,14 @@ console.log('\n[1] bend 引擎：一次循环一次数');
     ok('仰卧抬腿：抬不够会提示「幅度再大一点」', hasCue(r, 'moreRange'), cuesOf(r).join(','));
   }
   {
-    // 用户要求：胯部大概到 90° 就可以计次，但不要太严格 ——
+    // 用户要求：髋关节大概到 90° 就可以计次，但不要太严格 ——
     //   抬到 100°（离垂直 10°）算一次；抬到 118°（差得远）不算，只提示
     const near = createDetector('lyingLegRaise');
     const rNear = makeFrameRunner(near);
     rNear.run(repeatF((p) => supineFrame({
       hipAngle: 178 + (100 - 178) * Math.sin(Math.PI * p), kneeAngle: 176,
     }), 1400, 4));
-    ok('仰卧抬腿：抬到胯部 100°（离垂直 10°）就计次（宽容到 105° 以内）',
+    ok('仰卧抬腿：抬到髋关节 100°（离垂直 10°）就计次（宽容到 105° 以内）',
       near.validReps === 4, `实际 ${near.validReps}`);
     ok('仰卧抬腿：抬到 100° 不误记半程', near.partialReps === 0, `实际 ${near.partialReps}`);
     const far = createDetector('lyingLegRaise');
@@ -509,7 +509,7 @@ console.log('\n[1] bend 引擎：一次循环一次数');
     ok('仰卧抬腿：只抬到 118° 会提示「幅度再大一点」', hasCue(rFar, 'moreRange'), cuesOf(rFar).join(','));
   }
   {
-    // 用户要求：腿放平、胯部接近 180° 就能开始下一次，也不要太严格 ——
+    // 用户要求：腿放平、髋关节接近 180° 就能开始下一次，也不要太严格 ——
     //   放回 160°（离躺平 18°）这一轮就该结算并计次，不会因为没完全放平而不算
     const det = createDetector('lyingLegRaise');
     const r = makeFrameRunner(det);

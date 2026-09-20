@@ -1,4 +1,4 @@
-﻿# Motion Fitness Game
+# Motion Fitness Game
 
 [中文](README.md) · [English](README.en.md)
 
@@ -71,7 +71,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   The drum kit is really synthesised (kick, snare, hats, claps), so the rhythm is much punchier than before, and the music ducks automatically while the coach is speaking.
 - **🦴 Skeleton toggle**: hide the skeleton overlay and keep just the camera view; the **angle labels** toggle independently —
   with them on, the app prints **the one angle that exercise is actually judged by** (knee/hip for the squat, elbow for the
-  push-up, and **“Hip”** — the torso-to-leg angle, labelled with the casual everyday word for the hip in Chinese — plus the knee for the lying leg raise), so you can see how far you
+  push-up, and **“Hip”** — the torso-to-leg angle — plus the knee for the lying leg raise), so you can see how far you
   are from the line while you move. Exercises judged by something that is not a joint angle (jumping jack, burpee, the jump
   family) print nothing, so the picture never fills up with numbers.
 - **Goal progress ring, best scores and workout history** (saved locally in your browser).
@@ -737,8 +737,8 @@ Timed family plans also give **+1 point for every second you hold**; if your for
 >   knee (which can still reach 90°), the voice reminds you to keep the leg straight — and that is **advice only, it never costs
 >   you a rep**. The tolerance is a **knee angle ≥ 130°** (the user asked for it to be forgiving: “anything above 130° is fine”),
 >   so it only speaks up once you bend past that, and the same line is listed under “form reminders” in the settings modal.
-> - in Chinese the on-screen angle label and the 🐞 metrics panel use the casual everyday word for the hip instead of the
->   clinical one for this exercise; every other exercise still says “hip”.
+> - the on-screen angle label and the 🐞 metrics panel use the same “Hip” wording as every other exercise — the whole app has one
+>   single name for this angle, with no per-exercise special case.
 
 > **How the jumping jack is judged**: face the camera and the “open/close” is measured as the **horizontal distance
 > between your knees** (`kneeSpread`, in torso lengths) — feet together reads about 0.35 and a wide jump about 1.5, so
@@ -874,8 +874,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 283 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
 | `tests/test-engines.mjs` | 158 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 848 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 353 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 356 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-page.mjs` | 354 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
+| `tests/test-app.mjs` | 355 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 

@@ -10,7 +10,7 @@ import {
 import { LandmarkSmoother, toMetric, clamp, LM } from './geometry.js';
 import { computeFrame } from './metrics.js';
 import { PoseEngine, Camera } from './pose-engine.js';
-import { PoseRenderer, angleLabelKey } from './render.js';
+import { PoseRenderer } from './render.js';
 import { AudioKit, TRACKS, getTrack, DEFAULT_TRACK } from './audio.js';
 import { Calibrator, requiredView } from './calibration.js';
 import {
@@ -1171,8 +1171,7 @@ function renderDebug(f) {
     `${t('debug.trunkLean')} ${n(f.trunkLean)}°`,
     `${t('debug.knee')} ${n(f.kneeAngle)}°`,
     `${t('debug.elbow')} ${n(f.elbowAngle)}°`,
-    // 仰卧抬腿判的是「腰腿夹角」：面板里也按用户习惯叫它「腰部角度」（同一个数字）
-    `${t(angleLabelKey(state.exerciseId, 'hip', 'debug.hip'))} ${n(f.hipAngle)}°`,
+    `${t('debug.hip')} ${n(f.hipAngle)}°`,
     `${t('debug.bodyStraight')} ${n(f.bodyStraight)}°`,
     `${t('debug.hipRise')} ${n(f.hipRise, 2)}`,
     `${t('debug.thighFromHoriz')} ${n(f.thighFromHoriz)}°`,

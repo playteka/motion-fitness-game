@@ -241,7 +241,6 @@ export default {
     knee: 'Knee',
     elbow: 'Elbow',
     hip: 'Hip',
-    crotch: 'Hip',
     bodyStraight: 'Body line',
     hipRise: 'Hip lift',
     thighFromHoriz: 'Thigh from horizontal',
