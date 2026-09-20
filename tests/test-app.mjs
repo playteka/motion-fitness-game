@@ -46,7 +46,7 @@ class El {
   constructor(tag = 'div', id = '') {
     this.tagName = tag.toUpperCase();
     this.id = id;
-    this.className = '';
+    this._className = '';
     this.classList = makeClassList();
     this.style = {};
     this.dataset = {};
@@ -72,6 +72,13 @@ class El {
   }
   get textContent() { return this._text; }
   set textContent(v) { this._text = String(v); }
+  // className 与 classList 在真实浏览器里是同一份数据：桩里也保持一致，
+  // 否则「用 className 赋值」的代码在测试里 classList.contains 会查不到
+  get className() { return [...this.classList._set].join(' '); }
+  set className(v) {
+    this.classList._set.clear();
+    for (const c of String(v).split(/\s+/)) if (c) this.classList._set.add(c);
+  }
   get innerHTML() { return this._html; }
   set innerHTML(v) { this._html = String(v); if (v === '') this.children = []; }
   appendChild(c) { this.children.push(c); return c; }
@@ -82,7 +89,13 @@ class El {
   setAttribute(k, v) { this.attributes[k] = String(v); if (k === 'class') this.className = String(v); }
   getAttribute(k) { return this.attributes[k] ?? null; }
   querySelector(sel) {
-    // 桩 DOM：给需要的子元素（例如圆环的 .ring-fill）稳定地返回同一个桩，便于断言它的样式
+    // 桩 DOM：先在自己的子元素里按 class / 标签找（进度条的 .criteria-seg-pts 就是这样被找到的），
+    // 找不到（例如 HTML 里写死的 .ring-fill）就退回一个稳定桩，便于断言它的样式
+    const cls = sel.startsWith('.') ? sel.slice(1) : null;
+    for (const c of this.children) {
+      const names = String(c.className || '').split(/\s+/);
+      if (cls ? names.includes(cls) : String(c.tagName || '').toLowerCase() === sel.toLowerCase()) return c;
+    }
     const key = `_q${sel}`;
     if (!this[key]) this[key] = new El('div', '');
     return this[key];
@@ -1162,11 +1175,17 @@ console.log('\n[8b] 判定进度条');
     }
     return f;
   };
-  const segs = () => elements.get('criteriaTrack').children;
-  const segHtml = () => elements.get('criteriaTrack').innerHTML;
-  /** 桩 DOM 不会解析 innerHTML，所以按字符串数格子（真实浏览器里就是子元素） */
-  const segCount = () => (segHtml().match(/<div class="[^"]*" data-i="/g) || []).length;
-  const segAt = (i) => (segHtml().match(new RegExp(`<div class="[^"]*" data-i="${i}"[^>]*>`)) || [''])[0];
+  // 进度条是**增量更新**的：格子是真实元素，只在换动作时重建一次。
+  // 所以断言直接看元素（class / 文本 / 属性），而不是 innerHTML 字符串。
+  const trackEl = () => elements.get('criteriaTrack');
+  const segs = () => trackEl().children;
+  const segCount = () => segs().length;
+  const segAt = (i) => segs()[i];
+  const segTip = (i) => (segAt(i)?.getAttribute('data-tip') || '');
+  const ptsEl = (i) => segAt(i)?.querySelector('.criteria-seg-pts');
+  const ptsText = (i) => (ptsEl(i)?.textContent || '');
+  const iconHtml = () => segs().map((c) => c.innerHTML).join('');
+  const segHtml = () => iconHtml();   // 图标标记（判据文字只在 data-tip 里）
 
   // 主页上不该出现（整页都没有视频框）
   api.showHome();
@@ -1191,14 +1210,13 @@ console.log('\n[8b] 判定进度条');
     && elements.get('criteriaBar').classList.contains('idle') === false);
   ok('进度条格数 = 这个动作的关键帧数', segCount() === squatStages.length,
     `${segCount()} vs ${squatStages.length}`);
-  const visibleText = segHtml().replace(/\sdata-tip="[^"]*"/g, '');
   ok('每一格画的是线条图标（svg），不是文字',
-    (segHtml().match(/<svg class="criteria-icon"/g) || []).length === segCount()
-    && !/[\u4e00-\u9fff]/.test(visibleText), segHtml().slice(0, 200));
+    (iconHtml().match(/<svg class="criteria-icon"/g) || []).length === segCount()
+    && !/[\u4e00-\u9fff]/.test(iconHtml()), iconHtml().slice(0, 200));
   ok('进度条上没有任何可见文字（格子只有图标）',
-    !/class="criteria-seg-(label|index)"/.test(segHtml()), segHtml().slice(0, 200));
+    !segs().some((c) => /criteria-seg-(label|index)/.test(String(c.className))), iconHtml().slice(0, 200));
   ok('悬停提示里带判据（图标看不出数值时能查）',
-    /data-tip="[^"]*(站姿|0\.86)[^"]*"/.test(segHtml()), segHtml().slice(0, 300));
+    segs().some((c, i) => /(站姿|0\.86)/.test(segTip(i))), segTip(0));
   api.hideCriteriaTip();
   ok('判据文字默认不显示（进度条上只有图标）', elements.get('criteriaTip').hidden === true);
   api.showCriteriaTip(1);
@@ -1212,8 +1230,8 @@ console.log('\n[8b] 判定进度条');
 
   // 站着不动：只点亮「站姿」这一格
   ok('站着时点亮「站姿」这一格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
-  ok('「站姿」那一格标记为已完成', /class="[^"]*done[^"]*" data-i="0"/.test(segAt(0)), segAt(0));
-  ok('下一格标记为正在等（current）', /class="[^"]*current[^"]*" data-i="1"/.test(segAt(1)), segAt(1));
+  ok('「站姿」那一格标记为已完成', segAt(0).classList.contains('done'), segAt(0).className);
+  ok('下一格标记为正在等（current）', segAt(1).classList.contains('current'), segAt(1).className);
 
   // 一路蹲下去：进度条一格一格往前走
   const walked = [];
@@ -1227,7 +1245,7 @@ console.log('\n[8b] 判定进度条');
     api.state.criteriaIdx === squatStages.length - 2,
     `${api.state.criteriaIdx + 1}/${squatStages.length}`);
   ok('最后一格是「回位」：蹲到底时它还没亮（说明它真的是「回到起始位」那一刻）',
-    !/class="[^"]*done[^"]*" data-i="3"/.test(segAt(3)), segAt(3));
+    !segAt(3).classList.contains('done'), segAt(3).className);
   // 站起来 → 最后一格亮，同时识别器计上这一次（「关键帧全做完 = 已经计次」）
   api.updateCriteria(frameOf(178), [], 1400);
   ok('站起来后最后一格也亮了（整条链走完）', api.state.criteriaIdx === squatStages.length - 1,
@@ -1238,7 +1256,7 @@ console.log('\n[8b] 判定进度条');
   api.updateCriteria(frameOf(178), [], 2000);
   api.updateCriteria(frameOf(100), [{ type: 'step', points: 7, index: 1, total: 5, labelKey: 'x' }], 2100);
   ok('这一步加到的分标在格子上',
-    segHtml().includes('+7'), segHtml());
+    segs().some((c, i) => ptsText(i).includes('+7')), segs().map((c, i) => ptsText(i)).join(','));
   ok('同时飘一下「+N」（数字，不带文字）',
     elements.get('criteriaEarned').textContent === '+7', elements.get('criteriaEarned').textContent);
 
@@ -1256,16 +1274,75 @@ console.log('\n[8b] 判定进度条');
     JSON.stringify(api.state.criteriaMax));
   api.updateCriteria(frameOf(178), [], 8000);
   ok('还没拿到分时，格子上用灰字标出「可得分数」',
-    /class="criteria-seg-pts max">\+4</.test(segHtml()), segHtml().slice(0, 400));
+    ptsText(0) === '+4' && ptsEl(0).className === 'criteria-seg-pts max',
+    `${ptsText(0)}/${ptsEl(0).className}`);
   api.updateCriteria(frameOf(178), [{ type: 'step', id: 'hinge', points: 6, index: 1, total: 5, labelKey: 'x' }], 8100);
   ok('得分项按映射落到对应关键帧（squat 的 hinge → 第 2 格「开始」）',
-    api.state.criteriaPts[1] === 6 && /data-i="1"[^>]*data-pts="6"/.test(segHtml()),
+    api.state.criteriaPts[1] === 6 && segAt(1).dataset.pts === '6',
     JSON.stringify(api.state.criteriaPts));
   ok('拿到分的那一格显示大号亮色数字（.earned）',
-    /class="criteria-seg-pts earned">\+6</.test(segHtml()), segHtml().slice(0, 400));
+    ptsText(1) === '+6' && ptsEl(1).className === 'criteria-seg-pts earned',
+    `${ptsText(1)}/${ptsEl(1).className}`);
   ok('得分不会跑到别的格子上',
     api.state.criteriaPts.filter((n, i) => i !== 1 && n > 0).length === 0,
     JSON.stringify(api.state.criteriaPts));
+
+  // —— 用户反馈「计分的时候进度条抖得厉害」：这里把「不重建 DOM」锁死 ——
+  {
+    const same = segs();
+    const iconsBefore = segs().map((c) => c.innerHTML);
+    const clsBefore = segs().map((c) => String(c.className));
+    // 连续加分 + 继续推进（真实计分时的连续变化）
+    api.updateCriteria(frameOf(178), [{ type: 'step', id: 'descend', points: 7, index: 2, total: 5, labelKey: 'x' }], 2200);
+    api.updateCriteria(frameOf(100), [], 2300);
+    api.updateCriteria(frameOf(100), [{ type: 'step', id: 'parallel', points: 14, index: 3, total: 5, labelKey: 'x' }], 2400);
+    ok('计分过程中进度条是同一批元素（重建 DOM 会让动画重放 = 抖）',
+      segs().length === same.length && segs().every((c, i) => c === same[i]), `${segs().length}`);
+    ok('计分过程中图标不会被重写（只有 class 和数字在变）',
+      segs().map((c) => c.innerHTML).join('|') === iconsBefore.join('|'));
+    ok('没被影响的格子 class 没被反复改写（只有 just 提示会移动）',
+      segs().every((c, i) => String(c.className).includes('criteria-seg'))
+      && iconsBefore.length === segs().length);
+    // 同一份状态重复渲染：一次 class 写入都不该发生（写入会打断动画 → 看起来就是抖）
+    let writes = 0;
+    for (const c of segs()) {
+      const orig = c.classList.toggle.bind(c.classList);
+      c.classList.toggle = (name, force) => {
+        const had = c.classList.contains(name);
+        const r = orig(name, force);
+        if (c.classList.contains(name) !== had) writes += 1;
+        return r;
+      };
+    }
+    api.renderCriteriaBar(2600);
+    ok('状态没变时一次 class 写入都没有（动画不会被打断）', writes === 0, String(writes));
+    // 同一份状态重复渲染：DOM 完全不动（幂等 → 动画不会被打断）
+    const clsNow = segs().map((c) => String(c.className));
+    const ptsNow = segs().map((c, i) => ptsText(i));
+    api.renderCriteriaBar(2500);
+    api.renderCriteriaBar(2501);
+    ok('状态没变时重复渲染不动任何一格（幂等）',
+      segs().map((c) => String(c.className)).join('|') === clsNow.join('|')
+      && segs().map((c, i) => ptsText(i)).join('|') === ptsNow.join('|'));
+
+    // 计时类每秒加分（抖动最明显的场景）同样不重建
+    api.openExercise('plank');
+    api.buildCriteriaBar();
+    api.state.session = 'running';
+    api.state.criteriaLive = true;
+    const holdEls = segs();
+    for (let i = 0; i < 5; i += 1) {
+      api.updateCriteria({ ok: true, torsoIncl: 70, shoulderClear: 0.6, wristClear: 0.4, hipLineDev: 0, bodyStraight: 175, kneeClear: 0.6, elbowAngle: 90 },
+        [{ type: 'points', points: 1, tick: true }], 3000 + i * 1000);
+    }
+    ok('计时类每秒加分时同样不重建 DOM（格子还是同一批元素）',
+      segs().length === holdEls.length && segs().every((c, i) => c === holdEls[i]), `${segs().length}`);
+    api.openExercise('squat');
+    api.buildCriteriaBar();
+    api.state.session = 'running';
+    api.state.criteriaLive = true;
+    api.updateCriteria(frameOf(178), [], 4000);
+  }
   api.showCriteriaTip(1);
   ok('悬停提示里带上这一格的分数',
     /\+6/.test(elements.get('criteriaTip').innerHTML), elements.get('criteriaTip').innerHTML);
@@ -1525,8 +1602,9 @@ console.log('\n[8d] 每个动作做完一组都有两个圆环');
 console.log('\n[8e] 开合跳');
 {
   const api = windowStub.__mfg;
-  const segHtml = () => elements.get('criteriaTrack').innerHTML;
-  const segCount = () => (segHtml().match(/<div class="[^"]*" data-i="/g) || []).length;
+  const segEls = () => elements.get('criteriaTrack').children;
+  const segCount = () => segEls().length;
+  const iconHtml = () => segEls().map((c) => c.innerHTML).join('');
 
   const cards = documentStub.querySelectorAll('.ex-card').map((c) => c.dataset.id);
   ok('主页动作墙里有开合跳', cards.includes('jumpingJack'), cards.join(','));
@@ -1544,7 +1622,7 @@ console.log('\n[8e] 开合跳');
   api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, kneeSpread: 0.35 }, [], 1000);
   ok('开合跳进度条 = 4 格（并拢 → 打开 → 开到最大 → 收回）', segCount() === 4, String(segCount()));
   ok('开合跳每一格都画了图标（正面开合的火柴人）',
-    (segHtml().match(/<svg class="criteria-icon"/g) || []).length === 4);
+    (iconHtml().match(/<svg class="criteria-icon"/g) || []).length === 4, iconHtml().slice(0, 120));
   ok('站着并拢时只点亮「站立」这一格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
   ok('跳开之后进度条往前走（打开 → 开到最大，收回那一格要等真的并拢才亮）', (() => {
     api.state.detector.progress = 0.33;

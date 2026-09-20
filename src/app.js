@@ -111,6 +111,7 @@ const state = {
   criteriaLive: false,   // 这一帧识别到人体了没（决定进度条是灰色还是彩色）
   criteriaLostSince: 0,  // 从什么时候开始没识别到人（丢帧宽限用）
   criteriaIcons: [],     // 每一格的线条图标（SVG 字符串，重建时生成一次）
+  criteriaEls: [],       // 每一格的真实元素（{root, icon, pts}）—— 增量更新用，不在计分时重建
   criteriaContext: null, // 生成图标用的上下文（动作姿势/计划/门控）
   // ---- 计时类读秒（每 5 秒播报一次）----
   holdCountNext: 5,      // 下一个要读的秒数（5 / 10 / 15 …）
@@ -747,8 +748,38 @@ function buildCriteriaBar() {
     const shown = fullIdx >= 0 ? state.criteriaStages.indexOf(ctx.stages[fullIdx]) : -1;
     state.criteriaStepStage[def.id] = shown;
   }
+  // **只在换动作时建一次 DOM**：之后每一帧只改 class 和数字。
+  // 为什么：以前每次「点亮一格 / 加分」都重建整条 innerHTML —— 元素被换掉，
+  // 过渡和弹出动画（呼吸、对勾、分数弹出）就从头再放一遍，看起来就是「进度条一直在抖」。
+  buildCriteriaSegments();
   resetCriteriaProgress();
   renderCriteriaBar();
+}
+
+/** 把这条判据链的格子建出来（图标、判据提示都写一次；状态由 renderCriteriaBar 增量更新） */
+function buildCriteriaSegments() {
+  const track = $('criteriaTrack');
+  state.criteriaEls = [];
+  if (!track) return;
+  track.innerHTML = '';
+  state.criteriaStages.forEach((s, i) => {
+    const seg = document.createElement('div');
+    seg.className = 'criteria-seg';
+    seg.dataset.i = String(i);
+    seg.dataset.done = '0';
+    seg.dataset.pts = '0';
+    // 悬停提示里给完整判据 + 这一格的分数（画面上不写文字，鼠标移上去/触摸才知道这一步要什么）
+    const tip = [stageText(s).short, stageText(s).cond, criteriaPointsText(i)].filter(Boolean).join(' · ');
+    seg.setAttribute('data-tip', tip);
+    seg.innerHTML = state.criteriaIcons[i] || '';   // 线条图标（只在这里写一次）
+
+    const pts = document.createElement('span');
+    pts.className = 'criteria-seg-pts';
+    seg.appendChild(pts);
+
+    track.appendChild(seg);
+    state.criteriaEls.push({ root: seg, pts });
+  });
 }
 
 /**
@@ -878,7 +909,17 @@ function updateCriteria(frame, events, now) {
   renderCriteriaBar(now);
 }
 
-/** 画进度条（只有状态变化时才真的改 DOM，避免每帧重排）—— 格子上只有线条图标，不写文字 */
+/**
+ * 画进度条：**增量更新**，一格一格地只改该改的东西。
+ *
+ * 用户反馈「计分的时候进度条抖得厉害」——根因就是这里以前每次状态变化都重建整条 innerHTML：
+ * 元素被换掉，过渡（背景/边框 0.18s）、呼吸动画、对勾、以及分数数字的弹出动画都会**从头再放一遍**，
+ * 一秒一次（计时类每秒加分）就成了肉眼可见的抖动。
+ * 现在：
+ *   - 格子元素只在换动作时建一次（见 buildCriteriaSegments）；
+ *   - class 与数字**只有真的变了才写**，动画因此只在自己该播的时候播一次；
+ *   - 上面那条「本帧 +N」的牌子也只在分数变化时更新。
+ */
 function renderCriteriaBar(now = performance.now()) {
   const bar = $('criteriaBar');
   const track = $('criteriaTrack');
@@ -890,37 +931,38 @@ function renderCriteriaBar(now = performance.now()) {
   const live = !!state.criteriaLive;
   const active = state.session === 'running' && live;
   $('stage').classList.toggle('has-criteria', visible);
-  bar.hidden = !visible;
+  if (bar.hidden === visible) bar.hidden = !visible;   // 没变就别写属性（每帧都跑）
   if (!visible) return;
-  bar.classList.toggle('idle', !active);
-  bar.classList.toggle('active', active);
+  if (bar.classList.contains('idle') === active) bar.classList.toggle('idle', !active);
+  if (bar.classList.contains('active') !== active) bar.classList.toggle('active', active);
 
   const cleared = criteriaCleared(now);
-  bar.classList.toggle('reset', cleared && active);
+  const wantReset = cleared && active;
+  if (bar.classList.contains('reset') !== wantReset) bar.classList.toggle('reset', wantReset);
 
-  // 状态没变就不动 DOM
-  const sig = [
-    state.exerciseId, state.criteriaIdx, state.criteriaJust, state.criteriaJustPts,
-    state.criteriaPts.join(','), cleared ? 'c' : '', active ? 'a' : 'i',
-  ].join('|');
-  if (track.dataset.sig !== sig) {
-    track.dataset.sig = sig;
-    track.innerHTML = stages.map((s, i) => {
-      const done = i <= state.criteriaIdx;
-      const earned = state.criteriaPts[i] || 0;
-      const row = state.criteriaMax?.[i] || { points: 0, bonus: 0, perSecond: 0 };
-      const max = (row.points || 0) + (row.bonus || 0);
-      const cls = `criteria-seg${done ? ' done' : ''}${active && i === state.criteriaIdx + 1 ? ' current' : ''}`
-        + `${i === state.criteriaJust || i === state.criteriaJustPts ? ' just' : ''}`;
-      // 格子上显示这一格的分：**真的拿到**了就是大号亮色数字，还没拿到的用灰色小字标出「可得」
-      const ptsCls = earned > 0 ? 'criteria-seg-pts earned' : 'criteria-seg-pts max';
-      const ptsText = earned > 0 ? `+${earned}` : (max > 0 ? `+${max}` : '');
-      // 悬停提示里给完整判据 + 这一格的分数（画面上不写文字，鼠标移上去/触摸才知道这一步要什么）
-      const tip = [stageText(s).short, stageText(s).cond, criteriaPointsText(i)].filter(Boolean).join(' · ');
-      return `<div class="${cls}" data-i="${i}" data-done="${done ? 1 : 0}" data-pts="${earned}" data-max="${max}" data-tip="${esc(tip)}">`
-        + (state.criteriaIcons?.[i] || '')
-        + `<span class="${ptsCls}">${ptsText}</span></div>`;
-    }).join('');
+  const els = state.criteriaEls || [];
+  for (let i = 0; i < els.length; i++) {
+    const el = els[i];
+    if (!el) continue;
+    const done = i <= state.criteriaIdx;
+    const earned = state.criteriaPts[i] || 0;
+    const row = state.criteriaMax?.[i] || { points: 0, bonus: 0, perSecond: 0 };
+    const max = (row.points || 0) + (row.bonus || 0);
+    // 用 classList.toggle(name, force)：状态没变时浏览器不会改写 class 属性，
+    // 于是过渡与动画不会重放（直接赋值 className 每次都算一次改动）
+    el.root.classList.toggle('done', done);
+    el.root.classList.toggle('current', !!active && i === state.criteriaIdx + 1);
+    el.root.classList.toggle('just', i === state.criteriaJust || i === state.criteriaJustPts);
+    const doneStr = done ? '1' : '0';
+    if (el.root.dataset.done !== doneStr) el.root.dataset.done = doneStr;
+    const ptsStr = String(earned);
+    if (el.root.dataset.pts !== ptsStr) el.root.dataset.pts = ptsStr;
+    // 格子上显示这一格的分：**真的拿到**了就是大号亮色数字，还没拿到的用灰色小字标出「可得」
+    const got = earned > 0;
+    const ptsText = got ? `+${earned}` : (max > 0 ? `+${max}` : '');
+    if (el.pts.textContent !== ptsText) el.pts.textContent = ptsText;
+    el.pts.classList.toggle('earned', got);
+    el.pts.classList.toggle('max', !got);
   }
 }
 

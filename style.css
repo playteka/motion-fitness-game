@@ -551,7 +551,7 @@ kbd {
 .criteria-bar.idle .criteria-seg { border-color: rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); }
 /* 识别到人且正在计数：彩色状态，表示「已经开始工作」 */
 .criteria-bar.active { border-color: rgba(56, 189, 248, 0.35); }
-.criteria-head { display: flex; justify-content: flex-end; margin-bottom: 2px; min-height: 0; }
+.criteria-head { display: flex; justify-content: flex-end; margin-bottom: 2px; min-height: 16px; }
 .criteria-earned {
   font-size: 13px;
   font-weight: 800;

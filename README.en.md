@@ -438,6 +438,13 @@ Take the lunge (each segment holds the real threshold from the code):
 - **Matching feedback**: lighting a segment plays a light chime that rises step by step (the last one adds an octave); when
   a step earns points that segment pops and a “+N” floats up above the bar. Points only appear when the detector really
   awards them — the bar never jumps the gun just because a pose looks right.
+- **The bar never jitters**: the segments are **built once**, and each frame only updates the class and the number of the
+  segment that actually changed. It used to rebuild the whole bar's HTML on every point or advance, which swapped the
+  elements out and replayed the colour transition, the breathing highlight, the tick and the score pop **from the start** —
+  once a second (timed exercises score every second) that is a visible jitter. Now a frame with no state change performs
+  **zero DOM writes** (guarded by two assertions in `tests/test-app.mjs`: “class change count = 0” and “the elements are
+  always the same ones”), and the “+N this frame” label above the bar has a fixed height so it can no longer push the whole
+  bar down when it appears.
 - **How many segments** (segments drawn identically are merged, so you never see a “fake second step”):
   squat 4 (stand → half squat → squat → back to standing); lunge 5 (stand → step → sink → back knee down → back to standing);
   push-up 4 (plank → elbow ≤146° → count at ≤138° or a 0.14 shoulder drop → back at the top);
@@ -847,8 +854,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 283 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 794 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 345 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 344 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-page.mjs` | 349 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
+| `tests/test-app.mjs` | 350 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 

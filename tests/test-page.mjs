@@ -236,6 +236,21 @@ console.log('\n[3] 静态资源与模型文件');
   ok('计时归零时读秒重新装填（下一组从 5 秒开始）',
     /sec <= 0[\s\S]{0,80}holdCountNext = HOLD_COUNT_EVERY/.test(appSrc));
 
+  /* ---- 进度条不抖动：增量更新，不在计分时重建 DOM（用户反馈「计分时抖得厉害」） ---- */
+  ok('进度条 DOM 只在换动作时建一次（buildCriteriaBar 里建、renderCriteriaBar 里只改状态）',
+    /function buildCriteriaSegments\(\)/.test(appSrc)
+    && /buildCriteriaSegments\(\);/.test(appSrc)
+    && !/function renderCriteriaBar[\s\S]{0,2200}innerHTML/.test(appSrc),
+    '渲染函数里不该再出现 innerHTML');
+  ok('格子状态用 classList.toggle 增量更新（状态不变时浏览器不会改写 class）',
+    /classList\.toggle\('done', done\)/.test(appSrc)
+    && /classList\.toggle\('current'/.test(appSrc)
+    && /classList\.toggle\('just'/.test(appSrc));
+  ok('分数数字只在变化时才写（否则弹出动画每次都会重放）',
+    /if \(el\.pts\.textContent !== ptsText\) el\.pts\.textContent = ptsText;/.test(appSrc));
+  ok('「本帧 +N」牌子的高度固定（出现时不会把整条进度条顶下去）',
+    /\.criteria-head\s*\{[^}]*min-height:\s*1[0-9]px/.test(css));
+
   // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面
   const stageAt = html.indexOf('id="stage"');
   const toolbarAt = html.indexOf('class="stage-toolbar"');
