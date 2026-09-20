@@ -113,6 +113,8 @@ const ctxCounts = {
   translate: 0, scale: 0, scaleX: null,
   strokeStyle: null, globalAlpha: null, lineWidth: null,
 };
+/** 画面上真正写出来的文字（角度标注等）——按用例清空后断言 */
+const texts = [];
 const ctxStub = {
   clearRect() {}, beginPath() {}, closePath() {}, save() {}, restore() {}, setLineDash() {},
   arcTo() {},
@@ -130,7 +132,7 @@ const ctxStub = {
   },
   fill() { ctxCounts.fill += 1; },
   arc() { ctxCounts.arc += 1; },
-  fillText() { ctxCounts.fillText += 1; },
+  fillText(txt) { ctxCounts.fillText += 1; texts.push(String(txt)); },
   measureText: () => ({ width: 40 }),
 };
 const resetCtxCounts = () => { for (const k of Object.keys(ctxCounts)) ctxCounts[k] = 0; };
@@ -717,6 +719,36 @@ console.log('\n[6] 火柴人开关');
   ok('打开镜像后渲染器标志位跟着开', api.renderer.mirror === true);
   // 两次点击后回到默认（镜像开着），后面的用例继续按原状态跑
   ok('镜像开关与设置项保持一致', api.state.settings.mirror === true && api.renderer.mirror === true);
+
+  /* ---- 画面上的角度标注：每个动作标出它真正的判据角 ---- */
+  {
+    const { supinePose: liePose } = await import('./synthetic-pose.mjs');
+    // 仰卧抬腿：判据是「腰腿夹角」，画面上要像别的动作标膝关节那样标出来（用户要求）
+    const smLie = new LS();
+    const lie = liePose({ hip: { x: 0.75, y: 0.9 }, knee: 176, armDown: 90 });
+    let lieFrame = { ok: false };
+    for (let i = 0; i < 20; i++) lieFrame = cf(tm(smLie.apply(lie.map((q) => ({ ...q, v: q.visibility })), i / 30), A), null, i * 33, false, null);
+    api.renderer.mirror = false;
+    api.renderer.showAngles = true;
+    texts.length = 0;
+    api.renderer.draw({ landmarks: lie, frame: lieFrame, exerciseId: 'lyingLegRaise', status: 'ok' });
+    ok('仰卧抬腿：画面上标出「腰部角度」',
+      texts.some((x) => x.includes('腰部角度')), texts.join(' | '));
+    ok('仰卧抬腿：腰腿夹角就是判据那个数字（0~180°）',
+      texts.some((x) => /腰部角度\s+\d+°/.test(x) && Number(/(\d+)°/.exec(x)[1]) > 0), texts.join(' | '));
+    ok('仰卧抬腿：同时标出膝角（用来看腿有没有绷直）',
+      texts.some((x) => x.includes('膝')), texts.join(' | '));
+    // 别的动作仍然叫「髋」——不要把所有动作都改名
+    texts.length = 0;
+    api.renderer.draw({ landmarks, frame, exerciseId: 'squat', status: 'ok' });
+    ok('深蹲仍然标「髋」而不是「腰部角度」',
+      texts.some((x) => x.startsWith('髋')) && !texts.some((x) => x.includes('腰部角度')), texts.join(' | '));
+    // 没有角度判据的动作（跳跃离地）不标角度，避免画面全是数字
+    texts.length = 0;
+    api.renderer.draw({ landmarks, frame, exerciseId: 'jumpingJack', status: 'ok' });
+    ok('判据不是关节角的动作（开合跳）不标角度', texts.length === 0, texts.join(' | '));
+    api.renderer.mirror = true;
+  }
 
   // 按钮联动
   api.renderer.showSkeleton = true;

@@ -243,6 +243,7 @@ export default {
     knee: '膝',
     elbow: '肘',
     hip: '髋',
+    waist: '腰部角度',
     bodyStraight: '身体直线',
     hipRise: '髋抬起',
     thighFromHoriz: '大腿离水平',

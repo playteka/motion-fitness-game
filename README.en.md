@@ -69,7 +69,11 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - **🎶 Four selectable background tracks**: all synthesised live (no space taken, no internet needed) — pick one under “🎵 Background track” in the settings:
   **City Run** (132 BPM, light and swinging) / **Neon Pulse** (144 BPM, four-on-the-floor electronic) / **Sunrise Funk** (122 BPM, funky syncopation) / **Power Drive** (152 BPM, driving rock).
   The drum kit is really synthesised (kick, snare, hats, claps), so the rhythm is much punchier than before, and the music ducks automatically while the coach is speaking.
-- **🦴 Skeleton toggle**: hide the skeleton overlay and keep just the camera view; the angle labels toggle independently.
+- **🦴 Skeleton toggle**: hide the skeleton overlay and keep just the camera view; the **angle labels** toggle independently —
+  with them on, the app prints **the one angle that exercise is actually judged by** (knee/hip for the squat, elbow for the
+  push-up, and **“Waist angle”** — the torso-to-leg angle — plus the knee for the lying leg raise), so you can see how far you
+  are from the line while you move. Exercises judged by something that is not a joint angle (jumping jack, burpee, the jump
+  family) print nothing, so the picture never fills up with numbers.
 - **Goal progress ring, best scores and workout history** (saved locally in your browser).
 - **Works offline**: the model and wasm are local files, so it runs with no internet at all — and no video is ever uploaded.
 
@@ -864,8 +868,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 283 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
 | `tests/test-engines.mjs` | 149 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 845 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 349 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 350 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-page.mjs` | 353 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
+| `tests/test-app.mjs` | 355 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 
