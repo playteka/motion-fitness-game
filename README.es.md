@@ -364,9 +364,34 @@ Con el buscador de arriba puedes encontrar un ejercicio directamente por su nomb
   🎯 **Ajustes del ejercicio** (solo para este ejercicio) junto a ⚙️ **Ajustes** (globales).
 - **🎯 Ajustes del ejercicio** (solo aparece en la página del ejercicio, al lado de ⚙️): una ventana reúne el objetivo y los criterios
   de este ejercicio — la meta de la serie (casilla numérica y valores rápidos), el criterio de conteo (relajado / estricto, el mismo
-  interruptor que en ⚙️), además del **criterio de detección** y la **posición de la cámara** de este ejercicio. La tarjeta
-  «② Fija el objetivo» del panel lateral se queda con una línea de resumen y su botón abre esta misma ventana.
+  interruptor que en ⚙️), el **criterio de detección**, la **posición de la cámara** y los **📐 umbrales de conteo** de abajo.
+  La tarjeta «② Fija el objetivo» del panel lateral se queda con una línea de resumen y su botón abre esta misma ventana.
 - Un ejercicio que pertenece a dos categorías (la sentadilla con salto) aparece en los dos bloques, pero al entrar es el mismo ejercicio.
+
+## 📐 Umbrales de conteo (dentro de la ventana de ajustes del ejercicio)
+
+La ventana de ajustes de cada ejercicio enumera **los criterios que el detector está usando ahora mismo**: cuánto hay que hacer para
+que cuente una repetición, qué es profundidad completa, qué se considera un simple balanceo, dónde hay que volver y qué postura se exige.
+
+Con la zancada como ejemplo (los números son las constantes del código):
+
+| Grupo | Umbral | Criterio |
+|---|---|---|
+| Conteo | Cuenta como repetición (modo relajado) | Flexión de la rodilla delantera ≤ 152° |
+| Conteo | Se pliegan las dos rodillas (la pierna más estirada) | ≤ 158°, o 12° por debajo de tu ángulo de pie |
+| Conteo | Profundidad completa (puntos máximos) | Flexión de la rodilla delantera ≤ 128° |
+| Conteo | Vuelta al inicio (fin de la repetición) | Subir un 60% desde el punto más bajo, o 8° por encima |
+| Conteo | Duración mínima de la repetición | ≥ 0,45 s |
+| Postura | Posición de pie | Inclinación del tronco ≤ 52°, rodilla ≥ 0,28× torso, cadera ≥ 0,55× torso |
+| Aviso | Rodilla de atrás cerca del suelo (solo voz, no quita repeticiones) | Rodilla de atrás ≤ 0,66× pantorrilla |
+
+> **Estos números no son una explicación aparte: salen de las constantes que el detector usa de verdad** (ver `src/specs.js`):
+> los detectores escritos a mano leen las tablas `SQUAT / LUNGE / PUSHUP / BRIDGE / PLANK`, los motores genéricos leen el
+> `up / down` y los progresos `enter / bottom / loose / ignore` de cada ejercicio en `catalog.js`, el control de postura lee
+> `GATE_LIMITS` en `engines.js` (la misma tabla que se usa para decidir) y los ejercicios con cronómetro leen
+> `HOLD_PRIME_MS / HOLD_GRACE_MS`. Si cambias un umbral, la ventana cambia sola: la pantalla nunca puede decir algo que el
+> detector no haga. `tests/test-specs.mjs` devuelve estos números **al propio detector** en cada ejecución: la línea de conteo
+> mostrada tiene que caer exactamente en la línea de progreso del detector (379 comprobaciones).
 
 ## Ventana de ajustes (idioma / modelo / sonido)
 
@@ -656,10 +681,11 @@ El historial de entrenamientos y las mejores marcas se guardan en el localStorag
 ## Pruebas
 
 ```bash
-npm test                       # las cinco suites juntas (965 pruebas)
+npm test                       # las seis suites juntas (1356 pruebas)
 npm run test:i18n              # idiomas: claves ausentes / sin traducir / marcadores / arrays / chino escrito a fuego en el código / estructura de los cuatro README
 npm run test:detectors         # lógica de detección y puntuación de los cinco detectores escritos a mano (con esqueletos sintéticos)
 npm run test:engines           # motores de reconocimiento genéricos (flexión-extensión / alternancia / giro / movimiento por fases / cronómetro + control de postura)
+npm run test:specs             # los umbrales que muestra la ventana deben coincidir con las líneas que usan de verdad los detectores
 npm run test:dump              # imprime además las métricas de postura de referencia, para ajustar umbrales
 npm run test:page              # autochequeo del cableado de la página (ids del DOM / imports / recursos estáticos / catálogo de 22 ejercicios y lista de categorías)
 npm run test:app               # prueba de integración: app.js real cargado sobre un DOM mínimo de prueba
@@ -670,8 +696,9 @@ npm run test:app               # prueba de integración: app.js real cargado sob
 | `tests/test-i18n.mjs` | 32 | Estructura de claves idéntica en los cuatro idiomas, sin traducciones pendientes, mismos marcadores y misma longitud de arrays, sin chino escrito a fuego en el código fuente y estructura idéntica en los cuatro documentos |
 | `tests/test-detectors.mjs` | 247 | Conteo, cronómetro, puntos por paso y orden de puntuación de los cinco detectores escritos a mano, tanto con el ejercicio bien hecho como con todo tipo de errores, el criterio de profundidad con la cámara inclinada, además de las comprobaciones de la calibración previa |
 | `tests/test-engines.mjs` | 141 | Motores genéricos: un ciclo y una repetición, permisivo frente a estricto, los límites del balanceo y de la velocidad excesiva, control de postura, despegue del suelo en los saltos, alternancia de lados, secuencia completa y pausa y reanudación del cronómetro |
+| `tests/test-specs.mjs` | 379 | Devuelve los números que muestra la ventana a los propios detectores: la línea de conteo mostrada debe caer exactamente en su línea de progreso; los valores de postura vienen de la misma tabla que decide; los 22 ejercicios tienen umbrales; los cuatro idiomas están completos |
 | `tests/test-page.mjs` | 310 | Cableado del DOM, importación y exportación de módulos, recursos estáticos, lista de categorías de los 22 ejercicios e integridad de los planes de puntuación |
-| `tests/test-app.mjs` | 235 | Arranque del `app.js` real, renderizado de la página de inicio, las ventanas de ajustes del ejercicio y de ajustes generales, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
+| `tests/test-app.mjs` | 247 | Arranque del `app.js` real, renderizado de la página de inicio, las ventanas de ajustes del ejercicio (umbrales de conteo incluidos) y de ajustes generales, flujo de calibración, cambio de ejercicio, puntuación, sonidos, resumen y cambio de idioma |
 
 ---
 

@@ -368,9 +368,34 @@ The search box at the top finds exercises by name directly (type “push” or �
   🎯 **Exercise settings** (this exercise only) next to ⚙️ **Settings** (global).
 - **🎯 Exercise settings** (shown on the exercise page only, side by side with ⚙️): one modal gathers this exercise's target and
   judging rules — the set target (number box plus preset buttons), the counting rule (relaxed / strict, the very same switch as in ⚙️),
-  plus this exercise's **judging basis** and **camera hint**. The “② Set target” card in the side panel keeps just a one-line
-  target readout, and its button opens the same modal.
+  this exercise's **judging basis**, its **camera hint**, and the **📐 counting thresholds** below.
+  The “② Set target” card in the side panel keeps just a one-line target readout, and its button opens the same modal.
 - An exercise that belongs to two categories (Jump Squat) appears in both blocks, and either card opens the same exercise.
+
+## 📐 Counting thresholds (inside the exercise-settings modal)
+
+The exercise-settings modal of every exercise lists **the rules the detector is using right now**: how far a rep has to go to count,
+what counts as full depth, what is treated as a mere wobble, where the rep has to return to, and what posture is required.
+
+Take the lunge (the numbers are the constants in the code):
+
+| Group | Threshold | Rule |
+|---|---|---|
+| Counting | Counts as one rep (relaxed mode) | Front knee bend ≤ 152° |
+| Counting | Both knees must bend (the straighter leg) | ≤ 158°, or 12° below your own standing angle |
+| Counting | Full depth (earns full depth points) | Front knee bend ≤ 128° |
+| Counting | Back to the start position (rep ends) | Rise 60% of the way back from this rep’s deepest point, or 8° above it |
+| Counting | Shortest rep time | ≥ 0.45 s |
+| Posture | Standing position | Trunk tilt ≤ 52°, knee height off the floor ≥ 0.28× torso, hip height ≥ 0.55× torso |
+| Form reminder | Back knee close to the floor (spoken only, never costs reps) | Back-knee height off the floor ≤ 0.66× shin |
+
+> **These numbers are not a separate write-up — they are read out of the constants the detector actually uses** (see `src/specs.js`):
+> the hand-written detectors read the threshold tables `SQUAT / LUNGE / PUSHUP / BRIDGE / PLANK`, the generic engines read each
+> exercise's `up / down` and `enter / bottom / loose / ignore` progress from `catalog.js`, the posture gates read `GATE_LIMITS`
+> in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
+> Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
+> `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
+> exactly on the detector's own progress line (379 assertions).
 
 ## Settings modal (language / model / sound)
 
@@ -662,10 +687,11 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all five suites (965 cases)
+npm test                       # run all six suites (1356 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / README structure of all four files
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
+npm run test:specs             # the counting thresholds shown in the modal must equal the lines the detectors actually use
 npm run test:dump              # also prints baseline posture metrics, handy for tuning thresholds
 npm run test:page              # page wiring self-check (DOM ids / module imports / static assets / exercise catalogue and category lists)
 npm run test:app               # integration test that loads the real app.js with a minimal DOM stub
@@ -676,8 +702,9 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-i18n.mjs` | 32 | Identical key structure across all four languages, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across all four READMEs |
 | `tests/test-detectors.mjs` | 247 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, plus the pre-workout calibration checks |
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
+| `tests/test-specs.mjs` | 379 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; all four languages are complete |
 | `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 235 | Startup with the real `app.js`, home-page rendering, both the exercise-settings and settings modals, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
+| `tests/test-app.mjs` | 247 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the calibration flow, exercise switching, scoring, sound, the set summary and language switching |
 
 ---
 

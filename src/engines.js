@@ -20,11 +20,82 @@ import { DetectorBase, HoldDetector } from './detector-base.js';
  * 姿势门控
  * ------------------------------------------------------------------ */
 
+/**
+ * 门控阈值表：`[最小值, 最大值]`，null 表示这一侧不限制。
+ *
+ * 为什么单独抽成表：🎯「运动设定」弹窗要把**真正用于判定的数值**显示给用户
+ *（比如「肩离地 ≥ 0.10×躯干长」）。如果界面自己抄一份数字，改了识别逻辑就会出现
+ * 「界面说的和实际判的不一样」。这里一处定义，下面的 GATES 用它判定，
+ * specs.js 用它生成界面文案，两边永远一致。
+ *
+ * 只收录动作库里真的用到的门控（其余门控仍是就地写死的判定）。
+ */
+export const GATE_LIMITS = {
+  /** 站立（膝盖离地、髋在膝上方） */
+  stand: {
+    torsoIncl: [null, 52],
+    kneeClear: [0.28, null],
+    hipClear: [0.55, null],
+  },
+  /** 站立 + 双腿分开（相扑深蹲） */
+  standWide: {
+    torsoIncl: [null, 52],
+    kneeClear: [0.28, null],
+    hipClear: [0.55, null],
+    ankleSpread: [0.35, null],
+  },
+  /** 俯撑（俯卧撑 / 平板 / 登山者）：躯干接近水平 + 肩离地 + 手在地面 */
+  prone: {
+    torsoIncl: [32, null],
+    shoulderClear: [0.10, null],
+    wristClearMin: [null, 0.95],
+  },
+  /** 仰卧屈膝（臀桥 / 卷腹）：肩离地高度放宽到 0.95，卷腹卷高了也算 */
+  supine: {
+    torsoIncl: [36, null],
+    shoulderClear: [null, 0.95],
+    kneeClear: [0.15, null],
+  },
+  /** 仰卧（腿可以伸直：仰卧抬腿 / 死虫式） */
+  supineLow: {
+    torsoIncl: [36, null],
+    shoulderClear: [null, 0.6],
+  },
+  /** 侧卧（侧平板）：横着躺 + 肩/髋离地 + 手撑地 */
+  sideLying: {
+    torsoIncl: [55, null],
+    shoulderClear: [0.12, null],
+    hipClear: [0.08, null],
+    wristClearMin: [null, 0.6],
+  },
+  /** 站立体前屈：站着但躯干往前折 */
+  standFold: {
+    torsoIncl: [55, null],
+    hipClear: [0.65, null],
+  },
+  /** 坐姿体前屈：坐着 + 躯干往前折 */
+  seatedFold: {
+    hipClear: [null, 0.9],
+    torsoIncl: [40, null],
+  },
+};
+
+/** 区间判定：null 表示该侧不限制 */
+export function inLimit(v, [min, max]) {
+  if (!Number.isFinite(v)) return false;
+  if (min !== null && v < min) return false;
+  if (max !== null && v > max) return false;
+  return true;
+}
+
 export const GATES = {
   /** 站立（膝盖离地、髋在膝上方） */
-  stand: (f) => f.torsoIncl < 52 && f.kneeClear > 0.28 && f.hipClear > 0.55,
+  stand: (f) => inLimit(f.torsoIncl, GATE_LIMITS.stand.torsoIncl)
+    && inLimit(f.kneeClear, GATE_LIMITS.stand.kneeClear)
+    && inLimit(f.hipClear, GATE_LIMITS.stand.hipClear),
   /** 站立 + 双腿分开（相扑深蹲 / 侧向箭步蹲） */
-  standWide: (f) => GATES.stand(f) && f.ankleSpread > 0.35,
+  standWide: (f) => GATES.stand(f)
+    && inLimit(f.ankleSpread, GATE_LIMITS.standWide.ankleSpread),
   /** 单腿站立（手枪深蹲 / 单腿硬拉）：另一条腿离地或明显抬起 */
   standOneLeg: (f) => GATES.stand(f)
     && (Math.abs(f.perSide.L.kneeY - f.perSide.R.kneeY) > 0.06 * f.torsoLen
@@ -36,9 +107,12 @@ export const GATES = {
   /** 站立 + 手臂交叉在身前（肩部拉伸） */
   standArmCross: (f) => GATES.stand(f) && f.elbowBent < 125,
   /** 站立体前屈：站着但躯干往前折 */
-  standFold: (f) => f.torsoIncl > 55 && f.hipClear > 0.65,
+  standFold: (f) => inLimit(f.torsoIncl, GATE_LIMITS.standFold.torsoIncl)
+    && inLimit(f.hipClear, GATE_LIMITS.standFold.hipClear),
   /** 俯撑（俯卧撑 / 平板 / 登山者）：躯干接近水平 + 手在地面 */
-  prone: (f) => f.torsoIncl > 32 && f.shoulderClear > 0.10 && f.wristClearMin < 0.95,
+  prone: (f) => inLimit(f.torsoIncl, GATE_LIMITS.prone.torsoIncl)
+    && inLimit(f.shoulderClear, GATE_LIMITS.prone.shoulderClear)
+    && inLimit(f.wristClearMin, GATE_LIMITS.prone.wristClearMin),
   /** 手撑在椅子/台阶上的俯撑（上斜俯卧撑） */
   proneHigh: (f) => f.torsoIncl > 20 && f.shoulderClear > 0.10 && f.wristClearMin < 1.5,
   /** 俯卧在地面（超人式 / 青蛙趴 / 婴儿式） */
@@ -49,9 +123,12 @@ export const GATES = {
   /** 仰卧屈膝（臀桥 / 卷腹）
    *  肩离地高度给到 0.95 倍躯干长：卷腹本来就要把肩胛骨卷离地面（能到 0.7~1.0），
    *  卡在 0.6 会把「卷得高」的正常动作挡在门外（反而吃不到次数）。 */
-  supine: (f) => f.torsoIncl > 36 && f.shoulderClear < 0.95 && f.kneeClear > 0.15,
+  supine: (f) => inLimit(f.torsoIncl, GATE_LIMITS.supine.torsoIncl)
+    && inLimit(f.shoulderClear, GATE_LIMITS.supine.shoulderClear)
+    && inLimit(f.kneeClear, GATE_LIMITS.supine.kneeClear),
   /** 仰卧（腿可以伸直：仰卧抬腿 / 死虫式 / 空心支撑 / 龙旗） */
-  supineLow: (f) => f.torsoIncl > 36 && f.shoulderClear < 0.6,
+  supineLow: (f) => inLimit(f.torsoIncl, GATE_LIMITS.supineLow.torsoIncl)
+    && inLimit(f.shoulderClear, GATE_LIMITS.supineLow.shoulderClear),
   /** 空心支撑：肩和腿都稍微离地 */
   hollow: (f) => f.torsoIncl > 36 && f.shoulderClear > 0.12 && f.shoulderClear < 0.7
     && f.kneeClear > 0.12 && f.kneeClear < 0.9,
@@ -76,13 +153,17 @@ export const GATES = {
   /** 坐在地上的低姿（俄罗斯转体） */
   seatedLow: (f) => f.hipClear < 0.9 && f.torsoIncl > 15,
   /** 坐姿体前屈：坐着 + 躯干往前折 */
-  seatedFold: (f) => f.hipClear < 0.9 && f.torsoIncl > 40,
+  seatedFold: (f) => inLimit(f.hipClear, GATE_LIMITS.seatedFold.hipClear)
+    && inLimit(f.torsoIncl, GATE_LIMITS.seatedFold.torsoIncl),
   /** 蝴蝶式：坐姿 + 双膝打开 */
   butterfly: (f) => f.hipClear < 0.95 && f.kneeSpread > 0.55 && f.torsoIncl < 55,
   /** 青蛙趴：俯卧/跪趴 + 双膝打开 */
   frogPose: (f) => f.torsoIncl > 35 && f.kneeSpread > 0.5 && f.kneeClear < 0.5,
   /** 侧卧（侧平板） */
-  sideLying: (f) => f.horizontal && f.shoulderClear > 0.12 && f.hipClear > 0.08 && f.wristClearMin < 0.6,
+  sideLying: (f) => inLimit(f.torsoIncl, GATE_LIMITS.sideLying.torsoIncl)
+    && inLimit(f.shoulderClear, GATE_LIMITS.sideLying.shoulderClear)
+    && inLimit(f.hipClear, GATE_LIMITS.sideLying.hipClear)
+    && inLimit(f.wristClearMin, GATE_LIMITS.sideLying.wristClearMin),
   /** 倒立（倒立撑）：髋高于肩、身体竖直 */
   inverted: (f) => f.inverted && f.torsoIncl < 50 && f.shoulderClear > 0.3,
   /** 双杠臂屈伸：身体竖直、手在髋两侧（手离地高度接近髋） */
@@ -148,16 +229,25 @@ export const SIDE_METRICS = {
  * 仰卧与坐姿类**故意不做实时提醒**：卷腹、抬腿、体前屈本来就会让肩/背离开地面，
  * 拿「离地多少」去判断姿势只会误报（实测卷腹卷得标准反而被念「肋骨不要外翻」）。
  */
+/**
+ * 实时提醒的阈值（一处定义：ADVISORY 用它出声纠正，specs.js 用它显示技术指标）。
+ * 这些提醒**不拦计数**，只出声 + 打折质量分。
+ */
+export const ADVISORY_LIMITS = {
+  prone: { bodyStraight: 138, hipLineDev: 0.16 },
+  stand: { valgus: 0.45, trunkLean: 35 },
+};
+
 const ADVISORY = {
   prone: (f, d, now) => {
-    if (f.bodyStraight < 138) return d.cue('keepStraight', null, 'warn', now, 5000);
-    if (f.hipLineDev > 0.16) return d.cue('sag', null, 'warn', now, 5000);
-    if (f.hipLineDev < -0.16) return d.cue('pike', null, 'warn', now, 5000);
+    if (f.bodyStraight < ADVISORY_LIMITS.prone.bodyStraight) return d.cue('keepStraight', null, 'warn', now, 5000);
+    if (f.hipLineDev > ADVISORY_LIMITS.prone.hipLineDev) return d.cue('sag', null, 'warn', now, 5000);
+    if (f.hipLineDev < -ADVISORY_LIMITS.prone.hipLineDev) return d.cue('pike', null, 'warn', now, 5000);
     return null;
   },
   stand: (f, d, now) => {
-    if (f.view === 'front' && f.valgus > 0.45) return d.cue('valgus', null, 'warn', now, 6000);
-    if (f.trunkLean > 35) return d.cue('lean', null, 'warn', now, 6000);
+    if (f.view === 'front' && f.valgus > ADVISORY_LIMITS.stand.valgus) return d.cue('valgus', null, 'warn', now, 6000);
+    if (f.trunkLean > ADVISORY_LIMITS.stand.trunkLean) return d.cue('lean', null, 'warn', now, 6000);
     return null;
   },
 };
@@ -538,11 +628,24 @@ class TwistRepDetector extends DetectorBase {
  * 引擎 4：多段动作序列（波比跳这类「一整套」动作）
  * ------------------------------------------------------------------ */
 
-const SEQ_STAGE = {
+/**
+ * 序列动作（波比跳）每一段的判据。
+ * 同样是「一处定义」：seqStage 用它判定，specs.js 用它生成弹窗里的技术指标。
+ */
+export const SEQ_STAGE_LIMITS = {
+  stand: { gate: 'stand' },
+  crouch: { gate: 'stand', kneeBent: [null, 125] },
+  plank: { torsoIncl: [45, null], wristClearMin: [null, 0.75], kneeClear: [null, 0.6] },
+  jump: { gate: 'stand', lift: [0.035, null] },
+};
+
+const seqStage = {
   stand: (f) => GATES.stand(f),
-  crouch: (f) => GATES.stand(f) && f.kneeBent < 125,
-  plank: (f) => f.torsoIncl > 45 && f.wristClearMin < 0.75 && f.kneeClear < 0.6,
-  jump: (f) => GATES.stand(f) && f.__lift > 0.035,
+  crouch: (f) => GATES.stand(f) && inLimit(f.kneeBent, SEQ_STAGE_LIMITS.crouch.kneeBent),
+  plank: (f) => inLimit(f.torsoIncl, SEQ_STAGE_LIMITS.plank.torsoIncl)
+    && inLimit(f.wristClearMin, SEQ_STAGE_LIMITS.plank.wristClearMin)
+    && inLimit(f.kneeClear, SEQ_STAGE_LIMITS.plank.kneeClear),
+  jump: (f) => GATES.stand(f) && inLimit(f.__lift, SEQ_STAGE_LIMITS.jump.lift),
   kneel: (f) => GATES.kneel(f),
   sit: (f) => GATES.seated(f),
 };
@@ -552,7 +655,7 @@ class SequenceRepDetector extends DetectorBase {
     super(meta, opts);
     const p = meta.params || {};
     this.p = p;
-    this.stages = (p.stages || ['stand', 'crouch', 'plank', 'stand']).map((s) => SEQ_STAGE[s] || SEQ_STAGE.stand);
+    this.stages = (p.stages || ['stand', 'crouch', 'plank', 'stand']).map((s) => seqStage[s] || seqStage.stand);
     this.stageNames = p.stages || ['stand', 'crouch', 'plank', 'stand'];
     this.windowMs = p.windowMs ?? 9000;
     this.minRepMs = p.minRepMs ?? 900;

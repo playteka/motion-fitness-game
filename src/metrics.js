@@ -22,6 +22,13 @@ export const DEFAULT_CALIB = {
   view: 'side',
 };
 
+/**
+ * 「横着躺」的躯干倾角门槛（度）：超过它就认为身体接近水平。
+ * 单独导出是为了让 🎯「运动设定」弹窗显示**真实使用的数值**（见 specs.js），
+ * 界面不另抄一份数字。
+ */
+export const HORIZONTAL_TILT = 55;
+
 const SIDE_IDX = {
   L: { shoulder: LM.L_SHOULDER, elbow: LM.L_ELBOW, wrist: LM.L_WRIST, hip: LM.L_HIP, knee: LM.L_KNEE, ankle: LM.L_ANKLE, heel: LM.L_HEEL, foot: LM.L_FOOT },
   R: { shoulder: LM.R_SHOULDER, elbow: LM.R_ELBOW, wrist: LM.R_WRIST, hip: LM.R_HIP, knee: LM.R_KNEE, ankle: LM.R_ANKLE, heel: LM.R_HEEL, foot: LM.R_FOOT },
@@ -204,8 +211,9 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const armRaised = (shoulderMid.y - Math.min(P(LM.L_WRIST).y, P(LM.R_WRIST).y)) / torsoLen;
   // 倒立：髋高于肩（头朝下）
   const inverted = hipMid.y < shoulderMid.y - 0.05 * torsoLen;
-  // 横着躺（俯卧 / 仰卧 / 侧卧都算）：躯干接近水平
-  const horizontal = torsoIncl > 55;
+  // 横着躺（俯卧 / 仰卧 / 侧卧都算）：躯干接近水平。用 >= 与 GATE_LIMITS.sideLying 的
+  // 区间判定保持一致（界面显示的数值和这里判的是同一条规则）。
+  const horizontal = torsoIncl >= HORIZONTAL_TILT;
   // 四点支撑（熊爬 / 鸟狗 / 猫牛）：躯干水平 + 手撑地 + 膝也在低位
   const quadruped = horizontal && (groundRef - Math.min(P(LM.L_WRIST).y, P(LM.R_WRIST).y)) / torsoLen < 0.75
     && (groundRef - Math.min(P(LM.L_KNEE).y, P(LM.R_KNEE).y)) / torsoLen < 0.75

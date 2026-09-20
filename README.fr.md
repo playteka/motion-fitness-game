@@ -369,9 +369,35 @@ Le champ de recherche au-dessus permet de trouver un exercice par son nom (par e
   🎯 **Réglages de l'exercice** (uniquement pour cet exercice) à côté de ⚙️ **Réglages** (globaux).
 - **🎯 Réglages de l'exercice** (affiché seulement sur la page d'exercice, à côté de ⚙️) : une fenêtre rassemble l'objectif et les
   critères de cet exercice — l'objectif de la série (champ numérique et valeurs rapides), le critère de comptage (souple / strict,
-  exactement le même interrupteur que dans ⚙️), ainsi que le **critère de détection** et le **placement de la caméra** de l'exercice.
-  La carte « ② Fixe l'objectif » du panneau latéral ne garde qu'une ligne de résumé, et son bouton ouvre cette même fenêtre.
+  exactement le même interrupteur que dans ⚙️), le **critère de détection**, le **placement de la caméra** et les
+  **📐 seuils de comptage** ci-dessous. La carte « ② Fixe l'objectif » du panneau latéral ne garde qu'une ligne de résumé, et son
+  bouton ouvre cette même fenêtre.
 - Les exercices qui appartiennent à deux catégories (comme « Squats sautés ») apparaissent dans les deux blocs : en cliquant, c'est toujours le même exercice.
+
+## 📐 Seuils de comptage (dans la fenêtre de réglages de l'exercice)
+
+La fenêtre de réglages de chaque exercice énumère **les critères que le détecteur utilise en ce moment** : jusqu'où aller pour qu'une
+répétition compte, ce qu'est la profondeur complète, ce qui n'est qu'un balancement, où il faut revenir et quelle posture est exigée.
+
+Exemple avec la fente (les valeurs sont les constantes du code) :
+
+| Groupe | Seuil | Critère |
+|---|---|---|
+| Comptage | Compte une répétition (mode souple) | Flexion du genou avant ≤ 152° |
+| Comptage | Les deux genoux doivent se plier (la jambe la plus tendue) | ≤ 158°, ou 12° sous ton angle debout |
+| Comptage | Profondeur complète (points maximaux) | Flexion du genou avant ≤ 128° |
+| Comptage | Retour au départ (fin de la répétition) | Remonter de 60 % depuis le point le plus bas, ou 8° au-dessus |
+| Comptage | Durée minimale de la répétition | ≥ 0,45 s |
+| Posture | Position debout | Inclinaison du tronc ≤ 52°, genou ≥ 0,28× tronc, hanche ≥ 0,55× tronc |
+| Rappel | Genou arrière près du sol (voix seulement, jamais de répétition perdue) | Genou arrière ≤ 0,66× tibia |
+
+> **Ces valeurs ne sont pas une explication à part : elles sortent des constantes réellement utilisées par le détecteur** (voir `src/specs.js`) :
+> les détecteurs écrits à la main lisent les tables `SQUAT / LUNGE / PUSHUP / BRIDGE / PLANK`, les moteurs génériques lisent le
+> `up / down` et les progressions `enter / bottom / loose / ignore` de chaque exercice dans `catalog.js`, le contrôle de posture lit
+> `GATE_LIMITS` dans `engines.js` (la même table que celle qui décide) et les exercices chronométrés lisent
+> `HOLD_PRIME_MS / HOLD_GRACE_MS`. Change un seuil et la fenêtre suit automatiquement : l'écran ne peut jamais annoncer autre chose
+> que ce que fait le détecteur. `tests/test-specs.mjs` renvoie ces valeurs **aux détecteurs eux-mêmes** à chaque exécution : la ligne
+> de comptage affichée doit tomber exactement sur la ligne de progression du détecteur (379 vérifications).
 
 ## Fenêtre de réglages (langue / modèle / son)
 
@@ -662,10 +688,11 @@ L'historique d'entraînement et les meilleurs scores sont stockés dans le local
 ## Tests
 
 ```bash
-npm test                       # les cinq suites d'un coup (965 tests)
+npm test                       # les six suites d'un coup (1356 tests)
 npm run test:i18n              # langues : clés manquantes / traductions oubliées / espaces réservés / longueur des tableaux / chinois résiduel dans les sources / structure des quatre README
 npm run test:detectors         # détection et logique de score des cinq détecteurs écrits à la main (squelettes synthétiques)
 npm run test:engines           # moteurs de détection génériques (flexion / alternance / rotation / plusieurs phases / chrono + garde de posture)
+npm run test:specs             # les seuils affichés dans la fenêtre doivent être exactement les lignes qu'utilisent les détecteurs
 npm run test:dump              # affiche en plus les métriques de posture de référence, pour régler les seuils
 npm run test:page              # auto-contrôle du câblage de la page (id DOM / imports de modules / ressources statiques / catalogue et catégories)
 npm run test:app               # test d'intégration : charge le vrai app.js avec un stub DOM minimal
@@ -676,8 +703,9 @@ npm run test:app               # test d'intégration : charge le vrai app.js ave
 | `tests/test-i18n.mjs` | 32 | Structure de clés identique dans les quatre langues, aucune traduction manquante, espaces réservés et longueurs de tableaux identiques, aucun texte chinois codé en dur dans les sources, structure identique des quatre README |
 | `tests/test-detectors.mjs` | 247 | Comptage, chronométrage, points par étape et ordre de validation des cinq détecteurs écrits à la main (mouvements corrects comme erronés), le critère de profondeur avec une caméra inclinée, ainsi que la logique de validation du calibrage |
 | `tests/test-engines.mjs` | 141 | Moteurs génériques : une répétition par cycle, souple vs strict, cas limites des balancements et des mouvements trop rapides, garde de posture, décollage des pieds, alternance gauche-droite, enchaînement complet, pause et reprise du chrono |
+| `tests/test-specs.mjs` | 379 | Renvoie aux détecteurs eux-mêmes les valeurs affichées dans la fenêtre : la ligne de comptage montrée doit tomber exactement sur leur ligne de progression ; les valeurs de posture viennent de la même table que celle qui décide ; les 22 exercices ont des seuils ; les quatre langues sont complètes |
 | `tests/test-page.mjs` | 310 | Câblage du DOM, imports et exports de modules, ressources statiques, catalogue des 22 exercices par catégorie et exhaustivité des barèmes |
-| `tests/test-app.mjs` | 235 | Démarrage du vrai `app.js`, rendu de la page d'accueil, les fenêtres de réglages de l'exercice et de réglages généraux, déroulé du calibrage, changement d'exercice, score, sons, bilan, changement de langue |
+| `tests/test-app.mjs` | 247 | Démarrage du vrai `app.js`, rendu de la page d'accueil, les fenêtres de réglages de l'exercice (seuils de comptage inclus) et de réglages généraux, déroulé du calibrage, changement d'exercice, score, sons, bilan, changement de langue |
 
 ---
 

@@ -98,7 +98,11 @@ function bendPct(angle, straight, bent) {
  *
  * 附带好处：膝盖内扣只有正面才看得出来，这条纠错现在才真正生效。
  */
-const SQUAT = SQUAT_FRONT;
+/**
+ * 阈值表导出是为了让 🎯「运动设定」弹窗显示**真正参与判定的数值**（见 specs.js）：
+ * 界面不另抄一份数字，改了这里，界面上的技术指标跟着变，不会出现「说的和判的不一样」。
+ */
+export const SQUAT = SQUAT_FRONT;
 
 class SquatDetector extends DetectorBase {
   onReset() {
@@ -241,7 +245,7 @@ class SquatDetector extends DetectorBase {
  * 计数类：箭步蹲
  * ------------------------------------------------------------------ */
 
-const LUNGE = {
+export const LUNGE = {
   // 判据整体放宽：**动作大体做到位就算一次**，不要求前膝弯到 90°。
   // 三档膝角：enter 开始算这一轮 → loose 宽松计数线 → down 拿标准深度分。
   standKnee: 142,     // 「回到站姿」的参考门槛（实际跟着用户自己的站姿走，见 standLine）
@@ -548,7 +552,7 @@ class LungeDetector extends DetectorBase {
  *   looseElbow   宽松模式的计数线（135°）
  *   elbowFull    拿满分深度的线（118°）
  */
-const PUSHUP = {
+export const PUSHUP = {
   activeTorso: 32,
   activeShoulderClear: 0.12,
   activeHandOnFloor: 0.62,
@@ -784,7 +788,7 @@ class PushupDetector extends DetectorBase {
  * 计数类：臀桥
  * ------------------------------------------------------------------ */
 
-const BRIDGE = {
+export const BRIDGE = {
   supineTorso: 36,
   kneeMin: 30,
   kneeMax: 148,
@@ -876,7 +880,7 @@ class GluteBridgeDetector extends DetectorBase {
  * 这样「撑得不太标准」也能一直计时（分数照常按性价比打折），
  * 而「根本没撑起来」（站着、趴在地上）才不计时。
  */
-const PLANK = {
+export const PLANK = {
   // ---- HARD：撑起来了才开始计时 ----
   torsoIncl: 38,          // 身体接近水平（原来 42）
   shoulderClearMin: 0.10, // 肩离地（原来 0.14）

@@ -269,10 +269,18 @@ function resolveCueKey(exerciseId, code) {
  * 计时类基类
  * ------------------------------------------------------------------ */
 
+/**
+ * 计时类动作的宽容参数（计时类基类共用）。
+ * 单独导出是为了让「运动设定」弹窗显示真实数值（见 specs.js）：
+ *   稳定 PRIME_MS 之后才开始计时；姿势垮掉在 GRACE_MS 以内不停表。
+ */
+export const HOLD_PRIME_MS = 250;
+export const HOLD_GRACE_MS = 1200;
+
 export class HoldDetector extends DetectorBase {
   constructor(meta, opts) {
     super(meta, opts);
-    this.graceMs = 1200;
+    this.graceMs = HOLD_GRACE_MS;
     this.holdMs = 0;
     this._lastT = 0;
     this.okMs = 0;
@@ -312,8 +320,8 @@ export class HoldDetector extends DetectorBase {
     if (r.valid) {
       this.okMs += dt;
       this.badMs = 0;
-      // 稳定 250ms 后才开始计时，避免瞬间误判；跨过阈值时把这 250ms 补回来
-      if (this.okMs > 250) {
+      // 稳定 PRIME_MS 后才开始计时，避免瞬间误判；跨过阈值时把这段补回来
+      if (this.okMs > HOLD_PRIME_MS) {
         if (!this.holding && !this._primed) {
           this.holdMs += this.okMs;
           this._primed = true;

@@ -13,11 +13,15 @@ import { PoseEngine, Camera } from './pose-engine.js';
 import { PoseRenderer } from './render.js';
 import { AudioKit, TRACKS, getTrack, DEFAULT_TRACK } from './audio.js';
 import { Calibrator, requiredView } from './calibration.js';
+import { exerciseSpecs, specCondition } from './specs.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
 } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
+
+/** 拼 HTML 时的最小转义（文案来自词条，数值来自代码常量，仍然兜一层底） */
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 const STORE = {
   settings: 'mfg.settings.v1',
@@ -394,7 +398,31 @@ function closeSettings() {
 
 function exerciseSettingsOpen() { return !$('exerciseModal').hidden; }
 
-/** 把当前动作的资料刷进弹窗与侧栏摘要（目标、判定依据、机位） */
+/** 把当前动作的「计次技术指标」渲染进运动设定弹窗（数值来自识别器真正使用的常量） */
+function renderExerciseSpecs() {
+  const box = $('exerciseSpecs');
+  if (!box) return;
+  const { groups } = exerciseSpecs(state.exerciseId);
+  const parts = [];
+  for (const g of groups) {
+    parts.push('<div class="spec-group">');
+    parts.push(`<div class="spec-group-title">${esc(t(g.titleKey))}</div>`);
+    for (const it of g.items) {
+      const note = it.noteKey ? t(it.noteKey, it.noteParams || null) : '';
+      parts.push(
+        '<div class="spec-row">'
+        + `<span class="spec-name">${esc(t(it.labelKey))}</span>`
+        + `<span class="spec-cond">${esc(specCondition(it))}</span>`
+        + (note ? `<span class="spec-note">${esc(note)}</span>` : '')
+        + '</div>',
+      );
+    }
+    parts.push('</div>');
+  }
+  box.innerHTML = parts.join('');
+}
+
+/** 把当前动作的资料刷进弹窗与侧栏摘要（目标、判定依据、机位、技术指标） */
 function renderExerciseSettings() {
   const ex = localizedExercise(state.exerciseId);
   const unit = ex.unit || '';
@@ -405,7 +433,9 @@ function renderExerciseSettings() {
   $('targetUnit').textContent = unit;
   $('targetReadout').textContent = `${t('exercise.target')}: ${state.target} ${unit}`;
   const strictBtn = $('btnStrictEx');
-  if (strictBtn) strictBtn.setAttribute('aria-pressed', String(!!state.settings.strict));}
+  if (strictBtn) strictBtn.setAttribute('aria-pressed', String(!!state.settings.strict));
+  renderExerciseSpecs();
+}
 
 function openExerciseSettings() {
   const modal = $('exerciseModal');

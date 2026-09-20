@@ -347,6 +347,35 @@ console.log('\n[1b] 运动设定弹窗');
   ok('点 ✕ 关闭运动设定弹窗', elements.get('exerciseModal').hidden === true);
   elements.get('btnExerciseInline').dispatch('click');
   ok('侧栏「设定目标」卡片里的按钮也能打开', elements.get('exerciseModal').hidden === false);
+
+  // ===== 计次技术指标：把识别器真正用的数值显示给用户 =====
+  const specHtml = () => elements.get('exerciseSpecs').innerHTML;
+  ok('运动设定里列出了计次判据分组', specHtml().includes('计次判据'), specHtml().slice(0, 120));
+  ok('俯卧撑：列出肘角计次线（≤135°）', specHtml().includes('135'), specHtml().slice(0, 200));
+  ok('俯卧撑：列出肩膀下沉量这条第二路证据（0.20）', specHtml().includes('0.2'), specHtml().slice(0, 200));
+  ok('俯卧撑：列出俯撑姿势门控（躯干倾角 ≥ 32°）', specHtml().includes('≥ 32'), specHtml().slice(0, 300));
+  ok('指标行带上了单位（×躯干长 / °）',
+    specHtml().includes('躯干长') && specHtml().includes('°'), specHtml().slice(0, 200));
+
+  api.selectExercise('lunge');
+  ok('切到箭步蹲后指标跟着换', specHtml().includes('152') && !specHtml().includes('135'),
+    specHtml().slice(0, 200));
+  ok('箭步蹲：列出「两条腿都要弯」的门槛（≤158°）', specHtml().includes('158'), specHtml().slice(0, 200));
+  ok('箭步蹲：说明回程按自己的幅度算（没有固定角度）', specHtml().includes('回升 60%'), specHtml().slice(0, 300));
+
+  api.selectExercise('plank');
+  ok('平板支撑：列出计时类指标（姿势稳定后开始计时 0.25 秒）',
+    specHtml().includes('0.25') && specHtml().includes('1.2'), specHtml().slice(0, 200));
+  ok('平板支撑：列出必须项阈值（身体接近水平 ≥38°）', specHtml().includes('38'), specHtml().slice(0, 200));
+  ok('姿态提醒标注了「只出声、不吃次数」', specHtml().includes('不吃次数'), specHtml().slice(0, 400));
+
+  // 切语言时指标文案也要跟着变（数值不变）
+  api.changeLang('en');
+  ok('切到英文后指标文案变英文（数值仍是同一批）',
+    !/[\u4e00-\u9fff]/.test(specHtml()) && specHtml().includes('38'), specHtml().slice(0, 200));
+  api.changeLang('zh');
+  api.selectExercise('pushup');
+
   elements.get('exerciseBackdrop').dispatch('click');
   ok('点背景关闭', elements.get('exerciseModal').hidden === true);
   elements.get('btnExercise').dispatch('click');
