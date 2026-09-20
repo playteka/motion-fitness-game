@@ -675,12 +675,24 @@ console.log('\n[4] 臀桥计数');
   ok('第一次顶起不记为半程“太快”', det.partialReps === 0, `实际 ${det.partialReps}`);
 }
 {
-  // 上下快速抖动（整轮 0.3 秒，远快于人类）：只提示太快，不刷次数
+  // 上下快速抖动（整轮 0.3 秒，远快于人类）：只提示太快，不刷次数。
+  // 注意：臀桥是「顶起来 → **落回地面**才算一次」，所以要整轮都做完才谈得上太快；
+  // 这里关掉平滑，让 0.3 秒的整轮真的做完整（真机抖动到不了顶点/地面，会走「顶高一点」那条提示）
   const det = fresh('bridge');
-  const r = makeRunner(det);
+  const r = makeRunner(det, { smooth: false });
   r.run(repeat((p) => bridgePose(p), 300, 8));
   ok('臀桥快速抖动不刷次数', det.validReps <= 1, `实际 ${det.validReps}`);
   ok('臀桥快速抖动提示太快', r.cues.some((c) => c.code === 'tempo'));
+}
+{
+  // 幅度不够的抖动（真机识别平滑后的常见情况）：根本不构成一轮，提示「顶高一点」也不计数
+  const det = fresh('bridge');
+  const r = makeRunner(det);
+  r.run(repeat((p) => bridgePose(p), 300, 8));
+  ok('幅度不够的抖动完全不计次', det.validReps === 0 && det.partialReps === 0,
+    `有效 ${det.validReps} / 半程 ${det.partialReps}`);
+  ok('幅度不够的抖动只提示「再顶高一点」', r.cues.every((c) => c.code !== 'tempo')
+    && r.cues.some((c) => c.code === 'riseMore'));
 }
 
 /* ------------------------------------------------------------------ *

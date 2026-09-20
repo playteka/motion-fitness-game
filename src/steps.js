@@ -281,7 +281,11 @@ export const STEP_PLANS = {
         id: 'lower',
         labelKey: 'steps.bridge.lower.label',
         points: 8,
-        check: (f, d) => d.wasAtTop && f.hipRise < 0.15,
+        // 用识别器自己的「落回地面」判定（跟着用户自己的最低点走），而不是写死 0.15 ——
+        // 否则最低点偏高的人「第三个关键帧」永远拿不到分。
+        // 这里直接看**当前这一帧**的高度：它和识别器计次用的是同一个条件，
+        // 所以「落回」这一步能和计次、和整轮满分奖励落在同一帧（否则奖励会晚一帧、拿不到）
+        check: (f, d) => d.wasAtTop === true && f.hipRise <= (d.bottomLine ?? 0.15),
         hint: () => H('steps.bridge.lower.hint'),
       },
     ],
@@ -612,9 +616,16 @@ export const STEP_PLANS = {
  * 没传 meta 时自己从动作库里查（调用方常常只拿得到 id）。
  */
 export function getStepPlan(exerciseId, meta) {
-  const plan = STEP_PLANS[exerciseId];
-  if (plan) return plan;
+  const key = planKeyOf(exerciseId, meta);
+  return key ? STEP_PLANS[key] : { steps: [], repBonus: 0, perCycle: true, pointsPerSecond: 0 };
+}
+
+/**
+ * 这个动作**实际用的**计分方案键（族名，或动作自己的 id）。
+ * 进度条要把每个得分项分配到关键帧上，靠的就是这个键去查映射表。
+ */
+export function planKeyOf(exerciseId, meta) {
+  if (STEP_PLANS[exerciseId]) return exerciseId;
   const planId = (meta && meta.plan) || CATALOG_MAP[exerciseId]?.plan;
-  if (planId && STEP_PLANS[planId]) return STEP_PLANS[planId];
-  return { steps: [], repBonus: 0, perCycle: true, pointsPerSecond: 0 };
+  return planId && STEP_PLANS[planId] ? planId : null;
 }

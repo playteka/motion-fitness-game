@@ -27,6 +27,7 @@ import { EXERCISE_MAP } from './catalog.js';
 import { GATE_LIMITS, SEQ_STAGE_LIMITS, ADVISORY_LIMITS, SIDE_METRICS } from './engines.js';
 import { HORIZONTAL_TILT } from './metrics.js';
 import { HOLD_PRIME_MS, HOLD_GRACE_MS } from './detector-base.js';
+import { getStepPlan, planKeyOf } from './steps.js';
 import { t } from './i18n.js';
 import {
   SQUAT, LUNGE, PUSHUP, BRIDGE, PLANK,
@@ -695,9 +696,11 @@ export function specStages(id) {
   const pushItem = (it, extra) => { if (it && isStageItem(it)) stages.push(toStage(it, extra)); };
 
   if (id === 'bridge') {
-    // 臀桥：躺好（门控）→ 落回地面 → 顶起（顶起那一刻就计次）
-    pushItem(pick('spec.bridgeDown'), { kind: 'enter' });
-    pushItem(pick('spec.countLine'), { kind: 'finish' });
+    // 臀桥（用户指定的三个关键帧）：**屈腿仰卧 → 曲腿腰臀顶起 → 恢复屈腿仰卧**
+    //   「顶起」用识别器自己的动态顶点线（topLine，会跟着用户自己的最低点走），
+    //   「落回」用识别器自己的 atBottom —— 所以最后一格点亮的那一刻就是计次那一刻。
+    pushItem(pick('spec.countLine'), { kind: 'count', valueFrom: 'topLine' });
+    pushItem(pick('spec.bridgeDown'), { kind: 'finish', detFlag: 'atBottom' });
   } else if (id === 'pushup') {
     // 俯卧撑：开始 → 计次（肘角到位**或**肩膀已经沉到接近地面）→ 回到顶位（计次那一刻）
     pushItem(pick('spec.pushupEnter'), { kind: 'enter' });
@@ -802,6 +805,78 @@ export function specStages(id) {
 }
 
 /** 去重（同一格指标 + 同一阈值只留一条），并限制长度，画面上别太挤 */
+/**
+ * 计划步骤 → 进度条关键帧（用户要求：**把每个动作的得分分配到不同的关键帧里面**）。
+ *
+ * 值是这一格的短标签键（`spec.short.*` 的后半段），特殊值：
+ *   `*first` / `*gate` = 第一格（姿势门控），`*last` = 最后一格（计次那一刻）。
+ * 用短标签键而不是下标定位，是因为进度条会把「画得一模一样」的格子合并掉，
+ * 下标会跟着变，短标签不会。
+ *
+ * 一族方案（repStand / repSupine / jump …）里的步骤 id 是共用的，所以一族只写一条。
+ */
+const STEP_STAGE = {
+  squat: { stance: 'stance', hinge: 'start', descend: 'count', parallel: 'count', stand: 'back' },
+  lunge: {
+    stance: 'stance', split: 'start', stride: 'start', sink: 'count', backknee: 'both', return: 'back',
+  },
+  pushup: { setup: 'prone', lower: 'start', depth: 'count', press: 'back' },
+  bridge: { setup: 'supine', lift: 'count', top: 'count', lower: 'down' },
+  repStand: { stance: 'stand', lower: 'start', bottom: 'count', up: 'back' },
+  repProne: { setup: 'prone', lower: 'start', bottom: 'count', press: 'back' },
+  repSupine: { setup: 'supine', engage: 'start', top: 'count', lower: 'back' },
+  repAlt: { setup: '*gate', first: 'work', switch: 'rest', rhythm: 'rest' },
+  sequence: { setup: 'stand', down: 'crouch', middle: 'holdPlank', finish: 'jump' },
+  jump: { stance: 'stand', crouch: 'count', flight: 'jump', land: 'back' },
+  plank: { setup: 'lift', align: 'holdPlank', hold3: '*last', hold10: '*last', hold30: '*last' },
+  holdPose: { pose: 'side', align: 'lift', hold3: '*last', hold10: '*last', hold30: '*last' },
+  stretchHold: { pose: '*first', settle: '*last', hold10: '*last', hold20: '*last' },
+};
+
+/** 短标签键 → 第几格（找不到就退回 -1） */
+function stageIndexOfToken(stages, token) {
+  if (!token) return -1;
+  if (token === '*last') return stages.length - 1;
+  if (token === '*first') return 0;
+  if (token === '*gate') {
+    const i = stages.findIndex((s) => s.kind === 'gate');
+    return i >= 0 ? i : 0;
+  }
+  const want = `spec.short.${token}`;
+  const i = stages.findIndex((s) => s.shortKey === want);
+  return i;
+}
+
+/**
+ * 每个关键帧能拿多少分（与 `specStages(id)` 同顺序、同长度）。
+ *
+ * 「整轮要领全过」的奖励记在**最后一格**（计次那一刻给的），计时类的「每秒 1 分」
+ * 也记在最后一格（那格的分会一直往上加）。
+ */
+export function stagePoints(id) {
+  const stages = specStages(id);
+  const plan = getStepPlan(id);
+  const map = STEP_STAGE[planKeyOf(id)] || {};
+  const out = stages.map(() => ({ points: 0, steps: [], bonus: 0, perSecond: 0 }));
+  if (!out.length) return out;
+  for (const def of plan.steps || []) {
+    const idx = stageIndexOfToken(stages, map[def.id]);
+    if (idx < 0) continue;
+    out[idx].points += def.points;
+    out[idx].steps.push(def.id);
+  }
+  if (plan.repBonus > 0) out[out.length - 1].bonus = plan.repBonus;
+  if (plan.pointsPerSecond > 0) out[out.length - 1].perSecond = plan.pointsPerSecond;
+  return out;
+}
+
+/** 步骤 id → 第几格（界面把「这一步加到的分」记到对应格子上时用） */
+export function stageIndexForStep(id, stepId) {
+  const stages = specStages(id);
+  const map = STEP_STAGE[planKeyOf(id)] || {};
+  return stageIndexOfToken(stages, map[stepId]);
+}
+
 function dedupeStages(stages) {
   const seen = new Set();
   const out = [];

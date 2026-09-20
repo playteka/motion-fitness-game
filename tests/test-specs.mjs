@@ -16,14 +16,16 @@ import { createDetector, EXERCISES } from '../src/exercises.js';
 import { EXERCISE_MAP } from '../src/catalog.js';
 import {
   exerciseSpecs, specKeys, roundFor, specTextRows, specStages, stageText, stageHolds, SPEC_METRICS,
+  stagePoints, stageIndexForStep,
 } from '../src/specs.js';
 import {
-  stageIcon, iconSVG, iconAngle, drawnAngle, ICON_BOX, uniqueStages,
+  stageIcon, iconSVG, iconAngle, drawnAngle, ICON_BOX, uniqueStages, angleLabel,
 } from '../src/icons.js';
 import { toMetric, LandmarkSmoother } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
 import { standingPose, ASPECT } from './synthetic-pose.mjs';
 import { GATE_LIMITS, ADVISORY_LIMITS } from '../src/engines.js';
+import { getStepPlan } from '../src/steps.js';
 import { HOLD_PRIME_MS, HOLD_GRACE_MS } from '../src/detector-base.js';
 import { SQUAT, LUNGE, PUSHUP, BRIDGE, PLANK } from '../src/exercises.js';
 import { localeKeys, setLang } from '../src/i18n.js';
@@ -488,7 +490,48 @@ console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格'
 }
 
 /* ------------------------------------------------------------------ *
- * 10. 关键帧线条图标（进度条上只画图标、不写文字）
+ * 11. 得分分配到关键帧：每一格能拿多少分
+ * ------------------------------------------------------------------ */
+
+console.log('\n[11] 得分分配到关键帧');
+{
+  for (const id of ALL) {
+    const stages = specStages(id);
+    const rows = stagePoints(id);
+    const plan = getStepPlan(id);
+    const want = (plan.steps || []).reduce((n, d) => n + d.points, 0) + (plan.repBonus || 0);
+    const sum = rows.reduce((n, r) => n + r.points + r.bonus, 0);
+    ok(`${id}：每一格的分加起来 = 这个动作的总分（${want}）`, sum === want, `实际 ${sum}`);
+    ok(`${id}：分数格子数与关键帧数一致`, rows.length === stages.length,
+      `${rows.length} vs ${stages.length}`);
+    ok(`${id}：每个得分项都分到了某一格（不存在「有分却没地方显示」的项）`,
+      (plan.steps || []).every((d) => stageIndexForStep(id, d.id) >= 0),
+      JSON.stringify((plan.steps || []).filter((d) => stageIndexForStep(id, d.id) < 0).map((d) => d.id)));
+    ok(`${id}：整轮满分奖励记在最后一格（计次那一刻给的）`,
+      !plan.repBonus || rows[rows.length - 1].bonus === plan.repBonus,
+      JSON.stringify(rows.map((r) => r.bonus)));
+    ok(`${id}：计时类的「每秒加分」也记在最后一格`,
+      !plan.pointsPerSecond || rows[rows.length - 1].perSecond === plan.pointsPerSecond,
+      JSON.stringify(rows.map((r) => r.perSecond)));
+  }
+
+  // 用户举的例子：深蹲 45 分 = 站姿 4 + 开始 6 + 计次 21 + 回位 8 + 满轮 6
+  ok('深蹲：4 / 6 / 21 / 8 + 满轮 6 = 45 分',
+    JSON.stringify(stagePoints('squat').map((r) => r.points + r.bonus)) === '[4,6,21,14]',
+    JSON.stringify(stagePoints('squat').map((r) => r.points + r.bonus)));
+  ok('臀桥：仰卧 5 / 顶起 20 / 落回 8 + 满轮 6 = 39 分',
+    JSON.stringify(stagePoints('bridge').map((r) => r.points)) === '[5,20,8]'
+    && stagePoints('bridge')[2].bonus === 6,
+    JSON.stringify(stagePoints('bridge')));
+  ok('俯卧撑：俯撑 5 / 开始 7 / 计次 14 / 回位 8 + 满轮 6 = 40 分',
+    JSON.stringify(stagePoints('pushup').map((r) => r.points)) === '[5,7,14,8]'
+    && stagePoints('pushup')[3].bonus === 6,
+    JSON.stringify(stagePoints('pushup')));
+}
+
+
+/* ------------------------------------------------------------------ *
+ * 10. 关键帧线条图标（进度条上只画图标 + 判据角度数字）
  * ------------------------------------------------------------------ */
 
 console.log('\n[10] 关键帧线条图标');
@@ -610,12 +653,27 @@ console.log('\n[10] 关键帧线条图标');
     return ic.builder === 'lie' && ic.pose.params.face === 'fold';
   })(), JSON.stringify(stageIcon(specStages('standingForwardFold')[0], iconCtx('standingForwardFold')).pose.params));
 
-  // SVG 输出：只有线条和圆（没有文字、没有色块）
+  // SVG 输出：只有线条和圆（没有色块、没有随便写的文字）；
+  // **唯一允许的文字是判据角度数字**（用户要求：关键帧图标太像时在图标里标出关节度数）
   const svg = iconSVG(specStages('lunge')[1], lungeCtx);
-  ok('图标 SVG 只有 line / circle（没有 text、没有 fill）',
-    /^<svg class="criteria-icon"/.test(svg) && !/<text/.test(svg) && !/fill=/.test(svg) && /<circle/.test(svg),
+  ok('图标 SVG 只有 line / circle（外加判据角度数字，没有色块）',
+    /^<svg class="criteria-icon"/.test(svg) && /<circle/.test(svg)
+    && !/fill="(?!currentColor)/.test(svg)
+    && (svg.match(/<text/g) || []).length === (svg.match(/class="criteria-deg"/g) || []).length,
     svg.slice(0, 120));
   ok('图标 SVG 可解析（坐标都是有限数）', !/NaN|undefined/.test(svg), svg);
+  // 度数标注的规则：同一动作里两格用同一个关节角、且度数相差 ≤12°（画出来几乎一样）才标
+  const pushStagesForLabel = specStages('pushup');
+  const pushLabels = pushStagesForLabel.map((s) => angleLabel(s, pushCtx));
+  ok('俯卧撑：肘角几格画得太像 → 图标里标出肘关节度数（用户明确要求）',
+    pushLabels.filter(Boolean).length >= 3 && pushLabels.every((l) => !l || /^\d+°$/.test(l)),
+    JSON.stringify(pushLabels));
+  ok('俯卧撑：标出来的度数就是该格判据里的角度',
+    pushStagesForLabel.every((s, i) => !pushLabels[i] || pushLabels[i] === `${Math.round(s.value)}°`),
+    JSON.stringify(pushStagesForLabel.map((s, i) => `${s.value}→${pushLabels[i]}`)));
+  const squatLabels = specStages('squat').map((s) => angleLabel(s, iconCtx('squat')));
+  ok('深蹲：图标本来就能一眼区分（176/135/112/149）→ 不标数字，画面不乱',
+    squatLabels.every((l) => l === null), JSON.stringify(squatLabels));
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

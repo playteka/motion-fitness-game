@@ -1145,7 +1145,7 @@ console.log('\n[8b] 判定进度条');
   const { toMetric: tm, LandmarkSmoother: LS } = await import('../src/geometry.js');
   const { computeFrame: cf } = await import('../src/metrics.js');
   const { ASPECT: A, standingPose: sp } = await import('./synthetic-pose.mjs');
-  const { specStages } = await import('../src/specs.js');
+  const { specStages, stagePoints } = await import('../src/specs.js');
   const api = windowStub.__mfg;
 
   const frameOf = (knee) => {
@@ -1236,6 +1236,52 @@ console.log('\n[8b] 判定进度条');
     segHtml().includes('+7'), segHtml());
   ok('同时飘一下「+N」（数字，不带文字）',
     elements.get('criteriaEarned').textContent === '+7', elements.get('criteriaEarned').textContent);
+
+  // —— 得分分配到关键帧（用户要求：把每个动作的得分分到不同的关键帧里，按是否达标实际显示，字要大）——
+  api.openExercise('squat');
+  api.buildCriteriaBar();
+  api.state.session = 'running';
+  api.state.criteriaLive = true;
+  const squatPts = stagePoints('squat');
+  ok('每一格都有「这一格能拿多少分」（得分项按关键帧分配）',
+    api.state.criteriaMax.length === squatPts.length
+    && api.state.criteriaMax[0].points === 4
+    && api.state.criteriaMax[2].points === 21
+    && api.state.criteriaMax[api.state.criteriaMax.length - 1].bonus === 6,
+    JSON.stringify(api.state.criteriaMax));
+  api.updateCriteria(frameOf(178), [], 8000);
+  ok('还没拿到分时，格子上用灰字标出「可得分数」',
+    /class="criteria-seg-pts max">\+4</.test(segHtml()), segHtml().slice(0, 400));
+  api.updateCriteria(frameOf(178), [{ type: 'step', id: 'hinge', points: 6, index: 1, total: 5, labelKey: 'x' }], 8100);
+  ok('得分项按映射落到对应关键帧（squat 的 hinge → 第 2 格「开始」）',
+    api.state.criteriaPts[1] === 6 && /data-i="1"[^>]*data-pts="6"/.test(segHtml()),
+    JSON.stringify(api.state.criteriaPts));
+  ok('拿到分的那一格显示大号亮色数字（.earned）',
+    /class="criteria-seg-pts earned">\+6</.test(segHtml()), segHtml().slice(0, 400));
+  ok('得分不会跑到别的格子上',
+    api.state.criteriaPts.filter((n, i) => i !== 1 && n > 0).length === 0,
+    JSON.stringify(api.state.criteriaPts));
+  api.showCriteriaTip(1);
+  ok('悬停提示里带上这一格的分数',
+    /\+6/.test(elements.get('criteriaTip').innerHTML), elements.get('criteriaTip').innerHTML);
+  api.hideCriteriaTip();
+
+  // 臀桥：三个关键帧 = 屈腿仰卧 → 腰臀顶起 → 恢复屈腿仰卧（三个图标必须互不相同）
+  api.openExercise('bridge');
+  api.buildCriteriaBar();
+  api.state.session = 'running';
+  const bridgeIcons = api.state.criteriaIcons || [];
+  ok('臀桥进度条 = 3 个关键帧（仰卧 → 顶起 → 落回）',
+    bridgeIcons.length === 3, `${bridgeIcons.length}`);
+  ok('臀桥三个关键帧的图标互不相同（顶起有向上箭头、落回有向下箭头）',
+    new Set(bridgeIcons).size === 3, bridgeIcons.map((s) => s.length).join(','));
+  ok('臀桥得分分配：仰卧 5 / 顶起 20 / 落回 8 + 满轮 6',
+    JSON.stringify(api.state.criteriaMax.map((r) => r.points)) === '[5,20,8]'
+    && api.state.criteriaMax[2].bonus === 6,
+    JSON.stringify(api.state.criteriaMax));
+  api.openExercise('squat');
+  api.buildCriteriaBar();
+  api.state.session = 'running';
 
   // 一次动作结束 → 整条链点亮并保持 0.65 秒（让用户看到「这轮走完了」），然后清零重来
   api.updateCriteria(frameOf(80), [], 5100);

@@ -403,8 +403,25 @@ export function poseFor(stage, ctx = {}) {
       };
     case 'hip':
       return { builder: 'lie', params: { tilt: 92, hip: value, knee: 172, face: 'up', elbow: 170 }, criterion: { hip: value }, drawn: { hip: value } };
-    case 'hipRise':
-      return { builder: 'lie', params: { tilt: 92, hip: 92, knee: 92, rise: value, face: 'up', elbow: 172 }, criterion: { hipRise: value }, drawn: { rise: value } };
+    case 'hipRise': {
+      const rise = clamp(num(value, 0), 0, 0.6);
+      // 「顶起」那一格（要求抬到 ≥0.22×躯干长）：画成髋部确实抬起来的臀桥顶，上面加一个向上的箭头
+      if (stage?.kind !== 'finish' && rise >= 0.15) {
+        return {
+          builder: 'lie',
+          params: { tilt: 92, hip: 92, knee: 92, rise, face: 'up', elbow: 172, mark: 'up' },
+          criterion: { hipRise: value },
+          drawn: { rise },
+        };
+      }
+      // 「落回 / 还没抬起来」：画成**屈腿仰卧、双脚踩地**，并加一个向下箭头 ——
+      // 一眼看出这是「回到仰卧」（而不是又一个躺着的姿势，也不会跟门控格混成同一张图）
+      return {
+        builder: 'lie',
+        params: { tilt: 92, hip: 118, knee: 96, face: 'up', elbow: 172, mark: 'down' },
+        criterion: { hipRise: value },
+      };
+    }
     case 'oneSide':
       return { builder: 'lie', params: { tilt: 90, hip: 150, knee: clamp(value, 60, 180), face: 'down', support: true }, criterion: { knee: value }, drawn: { knee: clamp(value, 60, 180) } };
     case 'otherSide':
@@ -448,10 +465,98 @@ function gatePose(posture, value, stages, metric, ctx = {}) {
 export function stageIcon(stage, ctx = {}) {
   const pose = poseFor(stage, ctx);
   const built = pose.builder === 'lie' ? buildLie(pose.params) : buildStand(pose.params);
-  return { lines: built.lines, circles: built.circles, pose, builder: pose.builder, params: pose.params };
+  const lines = built.lines.concat(markLines(pose.params?.mark, pose.builder));
+  return { lines, circles: built.circles, pose, builder: pose.builder, params: pose.params };
 }
 
-/** 某一格的图标 SVG（进度条上只画这个，不画文字） */
+/**
+ * 「顶起 / 落回」这类**方向标记**：一小段箭头，画在图形外侧的空白处。
+ * 为什么要有它：臀桥的第 1 格（屈腿仰卧）和第 3 格（恢复屈腿仰卧）姿势本来就一样，
+ * 只靠姿势区分不了；有了箭头就能一眼看出「这一格是往下回到地面」。
+ * 位置在方框顶部中间 —— 躺着的人身体在中下部，那里是空的（站立类放在左上角）。
+ */
+function markLines(mark, builder) {
+  if (!mark) return [];
+  const cx = builder === 'lie' ? 16 : 4.2;
+  const y1 = 3.2;
+  const y2 = 9.2;
+  const head = 2.1;
+  if (mark === 'up') {
+    return [
+      seg({ x: cx, y: y2 }, { x: cx, y: y1 }),
+      seg({ x: cx - head, y: y1 + head }, { x: cx, y: y1 }),
+      seg({ x: cx + head, y: y1 + head }, { x: cx, y: y1 }),
+    ];
+  }
+  return [
+    seg({ x: cx, y: y1 }, { x: cx, y: y2 }),
+    seg({ x: cx - head, y: y2 - head }, { x: cx, y: y2 }),
+    seg({ x: cx + head, y: y2 - head }, { x: cx, y: y2 }),
+  ];
+}
+
+/* ------------------------------------------------------------------ *
+ * 判据里的关节角度：直接标在图标里
+ * ------------------------------------------------------------------ */
+
+/** 「这个数字是关节角（度）」的指标 */
+const JOINT_ANGLE_METRICS = new Set([
+  'elbow', 'elbowBent', 'elbowExtended',
+  'knee', 'kneeBent', 'kneeExtended',
+  'frontKnee', 'straighterKnee', 'hip', 'ankle',
+]);
+
+/** 图标里代表的是哪条判据（走识别器比例线的格子，看它展示用的判据条目） */
+function stageCriterion(stage) {
+  const item = stage?.item || {};
+  const inner = String(item.metricKey || '').replace('metric.', '');
+  if (stage?.metric === 'progress' && inner && inner !== 'progress') {
+    return { metric: inner, value: Number(item.value) };
+  }
+  return { metric: stage?.metric, value: Number(stage?.value) };
+}
+
+/**
+ * 一格判据里的关节角度（度数）；不是关节角、或者判据本身是文字（例如箭步蹲
+ * 「从本轮最弯处回升 60%」这种没有固定角度的）就返回 null —— 免得图标里标出一个
+ * 和弹窗不一致的数字。
+ */
+export function stageAngle(stage) {
+  const item = stage?.item || {};
+  const { metric } = stageCriterion(stage);
+  if (!JOINT_ANGLE_METRICS.has(metric)) return null;
+  if (item.textKey) return null;   // 判据本身是文字 → 弹窗里根本没有这个数字，不标
+  const fromItem = Number(item.value);
+  if (Number.isFinite(fromItem)) return fromItem;
+  const own = Number(stage?.value);
+  return Number.isFinite(own) ? own : null;
+}
+
+/**
+ * 图标里要不要标出角度、标多少。
+ *
+ * 用户反馈「俯卧撑的关键帧图标太相似了，要有点区别，实在相似就在图标里标注关节度数」——
+ * 所以规则是：**同一个动作里有两格用同一个关节角、而且两个度数相差 ≤12°（画出来几乎一样）**
+ * 时，这条链上所有同一关节角的格子都标上数字（方便横向比较）。
+ * 本来就一眼能区分的链（例如深蹲 176°→135°→112°→149°）不标，免得画面上全是数字。
+ */
+export function angleLabel(stage, ctx = {}) {
+  const { metric } = stageCriterion(stage);
+  const value = stageAngle(stage);
+  if (!Number.isFinite(value)) return null;
+  const same = (ctx.stages || []).filter((s) => stageCriterion(s).metric === metric);
+  const vals = same.map(stageAngle).filter((v) => Number.isFinite(v));
+  if (vals.length < 2) return null;
+  let ambiguous = false;
+  for (let i = 0; i < vals.length && !ambiguous; i += 1) {
+    for (let j = i + 1; j < vals.length; j += 1) {
+      if (Math.abs(vals[i] - vals[j]) <= 12) { ambiguous = true; break; }
+    }
+  }
+  return ambiguous ? `${Math.round(value)}°` : null;
+}
+
+/** 某一格的图标 SVG（进度条上只画这个 + 一个判据角度数字，不写别的文字） */
 export function iconSVG(stage, ctx = {}) {
   const { lines, circles } = stageIcon(stage, ctx);
   const parts = lines.map((l) => {
@@ -460,6 +565,13 @@ export function iconSVG(stage, ctx = {}) {
     return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />`;
   });
   for (const c of circles) parts.push(`<circle cx="${c.x}" cy="${c.y}" r="${c.r}" />`);
+  const label = angleLabel(stage, ctx);
+  if (label) {
+    // 描边当底（paint-order: stroke）→ 数字压在线条上也看得清
+    parts.push('<text class="criteria-deg" x="1.6" y="9.6" font-size="7.4" font-weight="800"'
+      + ' fill="currentColor" stroke="#0b1422" stroke-width="1.6" paint-order="stroke"'
+      + ` text-anchor="start">${label}</text>`);
+  }
   return `<svg class="criteria-icon" viewBox="0 0 ${ICON_BOX} ${ICON_BOX}" aria-hidden="true">${parts.join('')}</svg>`;
 }
 

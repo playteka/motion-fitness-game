@@ -183,6 +183,22 @@ console.log('\n[3] 静态资源与模型文件');
     && /box-shadow/.test(segDone));
   ok('做到的图标线条明显更粗（≥2）', Number(/stroke-width:\s*([\d.]+)/.exec(doneIcon)?.[1]) >= 2);
   ok('做到的格子右上角带对勾（图形符号）', /\.criteria-seg\.done::after\s*\{[^}]*content:\s*'✓'/.test(css));
+  // 用户反馈「打的这个钩太小了，根本看不清楚，要加倍放大」
+  const tickBlocks = [...css.matchAll(/\.criteria-seg\.done::after\s*\{([\s\S]*?)\}/g)].map((m) => m[1]);
+  const tickSize = Math.max(...tickBlocks.map((b) => Number(/width:\s*(\d+)px/.exec(b)?.[1]) || 0));
+  const tickFont = Math.max(...tickBlocks.map((b) => Number(/font-size:\s*(\d+)px/.exec(b)?.[1]) || 0));
+  ok('对勾做成大号徽标（≥44px 圆盘 + ≥28px 勾，窄屏另有小一号的规则）',
+    tickSize >= 44 && tickFont >= 28, `${tickSize}px / ${tickFont}px`);
+  // 用户反馈「得分显示在关键帧里，字体要大一点，让人看清楚」
+  const ptsEarned = /\.criteria-seg-pts\.earned\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+  const ptsFont = /font-size:\s*clamp\(\s*([\d.]+)px/.exec(ptsEarned)?.[1]
+    || /font-size:\s*([\d.]+)px/.exec(ptsEarned)?.[1];
+  ok('关键帧里「已拿到的分」用大号字（≥17px）', Number(ptsFont) >= 17, `font-size=${ptsFont}`);
+  ok('「还没拿到的分」用灰色小字标出可得分数',
+    /\.criteria-seg-pts\.max\s*\{[^}]*font-size:\s*12px/.test(css));
+  ok('图标里的判据角度数字有深色描边打底（压在线条上也看得清）',
+    /class="criteria-deg"/.test(fs.readFileSync(path.join(ROOT, 'src/icons.js'), 'utf8'))
+    && /paint-order="stroke"/.test(fs.readFileSync(path.join(ROOT, 'src/icons.js'), 'utf8')));
   ok('正在等的那一格：琥珀粗描边 + 呼吸动画',
     /border:\s*2px solid #fbbf24/.test(segCurrent) && /animation:/.test(segCurrent));
   ok('动效敏感用户会关掉呼吸/弹跳动画', /prefers-reduced-motion/.test(css));

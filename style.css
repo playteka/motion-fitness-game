@@ -545,6 +545,7 @@ kbd {
 }
 .criteria-tip[hidden] { display: none; }
 .criteria-tip .criteria-tip-name { color: var(--accent); margin-right: 6px; }
+.criteria-tip .criteria-tip-pts { color: #fde047; margin-left: 8px; }
 /* 还没识别到人：整条灰掉，表示「尚未开始」 */
 .criteria-bar.idle { background: rgba(8, 15, 26, 0.55); border-color: rgba(255, 255, 255, 0.07); }
 .criteria-bar.idle .criteria-seg { border-color: rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); }
@@ -660,14 +661,43 @@ kbd {
   45% { transform: scale(1.09); }
   100% { transform: scale(1); }
 }
+/* 每一格上的分：**拿到**了就是大号亮色数字（垫一个深色药丸底，看清），
+   还没拿到的用灰色小字标出「这一格可得多少」—— 用户要求「字体大一点，让人看清楚」 */
 .criteria-seg-pts {
-  font-size: 10.5px;
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  padding: 1px 7px;
+  border-radius: 999px;
   font-weight: 800;
-  color: #ffe066;
-  line-height: 1;
-  min-height: 0;
+  line-height: 1.25;
+  letter-spacing: 0.3px;
+  background: rgba(8, 15, 26, 0.72);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.criteria-seg-pts.max {
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.55);
+}
+.criteria-seg-pts.earned {
+  font-size: clamp(17px, 2.4vh, 26px);
+  color: #fde047;
+  background: rgba(8, 15, 26, 0.82);
+  box-shadow: 0 0 12px rgba(253, 224, 71, 0.45);
+  animation: criteriaPtsPop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.6);
+}
+@keyframes criteriaPtsPop {
+  0% { transform: scale(0.4); opacity: 0.2; }
+  100% { transform: scale(1); opacity: 1; }
 }
 .criteria-seg-pts:empty { display: none; }
+/* 图标里的判据角度数字（描边做底，压在线条上也看得清） */
+.criteria-icon .criteria-deg { font-family: inherit; }
+.criteria-seg .criteria-icon { color: rgba(148, 163, 184, 0.9); }
+.criteria-bar.idle .criteria-seg .criteria-icon { color: rgba(148, 163, 184, 0.42); }
+.criteria-seg.done .criteria-icon { color: #bbf7d0; }
+.criteria-seg.current .criteria-icon { color: #fde68a; }
 
 /* 一次动作完成：进度条清零并闪一下，让「从头开始」看得见 */
 .criteria-bar.reset {

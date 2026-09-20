@@ -807,23 +807,55 @@ export const BRIDGE = {
   kneeClearMin: 0.12,
   downRise: 0.12,     // 参考的「落回地面」高度（实际判定跟着用户自己的最低点走，见 bottomLine）
   upRise: 0.22,       // 顶起幅度要求（原来 0.35，要顶很高才算）
-  // 整轮时长下限（上一个顶点 → 这个顶点）：只用来滤掉「快速上下抖」，
-  // 比人体能做出的最快一次臀桥还短（1 秒 2 次以上一定是抖）。第一次顶点不参与这个判断。
+  // 一整轮的时长下限（离开地面 → 落回地面）：只用来滤掉「快速上下抖」，
+  // 比人体能做出的最快一次臀桥还短（1 秒 2 次以上一定是抖）。第一次不参与这个判断。
   minRepMs: 420,
 };
 
+/**
+ * 臀桥的判定（用户指定的三个关键帧：**屈腿仰卧 → 曲腿腰臀顶起 → 落回屈腿仰卧**）。
+ *
+ * 计次发生在**从顶点落回地面**那一刻 —— 也就是进度条最后一格「落回屈腿仰卧」点亮的同一刻。
+ * 这样「三个关键帧都做完」和「记上一个数」永远是同一件事（用户两次反馈的正是这件事：
+ * 之前要么在顶点计次、要么固定要求落到 0.12 以下，结果都出现「关键帧都做对了却不计次」）。
+ *
+ * 两条判定线都**跟着用户自己的幅度走**：
+ *   `bottomLine`（落回地面）= 自己这一组的最低点 + 0.08，`topLine`（顶起来）= 最低点 + 0.16（且不低于 0.22）。
+ * 每个人躺平时肩-髋高度差并不正好是 0，写死的 0.12 会让「最低点本来就高」的人永远回不到线下。
+ */
 class GluteBridgeDetector extends DetectorBase {
   onReset() {
     this.stage = 'down';
-    this.lastTopAt = 0;
     this.maxRise = -9;
     this.wasAtTop = false;
     this.prevAtTop = false;
-    this.bottomLine = BRIDGE.downRise;   // 「落回地面」的判定线（跟着用户自己的最低点漂移）
-    this._recent = [];                    // 最近几秒的抬起高度，用来估用户自己的最低点
+    this.atTop = false;
+    this.atBottom = false;
+    this.lastRise = 0;
+    this.floorLine = null;                // 「自己这一组的最低点」（见 rememberRise）
+    this._recent = [];                    // 最近 2.5 秒「没在顶点上」的抬起高度样本
+    this.cycleStartAt = 0;                // 这一轮「离开地面」的时刻（算整轮时长用）
   }
-  onLost() { this.stage = 'down'; this.lastTopAt = 0; this.prevAtTop = false; }
-  onNewCycle() { this.wasAtTop = false; }
+
+  onLost() {
+    this.stage = 'down';
+    this.wasAtTop = false;
+    this.prevAtTop = false;
+    this.cycleStartAt = 0;
+  }
+
+  onNewCycle() { this.wasAtTop = false; this.cycleStartAt = 0; }
+
+  /** 计数诊断（🐞 面板）：把「顶起线 / 落回线 / 自己这一组的最低点」都摊出来 */
+  diag() {
+    return [
+      { key: 'debug.diag.stage', value: this.stage },
+      { key: 'debug.diag.ridgeRise', value: `${this.lastRise.toFixed(2)}/${this.topLine.toFixed(2)}/${this.bottomLine.toFixed(2)}` },
+      { key: 'debug.diag.floorLine', value: this.floorLine === null ? '—' : this.floorLine.toFixed(2) },
+      { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
+      ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
+    ];
+  }
 
   /** 仰卧判据：躯干接近水平 + 屈膝 + 肩贴地 + 膝离地 */
   isSupine(f) {
@@ -834,26 +866,43 @@ class GluteBridgeDetector extends DetectorBase {
   }
 
   /**
-   * 记下最近 2 秒的抬起高度，估出「用户自己的最低点」。
+   * 「自己这一组的最低点」= 最近 2.5 秒里、**没在顶点上**的那些帧的最低值。
    *
    * 为什么需要：原来用固定的 downRise(0.12) 判断「落回地面」，但每个人躺平时
    * 肩-髋高度差并不正好是 0（体态、机位都会带一点偏移）。最低点偏高的人永远回不到
    * 0.12 以下，于是第一次顶点之后再也不计次 —— 正是用户反馈的
    * 「三个关键帧都做对了却不计次」。
    *
-   * 顶点线也要跟着自己的最低点走：否则「最低点本来就高」的人一躺下就已经超过 0.22，
-   * 上下抖一下就被算成一次（顶起幅度必须比自己的最低点高出 0.16）。
+   * 为什么把「顶点上的样本」直接丢掉：一直顶在最上面时，最近样本全是高位，
+   * 用它们算最低点会把人**在高处判成「落回地面」**，白送一次；而且人从高处开始
+   * （进画面时就已经顶起来了）也不会被当成基准。低位的样本过期了就保留上一次的值。
    */
   rememberRise(v, now) {
     if (!Number.isFinite(v)) return;
+    if (v > this.topLine) return;      // 顶点附近不算「地面」，不参与基准
     this._recent.push({ t: now, v });
-    while (this._recent.length > 3 && now - this._recent[0].t > 2000) this._recent.shift();
-    const low = Math.min(...this._recent.map((r) => r.v));
-    this.bottomLine = low + 0.04;   // 「落回地面」= 回到自己最低点附近（原来写死 0.12）
+    while (this._recent.length > 3 && now - this._recent[0].t > 2500) this._recent.shift();
+    if (!this._recent.length) return;
+    this.floorLine = Math.min(...this._recent.map((r) => r.v));
   }
+
+  /** 自己这一组的最低点（还没测到时用参考值） */
+  get floorValue() { return this.floorLine === null ? BRIDGE.downRise : this.floorLine; }
+
+  /** 「落回地面」的判定线：回到自己最低点往上 0.08 以内（识别有平滑延迟，贴合太紧会漏计次） */
+  get bottomLine() { return this.floorValue + 0.08; }
+
+  /**
+   * 「顶起来」的判定线：至少比自己最低点高 0.16（最低点本来就高的人不能一躺下就算顶起）。
+   * 因为 topLine 至少比 bottomLine 高 0.08，「已经落回地面」和「还在顶点」不可能同时成立。
+   */
+  get topLine() { return Math.max(BRIDGE.upRise, this.floorValue + 0.16); }
 
   /** 这一帧算不算「回到地面」 */
   atBottomNow(rise) { return rise <= this.bottomLine; }
+
+  /** 这一帧算不算「顶到位」 */
+  atTopNow(rise) { return rise > this.topLine; }
 
   step(f, now) {
     if (!this.isSupine(f)) {
@@ -861,30 +910,47 @@ class GluteBridgeDetector extends DetectorBase {
       this.standby = 'status.standbyBridge';
       this.stage = 'down';
       this.depthPct = 0;
+      this.atTop = false;
+      this.atBottom = false;
+      this.cycleStartAt = 0;
       if (f.torsoIncl < 35) this.cue('notSupine', null, 'info', now, 8000);
       return;
     }
     this.active = true;
     this.standby = '';
     const rise = f.hipRise;
+    this.lastRise = Number.isFinite(rise) ? rise : 0;
     this.depthPct = clamp((rise / 0.6) * 100, 0, 100);
     this.rememberRise(rise, now);
 
-    const atTop = rise > BRIDGE.upRise;
+    const atTop = this.atTopNow(rise);
     const atBottom = this.atBottomNow(rise);
     this.atTop = atTop;
     this.atBottom = atBottom;
     this.stage = atTop ? 'up' : 'down';
 
-    // 计次发生在「**第一次顶过顶点线**」的那一刻（不是等回到地面）：
-    // 这样进度条最后一格（顶起）一亮，次数就同步加上，不会出现「关键帧都做完了却不计次」。
+    // 这一轮「离开地面」的时刻：用来算整轮时长（滤掉快速上下抖）
+    if (!this.cycleStartAt && !atBottom) this.cycleStartAt = now;
+
     if (atTop && !this.prevAtTop) {
-      // 两次顶点之间的时长只用来滤掉「快速上下抖」（1 秒两次以上一定是抖）
-      const dur = this.lastTopAt ? now - this.lastTopAt : 0;
-      this.lastTopAt = now;
-      this.maxRise = Math.max(this.maxRise, rise);
       this.wasAtTop = true;
+      this.maxRise = Math.max(this.maxRise, rise);
+    } else if (!atTop && !this.wasAtTop && rise > this.bottomLine + 0.03) {
+      // 想顶但没顶起来：提示再高一点
+      this.cue('riseMore', null, 'warn', now, 3500);
+    }
+    this.prevAtTop = atTop;
+
+    // 计次 = **从顶点落回地面**那一刻（进度条最后一格「落回屈腿仰卧」点亮的同一刻）
+    if (this.wasAtTop && atBottom) {
+      const peak = this.maxRise;
+      const dur = this.cycleStartAt ? now - this.cycleStartAt : 0;
+      this.wasAtTop = false;
+      this.maxRise = -9;
+      this.cycleStartAt = 0;
+      this.phase = 'down';
       if (dur > 0 && dur < BRIDGE.minRepMs) {
+        // 快速上下抖一下：不算次数，但出声提示放慢
         this.partialReps += 1;
         this.cue('tempo', null, 'warn', now, 3000);
         this.emit({ type: 'rep', valid: false, reason: 'tempo' });
@@ -893,20 +959,9 @@ class GluteBridgeDetector extends DetectorBase {
         this.reps = this.validReps;
         this.cycleHadValidRep = true;
         this.phase = 'up';
-        const quality = clamp(Math.round(60 + (rise > 0.5 ? 30 : 18) + (f.kneeAngle > 80 && f.kneeAngle < 120 ? 10 : 5)), 0, 100);
+        const quality = clamp(Math.round(60 + (peak > 0.5 ? 30 : 18) + (f.kneeAngle > 80 && f.kneeAngle < 120 ? 10 : 5)), 0, 100);
         this.emit({ type: 'rep', valid: true, index: this.validReps, quality, duration: dur });
       }
-    } else if (!atTop && !this.wasAtTop && rise > this.bottomLine + 0.03) {
-      // 想顶但没顶起来：提示再高一点
-      this.cue('riseMore', null, 'warn', now, 3500);
-    }
-    this.prevAtTop = atTop;
-
-    // 回到自己最低点附近 = 这一轮结束：结算「整轮要领满分」并重置要领清单
-    if (this.wasAtTop && atBottom) {
-      this.wasAtTop = false;
-      this.maxRise = -9;
-      this.phase = 'down';
       this.nextCycle(now);
     }
   }

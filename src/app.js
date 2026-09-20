@@ -13,7 +13,10 @@ import { PoseEngine, Camera } from './pose-engine.js';
 import { PoseRenderer } from './render.js';
 import { AudioKit, TRACKS, getTrack, DEFAULT_TRACK } from './audio.js';
 import { Calibrator, requiredView } from './calibration.js';
-import { exerciseSpecs, specCondition, specStages, stageHolds, stageText } from './specs.js';
+import {
+  exerciseSpecs, specCondition, specStages, stageHolds, stageText, stagePoints, stageIndexForStep,
+} from './specs.js';
+import { getStepPlan } from './steps.js';
 import { iconSVG, uniqueStages } from './icons.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
@@ -100,7 +103,10 @@ const state = {
   criteriaStages: [],   // 当前动作的阶段（见 specs.js 的 specStages）
   criteriaIdx: -1,      // 已经识别到的最后一格；-1 = 还没开始
   criteriaJust: -1,     // 刚刚点亮的那一格（用于播放「跳一下」动画）
-  criteriaPts: [],      // 每一格上显示的分（那一步真的加了分才写）
+  criteriaJustPts: -1,  // 刚刚拿到分的那一格（同上）
+  criteriaPts: [],      // 每一格上**已经拿到**的分（真的有得分项达标才写）
+  criteriaMax: [],      // 每一格**能拿多少分**（得分项按关键帧分配，见 specs.js 的 stagePoints）
+  criteriaStepStage: {}, // 得分项 id → 第几格（把得分记到对应格子上）
   criteriaClearUntil: 0, // 刚清零后的展示期结束时间（这段时间进度条保持空的）
   criteriaLive: false,   // 这一帧识别到人体了没（决定进度条是灰色还是彩色）
   criteriaLostSince: 0,  // 从什么时候开始没识别到人（丢帧宽限用）
@@ -495,6 +501,24 @@ function buildCriteriaBar() {
   state.criteriaIcons = state.criteriaStages.map((s) => iconSVG(s, ctx));
   state.criteriaContext = ctx;
   state.criteriaPts = new Array(state.criteriaStages.length).fill(0);
+  // **得分分配到关键帧**：每个关键帧能拿多少分（整轮满分奖励记在最后一格，计时类的每秒分也是）
+  const scored = stagePoints(state.exerciseId);
+  state.criteriaMax = state.criteriaStages.map((s) => {
+    const idx = ctx.stages.indexOf(s);
+    const row = idx >= 0 ? scored[idx] : null;
+    return {
+      points: row ? row.points : 0,
+      bonus: row ? row.bonus : 0,
+      perSecond: row ? row.perSecond : 0,
+    };
+  });
+  // 步骤 id → 第几格：界面按这个把「这一步加到的分」记到对应格子上
+  state.criteriaStepStage = {};
+  for (const def of (getStepPlan(state.exerciseId)?.steps || [])) {
+    const fullIdx = stageIndexForStep(state.exerciseId, def.id);
+    const shown = fullIdx >= 0 ? state.criteriaStages.indexOf(ctx.stages[fullIdx]) : -1;
+    state.criteriaStepStage[def.id] = shown;
+  }
   resetCriteriaProgress();
   renderCriteriaBar();
 }
@@ -510,6 +534,7 @@ function buildCriteriaBar() {
 function resetCriteriaProgress({ holdMs = 0, now = performance.now() } = {}) {
   state.criteriaIdx = -1;
   state.criteriaJust = -1;
+  state.criteriaJustPts = -1;
   state.criteriaClearUntil = holdMs > 0 ? now + holdMs : 0;
   for (let i = 0; i < state.criteriaPts.length; i++) state.criteriaPts[i] = 0;
 }
@@ -519,13 +544,28 @@ function criteriaCleared(now = performance.now()) {
   return now < state.criteriaClearUntil;
 }
 
+/** 某一格能拿多少分的文字（悬停提示用；没有分数的格子返回 ''） */
+function criteriaPointsText(index) {
+  const row = state.criteriaMax?.[index];
+  if (!row) return '';
+  const earned = state.criteriaPts?.[index] || 0;
+  const parts = [];
+  if (earned > 0) parts.push(t('ui.criteriaPtsGot', { n: earned }));
+  const max = (row.points || 0) + (row.bonus || 0);
+  if (max > 0) parts.push(t('ui.criteriaPtsMax', { n: max }));
+  if (row.perSecond > 0) parts.push(t('ui.criteriaPtsPerSec', { n: row.perSecond }));
+  return parts.join(' · ');
+}
+
 /** 悬停某一格：在进度条上方显示这一格的判定标准 */
 function showCriteriaTip(index) {
   const tip = $('criteriaTip');
   const stage = state.criteriaStages?.[index];
   if (!tip || !stage) return;
   const { short, cond } = stageText(stage);
-  tip.innerHTML = `<span class="criteria-tip-name">${esc(short)}</span>${esc(cond)}`;
+  const pts = criteriaPointsText(index);
+  tip.innerHTML = `<span class="criteria-tip-name">${esc(short)}</span>${esc(cond)}`
+    + (pts ? `<span class="criteria-tip-pts">${esc(pts)}</span>` : '');
   tip.hidden = false;
 }
 
@@ -565,8 +605,20 @@ function updateCriteria(frame, events, now) {
     if (!live) resetCriteriaProgress();
   }
 
-  // 这一帧加到的分（要领得分 / 满分奖励）先处理：清零展示期里也不能丢掉分数反馈
-  const earned = (events || []).reduce((n, ev) => n + (Number.isFinite(ev.points) ? ev.points : 0), 0);
+  // 这一帧加到的分（要领得分 / 满分奖励）先处理：清零展示期里也不能丢掉分数反馈。
+  // 得分按**得分项 → 关键帧**的映射记到对应的格子上（见 specs.js 的 stageIndexForStep），
+  // 所以「得分显示在关键帧里」和「哪个要领给的分」永远对得上，不会飘到别的格子上。
+  let earned = 0;
+  for (const ev of (events || [])) {
+    if (!Number.isFinite(ev.points) || ev.points <= 0) continue;
+    earned += ev.points;
+    const mapped = ev.type === 'step' ? state.criteriaStepStage?.[ev.id] : undefined;
+    let idx = Number.isFinite(mapped) ? mapped : -1;
+    if (idx < 0 && ev.type !== 'step') idx = stages.length - 1;   // 整轮奖励 / 每秒分 → 最后一格
+    if (idx < 0) idx = Math.max(0, Math.min(stages.length - 1, state.criteriaIdx));
+    state.criteriaPts[idx] = (state.criteriaPts[idx] || 0) + ev.points;
+    state.criteriaJustPts = idx;
+  }
   if (earned > 0) {
     const el = $('criteriaEarned');
     if (el) {
@@ -594,11 +646,6 @@ function updateCriteria(frame, events, now) {
   if (advanced >= 0) {
     state.criteriaJust = advanced;
     audio.criteria(advanced, stages.length);
-    if (earned > 0) state.criteriaPts[advanced] = earned;
-  } else if (earned > 0) {
-    // 分数落在没有前进的那一帧（例如要领步骤比判据链先达标）：标在已经点亮的那一格上
-    const at = Math.max(0, state.criteriaIdx);
-    state.criteriaPts[at] = (state.criteriaPts[at] || 0) + earned;
   }
   renderCriteriaBar(now);
 }
@@ -625,20 +672,26 @@ function renderCriteriaBar(now = performance.now()) {
 
   // 状态没变就不动 DOM
   const sig = [
-    state.exerciseId, state.criteriaIdx, state.criteriaJust, state.criteriaPts.join(','),
-    cleared ? 'c' : '', active ? 'a' : 'i',
+    state.exerciseId, state.criteriaIdx, state.criteriaJust, state.criteriaJustPts,
+    state.criteriaPts.join(','), cleared ? 'c' : '', active ? 'a' : 'i',
   ].join('|');
   if (track.dataset.sig !== sig) {
     track.dataset.sig = sig;
     track.innerHTML = stages.map((s, i) => {
       const done = i <= state.criteriaIdx;
-      const cls = `criteria-seg${done ? ' done' : ''}${active && i === state.criteriaIdx + 1 ? ' current' : ''}${i === state.criteriaJust ? ' just' : ''}`;
-      const pts = state.criteriaPts[i] > 0 ? `+${state.criteriaPts[i]}` : '';
-      // 悬停提示里给完整判据（画面上不写文字，鼠标移上去/触摸才知道这一步要什么）
-      const tip = `${stageText(s).short} · ${stageText(s).cond}`;
-      return `<div class="${cls}" data-i="${i}" data-done="${done ? 1 : 0}" data-tip="${esc(tip)}">`
+      const earned = state.criteriaPts[i] || 0;
+      const row = state.criteriaMax?.[i] || { points: 0, bonus: 0, perSecond: 0 };
+      const max = (row.points || 0) + (row.bonus || 0);
+      const cls = `criteria-seg${done ? ' done' : ''}${active && i === state.criteriaIdx + 1 ? ' current' : ''}`
+        + `${i === state.criteriaJust || i === state.criteriaJustPts ? ' just' : ''}`;
+      // 格子上显示这一格的分：**真的拿到**了就是大号亮色数字，还没拿到的用灰色小字标出「可得」
+      const ptsCls = earned > 0 ? 'criteria-seg-pts earned' : 'criteria-seg-pts max';
+      const ptsText = earned > 0 ? `+${earned}` : (max > 0 ? `+${max}` : '');
+      // 悬停提示里给完整判据 + 这一格的分数（画面上不写文字，鼠标移上去/触摸才知道这一步要什么）
+      const tip = [stageText(s).short, stageText(s).cond, criteriaPointsText(i)].filter(Boolean).join(' · ');
+      return `<div class="${cls}" data-i="${i}" data-done="${done ? 1 : 0}" data-pts="${earned}" data-max="${max}" data-tip="${esc(tip)}">`
         + (state.criteriaIcons?.[i] || '')
-        + `<span class="criteria-seg-pts">${pts}</span></div>`;
+        + `<span class="${ptsCls}">${ptsText}</span></div>`;
     }).join('');
   }
 }
