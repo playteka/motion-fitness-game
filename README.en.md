@@ -389,8 +389,9 @@ Take the lunge (each segment holds the real threshold from the code):
 ```
 
 - **Two states**: with **nobody detected** the whole bar is grey (not started yet); once you are **detected and counting**
-  it turns coloured (working) — unmet segments are grey lines, met ones light up green, and the segment being waited on is
-  amber and lifted a little. Detection flickers, so a short dropout (under 0.7 s) neither greys the bar nor clears progress.
+  it turns coloured (working). The **done / not-done contrast is four-fold** so it reads at a glance: not done = dashed grey frame
+  with thin, faint grey lines; done = solid bright-green fill with thicker green lines, a tick in the corner and a glow; the segment
+  being waited on = thick amber border with a slow breathing pulse. Detection flickers, so a short dropout (under 0.7 s) neither greys the bar nor clears progress.
 - **Icons only, no text on the bar**: every icon is a stick figure drawn from that segment's own criterion — “Front knee
   bend ≤ 152°” is drawn as a leg bent to exactly 152°; “Hip lift ≥ 0.22× torso length” lifts the glute bridge to that
   height; “Lift ≥ 0.035× frame height” is drawn airborne; and for a supported pose like the push-up the **hand is pinned to
@@ -738,7 +739,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all six suites (1607 cases)
+npm test                       # run all six suites (1614 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / matching structure of the Chinese and English READMEs
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -754,7 +755,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 247 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, plus the pre-workout calibration checks |
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 601 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; the judgement progress bar is walked through with synthetic poses (a shallow movement never reaches the full-depth segment); both languages are complete |
-| `tests/test-page.mjs` | 314 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
+| `tests/test-page.mjs` | 321 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
 | `tests/test-app.mjs` | 286 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar, the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---

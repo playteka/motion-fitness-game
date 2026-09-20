@@ -167,6 +167,26 @@ console.log('\n[3] 静态资源与模型文件');
   ok('进度条出现时底部提示条会让位（不会两块叠在一起）',
     /\.stage\.has-criteria \.pose-hint\s*\{[^}]*bottom:/.test(css));
 
+  // 做到与没做到要一眼分得清（颜色 + 填充 + 线粗 + 对勾，四重区别）
+  const segBase = /(?:^|\n)\.criteria-seg\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+  const segDone = /(?:^|\n)\.criteria-seg\.done\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+  const doneIcon = /\.criteria-seg\.done \.criteria-icon\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+  const segCurrent = /(?:^|\n)\.criteria-seg\.current\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+  ok('没做到的格子：虚线灰框 + 几乎没有底色',
+    /border:\s*1px dashed/.test(segBase) && /background:\s*rgba\(255, 255, 255, 0\.0/.test(segBase));
+  ok('没做到的图标线条又细又淡（stroke-width ≤ 1.4，透明度 ≤ 0.35）',
+    /stroke-width:\s*1\.[0-4]/.test(iconBlock)
+    && Number(/stroke:\s*rgba\([^)]*,\s*([\d.]+)\)/.exec(iconBlock)?.[1]) <= 0.35);
+  ok('做到的格子：实心绿底 + 实线绿框 + 外发光',
+    /border:\s*1px solid/.test(segDone) && /background:/.test(segDone)
+    && Number(/background:\s*rgba\([^)]*,\s*([\d.]+)\)/.exec(segDone)?.[1]) >= 0.18
+    && /box-shadow/.test(segDone));
+  ok('做到的图标线条明显更粗（≥2）', Number(/stroke-width:\s*([\d.]+)/.exec(doneIcon)?.[1]) >= 2);
+  ok('做到的格子右上角带对勾（图形符号）', /\.criteria-seg\.done::after\s*\{[^}]*content:\s*'✓'/.test(css));
+  ok('正在等的那一格：琥珀粗描边 + 呼吸动画',
+    /border:\s*2px solid #fbbf24/.test(segCurrent) && /animation:/.test(segCurrent));
+  ok('动效敏感用户会关掉呼吸/弹跳动画', /prefers-reduced-motion/.test(css));
+
   // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面
   const stageAt = html.indexOf('id="stage"');
   const toolbarAt = html.indexOf('class="stage-toolbar"');
