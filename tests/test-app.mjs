@@ -382,8 +382,8 @@ console.log('\n[1b] 运动设定弹窗');
   // ===== 计次技术指标：把识别器真正用的数值显示给用户 =====
   const specHtml = () => elements.get('exerciseSpecs').innerHTML;
   ok('运动设定里列出了计次判据分组', specHtml().includes('计次判据'), specHtml().slice(0, 120));
-  ok('俯卧撑：列出肘角计次线（≤135°）', specHtml().includes('135'), specHtml().slice(0, 200));
-  ok('俯卧撑：列出肩膀下沉量这条第二路证据（0.20）', specHtml().includes('0.2'), specHtml().slice(0, 200));
+  ok('俯卧撑：列出肘角计次线（≤138°）', specHtml().includes('138'), specHtml().slice(0, 240));
+  ok('俯卧撑：列出肩膀下沉量这条第二路证据（0.14）', specHtml().includes('0.14'), specHtml().slice(0, 200));
   ok('俯卧撑：列出俯撑姿势门控（躯干倾角 ≥ 32°）', specHtml().includes('≥ 32'), specHtml().slice(0, 300));
   ok('指标行带上了单位（×躯干长 / °）',
     specHtml().includes('躯干长') && specHtml().includes('°'), specHtml().slice(0, 200));
@@ -1186,14 +1186,24 @@ console.log('\n[8b] 判定进度条');
     && elements.get('criteriaBar').classList.contains('idle') === false);
   ok('进度条格数 = 这个动作的关键帧数', segCount() === squatStages.length,
     `${segCount()} vs ${squatStages.length}`);
-  const visibleText = segHtml().replace(/\s(title)="[^"]*"/g, '');
+  const visibleText = segHtml().replace(/\sdata-tip="[^"]*"/g, '');
   ok('每一格画的是线条图标（svg），不是文字',
     (segHtml().match(/<svg class="criteria-icon"/g) || []).length === segCount()
     && !/[\u4e00-\u9fff]/.test(visibleText), segHtml().slice(0, 200));
   ok('进度条上没有任何可见文字（格子只有图标）',
     !/class="criteria-seg-(label|index)"/.test(segHtml()), segHtml().slice(0, 200));
   ok('悬停提示里带判据（图标看不出数值时能查）',
-    /title="[^"]*(站姿|0\.86)[^"]*"/.test(segHtml()), segHtml().slice(0, 300));
+    /data-tip="[^"]*(站姿|0\.86)[^"]*"/.test(segHtml()), segHtml().slice(0, 300));
+  api.hideCriteriaTip();
+  ok('判据文字默认不显示（进度条上只有图标）', elements.get('criteriaTip').hidden === true);
+  api.showCriteriaTip(1);
+  ok('鼠标移到某一格时，判据文字显示在进度条上方',
+    elements.get('criteriaTip').hidden === false
+    && /<=|≤/.test(elements.get('criteriaTip').innerHTML)
+    && elements.get('criteriaTip').innerHTML.includes('开始'),
+    elements.get('criteriaTip').innerHTML);
+  api.hideCriteriaTip();
+  ok('移开鼠标后判据文字收起', elements.get('criteriaTip').hidden === true);
 
   // 站着不动：只点亮「站姿」这一格
   ok('站着时点亮「站姿」这一格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
@@ -1208,7 +1218,14 @@ console.log('\n[8b] 判定进度条');
   }
   ok('蹲下去时进度条只前进不后退（单调）',
     walked.every((v, i) => i === 0 || v >= walked[i - 1]), walked.join(','));
-  ok('蹲到底时走到最后一格（满分深度）', api.state.criteriaIdx === squatStages.length - 1,
+  ok('蹲下去时走到「计次」这一格（深度分不再单独占格）',
+    api.state.criteriaIdx === squatStages.length - 2,
+    `${api.state.criteriaIdx + 1}/${squatStages.length}`);
+  ok('最后一格是「回位」：蹲到底时它还没亮（说明它真的是「回到起始位」那一刻）',
+    !/class="[^"]*done[^"]*" data-i="3"/.test(segAt(3)), segAt(3));
+  // 站起来 → 最后一格亮，同时识别器计上这一次（「关键帧全做完 = 已经计次」）
+  api.updateCriteria(frameOf(178), [], 1400);
+  ok('站起来后最后一格也亮了（整条链走完）', api.state.criteriaIdx === squatStages.length - 1,
     `${api.state.criteriaIdx + 1}/${squatStages.length}`);
 
   // 一步真的加了分 → 标在格子上，并飘一下「+N」
@@ -1220,29 +1237,26 @@ console.log('\n[8b] 判定进度条');
   ok('同时飘一下「+N」（数字，不带文字）',
     elements.get('criteriaEarned').textContent === '+7', elements.get('criteriaEarned').textContent);
 
-  // 一次动作结束 → 进度条清零，并且**看得见地**保持空的，然后从头再走
-  api.updateCriteria(frameOf(178), [], 5000);
+  // 一次动作结束 → 整条链点亮并保持 0.65 秒（让用户看到「这轮走完了」），然后清零重来
   api.updateCriteria(frameOf(80), [], 5100);
-  ok('这轮先把进度走到最后一格', api.state.criteriaIdx === squatStages.length - 1,
-    String(api.state.criteriaIdx));
   api.handleEvents([{ type: 'rep', valid: true, index: 1, quality: 90, duration: 900 }], 5200);
-  ok('做完一次动作后进度条清零', api.state.criteriaIdx === -1, String(api.state.criteriaIdx));
-  ok('清零瞬间进度条有清零动画标记', elements.get('criteriaBar').classList.contains('reset'),
-    String(elements.get('criteriaBar').classList.contains('reset')));
-  // 站在起始姿势（判据其实已满足）也不该立刻重新点亮
+  ok('识别器计上一次时，进度条整条点亮（做完了就一定显示做完）',
+    api.state.criteriaIdx === squatStages.length - 1, String(api.state.criteriaIdx));
+  ok('点亮后进入 0.65 秒展示期（还没清零）',
+    api.state.criteriaClearUntil > 5200, String(api.state.criteriaClearUntil));
   api.updateCriteria(frameOf(178), [], 5300);
-  ok('清零展示期内就算姿势符合，也不立刻重新点亮', api.state.criteriaIdx === -1,
-    String(api.state.criteriaIdx));
-  ok('清零展示期内所有格子都是空的', !/class="[^"]*done[^"]*" data-i="0"/.test(segAt(0)), segAt(0));
-  // 展示期过去 → 从站姿重新开始
+  ok('展示期内不会被「站姿」立刻重新点亮（还是保持整条亮着）',
+    api.state.criteriaIdx === squatStages.length - 1, String(api.state.criteriaIdx));
   api.updateCriteria(frameOf(178), [], 6000);
-  ok('展示期过后从头开始（先点亮站姿）', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
+  ok('展示期过后清零，从头开始（先点亮站姿）', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
   ok('清零标记也撤掉了', elements.get('criteriaBar').classList.contains('reset') === false);
-  // 半程动作也算「一次动作结束」，同样清零
+  // 半程动作也算「一次动作结束」，同样走完 + 清零
   api.updateCriteria(frameOf(120), [], 6100);
-  ok('（前置）半程前进度已经走了一段', api.state.criteriaIdx > 0, String(api.state.criteriaIdx));
   api.handleEvents([{ type: 'rep', valid: false, reason: 'depth' }], 6200);
-  ok('半程动作结束后同样清零', api.state.criteriaIdx === -1, String(api.state.criteriaIdx));
+  ok('半程动作结束后也整条点亮并进入展示期',
+    api.state.criteriaIdx === squatStages.length - 1, String(api.state.criteriaIdx));
+  api.updateCriteria(frameOf(178), [], 7000);
+  ok('半程的展示期过后同样清零', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
 
   // 识别丢了：短暂丢帧保持不变（识别本来就会抖），丢久了才变灰并清零
   api.updateCriteria({ ok: true, perSide: { L: { knee: 130 }, R: { knee: 150 } }, kneeExtended: 150 }, [], 6300);
@@ -1266,8 +1280,8 @@ console.log('\n[8b] 判定进度条');
   api.updateCriteria({
     ok: true, perSide: { L: { knee: 120 }, R: { knee: 150 } }, kneeExtended: 150,
   }, [], 7100);
-  ok('箭步蹲蹲到 120°（两条腿都弯）后走到「满分」那一格',
-    api.state.criteriaIdx === specStages('lunge').length - 1, String(api.state.criteriaIdx));
+  ok('箭步蹲蹲到 120°（两条腿都弯）后走到「双腿」那一格',
+    api.state.criteriaIdx === specStages('lunge').length - 2, String(api.state.criteriaIdx));
 
   // 后腿不弯时，卡在「双腿」那一格
   api.resetCriteriaProgress();

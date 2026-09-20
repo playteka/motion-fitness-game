@@ -521,6 +521,30 @@ kbd {
   transition: border-color 0.2s ease, background 0.2s ease;
 }
 .criteria-bar[hidden] { display: none; }
+/* 鼠标移到某一格上时，在进度条**上方**显示这一格的判定标准 */
+.criteria-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  max-width: 92%;
+  padding: 7px 14px;
+  border-radius: 11px;
+  background: rgba(8, 15, 26, 0.95);
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  color: #dcf2ff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.criteria-tip[hidden] { display: none; }
+.criteria-tip .criteria-tip-name { color: var(--accent); margin-right: 6px; }
 /* 还没识别到人：整条灰掉，表示「尚未开始」 */
 .criteria-bar.idle { background: rgba(8, 15, 26, 0.55); border-color: rgba(255, 255, 255, 0.07); }
 .criteria-bar.idle .criteria-seg { border-color: rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); }
@@ -557,6 +581,9 @@ kbd {
   border-radius: 12px;
   border: 1px dashed rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.015);
+  /* 格子可接收鼠标：移上去会在进度条上方显示这一格的判定标准 */
+  pointer-events: auto;
+  cursor: help;
   transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 /* 图标放大到铺满格子高度（横躺的姿势会长一些，站姿高一些，都是等比缩放不变形） */
@@ -576,10 +603,12 @@ kbd {
 @media (max-width: 820px) {
   .criteria-bar { width: 96%; padding: 6px 8px 7px; }
   .criteria-icon { height: clamp(44px, 6vh, 64px); max-width: 96px; }
+  .criteria-seg.done::after { width: 36px; height: 36px; font-size: 25px; top: -11px; right: -8px; }
 }
 @media (max-width: 560px) {
   .criteria-bar { width: 98%; }
   .criteria-icon { height: 42px; max-width: 64px; }
+  .criteria-seg.done::after { width: 30px; height: 30px; font-size: 21px; top: -9px; right: -6px; border-width: 2px; }
 }
 /* 已经识别到的关键帧：实心亮绿 + 加粗线条 + 对勾 + 外发光 */
 .criteria-seg.done {
@@ -588,17 +617,25 @@ kbd {
   box-shadow: 0 0 16px rgba(74, 222, 128, 0.4), inset 0 0 14px rgba(74, 222, 128, 0.14);
 }
 .criteria-seg.done .criteria-icon { stroke: #86efac; stroke-width: 2.4; }
-/* 右上角一个对勾（图形符号，不是文字）：做完的格子一眼可辨 */
+/* 右上角一个对勾：**大号徽标**（48px 绿底圆盘 + 34px 勾 + 深色描边 + 外发光）——
+   用户反馈「原来的勾太小根本看不清」，所以这里做成比图标本身还显眼的一块牌子 */
 .criteria-seg.done::after {
   content: '✓';
   position: absolute;
-  top: 1px;
-  right: 7px;
-  font-size: 15px;
+  top: -14px;
+  right: -10px;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #22c55e;
+  color: #06281a;
+  font-size: 34px;
   font-weight: 900;
   line-height: 1;
-  color: #4ade80;
-  text-shadow: 0 0 8px rgba(74, 222, 128, 0.7);
+  border: 3px solid #0b1422;
+  box-shadow: 0 0 18px rgba(74, 222, 128, 0.95);
 }
 /* 正在等的那一格：琥珀色粗描边 + 轻轻呼吸，指出「下一步做这个」 */
 .criteria-seg.current {

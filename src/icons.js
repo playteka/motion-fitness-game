@@ -342,6 +342,21 @@ export function poseFor(stage, ctx = {}) {
     return { builder: 'lie', params: { tilt: 90, hip: 178, knee: 172, elbow: 178, face: 'down', support: true, bodyLift: 1.2, handMark: true }, criterion: { wristClear: value } };
   }
 
+  if (metric === 'progress') {
+    // 「回到起始位」这类用**识别器自己的比例线**（progress ≤ 0.16）判定的格子：
+    // 判定照旧用比例（跟着用户自己的幅度走，和引擎同一条线），但**图标按判据里的真实数值画**
+    // （「膝屈角 ≥ 157°」就画一条 157° 的腿）。这样它和门控格「站直（176°）」画出来不一样，
+    // 不会被「画得一模一样就合并」的规则吃掉 —— 否则进度条最后一格会变成「计次」，
+    // 用户就会看到「进度条满了、可是没计次」（真实踩过的坑）。
+    const item = stage?.item || {};
+    const inner = String(item.metricKey || '').replace('metric.', '');
+    const innerValue = Number(item.value);
+    if (inner && inner !== 'progress' && Number.isFinite(innerValue)) {
+      return poseFor({ ...stage, metric: inner, value: innerValue, op: item.op }, ctx);
+    }
+    return gatePose(posture, value, stages, metric, ctx);
+  }
+
   switch (metric) {
     case 'knee':
     case 'kneeBent': {

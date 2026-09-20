@@ -326,9 +326,15 @@ class LungeDetector extends DetectorBase {
    */
   get exitLine() {
     const recovered = this.minFront + LUNGE.recovery * (this.topLine - this.minFront);
-    return Math.max(
-      this.minFront + LUNGE.minBend,
-      Math.min(recovered, this.topLine - LUNGE.minBend),
+    // 上下都要夹住：这一轮还没开始时 minFront 还是初始值 180，算出来会是 188°，
+    // 那种情况下「回到站姿」永远不成立（进度条最后一格也就永远点不亮）。
+    return clamp(
+      Math.max(
+        this.minFront + LUNGE.minBend,
+        Math.min(recovered, this.topLine - LUNGE.minBend),
+      ),
+      LUNGE.downKnee + 6,
+      176,
     );
   }
 
@@ -547,20 +553,20 @@ class LungeDetector extends DetectorBase {
  *   上限仍然是 145°），只要回到自己顶位附近就算这一轮完成。
  * 另外：一轮最多 9 秒，超时也会**强制结算**（够深就计数），绝不把次数悄悄吞掉。
  *
- * 三档肘角的意义：
- *   elbowUp      参考顶位（145°，只在用户能举得更高时才用它）
- *   looseElbow   宽松模式的计数线（135°）
- *   elbowFull    拿满分深度的线（118°）
+ * 三档肘角的意义（**顺序不能反**：顶位 > 计数线 > 满分深度）：
+ *   elbowUp      参考顶位（152°，只在用户能举得更高时才用它）→ 回位线 = topLine − returnTol
+ *   looseElbow   宽松模式的计数线（138°）
+ *   elbowFull    拿满分深度的线（128°）
  */
 export const PUSHUP = {
   activeTorso: 32,
   activeShoulderClear: 0.12,
   activeHandOnFloor: 0.62,
-  elbowUp: 145,       // 参考顶位（原来 152，要求手臂几乎全直）
-  elbowEnter: 138,    // 起步角度参考值（实际用「顶位基准 − 22°」判断，见 step）
-  elbowDown: 120,     // 下放到这里算「到过底部」
-  elbowFull: 118,     // 满分深度
-  looseElbow: 135,    // 宽松模式计数线
+  elbowUp: 152,       // 参考顶位（原来 145；回位线要留在计数线之上，否则往下蹲一格就成了「回到顶位」）
+  elbowEnter: 146,    // 起步角度参考值（实际用「顶位基准 − enterDrop」判断，见 step）
+  elbowDown: 132,     // 下放到这里算「到过底部」（用户反馈「最后一个关键帧太难」，整体放宽）
+  elbowFull: 128,     // 满分深度（原来 118：要求肘部几乎折成 90°，多数人做不到位）
+  looseElbow: 138,    // 宽松模式计数线（原来 135）
   ignoreElbow: 146,   // 没弯过这里 = 只是晃了一下（相对判定用，见 minBend）
   minBend: 12,        // 一轮至少要比「自己的顶位」弯这么多度才算一次尝试（滤掉噪声）
   enterDrop: 22,      // 相对顶位弯下去这么多才算「开始做」
@@ -575,10 +581,13 @@ export const PUSHUP = {
    * 压得比真实更“直”（实测同一次俯卧撑在不同机位下相差 20° 以上），于是肘角判据
    * 经常判不出深度。这里补一路与肘角无关的深度证据：撑起时肩离地约 0.9~1.2 个躯干长，
    * 压到底时只剩 0.3~0.5 —— 只要肩膀整体沉下去这么多，就认为身体确实接近地面了。
+   *
+   * 这一路同时也是**进度条最后一格之前的台阶**：肘角读数被机位压平的人先过这一格，
+   * 不至于卡在「肘 ≤ 127°」那一格上永远点不亮后面。
    */
-  dropMin: 0.20,      // 沉这么多 = 算「身体接近地面」，宽松模式可以计次
-  dropFull: 0.40,     // 沉这么多 = 深度给满分（严格模式下也认这个深度）
-  dropStart: 0.10,    // 沉这么多 = 认为「这一轮开始了」（肘角读数被压平时靠这一路起头）
+  dropMin: 0.14,      // 沉这么多 = 算「身体接近地面」，宽松模式可以计次（原来 0.20）
+  dropFull: 0.30,     // 沉这么多 = 深度给满分（严格模式下也认这个深度，原来 0.40）
+  dropStart: 0.08,    // 沉这么多 = 认为「这一轮开始了」（肘角读数被压平时靠这一路起头）
   dropDecay: 0.01,    // 顶位基准的缓慢回落（跟着用户姿势漂移，不会一直卡在最高点）
 };
 
@@ -776,8 +785,8 @@ class PushupDetector extends DetectorBase {
     // 质量分按「下放深度」给：压到 elbowFull 以内（或肩膀沉到接近地面）满分，
     // 只到宽松线就少一截 —— 摄像头看不到贴地时按肩膀下沉量给同样的分。
     const depthGain = this.minElbow <= PUSHUP.elbowFull || this.drop >= PUSHUP.dropFull ? 30
-      : this.minElbow <= 124 ? 24
-        : this.minElbow <= 130 ? 18 : 12;
+      : this.minElbow <= PUSHUP.elbowFull + 6 ? 24
+        : this.minElbow <= PUSHUP.elbowFull + 12 ? 18 : 12;
     const quality = clamp(Math.round(56 + depthGain + (this.minBody > 165 ? 10 : bodyOk ? 5 : 0)), 0, 100);
     this.emit({ type: 'rep', valid: true, index: this.validReps, quality, duration: dur });
     this.nextCycle(now);
@@ -790,20 +799,30 @@ class PushupDetector extends DetectorBase {
 
 export const BRIDGE = {
   supineTorso: 36,
-  kneeMin: 30,
-  kneeMax: 148,
-  shoulderClearMax: 0.46,
-  kneeClearMin: 0.20,
-  downRise: 0.12,
-  upRise: 0.22,   // 顶起幅度要求（原来 0.35，要顶很高才算）
-  // 整轮时长下限（上一个顶点 → 这个顶点）：比人体能做出的最快一次臀桥还短，
-  // 所以只会滤掉“上下抖一下”，不会吃掉真做的次数。第一次顶起不参与这个判断。
-  minRepMs: 700,
+  kneeMin: 20,
+  kneeMax: 160,
+  // 肩贴地 / 膝离地：都放宽了（用户反馈「三个关键帧都做对了却不计次」，
+  // 实测常见成因是这个门控判得比进度条更严 —— 人都躺好了却被判成「没躺下」）
+  shoulderClearMax: 0.7,
+  kneeClearMin: 0.12,
+  downRise: 0.12,     // 参考的「落回地面」高度（实际判定跟着用户自己的最低点走，见 bottomLine）
+  upRise: 0.22,       // 顶起幅度要求（原来 0.35，要顶很高才算）
+  // 整轮时长下限（上一个顶点 → 这个顶点）：只用来滤掉「快速上下抖」，
+  // 比人体能做出的最快一次臀桥还短（1 秒 2 次以上一定是抖）。第一次顶点不参与这个判断。
+  minRepMs: 420,
 };
 
 class GluteBridgeDetector extends DetectorBase {
-  onReset() { this.stage = 'down'; this.lastTopAt = 0; this.maxRise = -9; this.wasAtTop = false; }
-  onLost() { this.stage = 'down'; this.lastTopAt = 0; }
+  onReset() {
+    this.stage = 'down';
+    this.lastTopAt = 0;
+    this.maxRise = -9;
+    this.wasAtTop = false;
+    this.prevAtTop = false;
+    this.bottomLine = BRIDGE.downRise;   // 「落回地面」的判定线（跟着用户自己的最低点漂移）
+    this._recent = [];                    // 最近几秒的抬起高度，用来估用户自己的最低点
+  }
+  onLost() { this.stage = 'down'; this.lastTopAt = 0; this.prevAtTop = false; }
   onNewCycle() { this.wasAtTop = false; }
 
   /** 仰卧判据：躯干接近水平 + 屈膝 + 肩贴地 + 膝离地 */
@@ -813,6 +832,28 @@ class GluteBridgeDetector extends DetectorBase {
       && f.shoulderClear < BRIDGE.shoulderClearMax
       && f.kneeClear > BRIDGE.kneeClearMin;
   }
+
+  /**
+   * 记下最近 2 秒的抬起高度，估出「用户自己的最低点」。
+   *
+   * 为什么需要：原来用固定的 downRise(0.12) 判断「落回地面」，但每个人躺平时
+   * 肩-髋高度差并不正好是 0（体态、机位都会带一点偏移）。最低点偏高的人永远回不到
+   * 0.12 以下，于是第一次顶点之后再也不计次 —— 正是用户反馈的
+   * 「三个关键帧都做对了却不计次」。
+   *
+   * 顶点线也要跟着自己的最低点走：否则「最低点本来就高」的人一躺下就已经超过 0.22，
+   * 上下抖一下就被算成一次（顶起幅度必须比自己的最低点高出 0.16）。
+   */
+  rememberRise(v, now) {
+    if (!Number.isFinite(v)) return;
+    this._recent.push({ t: now, v });
+    while (this._recent.length > 3 && now - this._recent[0].t > 2000) this._recent.shift();
+    const low = Math.min(...this._recent.map((r) => r.v));
+    this.bottomLine = low + 0.04;   // 「落回地面」= 回到自己最低点附近（原来写死 0.12）
+  }
+
+  /** 这一帧算不算「回到地面」 */
+  atBottomNow(rise) { return rise <= this.bottomLine; }
 
   step(f, now) {
     if (!this.isSupine(f)) {
@@ -827,42 +868,46 @@ class GluteBridgeDetector extends DetectorBase {
     this.standby = '';
     const rise = f.hipRise;
     this.depthPct = clamp((rise / 0.6) * 100, 0, 100);
+    this.rememberRise(rise, now);
 
     const atTop = rise > BRIDGE.upRise;
-    const atBottom = rise < BRIDGE.downRise;
+    const atBottom = this.atBottomNow(rise);
+    this.atTop = atTop;
+    this.atBottom = atBottom;
+    this.stage = atTop ? 'up' : 'down';
 
-    if (this.stage === 'down') {
-      if (atTop) {
-        // 一次计数的时长 = 上一个顶点 → 这个顶点（整轮时长），只用来滤掉“快速上下抖”。
-        // 第一次顶起没有上一个顶点作参照，直接算有效，不要因为“计时数据不足”吃掉用户的第一下。
-        const dur = this.lastTopAt ? now - this.lastTopAt : 0;
-        this.lastTopAt = now;
-        this.stage = 'up';
-        this.maxRise = rise;
-        this.wasAtTop = true;
-        if (dur > 0 && dur < BRIDGE.minRepMs) {
-          this.partialReps += 1;
-          this.cue('tempo', null, 'warn', now, 3000);
-          this.emit({ type: 'rep', valid: false, reason: 'tempo' });
-        } else {
-          this.validReps += 1;
-          this.reps = this.validReps;
-          this.cycleHadValidRep = true;
-          this.phase = 'up';
-          const quality = clamp(Math.round(60 + (rise > 0.5 ? 30 : 18) + (f.kneeAngle > 80 && f.kneeAngle < 120 ? 10 : 5)), 0, 100);
-          this.emit({ type: 'rep', valid: true, index: this.validReps, quality, duration: dur });
-        }
-      } else if (rise > BRIDGE.downRise) {
-        this.cue('riseMore', null, 'warn', now, 3500);
-      }
-    } else {
+    // 计次发生在「**第一次顶过顶点线**」的那一刻（不是等回到地面）：
+    // 这样进度条最后一格（顶起）一亮，次数就同步加上，不会出现「关键帧都做完了却不计次」。
+    if (atTop && !this.prevAtTop) {
+      // 两次顶点之间的时长只用来滤掉「快速上下抖」（1 秒两次以上一定是抖）
+      const dur = this.lastTopAt ? now - this.lastTopAt : 0;
+      this.lastTopAt = now;
       this.maxRise = Math.max(this.maxRise, rise);
-      if (atBottom) {
-        this.stage = 'down';
-        this.phase = 'down';
-        // 回到起点才算一轮结束：此时结算“整轮要领满分”，并重置要领清单
-        this.nextCycle(now);
+      this.wasAtTop = true;
+      if (dur > 0 && dur < BRIDGE.minRepMs) {
+        this.partialReps += 1;
+        this.cue('tempo', null, 'warn', now, 3000);
+        this.emit({ type: 'rep', valid: false, reason: 'tempo' });
+      } else {
+        this.validReps += 1;
+        this.reps = this.validReps;
+        this.cycleHadValidRep = true;
+        this.phase = 'up';
+        const quality = clamp(Math.round(60 + (rise > 0.5 ? 30 : 18) + (f.kneeAngle > 80 && f.kneeAngle < 120 ? 10 : 5)), 0, 100);
+        this.emit({ type: 'rep', valid: true, index: this.validReps, quality, duration: dur });
       }
+    } else if (!atTop && !this.wasAtTop && rise > this.bottomLine + 0.03) {
+      // 想顶但没顶起来：提示再高一点
+      this.cue('riseMore', null, 'warn', now, 3500);
+    }
+    this.prevAtTop = atTop;
+
+    // 回到自己最低点附近 = 这一轮结束：结算「整轮要领满分」并重置要领清单
+    if (this.wasAtTop && atBottom) {
+      this.wasAtTop = false;
+      this.maxRise = -9;
+      this.phase = 'down';
+      this.nextCycle(now);
     }
   }
 }

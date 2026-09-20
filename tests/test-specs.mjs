@@ -257,8 +257,8 @@ console.log('\n[5c] 界面上最终看到的文字');
     rows.some((r) => /回升 60%/.test(r.cond) && /8°/.test(r.cond)));
   ok('中文：时间类数值带单位且有空隙（≥ 0.45 秒）',
     rows.some((r) => /≥ 0.45 秒/.test(r.cond)), JSON.stringify(rows.map((r) => r.cond).filter((c) => /0\.45/.test(c))));
-  ok('中文：区间型指标只写一次单位（30°–148°）',
-    specTextRows('bridge').some((r) => /30°–148°/.test(r.cond)),
+  ok('中文：区间型指标只写一次单位（膝角区间 20°–160°）',
+    specTextRows('bridge').some((r) => /20°–160°/.test(r.cond)),
     JSON.stringify(specTextRows('bridge').map((r) => r.cond)));
 
   setLang('en', { persist: false });
@@ -331,31 +331,72 @@ console.log('\n[8] 判定进度条（画面上一格一格点亮的那条判据�
         const tx = stageText(s);
         return !!tx.short && tx.short !== s.shortKey && !!tx.cond;
       }), JSON.stringify(st.map((s) => stageText(s).short)));
-    ok(`${id}：格子里的阈值就是弹窗里列出的阈值`,
-      st.every((s) => Number.isFinite(s.value) && itemsOf(id).some((it) => it.metricKey === `metric.${s.metric}`
-        && it.op === s.op && it.value === s.value)), JSON.stringify(st.map((s) => `${s.metric}${s.op}${s.value}`)));
-    ok(`${id}：进度条里没有「越走越倒退」的收尾/时间类判据`,
-      !st.some((s) => ['spec.backLine', 'spec.wobble', 'spec.minRep', 'spec.giveUp'].includes(s.item.labelKey)));
+    // 链上的阈值要么是弹窗里列的判据，要么是识别器自己的动态判定线 / 门控信号
+    ok(`${id}：格子里的阈值就是弹窗里列出的阈值（或识别器的动态判定线）`,
+      st.every((s) => s.valueFrom || s.detFlag || s.metric === 'progress'
+        || (Number.isFinite(s.value) && itemsOf(id).some((it) => it.metricKey === `metric.${s.metric}`
+          && it.op === s.op && it.value === s.value))),
+    JSON.stringify(st.map((s) => `${s.metric}${s.op}${s.value}${s.valueFrom ? '←' + s.valueFrom : ''}`)));
+    // 「多余的动作可以从关键帧里面删除」：深度 / 满分那类不影响计次的判据不进链
+    ok(`${id}：进度条里没有「不影响计次」的深度/时间类判据`,
+      !st.some((s) => ['spec.bottomLine', 'spec.wobble', 'spec.minRep', 'spec.giveUp',
+        'spec.holdPrime', 'spec.holdGrace', 'spec.seqWindow', 'spec.altHold', 'spec.altGap'].includes(s.item.labelKey)),
+    JSON.stringify(st.map((s) => s.item.labelKey)));
+    // 「所有关键帧做完了就要计次」：链上最后一格就是计次那一刻
+    if (EXERCISE_MAP[id].kind === 'hold') {
+      ok(`${id}（计时类）：最后一格是「姿势到位」`, st[st.length - 1].kind === 'hold',
+        st[st.length - 1].kind);
+    } else {
+      ok(`${id}：最后一格就是「计次那一刻」`, st[st.length - 1].kind === 'finish',
+        JSON.stringify(st.map((s) => s.kind)));
+      ok(`${id}：链上每一格都是计次必需的条件（没有纯装饰格）`,
+        st.every((s) => ['gate', 'enter', 'count', 'finish'].includes(s.kind)),
+        JSON.stringify(st.map((s) => `${stageText(s).short}:${s.kind}`)));
+    }
   }
 
-  // 用户举的例子：箭步蹲应该是 站姿 → 开始(146°) → 计次(152°) → 双腿 → 满分(128°)
+  // 用户举的例子：箭步蹲的链 = 站姿 → 开始(146°) → 计次(152°) → 双腿 → 回位（最后一格 = 计次那一刻）
   const lunge = specStages('lunge');
-  ok('箭步蹲进度条：站姿 → 146° → 152° → 双腿 → 128°',
+  ok('箭步蹲进度条：站姿 → 146° → 152° → 双腿 → 回位',
     lunge.length === 5
     && lunge[0].metric === 'kneeExtended' && lunge[0].value === 145
     && lunge[1].metric === 'frontKnee' && lunge[1].value === 146
     && lunge[2].metric === 'frontKnee' && lunge[2].value === 152
     && lunge[3].metric === 'straighterKnee' && lunge[3].value === 158
-    && lunge[4].metric === 'frontKnee' && lunge[4].value === 128,
-    JSON.stringify(lunge.map((s) => `${s.metric}${s.op}${s.value}`)));
+    && lunge[4].kind === 'finish',
+    JSON.stringify(lunge.map((s) => `${s.metric}${s.op}${s.value}:${s.kind}`)));
   const squat = specStages('squat');
-  ok('深蹲进度条：站姿 0.86 → 开始 0.78 → 计次 0.62 → 满分 0.40',
-    squat.map((s) => s.value).join(',') === '0.86,0.78,0.62,0.4', squat.map((s) => s.value).join(','));
+  ok('深蹲进度条：站姿 0.86 → 开始 0.78 → 计次 0.62 → 回位（深度分不再单独占一格）',
+    squat[0].value === 0.86 && squat[1].value === 0.78 && squat[2].value === 0.62
+    && squat[3].kind === 'finish' && squat[3].valueFrom === 'standLine',
+    JSON.stringify(squat.map((s) => `${s.value}${s.valueFrom ? '<-' + s.valueFrom : ''}:${s.kind}`)));
   ok('跳跃类动作的进度条包含「起跳」这一格',
     specStages('squatJump').some((s) => s.metric === 'lift' && s.value === 0.035),
     JSON.stringify(specStages('squatJump').map((s) => s.metric)));
-  ok('俯卧撑的进度条包含「肩膀下沉量」这一格',
-    specStages('pushup').some((s) => s.metric === 'shoulderDrop' && s.value === PUSHUP.dropMin));
+  ok('俯卧撑：计次那一格带「肩膀下沉量」替代判据（镜头看不到贴地时靠它）',
+    specStages('pushup').some((s) => s.alt && s.alt.metric === 'shoulderDrop' && s.alt.value === PUSHUP.dropMin),
+    JSON.stringify(specStages('pushup').map((s) => `${s.metric}${s.alt ? '+' + s.alt.metric : ''}`)));
+
+  // 通用屈伸类（仰卧抬起 / 站立屈伸 …）：最后一格必须**就是引擎计次那一刻**，
+  // 不能是「永远成立」的假格子 —— 否则用户会看到「进度条满了却没计次」（真实踩过的坑：
+  // 这里曾经写成 roundFor(0.16,'count') = 0 且 k = 6，progress ≤ 6 恒真）。
+  for (const id of ALL) {
+    const meta = EXERCISE_MAP[id];
+    if (meta.kind === 'hold' || meta.engine !== 'bend') continue;
+    const last = specStages(id).slice(-1)[0];
+    const backP = Number.isFinite(meta.params?.backP) ? meta.params.backP : 0.16;
+    ok(`${id}：最后一格用的是引擎自己的回位线（progress ≤ ${backP}）`,
+      last.metric === 'progress' && last.op === 'lte' && near(last.value, backP, 1e-9),
+      `${last.metric} ${last.op} ${last.value}`);
+    ok(`${id}：最后一格留的宽容量不会让它提前成立`, !(last.k > 0.05), `k = ${last.k}`);
+    ok(`${id}：动作还在低位时最后一格**不亮**`, stageHolds(last, { ok: true }, { progress: 0.9 }) === false);
+    ok(`${id}：回到起始位时最后一格亮起（= 计次那一刻）`,
+      stageHolds(last, { ok: true }, { progress: 0 }) === true);
+    ok(`${id}：最后一格的悬停文字是弹窗里那条真实判据（不是「≤ 0 次」这类假数字）`,
+      !!(last.item && last.item.textKey) || itemsOf(id).some((it) => it.labelKey === last.item.labelKey
+        && it.metricKey === last.item.metricKey && it.op === last.item.op && it.value === last.item.value),
+      JSON.stringify(last.item));
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -394,34 +435,56 @@ console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格'
     return idx;
   };
 
+  const squatStages = specStages('squat');
+  const lastSquat = squatStages.length - 1;
   const deep = [178, 170, 160, 150, 140, 130, 120, 110, 100, 90, 80, 75].map(squatFrame);
-  ok('深蹲一路蹲下去：进度条走到最后一格（满分）', walk(deep) === specStages('squat').length - 1, `到第 ${walk(deep) + 1} 格`);
+  const roundTrip = [178, 165, 150, 135, 120, 105, 95, 95, 105, 120, 135, 150, 165, 176, 178].map(squatFrame);
+  ok('深蹲：蹲下再站起来才走完关键帧链（最后一格 = 回位 = 计次那一刻）',
+    walk(roundTrip) === lastSquat, `到第 ${walk(roundTrip) + 1}/${squatStages.length} 格`);
+  ok('深蹲：只蹲下去、不站起来走不完链（不会「链没走完却计次」）',
+    walk(deep) < lastSquat, `到第 ${walk(deep) + 1}/${squatStages.length} 格`);
   const shallow = [178, 172, 168, 165, 162, 160, 158].map(squatFrame);
-  ok('只蹲一点点：进度条停在前面几格，不会跳到满分', walk(shallow) <= 1, `到第 ${walk(shallow) + 1} 格`);
+  ok('只蹲一点点：进度条停在前面几格，不会走完', walk(shallow) <= 1, `到第 ${walk(shallow) + 1} 格`);
   ok('站着不动：进度条只点亮「站姿」这一格', walk([178, 178, 178].map(squatFrame)) === 0,
     `到第 ${walk([178, 178, 178].map(squatFrame)) + 1} 格`);
+  ok('深蹲：链上最后一格是「回位」',
+    squatStages[lastSquat].kind === 'finish', squatStages[lastSquat].kind);
+  ok('深蹲：蹲到底那一帧，「回位」那一格不该亮（它还没回来）',
+    !stageHolds(squatStages[lastSquat], squatFrame(75), createDetector('squat')));
 
   // 丢失跟踪（frame.ok = false）时任何一格都不该点
   ok('没识别到人时不点亮任何一格',
-    !stageHolds(specStages('squat')[0], { ok: false }, createDetector('squat')));
+    !stageHolds(squatStages[0], { ok: false }, createDetector('squat')));
 
   // 箭步蹲：两条腿都弯才能过「双腿」那一格（真实阈值 158°）
   const lungeStages = specStages('lunge');
+  const lungeBoth = lungeStages.findIndex((s) => s.metric === 'straighterKnee');
+  const lungeFinish = lungeStages.length - 1;
   const fake = (frontKnee, backKnee, kneeExtended = 175) => ({
     ok: true,
     perSide: { L: { knee: frontKnee }, R: { knee: backKnee } },
     kneeExtended,
   });
   ok('箭步蹲：前膝 130°、后膝 150° 时「双腿」这一格过得了',
-    stageHolds(lungeStages[3], fake(130, 150), createDetector('lunge')));
+    stageHolds(lungeStages[lungeBoth], fake(130, 150), createDetector('lunge')));
   ok('箭步蹲：前膝 130° 但后膝几乎伸直（172°）时「双腿」这一格过不了',
-    !stageHolds(lungeStages[3], fake(130, 172), createDetector('lunge')));
+    !stageHolds(lungeStages[lungeBoth], fake(130, 172), createDetector('lunge')));
   ok('箭步蹲：站着不动时连「开始」那一格都过不了',
     !stageHolds(lungeStages[1], fake(175, 175), createDetector('lunge')));
-  ok('箭步蹲：蹲到 90° 时最后一格（满分 128°）过得了',
-    stageHolds(lungeStages[4], fake(90, 95), createDetector('lunge')));
-  ok('箭步蹲：只到 140° 时最后一格过不了',
-    !stageHolds(lungeStages[4], fake(140, 140), createDetector('lunge')));
+  ok('箭步蹲：最后一格是「回位」（计次那一刻）',
+    lungeStages[lungeFinish].kind === 'finish', lungeStages[lungeFinish].kind);
+  ok('箭步蹲：站起来（两腿伸直）能过一次「回位」',
+    stageHolds(lungeStages[lungeFinish], fake(176, 176, 176), createDetector('lunge')));
+  ok('箭步蹲：还蹲着（前膝 90°）时「回位」那一格过不了',
+    !stageHolds(lungeStages[lungeFinish], fake(90, 95, 95), createDetector('lunge')));
+
+  // 俯卧撑：计次那一格同时接受「肩膀沉到接近地面」这条更稳的证据
+  const pushStages = specStages('pushup');
+  const pushCount = pushStages.find((s) => s.kind === 'count');
+  ok('俯卧撑：计次那一格带「肩膀下沉」替代判据',
+    pushCount && pushCount.alt && pushCount.alt.metric === 'shoulderDrop'
+    && pushCount.alt.value === PUSHUP.dropMin,
+    JSON.stringify(pushCount?.alt && { m: pushCount.alt.metric, v: pushCount.alt.value }));
 }
 
 /* ------------------------------------------------------------------ *
@@ -463,6 +526,14 @@ console.log('\n[10] 关键帧线条图标');
       icons.every((ic, i) => i === 0 || JSON.stringify(ic.pose.params) !== JSON.stringify(icons[i - 1].pose.params)),
       JSON.stringify(icons.map((ic) => ic.pose.params)));
     ok(`${id}：进度条至少有一格`, stages.length >= 1, String(stages.length));
+    // 「计次那一刻」那一格必须真的画出来（不能被「画得一模一样就合并」吃掉）：
+    // 曾经「回到起始位」画得和门控格「站直」一样，于是被合并掉，进度条最后一格变成「计次」——
+    // 用户就会看到「进度条满了、却没计次」。计时类没有「计次」，姿势判据本来就会被合并，不做这条要求。
+    if (EXERCISE_MAP[id].kind !== 'hold') {
+      const kinds = stages.map((s) => s.kind);
+      ok(`${id}：画出来的最后一格就是「计次那一刻」（回位/顶起/起跳…）`,
+        kinds[kinds.length - 1] === 'finish', JSON.stringify(stages.map((s) => `${s.kind}:${stageText(s).short}`)));
+    }
   }
 
   // 图标里的角度必须来自判据（深蹲/箭步蹲/俯卧撑这类「关节角就是姿态」的判据）
@@ -500,15 +571,26 @@ console.log('\n[10] 关键帧线条图标');
     .every((s) => iconAngle(s, pushCtx) === s.value),
   JSON.stringify(pushStages.filter((s) => s.metric === 'elbow').map((s) => iconAngle(s, pushCtx))));
   ok('俯卧撑：肘弯得越多，图标里身体越低（撑地高度随肘角变小）', (() => {
-    const elbowStages = pushStages.filter((s) => s.metric === 'elbow');
+    // 只看「往下走」的那几格（最后那格是「回到顶位」，本来就该画得更高）
+    const elbowStages = pushStages.filter((s) => s.metric === 'elbow' && s.kind !== 'finish');
     const heights = elbowStages.map((s) => {
       const ic = stageIcon(s, pushCtx);
-      // 手撑在地面上：身体高度 = 最低点（手）到肩的高度
+      const shoulderY = ic.lines[0].a.y;
+      const handY = Math.max(...ic.lines.flatMap((l) => [l.a.y, l.b.y]));
+      return handY - shoulderY;   // 撑地高度：手在地面时 = 肩到手的距离
+    });
+    return heights.length >= 2 && heights.every((v, i) => i === 0 || v <= heights[i - 1]);
+  })(), JSON.stringify(pushStages.filter((s) => s.metric === 'elbow').map((s) => `${s.kind}:${s.value}`)));
+  ok('俯卧撑：「回到顶位」那一格画得比「计次」那一格高（看得出是回去了）', (() => {
+    const h = (s) => {
+      const ic = stageIcon(s, pushCtx);
       const shoulderY = ic.lines[0].a.y;
       const handY = Math.max(...ic.lines.flatMap((l) => [l.a.y, l.b.y]));
       return handY - shoulderY;
-    });
-    return heights.every((v, i) => i === 0 || v <= heights[i - 1]);
+    };
+    const count = pushStages.find((s) => s.kind === 'count');
+    const finish = pushStages.find((s) => s.kind === 'finish');
+    return count && finish && h(finish) > h(count);
   })());
   ok('俯卧撑：撑地类姿势用「手在地面」的画法（support）',
     pushStages.filter((s) => s.metric === 'elbow').every((s) => stageIcon(s, pushCtx).pose.params.support === true));

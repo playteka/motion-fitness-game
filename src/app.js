@@ -519,6 +519,21 @@ function criteriaCleared(now = performance.now()) {
   return now < state.criteriaClearUntil;
 }
 
+/** 悬停某一格：在进度条上方显示这一格的判定标准 */
+function showCriteriaTip(index) {
+  const tip = $('criteriaTip');
+  const stage = state.criteriaStages?.[index];
+  if (!tip || !stage) return;
+  const { short, cond } = stageText(stage);
+  tip.innerHTML = `<span class="criteria-tip-name">${esc(short)}</span>${esc(cond)}`;
+  tip.hidden = false;
+}
+
+function hideCriteriaTip() {
+  const tip = $('criteriaTip');
+  if (tip) tip.hidden = true;
+}
+
 /** 某一格现在满足了没 */
 function criteriaHolds(stage, frame) {
   return stageHolds(stage, frame, state.detector);
@@ -531,6 +546,12 @@ function criteriaHolds(stage, frame) {
 function updateCriteria(frame, events, now) {
   const stages = state.criteriaStages;
   if (!stages.length) return;
+
+  // 展示期结束 → 进度条收回起点（下一轮从头走）
+  if (state.criteriaClearUntil && now >= state.criteriaClearUntil) {
+    state.criteriaClearUntil = 0;
+    resetCriteriaProgress();
+  }
 
   // 「识别到人了吗」：没识别到 → 进度条整条变灰（表示还没开始工作）。
   // 识别会抖动，所以给一点宽限：短暂丢帧不立刻变灰、也不清进度，丢久了才清零。
@@ -613,9 +634,9 @@ function renderCriteriaBar(now = performance.now()) {
       const done = i <= state.criteriaIdx;
       const cls = `criteria-seg${done ? ' done' : ''}${active && i === state.criteriaIdx + 1 ? ' current' : ''}${i === state.criteriaJust ? ' just' : ''}`;
       const pts = state.criteriaPts[i] > 0 ? `+${state.criteriaPts[i]}` : '';
-      // 悬停提示里给完整判据（画面上不写文字，鼠标放上去才知道这一步要什么）
-      const title = esc(`${stageText(s).short} · ${stageText(s).cond}`);
-      return `<div class="${cls}" data-i="${i}" data-done="${done ? 1 : 0}" title="${title}">`
+      // 悬停提示里给完整判据（画面上不写文字，鼠标移上去/触摸才知道这一步要什么）
+      const tip = `${stageText(s).short} · ${stageText(s).cond}`;
+      return `<div class="${cls}" data-i="${i}" data-done="${done ? 1 : 0}" data-tip="${esc(tip)}">`
         + (state.criteriaIcons?.[i] || '')
         + `<span class="criteria-seg-pts">${pts}</span></div>`;
     }).join('');
@@ -1454,8 +1475,15 @@ function handleEvents(events, now = performance.now()) {
       audio.scoreTick();
       checkScoreMilestone(ev.score);
     } else if (ev.type === 'rep') {
-      // 一次动作结束（有效或半程）→ 进度条清零，下一轮从头开始
-      resetCriteriaProgress({ holdMs: CRITERIA_CLEAR_MS, now });
+      // 一次动作结束（有效或半程）→ 进度条**点亮最后一格**并保持 0.65 秒（让用户看到「这一轮走完了」），
+      // 之后自动收回起点，下一轮重新一格一格走。
+      // 注意：识别器真正计上的那一次，这里会把整条链补满 —— 保证「做完了就一定显示做完」。
+      const last = state.criteriaStages.length - 1;
+      if (last >= 0) {
+        state.criteriaIdx = last;
+        state.criteriaJust = last;
+        state.criteriaClearUntil = now + CRITERIA_CLEAR_MS;
+      }
       renderCriteriaBar(now);
       if (ev.valid) {
         pulseValue();
@@ -1892,6 +1920,20 @@ function bindUI() {
   $('btnExerciseInline').addEventListener('click', () => openExerciseSettings());
   $('btnCloseExercise').addEventListener('click', () => closeExerciseSettings());
   $('exerciseBackdrop').addEventListener('click', () => closeExerciseSettings());
+
+  // 鼠标移到某一格关键帧上 → 在进度条上方显示这一格的判定标准
+  {
+    const track = $('criteriaTrack');
+    const segOf = (e) => (e.target && typeof e.target.closest === 'function' ? e.target.closest('.criteria-seg') : null);
+    track.addEventListener('mouseover', (e) => {
+      const seg = segOf(e);
+      if (seg && seg.dataset) showCriteriaTip(Number(seg.dataset.i));
+    });
+    track.addEventListener('mouseout', (e) => {
+      if (!segOf(e)) hideCriteriaTip();
+    });
+    track.addEventListener('mouseleave', () => hideCriteriaTip());
+  }
   $('exSearch').addEventListener('input', (e) => {
     homeQuery = e.target.value || '';
     buildHome();
@@ -2121,5 +2163,6 @@ window.__mfg = {
   buildHome, showHome, showWorkout, openExercise, openSettings, closeSettings,
   openExerciseSettings, closeExerciseSettings, renderExerciseSettings,
   buildCriteriaBar, updateCriteria, resetCriteriaProgress, renderCriteriaBar,
+  showCriteriaTip, hideCriteriaTip,
   buildMusicTracks, selectMusicTrack,
 };

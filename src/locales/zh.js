@@ -428,7 +428,7 @@ export default {
         tune: '把身体收成一条线就能拿分',
       },
       lower: { label: '收紧核心，肘部弯曲下沉', hint: '开始下放：肘部弯曲，胸口向地面靠近' },
-      depth: { label: '肘角弯到 90° 以内，胸口接近地面（这步分最高）', hint: '再往下一点：现在肘角约 {deg}°' },
+      depth: { label: '肘角弯到 118° 以内，胸口接近地面（这步分最高）', hint: '再往下一点：现在肘角约 {deg}°' },
       press: { label: '推起还原，手臂完全伸直', hint: '用力推起，手臂完全伸直' },
     },
     bridge: {
@@ -784,6 +784,7 @@ export default {
       both: '双腿',
       jump: '起跳',
       down: '落下',
+      back: '回位',
       drop: '下沉',
       work: '发力',
       rest: '还原',

@@ -228,8 +228,10 @@ export const STEP_PLANS = {
         id: 'depth',
         labelKey: 'steps.pushup.depth.label',
         points: 14,
-        check: (f) => f.elbowAngle <= 105 && straight(f, 138),
-        hint: (f) => (f.elbowAngle > 105 ? H('steps.pushup.depth.hint', { deg: Math.round(f.elbowAngle) }) : null),
+        // 放宽到 118°（原来 105°）：用户反馈「俯卧撑最后一个关键帧太难、做不到位」；
+        // 识别器的满分深度线也一起放宽到了 128°
+        check: (f) => f.elbowAngle <= 118 && straight(f, 138),
+        hint: (f) => (f.elbowAngle > 118 ? H('steps.pushup.depth.hint', { deg: Math.round(f.elbowAngle) }) : null),
       },
       {
         id: 'press',

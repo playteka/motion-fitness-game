@@ -508,6 +508,8 @@ export const SPEC_METRICS = {
   // 左右交替类：正在做的那一侧 / 另一侧
   oneSide: (f, det) => (det?.cmp === 'gt' ? Math.max(...sideValues(f, det?.metricName)) : Math.min(...sideValues(f, det?.metricName))),
   otherSide: (f, det) => (det?.cmp === 'gt' ? Math.min(...sideValues(f, det?.metricName)) : Math.max(...sideValues(f, det?.metricName))),
+  // 通用引擎的「本轮进度」（0 = 起始位，1 = 到位）：最后的「回到起始位」那一格直接问它
+  progress: (f, det) => det?.progress,
 };
 
 function sideValues(f, metric) {
@@ -515,36 +517,55 @@ function sideValues(f, metric) {
   return ['L', 'R'].map((s) => read(f, s)).filter(Number.isFinite);
 }
 
-/** 判据行能不能实时判断（时间类、纯文字类不算） */
+/**
+ * 判据行能不能实时判断（时间类、纯文字类不算）。
+ * 注意：进度条的「计数链」不再用黑名单过滤条目（见 specStages），
+ * 而是自己挑**计次必需**的条件，保证「链上最后一格点亮 = 这一次已经计上」。
+ */
 const isLiveItem = (it) => !!it && !!it.metricKey && !!SPEC_METRICS[it.metricKey.replace('metric.', '')]
   && Number.isFinite(it.value) && it.op !== undefined;
 
+const isStageItem = (it) => isLiveItem(it);
+
 /**
- * 不进进度条的条目：
- *   - 收尾条件（回到起始位）——那是「这一轮结束」，进度条在结算时就归零了，放进去只会闪一下；
- *   - 「只是晃了一下」是**否定**条件，方向正好相反；
- *   - 时间类（最短用时 / 最长时限 / 计时宽容）在画面上没法「看着一格一格走」。
+ * 判据文字用的比较：op 是「值要满足的方向」。
+ *
+ * 一格的判定线可以来自三处（优先级从上到下）：
+ *   1. `detFlag`：识别器自己的布尔状态（例如「现在是不是已经回到起始位」）；
+ *   2. `valueFrom`：识别器自己的**动态判定线**（例如深蹲的 standLine、俯卧撑的 backLine，
+ *      它们会跟着用户自己的幅度走）—— 这样进度条和识别器用的是同一条线，不会「界面到了、判定没到」；
+ *   3. 判据里的静态数值。
  */
-const NOT_A_STAGE = new Set([
-  'spec.backLine', 'spec.wobble', 'spec.minRep', 'spec.giveUp',
-  'spec.holdPrime', 'spec.holdGrace', 'spec.seqWindow', 'spec.altHold', 'spec.altGap',
-]);
-
-const isStageItem = (it) => isLiveItem(it) && !NOT_A_STAGE.has(it.labelKey);
-
-/** 判据文字用的比较：op 是「值要满足的方向」 */
 export function stageHolds(stage, frame, det) {
+  if (!frame || !frame.ok) return false;
+  if (stage.detFlag) {
+    const flag = det?.[stage.detFlag];
+    if (typeof flag === 'boolean') return flag;
+  }
+  // `also`：必须同时成立的附加条件（AND）
+  if (stage.also && !holdsOne(stage.also, frame, det)) return false;
+  if (holdsOne(stage, frame, det)) return true;
+  // 有替代判据的格子（例如俯卧撑「肘角到位 或 肩膀已经沉到接近地面」）：任意一条成立就算过
+  return !!stage.alt && holdsOne(stage.alt, frame, det);
+}
+
+function holdsOne(stage, frame, det) {
   const read = SPEC_METRICS[stage.metric];
-  if (!read || !frame || !frame.ok) return false;
+  if (!read) return false;
   const v = read(frame, det);
   if (!Number.isFinite(v)) return false;
-  const k = stage.k / 100;   // 一点的宽容：识别抖动时不至于卡在临界线上来回跳
+  // 动态判定线：优先用识别器现在的判定线（跟着用户自己幅度走）
+  const dynamic = stage.valueFrom ? det?.[stage.valueFrom] : null;
+  const limit = Number.isFinite(dynamic) ? dynamic : stage.value;
+  const limit2 = Number.isFinite(dynamic) ? dynamic : stage.value2;
+  if (!Number.isFinite(limit)) return false;
+  const k = stage.k || 0;   // 宽容量（单位与指标一致：角度就是度）：识别抖动时不至于卡在临界线上来回跳
   switch (stage.op) {
-    case 'lte': return v <= stage.value + k;
-    case 'gte': return v >= stage.value - k;
-    case 'lt': return v < stage.value + k;
-    case 'gt': return v > stage.value - k;
-    case 'range': return v >= stage.value - k && v <= stage.value2 + k;
+    case 'lte': return v <= limit + k;
+    case 'gte': return v >= limit - k;
+    case 'lt': return v < limit + k;
+    case 'gt': return v > limit - k;
+    case 'range': return v >= limit - k && v <= limit2 + k;
     default: return false;
   }
 }
@@ -571,6 +592,7 @@ const SHORT_LABEL = {
   'spec.bottomLine': 'spec.short.full',
   'spec.bothKnees': 'spec.short.both',
   'spec.flight': 'spec.short.jump',
+  'spec.backLine': 'spec.short.back',
   'spec.bridgeDown': 'spec.short.down',
   'spec.shoulderDrop': 'spec.short.drop',
   'spec.seq1': 'spec.short.stand',
@@ -623,32 +645,168 @@ function toStage(it, extra = {}) {
  * 再依次是 开始这一轮 → 计入一次 → 双腿/离地等附加条件 → 深度到位。
  * 每一格都带**真实阈值**，用户在外面就能看到「差在哪一格」。
  */
+/**
+ * 某个动作的判定进度条阶段（**计数链**）。
+ *
+ * 核心约定（用户明确要求：**所有关键帧都做完了就必须计次**）：
+ *   这条链上的每一格都是「计一次数必须满足的条件」，顺序与识别器判定顺序一致，
+ *   **最后一格就是计次发生的那一刻**：
+ *     - 在「回到起始位才算一轮」的动作里（深蹲/箭步蹲/俯卧撑/通用屈伸类），最后一个格是「回到起始位」；
+ *     - 臀桥是在顶点计数，所以最后一格就是「顶起」；
+ *     - 左右交替类最后一格是「另一侧还原」，多段动作（波比跳）最后一格是最后一段（起跳）。
+ *   因此「最后一格点亮 ⇒ 这一次已经计上了」。深度 / 满分那类**不影响计次**的判据
+ *   （bottomLine 等）不进链（仍在 📐 计次技术指标弹窗里列出），免得它们卡住后面的格子。
+ *
+ * 没识别到人 / 没进入动作姿势时，第一格（门控格）不亮，整条进度条也保持灰色。
+ */
 export function specStages(id) {
   const meta = EXERCISE_MAP[id];
+  if (!meta) return [];
   const { groups } = exerciseSpecs(id);
-  const count = groups.find((g) => g.titleKey === 'spec.group.count');
-  const posture = groups.find((g) => g.titleKey === 'spec.group.posture');
+  const count = groups.find((g) => g.titleKey === 'spec.group.count')?.items || [];
+  const posture = groups.find((g) => g.titleKey === 'spec.group.posture')?.items || [];
+  const pick = (label) => count.find((it) => it.labelKey === label);
+  const isHold = meta.kind === 'hold';
   const stages = [];
 
-  // ① 姿势要求：计人类的动作只要第一条（站直 / 俯撑 / 仰卧…）；
-  //    计时类动作没有「往复」过程，姿势的每一条就是一个台阶（撑起来 → 身体水平 → 手贴地），都收进来。
-  //    只有第一条标 pose：它代表「先进入这个动作的姿势」，其余几条按各自的指标画不同的图。
-  const poseItems = (posture?.items || []).filter(isLiveItem);
-  const isHold = meta?.kind === 'hold';
-  const poseTake = isHold ? poseItems.slice(0, 4) : poseItems.slice(0, 1);
-  poseTake.forEach((it, i) => stages.push(toStage(it, i === 0 ? { pose: true } : {})));
-
-  // ② 计次判据里能实时判断的条目，按识别器检查顺序
-  for (const it of count?.items || []) {
-    if (!isStageItem(it)) continue;
-    stages.push(toStage(it));
+  // ① 门控格：进入这个动作的姿势。
+  //    有真实门控的识别器直接用它的判定结果（俯卧撑 isProne → active、臀桥 isSupine → active、
+  //    通用引擎 / 计时类 → gateOk）；深蹲 / 箭步蹲没有门控，退回数值判据
+  //    （深蹲「髋比膝高 ≥ 0.86」、箭步蹲「双腿伸直角 ≥ 145°」）。
+  const GATED_BUILTINS = new Set(['pushup', 'bridge']);
+  const gateItem = posture.find(isLiveItem);
+  if (gateItem) {
+    const flag = isHold ? 'gateOk' : (GATED_BUILTINS.has(id) ? 'active' : (BUILDERS[id] ? null : 'gateOk'));
+    stages.push(toStage(gateItem, { kind: 'gate', detFlag: flag, pose: true }));
   }
 
-  // 去重（同一格指标 + 同一阈值只留一条），并限制长度，画面上别太挤
+  if (isHold) {
+    // 计时类没有「往复」，姿势的每一条就是一个台阶（撑起来 → 离地 → 手贴地）；
+    // 最后一格 = 姿势到位、计时开始（计时类没有「计次」，所以不参与「最后一格=计次」的约定）
+    for (const it of posture.filter(isLiveItem).slice(0, 4)) {
+      if (it === gateItem) continue;
+      stages.push(toStage(it, { kind: 'gate' }));
+    }
+    const list = dedupeStages(stages);
+    if (list.length) list[list.length - 1].kind = 'hold';
+    return list;
+  }
+
+  const pushItem = (it, extra) => { if (it && isStageItem(it)) stages.push(toStage(it, extra)); };
+
+  if (id === 'bridge') {
+    // 臀桥：躺好（门控）→ 落回地面 → 顶起（顶起那一刻就计次）
+    pushItem(pick('spec.bridgeDown'), { kind: 'enter' });
+    pushItem(pick('spec.countLine'), { kind: 'finish' });
+  } else if (id === 'pushup') {
+    // 俯卧撑：开始 → 计次（肘角到位**或**肩膀已经沉到接近地面）→ 回到顶位（计次那一刻）
+    pushItem(pick('spec.pushupEnter'), { kind: 'enter' });
+    const countItem = pick('spec.countLine');
+    const dropItem = pick('spec.shoulderDrop');
+    if (countItem && dropItem) {
+      const stage = toStage(countItem, { kind: 'count' });
+      stage.alt = toStage(dropItem);
+      stages.push(stage);
+    } else pushItem(countItem, { kind: 'count' });
+    // 「回到顶位」用识别器自己的动态线（跟着用户自己举到的最高点走），
+    // 而且必须**同时**肩膀也抬回来了（识别器收尾要求的就是这两条，缺一条就会
+    // 在下沉刚起步那一帧误判成「已经回到顶位」）
+    pushItem(pick('spec.backLine'), {
+      kind: 'finish',
+      valueFrom: 'backLine',
+      also: {
+        metric: 'shoulderDrop',
+        op: 'lte',
+        value: roundFor(PUSHUP.dropStart, TORSO),
+        unit: TORSO,
+        k: STAGE_TOLERANCE.torso,
+      },
+    });
+  } else if (meta.engine === 'alt') {
+    // 左右交替：一侧发力 → 另一侧还原（交替成立那一刻计次）
+    pushItem(pick('spec.altOn'), { kind: 'count' });
+    pushItem(pick('spec.altOff'), { kind: 'finish' });
+  } else if (meta.engine === 'sequence') {
+    // 多段动作：按顺序每一段都要做到，最后一段完成即计次
+    const seq = count.filter((it) => /^spec\.seq\d+$/.test(it.labelKey));
+    seq.forEach((it, i) => pushItem(it, { kind: i === seq.length - 1 ? 'finish' : 'count' }));
+  } else if (meta.engine === 'twist') {
+    pushItem(pick('spec.twistAmount'), { kind: 'finish' });
+  } else if (id === 'squat' || id === 'lunge') {
+    // 深蹲 / 箭步蹲：站姿（门控）→ 开始 → 计次 →[双腿都要弯]→ 回到起始位（计次那一刻）
+    pushItem(pick('spec.squatEnter') || pick('spec.lungeEnter'), { kind: 'enter' });
+    pushItem(pick('spec.countLine'), { kind: 'count' });
+    pushItem(pick('spec.bothKnees'), { kind: 'count' });
+    if (id === 'squat') {
+      pushItem(pick('spec.backLine'), { kind: 'finish', valueFrom: 'standLine' });
+    } else {
+      // 箭步蹲的「回到站姿」是动态线（按本轮幅度算），同样用识别器自己的 exitLine
+      stages.push({
+        shortKey: 'spec.short.back',
+        metric: 'frontKnee',
+        op: 'gte',
+        value: 145,
+        valueFrom: 'exitLine',
+        unit: DEG,
+        k: STAGE_TOLERANCE.deg,
+        kind: 'finish',
+        item: {
+          labelKey: 'spec.backLine',
+          metricKey: 'metric.frontKnee',
+          op: 'gte',
+          value: 145,
+          unit: DEG,
+          textKey: 'spec.text.lungeBack',
+          noteParams: { pct: Math.round(LUNGE.recovery * 100), deg: LUNGE.minBend },
+        },
+      });
+    }
+  } else {
+    // 通用屈伸类：姿势（门控）→ 开始 → 计次 →[要跳起来]→ 回到起始位（计次那一刻）
+    pushItem(pick('spec.enterLine'), { kind: 'enter' });
+    pushItem(pick('spec.countLine'), { kind: 'count' });
+    pushItem(pick('spec.flight'), { kind: 'count' });
+    const backP = Number.isFinite(meta.params?.backP) ? meta.params.backP : 0.16;
+    // 「回到起始位」这一格用的就是**引擎自己的比例线**（`DetectorBase` 里 `progress <= backP`
+    // 就是它计次的那一刻），所以：
+    //   - 判定值必须是原始比例（0~1），而且**不加宽容量**（k = 0）——
+    //     之前这里写成 roundFor(0.16, 'count') = 0 且 k = 6，等于「永远成立」，
+    //     结果链条在「计次」那一格就整条点亮了，用户会看到「进度条满了但没计次」；
+    //   - 悬停文字用弹窗里那条真实判据（同一个动作的角度/幅度，例如「膝屈角 ≥ 162°」），
+    //     不再显示「幅度 ≤ 0 次」这种没意义的数字。
+    const backItem = pick('spec.backLine');
+    stages.push({
+      shortKey: 'spec.short.back',
+      metric: 'progress',
+      op: 'lte',
+      value: backP,
+      unit: COUNT,
+      k: 0,
+      kind: 'finish',
+      item: backItem || {
+        labelKey: 'spec.backLine',
+        metricKey: 'metric.progress',
+        op: 'lte',
+        value: roundFor(backP * 100, COUNT),
+        unit: COUNT,
+        noteKey: 'spec.note.adaptive',
+      },
+    });
+  }
+
+  // 兜底：链上必须有「计次那一刻」这一格
+  if (stages.length && !stages.some((s) => s.kind === 'finish')) {
+    stages[stages.length - 1].kind = 'finish';
+  }
+  return dedupeStages(stages);
+}
+
+/** 去重（同一格指标 + 同一阈值只留一条），并限制长度，画面上别太挤 */
+function dedupeStages(stages) {
   const seen = new Set();
   const out = [];
   for (const s of stages) {
-    const sig = `${s.metric}|${s.op}|${s.value}|${s.value2 ?? ''}`;
+    const sig = `${s.metric}|${s.op}|${s.value}|${s.value2 ?? ''}|${s.kind}`;
     if (seen.has(sig)) continue;
     seen.add(sig);
     out.push(s);

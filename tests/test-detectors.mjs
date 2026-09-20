@@ -11,6 +11,7 @@
 import { toMetric, LandmarkSmoother, LM } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
 import { createDetector } from '../src/exercises.js';
+import { specStages, stageHolds } from '../src/specs.js';
 import { EXERCISES } from '../src/catalog.js';
 import {
   Calibrator, OUTLINE, LYING, outlinePath, outlineBounds, outlineKind,
@@ -564,6 +565,61 @@ console.log('\n[3] 俯卧撑计数');
   r.run(repeat(cameraAngle, 1500, 5));
   atLeast('斜机位把肘角读数压平时，靠肩膀下沉量也能计次', det.validReps, 4);
   ok('斜机位下不会把真做的次数记成半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+}
+
+/* ------------------------------------------------------------------ *
+ * 判定进度条 × 计次：**链上最后一格点亮 = 这一次已经计上**
+ * ------------------------------------------------------------------ */
+
+console.log('\n[6] 进度条与计次一致（关键帧全做完就必须计次）');
+{
+  /** 一边喂帧给识别器、一边推进进度条；返回「链走完的时刻」与「第一次计次的时刻」 */
+  function barTrace(id, segments) {
+    const det = fresh(id);
+    const stages = specStages(id);
+    const smoother = new LandmarkSmoother();
+    let t = 0;
+    let idx = -1;
+    let barDoneAt = -1;
+    let firstValidAt = -1;
+    for (const seg of segments) {
+      const n = Math.max(1, Math.round(seg.ms / DT));
+      for (let i = 0; i < n; i++) {
+        const lm = (typeof seg.pose === 'function' ? seg.pose(i / n) : seg.pose)
+          .map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0, visibility: p.visibility ?? 1 }));
+        const sm = smoother.apply(lm, t / 1000);
+        const f = computeFrame(toMetric(sm, ASPECT), null, t, false, null);
+        const evs = det.update(f, t);
+        if (firstValidAt < 0 && evs.some((e) => e.type === 'rep' && e.valid)) firstValidAt = t;
+        for (let k = idx + 1; k < stages.length; k++) {
+          if (!stageHolds(stages[k], f, det)) break;
+          idx = k;
+        }
+        if (barDoneAt < 0 && idx >= stages.length - 1) barDoneAt = t;
+        t += DT;
+      }
+    }
+    return { det, stages, idx, barDoneAt, firstValidAt, reached: idx >= stages.length - 1 };
+  }
+
+  const cases = [
+    ['squat', repeat(squatPose(75), 1600, 2)],
+    ['lunge', repeat(lungeMix(1), 1800, 2)],
+    ['pushup', repeat(pushupMix(), 1400, 2)],
+    ['bridge', repeat((p) => bridgePose(p), 1800, 2)],
+  ];
+  for (const [id, segments] of cases) {
+    const r = barTrace(id, segments);
+    ok(`${id}：走完一轮后进度条整条走完`, r.reached, `到第 ${r.idx + 1}/${r.stages.length} 格`);
+    ok(`${id}：这一轮确实计上了次数`, r.firstValidAt >= 0 && r.det.validReps >= 1,
+      `有效 ${r.det.validReps}`);
+    ok(`${id}：链走完与计次基本同时（相差 ≤250ms，不会「做完了却不计次」）`,
+      r.barDoneAt >= 0 && r.firstValidAt >= 0 && Math.abs(r.barDoneAt - r.firstValidAt) <= 250,
+      `链完成 ${Math.round(r.barDoneAt)}ms / 计次 ${Math.round(r.firstValidAt)}ms`);
+    ok(`${id}：进度条不会「提前走完」（走完时还没计上）`,
+      r.barDoneAt < 0 || r.firstValidAt < 0 || r.barDoneAt <= r.firstValidAt + 250,
+      `链完成 ${Math.round(r.barDoneAt)}ms / 计次 ${Math.round(r.firstValidAt)}ms`);
+  }
 }
 
 /* ------------------------------------------------------------------ *

@@ -425,7 +425,7 @@ export default {
         tune: 'Pull your body into one straight line to score',
       },
       lower: { label: 'Brace your core and bend your elbows to lower down', hint: 'Start lowering: bend your elbows and bring your chest toward the floor' },
-      depth: { label: 'Elbows to 90° or less, chest close to the floor (top-scoring step)', hint: 'A little deeper — your elbow angle is about {deg}°' },
+      depth: { label: 'Elbows to 118° or less, chest close to the floor (top-scoring step)', hint: 'A little deeper — your elbow angle is about {deg}°' },
       press: { label: 'Press back up to fully straight arms', hint: 'Push hard and straighten your arms all the way' },
     },
     bridge: {
@@ -783,6 +783,7 @@ export default {
       both: 'Both',
       jump: 'Jump',
       down: 'Back down',
+      back: 'Return',
       drop: 'Sink',
       work: 'Work',
       rest: 'Return',
