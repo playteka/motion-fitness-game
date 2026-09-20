@@ -1519,8 +1519,51 @@ console.log('\n[8d] 每个动作做完一组都有两个圆环');
 }
 
 /* ------------------------------------------------------------------ *
- * 语音播报的健壮性（浏览器不给被取消的那句触发 onend 时不能永久哑掉）
+ * 开合跳（新增在「全身」分类里）
  * ------------------------------------------------------------------ */
+
+console.log('\n[8e] 开合跳');
+{
+  const api = windowStub.__mfg;
+  const segHtml = () => elements.get('criteriaTrack').innerHTML;
+  const segCount = () => (segHtml().match(/<div class="[^"]*" data-i="/g) || []).length;
+
+  const cards = documentStub.querySelectorAll('.ex-card').map((c) => c.dataset.id);
+  ok('主页动作墙里有开合跳', cards.includes('jumpingJack'), cards.join(','));
+  ok('深蹲跳不再出现在「全身」块里（只在下肢）',
+    documentStub.querySelectorAll('.cat-block').length === 5, `${documentStub.querySelectorAll('.cat-block').length}`);
+
+  api.openExercise('jumpingJack');
+  ok('开合跳默认目标 = 50 次', api.state.target === 50, String(api.state.target));
+  ok('目标输入框也跟着显示 50', String(elements.get('targetInput').value) === '50', String(elements.get('targetInput').value));
+  api.buildCriteriaBar();
+  api.state.session = 'running';
+  // 通用引擎的「站立」门控是识别器自己的布尔状态（detFlag: gateOk），桩里直接给上
+  api.state.detector.gateOk = true;
+  api.state.detector.active = true;
+  api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, kneeSpread: 0.35 }, [], 1000);
+  ok('开合跳进度条 = 4 格（并拢 → 打开 → 开到最大 → 收回）', segCount() === 4, String(segCount()));
+  ok('开合跳每一格都画了图标（正面开合的火柴人）',
+    (segHtml().match(/<svg class="criteria-icon"/g) || []).length === 4);
+  ok('站着并拢时只点亮「站立」这一格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
+  ok('跳开之后进度条往前走（打开 → 开到最大，收回那一格要等真的并拢才亮）', (() => {
+    api.state.detector.progress = 0.33;
+    api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, kneeSpread: 0.8 }, [], 1100);
+    const mid = api.state.criteriaIdx;
+    api.state.detector.progress = 0.9;
+    api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, kneeSpread: 1.5 }, [], 1200);
+    const top = api.state.criteriaIdx;
+    api.state.detector.progress = 0.05;
+    api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, kneeSpread: 0.35 }, [], 1300);
+    return mid === 1 && top === 2 && api.state.criteriaIdx === 3;
+  })(), `mid=${api.state.criteriaIdx}`);
+  ok('开合跳得分分配到关键帧：并拢 4 / 打开 7 / 开到最大 14 / 收回 8 + 满轮 6',
+    JSON.stringify(api.state.criteriaMax.map((r) => r.points)) === '[4,7,14,8]'
+    && api.state.criteriaMax[3].bonus === 6,
+    JSON.stringify(api.state.criteriaMax));
+  api.showHome();
+}
+
 
 console.log('\n[9] 语音播报健壮性');
 {

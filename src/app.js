@@ -717,6 +717,8 @@ function buildCriteriaBar() {
     kind: ex.kind,
     plan: ex.plan,
     gate: EXERCISE_MAP[state.exerciseId]?.params?.gate,
+    // 引擎量的是哪个指标：图标要用它决定「画成哪一类姿势」（例如开合跳要画正面开合的姿势）
+    metric: EXERCISE_MAP[state.exerciseId]?.params?.metric,
     stages: specStages(state.exerciseId),
   };
   // 画出来一模一样的格子留一格就够（计时类动作里两条姿势要求常常画的是同一个姿势）

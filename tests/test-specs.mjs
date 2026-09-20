@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 「计次技术指标」自检（🎯 运动设定弹窗里那组数值）。
  *
  * 这里要守住的核心承诺是：**弹窗里显示的每一个数字都必须等于识别器真正使用的判定线**。
@@ -70,7 +70,7 @@ console.log('\n[1] 每个动作都有技术指标');
       JSON.stringify([...new Set(items.map((it) => it.op))]));
     ok(`${id}：带指标的条目一定带比较符`, items.every((it) => !it.metricKey || it.op || it.textKey));
   }
-  ok('动作库里 21 个动作都有指标', ALL.length === 21 && ALL.every((id) => itemsOf(id).length > 0), `实际 ${ALL.length}`);
+  ok('动作库里 22 个动作都有指标', ALL.length === 22 && ALL.every((id) => itemsOf(id).length > 0), `实际 ${ALL.length}`);
 }
 
 /* ------------------------------------------------------------------ *
@@ -544,6 +544,7 @@ console.log('\n[10] 关键帧线条图标');
       kind: meta.kind,
       plan: meta.plan,
       gate: meta.params?.gate,
+      metric: meta.params?.metric,
       stages: specStages(id),
     };
   };

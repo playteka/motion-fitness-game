@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 识别逻辑的自动化测试。
  *
  * 做法：用合成骨架“演”出标准动作与各种常见错误动作，跑完整识别管线
@@ -224,6 +224,21 @@ const bridgeFlatPose = (p) => supinePose({
 });
 const BRIDGE_FLAT = { hipY: 0.89, thighUp: 50, knee: 100, torsoUp: 270 };
 const BRIDGE_TOP = { hipY: 0.68, thighUp: 90, knee: 90, torsoUp: 233.5 };
+
+/**
+ * 开合跳：正对镜头，双脚并拢 ↔ 打开。
+ * `spread` 是合成骨架额外的横向张开量，实测 kneeSpread = 0.688 + spread × 6.25：
+ *   spread = −0.075 → kneeSpread ≈ 0.22（双脚并拢）
+ *   spread = +0.130 → kneeSpread ≈ 1.5（跳开到最宽）
+ */
+const JACK_CLOSED = -0.075;
+const JACK_OPEN = 0.13;
+const jackPose = (p, closed = JACK_CLOSED, open = JACK_OPEN) => standingPose({
+  knee: 175,
+  view: 'front',
+  spread: lerp(closed, open, Math.sin(Math.PI * p)),
+});
+
 const bridgePose = (p, toTop = true) => {
   const s = toTop ? Math.sin(Math.PI * p) : 1;
   const a = toTop ? BRIDGE_FLAT : BRIDGE_TOP;
@@ -607,6 +622,7 @@ console.log('\n[6] 进度条与计次一致（关键帧全做完就必须计次�
     ['lunge', repeat(lungeMix(1), 1800, 2)],
     ['pushup', repeat(pushupMix(), 1400, 2)],
     ['bridge', repeat((p) => bridgePose(p), 1800, 2)],
+    ['jumpingJack', repeat((p) => jackPose(p), 1000, 2)],
   ];
   for (const [id, segments] of cases) {
     const r = barTrace(id, segments);
@@ -693,6 +709,76 @@ console.log('\n[4] 臀桥计数');
     `有效 ${det.validReps} / 半程 ${det.partialReps}`);
   ok('幅度不够的抖动只提示「再顶高一点」', r.cues.every((c) => c.code !== 'tempo')
     && r.cues.some((c) => c.code === 'riseMore'));
+}
+
+/* ------------------------------------------------------------------ *
+ * 开合跳（通用 bend 引擎 + 双膝开合距离）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[4b] 开合跳计数');
+{
+  // 并拢 → 打开 → 并拢 = 一次
+  const det = fresh('jumpingJack');
+  const r = makeRunner(det);
+  r.run(repeat((p) => jackPose(p), 1000, 4));
+  ok('开合跳：4 个完整开合 = 4 次', det.validReps === 4, `实际 ${det.validReps}`);
+  ok('开合跳：没有半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
+  ok('开合跳：每次有效次数都带序号与质量分',
+    r.reps.filter((x) => x.valid).length === 4
+    && r.reps.filter((x) => x.valid).every((x, i) => x.index === i + 1 && x.quality > 0 && x.duration > 0));
+  const fOpen = makeRunner(fresh('jumpingJack')).peek(jackPose(0.5));
+  const fClosed = makeRunner(fresh('jumpingJack')).peek(jackPose(0));
+  ok('开合跳：判据量的是双膝开合距离（并拢 ≈ 0.22、打开 ≈ 1.5）',
+    fClosed.kneeSpread < 0.4 && fOpen.kneeSpread > 1.2,
+    `${fClosed.kneeSpread.toFixed(2)} → ${fOpen.kneeSpread.toFixed(2)}`);
+}
+{
+  // 只开一点点（远没到「宽松线」）：不计数、不记半程、也不出声
+  const det = fresh('jumpingJack');
+  const r = makeRunner(det);
+  r.run(repeat((p) => jackPose(p, JACK_CLOSED, 0.0), 1000, 4));
+  ok('开合跳：只开一点点不算次数', det.validReps === 0, `实际 ${det.validReps}`);
+  ok('开合跳：只开一点点不记半程、也不出声',
+    det.partialReps === 0 && r.cues.length === 0, `半程 ${det.partialReps} / 提示 ${r.cues.map((c) => c.code).join(',')}`);
+}
+{
+  // 站得本来就开（并拢不了）的人：引擎按他自己的最窄站距自校准，照样计数
+  const det = fresh('jumpingJack');
+  const r = makeRunner(det);
+  r.run(repeat((p) => jackPose(p, 0.02, 0.22), 1000, 4));
+  atLeast('开合跳：站得本来就开的人也算得出次数（按自己的最窄站距自校准）', det.validReps, 3);
+  void r;
+}
+{
+  // 快得不像人：只记半程 + 「太快了」（和臀桥的抖动用例同口径：快动作一律不算有效次数）
+  const det = fresh('jumpingJack');
+  const r = makeRunner(det);
+  r.run(repeat((p) => jackPose(p), 220, 6));
+  ok('开合跳：过快不刷有效次数', det.validReps <= 1, `实际 ${det.validReps}`);
+  atLeast('开合跳：过快记成半程', det.partialReps, 3);
+  ok('开合跳：过快提示「太快了」', r.cues.some((c) => c.code === 'tooFast'), r.cues.map((c) => c.code).join(','));
+}
+{
+  // 站着不动：不计次（站着本来就是这个动作的合法起始姿势，所以门控是过的 —— 但没开合就不该计）
+  const det = fresh('jumpingJack');
+  const r = makeRunner(det);
+  r.run([{ pose: standingIdle, ms: 2500 }]);
+  ok('开合跳：站着不动不计次', det.validReps === 0 && det.partialReps === 0,
+    `有效 ${det.validReps} / 半程 ${det.partialReps}`);
+  // 趴下 / 躺下就不是站姿了：门控拦住、进入待机
+  const detLie = fresh('jumpingJack');
+  makeRunner(detLie).run([{ pose: plankPose(), ms: 2000 }]);
+  ok('开合跳：趴着时门控不过、进入待机', detLie.active === false && detLie.validReps === 0);
+}
+{
+  // 得分：站好 / 打开 / 开到最大 / 收回 四步都拿到，并且整轮满分奖励跟着来
+  const det = fresh('jumpingJack');
+  const r = makeRunner(det);
+  r.run(repeat((p) => jackPose(p), 1000, 3));
+  const ids = new Set(r.steps.map((x) => x.id));
+  ok('开合跳：要领「站好 → 打开 → 开到最大 → 收回」都会得分',
+    ['stance', 'open', 'wide', 'close'].every((id) => ids.has(id)), [...ids].join(','));
+  atLeast('开合跳：做满一轮有整轮满分奖励', r.bonuses.length, 2);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1281,6 +1367,7 @@ function calibOnce(cal, lm, now) {
       squat: 'front',
       squatSumo: 'front',
       squatJump: 'front',
+      jumpingJack: 'front',
       burpee: 'front',
       boxJump: 'front',
       lunge: 'side',

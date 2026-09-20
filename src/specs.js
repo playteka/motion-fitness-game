@@ -823,6 +823,7 @@ const STEP_STAGE = {
   pushup: { setup: 'prone', lower: 'start', depth: 'count', press: 'back' },
   bridge: { setup: 'supine', lift: 'count', top: 'count', lower: 'down' },
   repStand: { stance: 'stand', lower: 'start', bottom: 'count', up: 'back' },
+  jumpingJack: { stance: 'stand', open: 'start', wide: 'count', close: 'back' },
   repProne: { setup: 'prone', lower: 'start', bottom: 'count', press: 'back' },
   repSupine: { setup: 'supine', engage: 'start', top: 'count', lower: 'back' },
   repAlt: { setup: '*gate', first: 'work', switch: 'rest', rhythm: 'rest' },

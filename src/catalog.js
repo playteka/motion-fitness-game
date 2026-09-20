@@ -7,7 +7,7 @@
  * 每条配置的字段：
  *   id          唯一 id，也是 i18n 键 `ex.<id>.*` 的前缀
  *   icon        图标（emoji，主页与动作页都用它）
- *   cats        所属分类（一个动作可以同时属于多个分类，例如「深蹲跳」既是下肢也是全身）
+ *   cats        所属分类（一个动作可以属于多个分类，例如 ['lower','full'] 就会在两块里出现）
  *   kind        'rep'（计数）| 'hold'（计时）
  *   engine      'builtin' | 'bend' | 'alt' | 'twist' | 'sequence' | 'hold'
  *   plan        计分方案（steps.js 里的 STEP_PLANS 键）
@@ -69,7 +69,7 @@ const e = (id, icon, cats, opts) => ({
 });
 
 /* ------------------------------------------------------------------ *
- * 动作库：上肢 3 / 下肢 6 / 核心 6 / 全身 5 / 拉伸 2（共 21 个动作）
+ * 动作库：上肢 3 / 下肢 6 / 核心 6 / 全身 5 / 拉伸 2（共 22 个动作）
  * ------------------------------------------------------------------ */
 
 export const EXERCISES = [
@@ -104,7 +104,7 @@ export const EXERCISES = [
   e('bridge', '🌉', 'lower', {
     engine: 'builtin', plan: 'bridge', posture: 'supine', judge: 'rise', target: 15,
   }),
-  e('squatJump', '🚀', ['lower', 'full'], {
+  e('squatJump', '🚀', 'lower', {
     plan: 'jump', view: 'front', posture: 'stand', judge: 'flight', target: 12,
     params: bend({ metric: 'kneeBent', gate: 'stand', up: 168, down: 100, flight: true, flightMin: 0.035, minRepMs: 420 }),
   }),
@@ -147,6 +147,13 @@ export const EXERCISES = [
   e('mountainClimber', '⛰️', 'full', {
     engine: 'alt', plan: 'repAlt', posture: 'prone', judge: 'leg', target: 24,
     params: { gate: 'prone', metric: 'knee', cmp: 'lt', onValue: 105, offValue: 140, minRepMs: 200 },
+  }),
+  e('jumpingJack', '🙌', 'full', {
+    plan: 'jumpingJack', view: 'front', posture: 'stand', judge: 'spread', target: 50,
+    // 开合跳：正对镜头，用**双膝横向距离**（kneeSpread）量「开合」——
+    // 并拢站好 ≈ 0.35，跳开站宽 ≈ 1.5（引擎会按用户自己的最窄站距自校准，站得开的人也准）。
+    // up < down：progress = (最窄 − 当前) / (最窄 − 最宽)，所以并拢 = 0、开到最大 = 1。
+    params: bend({ metric: 'kneeSpread', gate: 'stand', up: 0.35, down: 1.5, minRepMs: 300 }),
   }),
   e('boxJump', '🦘', 'full', {
     plan: 'jump', view: 'front', posture: 'stand', judge: 'flight', target: 10, rough: true,

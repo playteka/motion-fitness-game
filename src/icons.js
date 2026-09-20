@@ -218,6 +218,43 @@ function buildLie({
 const STRAIGHT_KNEE = 174;
 
 /**
+ * 开合跳 / 立姿开合类（正面）：**双腿按开合角张开、手臂按上举角摆动**。
+ *
+ * 判据是「双膝横向距离」（kneeSpread），所以画出来的就是那个开合幅度：
+ * 并拢站好 = 两腿几乎竖直、手臂自然下垂；开到最大 = 两腿向外张开、双手举过头顶。
+ * 这一套在网上没有「侧视骨架」对应物，所以单独写一个正面构建器 ——
+ * 站立类的 buildStand 是侧视的，用它画开合跳会把「开」画成「前后迈步」。
+ *
+ * @param o.legAngle  每条腿相对竖直向外张开的角度（度）
+ * @param o.armAngle  手臂相对「竖直向上」的角度：0 = 举过头顶，180 = 自然下垂
+ */
+function buildJack({ legAngle = 6, armAngle = 150 } = {}) {
+  const S = { thigh: 6.2, shin: 6.2, torso: 7.4, head: 2.0, upper: 3.7, fore: 3.6 };
+  const cx = ICON_BOX / 2;
+  const la = clamp(num(legAngle, 6), 0, 34);
+  const aa = clamp(num(armAngle, 150), 0, 180);
+
+  const lines = [];
+  const circles = [];
+  // 脚底落在地面线上 → 髋的高度由开合角决定（张得越开，人越矮，看得出在「开」）
+  const legLen = S.thigh + S.shin;
+  const hip = { x: cx, y: STAND_FLOOR - legLen * Math.cos(rad(la)) };
+  const shoulder = { x: cx, y: hip.y - S.torso };
+
+  for (const side of [1, -1]) {
+    const knee = add(hip, down(side * la), S.thigh);
+    const ankle = add(knee, down(side * la), S.shin);
+    lines.push(seg(hip, knee), seg(knee, ankle));
+    const elbow = add(shoulder, up(side * aa), S.upper);
+    const wrist = add(elbow, up(side * aa), S.fore);
+    lines.push(seg(shoulder, elbow), seg(elbow, wrist));
+  }
+  lines.push(seg(hip, shoulder));
+  circles.push({ x: shoulder.x, y: shoulder.y - S.head * 1.6, r: S.head });
+  return { lines, circles };
+}
+
+/**
  * 把判据里的角度换成**画出来的**角度。
  *
  * 为什么要放大：146° 与 152° 的膝角在 32 像素的小图里几乎看不出差别，
@@ -289,7 +326,34 @@ export function poseFor(stage, ctx = {}) {
   const isPose = !!stage?.pose;
 
   if (metric === 'frontKnee' || metric === 'straighterKnee') return lungePose(stage, stages);
-  if (isPose) return gatePose(posture, value, stages, metric, ctx);
+  if (isPose) {
+    // 开合跳这类「正面对镜头的开合动作」：起始格画并拢站直（手臂放下）
+    if (ctx.metric === 'kneeSpread') {
+      return { builder: 'jack', params: { legAngle: 5, armAngle: 152 }, criterion: { spread: 0 } };
+    }
+    return gatePose(posture, value, stages, metric, ctx);
+  }
+
+  if (metric === 'kneeSpread') {
+    // 「开到最大」那一格：腿张开的角度由判据值决定，手臂同步举过头顶
+    const open = stage.op === 'gte' || stage.op === 'gt';
+    if (!open) {
+      // 「并拢收回」那一格：姿势和起始格一样（本来就是回到起始位），
+      // 加一个向下的箭头才分得出来 —— 否则会被「画得一样就合并」吃掉
+      return {
+        builder: 'jack',
+        params: { legAngle: 5, armAngle: 152, mark: 'down' },
+        criterion: { spread: value },
+      };
+    }
+    const legAngle = clamp(7 + (num(value, 0.5) - 0.35) * 18, 7, 30);
+    return {
+      builder: 'jack',
+      params: { legAngle, armAngle: 20 },
+      criterion: { spread: value },
+      drawn: { legAngle },
+    };
+  }
 
   // 躯干倾角：「不要超过 X°」是站姿门槛（画站直），「至少 X°」是要你趴下/折下去（画那个姿态）
   if (metric === 'torsoIncl' || metric === 'trunk') {
@@ -464,7 +528,8 @@ function gatePose(posture, value, stages, metric, ctx = {}) {
 /** 某一格的线条图标（纯数据；测试可以直接核对里面的角度） */
 export function stageIcon(stage, ctx = {}) {
   const pose = poseFor(stage, ctx);
-  const built = pose.builder === 'lie' ? buildLie(pose.params) : buildStand(pose.params);
+  const built = pose.builder === 'lie' ? buildLie(pose.params)
+    : (pose.builder === 'jack' ? buildJack(pose.params) : buildStand(pose.params));
   const lines = built.lines.concat(markLines(pose.params?.mark, pose.builder));
   return { lines, circles: built.circles, pose, builder: pose.builder, params: pose.params };
 }

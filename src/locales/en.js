@@ -362,6 +362,13 @@ export default {
       cameraHint: 'Turn sideways to the camera, up on straight arms',
       goal: 'Drive your knees toward your chest one after the other, fast',
     },
+    jumpingJack: {
+      name: 'Jumping Jack',
+      cameraHint: 'Face the camera with your whole body in frame (the leg spread is what gets measured)',
+      goal: 'Jump your feet wide and back together while your arms go up and down — 50 reps per set',
+      howto: ['Face the camera with your feet together and your arms at your sides', 'Jump your feet out to about one and a half shoulder-widths while your arms go overhead', 'Jump back to feet together with your arms at your sides — that is one rep'],
+      tips: ['Land softly on the balls of your feet instead of slamming your heels', 'Do not shrug your shoulders when your arms go overhead, keep breathing', 'Knees track over your toes, never caving in'],
+    },
     deadBug: {
       name: 'Dead Bug',
       cameraHint: 'Turn sideways to the camera, lying on your back with arms and legs up',
@@ -478,6 +485,24 @@ export default {
       up: {
         label: 'Drive back up to the start position',
         hint: 'Return to the start position to complete the rep',
+      },
+    },
+    jumpingJack: {
+      stance: {
+        label: 'Stand with your feet together and arms at your sides',
+        hint: 'Start with your feet together and your arms down by your sides',
+      },
+      open: {
+        label: 'Jump your feet wide and raise both arms',
+        hint: 'Open up: jump your feet out to the sides and your hands overhead',
+      },
+      wide: {
+        label: 'Reach the widest spread (top-scoring step)',
+        hint: 'A little wider — feet all the way open, arms straight up',
+      },
+      close: {
+        label: 'Jump back together to the start position',
+        hint: 'Feet back together and arms down completes the rep',
       },
     },
     repProne: {
@@ -677,6 +702,7 @@ export default {
     sequence: 'Order of the whole sequence',
     arm: 'Single-arm raise',
     leg: 'Left/right leg alternation',
+    spread: 'How wide your legs open',
     pose: 'Whether your body position is on target',
     time: 'Hold time',
   },
@@ -692,6 +718,7 @@ export default {
     elbow: 'Elbow angle',
     hip: 'Hip angle',
     ankleSpread: 'Ankle separation',
+    kneeSpread: 'Knee separation',
     body: 'Body line angle',
     trunk: 'Trunk tilt',
     torsoIncl: 'Trunk tilt',

@@ -262,11 +262,11 @@ console.log('\n[4] 动作库与界面一致性');
     upper: ['pushup', 'pushupWide', 'pushupDiamond'],
     lower: ['squat', 'squatSumo', 'lunge', 'lungeBack', 'bridge', 'squatJump'],
     core: ['plank', 'sidePlank', 'deadBug', 'crunch', 'reverseCrunch', 'lyingLegRaise'],
-    full: ['burpee', 'mountainClimber', 'boxJump', 'squatJump', 'lungeJump'],
+    full: ['burpee', 'mountainClimber', 'jumpingJack', 'boxJump', 'lungeJump'],
     stretch: ['standingForwardFold', 'seatedForwardFold'],
   };
   const expectIds = [...new Set(Object.values(EXPECT).flat())];
-  ok('动作库就是约定的 21 个动作',
+  ok('动作库就是约定的 22 个动作',
     EXERCISES.map((x) => x.id).sort().join(',') === expectIds.sort().join(','),
     `实际 ${EXERCISES.length} 个：${EXERCISES.map((x) => x.id).join(',')}`);
   for (const [cat, ids] of Object.entries(EXPECT)) {
@@ -278,6 +278,15 @@ console.log('\n[4] 动作库与界面一致性');
   ok('每个分类都有动作', CATEGORIES.every((c) => EXERCISES.some((x) => x.cats.includes(c.id))),
     CATEGORIES.map((c) => `${c.id}:${EXERCISES.filter((x) => x.cats.includes(c.id)).length}`).join(' '));
   ok('动作 id 唯一', new Set(EXERCISES.map((x) => x.id)).size === EXERCISES.length);
+  // 用户指定的调整：深蹲跳只留在下肢；全身新增「开合跳」，默认目标 50 次
+  const squatJump = EXERCISES.find((x) => x.id === 'squatJump');
+  ok('深蹲跳只在「下肢」分类里（已从全身移除）',
+    squatJump && squatJump.cats.join(',') === 'lower', squatJump?.cats.join(','));
+  const jack = EXERCISES.find((x) => x.id === 'jumpingJack');
+  ok('全身分类里有「开合跳」', !!jack && jack.cats.join(',') === 'full', jack?.cats.join(','));
+  ok('开合跳默认目标 50 次', jack?.target === 50 && jack?.kind === 'rep', `${jack?.target}/${jack?.kind}`);
+  ok('开合跳判定依据是「双腿开合幅度」', jack?.judge === 'spread', String(jack?.judge));
+  ok('开合跳要求正对镜头（正面才量得准开合宽度）', jack?.view === 'front', String(jack?.view));
   ok('每个动作都有图标', EXERCISES.every((x) => !!x.icon));
   ok('每个动作都归属至少一个分类', EXERCISES.every((x) => x.cats.length >= 1));
   ok('计时类动作都写了秒数单位', EXERCISES.filter((x) => x.kind === 'hold').every((x) => x.unitKey === 'ui.secondsUnit'));

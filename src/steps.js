@@ -375,6 +375,43 @@ export const STEP_PLANS = {
     ],
   },
 
+  /* 开合跳：双脚打开 / 并拢算一轮（正对镜头，用双膝横向距离量开合） */
+  jumpingJack: {
+    perCycle: true,
+    repBonus: 6,
+    steps: [
+      {
+        id: 'stance',
+        labelKey: 'steps.jumpingJack.stance.label',
+        points: 4,
+        // 「并拢站好」用引擎自己的进度判断：progress ≈ 0 就是站在自己最窄的站距上
+        check: (f, d) => d.gateOk && d.progress <= 0.25,
+        hint: () => H('steps.jumpingJack.stance.hint'),
+      },
+      {
+        id: 'open',
+        labelKey: 'steps.jumpingJack.open.label',
+        points: 7,
+        check: (f, d) => d.progress >= 0.35,
+        hint: () => H('steps.jumpingJack.open.hint'),
+      },
+      {
+        id: 'wide',
+        labelKey: 'steps.jumpingJack.wide.label',
+        points: 14,
+        check: (f, d) => d.progress >= 0.80,
+        hint: () => H('steps.jumpingJack.wide.hint'),
+      },
+      {
+        id: 'close',
+        labelKey: 'steps.jumpingJack.close.label',
+        points: 8,
+        check: (f, d) => d.peak >= 0.5 && d.progress <= 0.30,
+        hint: () => H('steps.jumpingJack.close.hint'),
+      },
+    ],
+  },
+
   /* 俯撑屈伸（俯卧撑/臂屈伸/倒立撑的各种变体） */
   repProne: {
     perCycle: true,
