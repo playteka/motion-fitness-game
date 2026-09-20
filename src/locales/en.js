@@ -793,6 +793,7 @@ export default {
       prone: 'Push-up position',
       supine: 'Lying on your back, knees bent',
       supineLow: 'Lying on your back',
+      supineFlat: 'Lying on your back',
       sideLying: 'Lying on your side',
       standFold: 'Standing forward fold',
       seatedFold: 'Seated forward fold',

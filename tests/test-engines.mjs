@@ -691,6 +691,22 @@ console.log('\n[4] bend 引擎：姿势门控');
   r.run([{ pose: deadBugPose('L'), ms: 600 }]);
   ok('躺下之后：门控放行', det.active === true && det.standby === '', `active=${det.active}`);
 }
+{
+  // 仰卧抬腿的姿势要求放宽了（用户要求）：门控改成 supineFlat —— **只看「肩离地高度 ≤ 0.6×躯干长」**，
+  // 删掉了「躯干倾角 ≥ 36°」。所以「半躺」（躯干离竖直只斜 30°）现在也能进入判定，
+  // 而站着（肩离地高度 1.2×躯干长）仍旧被这一条拦住。
+  const reclined = createDetector('lyingLegRaise');
+  const r1 = makeFrameRunner(reclined);
+  r1.run([{ f: supineFrame({ torsoIncl: 30, shoulderClear: 0.5, hipAngle: 178, kneeAngle: 176 }), ms: 900 }]);
+  ok('仰卧抬腿：躯干只斜 30°（不到旧的 36°）也放行（姿势要求已放宽）',
+    reclined.active === true && reclined.standby === '', `active=${reclined.active} standby=${reclined.standby}`);
+
+  const standing = createDetector('lyingLegRaise');
+  const r2 = makeFrameRunner(standing);
+  r2.run([{ f: supineFrame({ torsoIncl: 10, shoulderClear: 1.2, hipAngle: 178, kneeAngle: 176 }), ms: 900 }]);
+  ok('仰卧抬腿：站着（肩离地高度 1.2×躯干长）仍旧被门控拦住',
+    standing.active === false && standing.standby !== '', `active=${standing.active} standby=${standing.standby}`);
+}
 
 /* ------------------------------------------------------------------ *
  * [5] bend 引擎：跳跃（离地）

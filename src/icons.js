@@ -14,6 +14,9 @@
  *      膝角 θ 由「大腿相对竖直的夹角 a」和「小腿相对竖直的夹角 b」给出：θ = 180 − |a − b|。
  */
 
+// 「仰卧抬腿那一类」的门控名（supineFlat / supineLow）只写在 engines.js 一处，这里跟着它走
+import { isSupineGate } from './engines.js';
+
 export const ICON_BOX = 32;
 
 /** 人体各段长度（图标单位） */
@@ -333,7 +336,7 @@ export function poseFor(stage, ctx = {}) {
     }
     // 仰卧抬腿这类「躺平、腿伸直」的动作：起始格必须画**躺平 + 腿伸直**（≈180°），
     // 而不是躺着屈膝的姿势（那是臀桥 / 卷腹的起始位，两个动作的判据完全不同）
-    if (ctx.metric === 'hip' && ctx.gate === 'supineLow') {
+    if (ctx.metric === 'hip' && isSupineGate(ctx.gate)) {
       return {
         builder: 'lie',
         params: { tilt: 92, hip: 178, knee: 176, face: 'up', elbow: 172 },

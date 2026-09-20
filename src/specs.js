@@ -24,7 +24,7 @@
  */
 
 import { EXERCISE_MAP } from './catalog.js';
-import { GATE_LIMITS, SEQ_STAGE_LIMITS, ADVISORY_LIMITS, SIDE_METRICS, LEG_STRAIGHT_MIN } from './engines.js';
+import { GATE_LIMITS, SEQ_STAGE_LIMITS, ADVISORY_LIMITS, SIDE_METRICS, LEG_STRAIGHT_MIN, isSupineGate } from './engines.js';
 import { HORIZONTAL_TILT } from './metrics.js';
 import { HOLD_PRIME_MS, HOLD_GRACE_MS } from './detector-base.js';
 import { getStepPlan, planKeyOf } from './steps.js';
@@ -144,7 +144,7 @@ function bendSpecs(meta) {
   const advice = advisoryItems(gate);
   // 仰卧抬腿：判据是腰腿夹角，膝盖弯着也能凑到 90° —— 所以「腿绷直」是一条**建议项**
   // （只语音提醒，不扣次数）。宽容线就是识别器真正用的那条常量，界面与判定不会各说一套。
-  if (metric === 'hip' && gate === 'supineLow') {
+  if (metric === 'hip' && isSupineGate(gate)) {
     advice.push(item({
       labelKey: 'spec.adviceLegStraight',
       metricKey: 'metric.knee',
@@ -627,6 +627,7 @@ const SHORT_LABEL = {
   'spec.pose.prone': 'spec.short.prone',
   'spec.pose.supine': 'spec.short.supine',
   'spec.pose.supineLow': 'spec.short.supine',
+  'spec.pose.supineFlat': 'spec.short.supine',
   'spec.pose.sideLying': 'spec.short.side',
   'spec.pose.standFold': 'spec.short.fold',
   'spec.pose.seatedFold': 'spec.short.fold',

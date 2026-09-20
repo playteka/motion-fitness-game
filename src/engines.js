@@ -56,9 +56,19 @@ export const GATE_LIMITS = {
     shoulderClear: [null, 0.95],
     kneeClear: [0.15, null],
   },
-  /** 仰卧（腿可以伸直：仰卧抬腿 / 死虫式） */
+  /** 仰卧（腿可以伸直：死虫式）：横着躺 + 肩不要抬太高 */
   supineLow: {
     torsoIncl: [36, null],
+    shoulderClear: [null, 0.6],
+  },
+  /**
+   * 仰卧抬腿专用的**最宽松**仰卧门控：**只看肩离地高度**。
+   *
+   * 用户明确要求「姿势要求只保留『肩离地高度 ≤ 0.6×躯干长』，删除『躯干倾角 ≥ 36°』，
+   * 进一步放宽姿势要求」—— 所以这个门控里没有 torsoIncl 这一条。
+   * 剩下的肩离地高度本身就已经把「站着 / 坐直」挡在外面（站立时肩离地高度约 1.0×躯干长以上）。
+   */
+  supineFlat: {
     shoulderClear: [null, 0.6],
   },
   /** 侧卧（侧平板）：横着躺 + 肩/髋离地 + 手撑地 */
@@ -129,6 +139,7 @@ export const GATES = {
   /** 仰卧（腿可以伸直：仰卧抬腿 / 死虫式 / 空心支撑 / 龙旗） */
   supineLow: (f) => inLimit(f.torsoIncl, GATE_LIMITS.supineLow.torsoIncl)
     && inLimit(f.shoulderClear, GATE_LIMITS.supineLow.shoulderClear),
+  supineFlat: (f) => inLimit(f.shoulderClear, GATE_LIMITS.supineFlat.shoulderClear),
   /** 空心支撑：肩和腿都稍微离地 */
   hollow: (f) => f.torsoIncl > 36 && f.shoulderClear > 0.12 && f.shoulderClear < 0.7
     && f.kneeClear > 0.12 && f.kneeClear < 0.9,
@@ -177,7 +188,7 @@ const GATE_HINT = {
   stand: 'stand', standWide: 'stand', standOneLeg: 'stand', standWall: 'stand',
   standHeelUp: 'stand', standArmCross: 'stand', standFold: 'stand',
   prone: 'prone', proneHigh: 'prone', proneFloor: 'prone', proneLift: 'prone',
-  supine: 'supine', supineLow: 'supine', hollow: 'supine', crab: 'supine',
+  supine: 'supine', supineLow: 'supine', supineFlat: 'supine', hollow: 'supine', crab: 'supine',
   quadruped: 'quadruped', bearCrawl: 'quadruped',
   kneel: 'kneel', kneelFold: 'kneel', childPose: 'kneel', wristStretch: 'kneel',
   seated: 'seated', seatedLow: 'seated', seatedFold: 'seated', butterfly: 'seated',
@@ -195,6 +206,15 @@ const GATE_HINT = {
  * 所以只在这个角度以下才出声提醒，而且**只是提醒，不扣次数**（界面上的建议项也读这条常量）。
  */
 export const LEG_STRAIGHT_MIN = 130;
+
+/**
+ * 「仰卧抬腿那一类」的仰卧门控：supineFlat（放宽后：只看肩离地高度）与 supineLow。
+ *
+ * 仰卧抬腿专用的几处特例（进度条第一格画躺平姿势、腿要绷直的建议项、语音纠正）
+ * 都认这两个名字，换门控名时不会漏改。
+ */
+export const SUPINE_GATES = ['supineFlat', 'supineLow'];
+export const isSupineGate = (name) => SUPINE_GATES.includes(name);
 
 export const METRICS = {
   knee: (f) => f.kneeAngle,
@@ -403,7 +423,7 @@ class BendRepDetector extends DetectorBase {
     // 仰卧抬腿（指标是腰-腿夹角、起始是躺平）：膝盖弯着也能把夹角凑到 90°，
     // 所以腿没有绷直时出声纠正 —— 只提醒、不拦计数（和其余「建议项」一个待遇）。
     // 宽容线 130°：不要太严格，膝盖角度大于 130° 就算绷直（用户要求）
-    if (this.metricName === 'hip' && this.gateName === 'supineLow'
+    if (this.metricName === 'hip' && isSupineGate(this.gateName)
       && pr > 0.25 && Number.isFinite(f.kneeAngle) && f.kneeAngle < LEG_STRAIGHT_MIN) {
       this.cue('straightLegs', null, 'warn', now, 9000);
     }

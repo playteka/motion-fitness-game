@@ -543,7 +543,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (848 assertions in the suite).
+> exactly on the detector's own progress line (2035 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -770,6 +770,11 @@ Timed family plans also give **+1 point for every second you hold**; if your for
 >   so it only speaks up once you bend past that, and the same line is listed under “form reminders” in the settings modal.
 > - the on-screen angle label and the 🐞 metrics panel use the same “Hip” wording as every other exercise — the whole app has one
 >   single name for this angle, with no per-exercise special case.
+> - **the posture requirement is cut down to the bare minimum** (as the user asked): entering the judging state requires **only
+>   “shoulder height off the floor ≤ 0.6× torso length”** — the old “trunk tilt ≥ 36°” line is gone, so half-reclining (trunk not
+>   tilted far enough) still counts as lying down and still enters the judging state; standing still cannot get in (standing puts
+>   your shoulders more than 1× torso length off the floor, which that one line already blocks).
+>   The dead bug shares the older `supineLow` gate and still checks both lines.
 
 > **How the jumping jack is judged**: face the camera and the “open/close” is measured as the **horizontal distance
 > between your knees** (`kneeSpread`, in torso lengths) — feet together reads about 0.35 and a wide jump about 1.5, so
@@ -903,8 +908,8 @@ npm run test:app               # integration test that loads the real app.js wit
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
 | `tests/test-detectors.mjs` | 284 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
-| `tests/test-engines.mjs` | 156 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 848 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
+| `tests/test-engines.mjs` | 158 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
+| `tests/test-specs.mjs` | 851 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 354 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
 | `tests/test-app.mjs` | 370 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 

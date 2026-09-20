@@ -793,6 +793,7 @@ export default {
       prone: '俯撑姿势',
       supine: '仰卧屈膝',
       supineLow: '仰卧',
+      supineFlat: '仰卧',
       sideLying: '侧卧',
       standFold: '站立前折',
       seatedFold: '坐姿前折',

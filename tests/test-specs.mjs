@@ -207,6 +207,20 @@ console.log('\n[5] 姿势要求用的就是 GATES 的那张表');
   }
   ok('确实检查了门控数值（不是空跑）', checked >= 20, `实际 ${checked} 条`);
 
+  // 用户要求：仰卧抬腿的姿势要求只保留「肩离地高度 ≤ 0.6×躯干长」，删掉「躯干倾角 ≥ 36°」
+  const legRaisePose = itemsOf('lyingLegRaise').filter((it) => it.labelKey.startsWith('spec.pose.'));
+  ok('仰卧抬腿：姿势要求只剩一条（肩离地高度）',
+    legRaisePose.length === 1, `实际 ${legRaisePose.length} 条：${legRaisePose.map((it) => it.metricKey).join(',')}`);
+  ok('仰卧抬腿：剩下那条就是「肩离地高度 ≤ 0.6×躯干长」',
+    legRaisePose[0]?.metricKey === 'metric.shoulderClear' && legRaisePose[0]?.value === 0.6,
+    `${legRaisePose[0]?.metricKey} ${legRaisePose[0]?.value}`);
+  ok('仰卧抬腿：不再有「躯干倾角 ≥ 36°」这条姿势要求',
+    !legRaisePose.some((it) => it.metricKey === 'metric.torsoIncl'),
+    legRaisePose.map((it) => it.metricKey).join(','));
+  ok('死虫式：共用旧的 supineLow，仍旧是「躯干倾角 + 肩离地高度」两条（放宽只针对仰卧抬腿）',
+    itemsOf('deadBug').filter((it) => it.labelKey === 'spec.pose.supineLow').length === 2,
+    String(itemsOf('deadBug').filter((it) => it.labelKey === 'spec.pose.supineLow').length));
+
   // 手写识别器用自己的姿势判据（不套通用 prone 门控），也必须逐条对上
   const pose = itemsOf('pushup').filter((it) => it.labelKey === 'spec.pushupPose');
   ok('俯卧撑：俯撑判据 = PUSHUP.activeTorso',
