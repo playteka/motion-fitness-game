@@ -500,6 +500,23 @@ console.log('\n[1] bend 引擎：一次循环一次数');
     ok('仰卧抬腿：弯膝盖时会提醒「腿要绷直」', hasCue(r, 'straightLegs'), cuesOf(r).join(','));
   }
   {
+    // 宽容线 130°（用户要求「不要太严格，膝盖角度大于 130° 都可以接受」）：
+    //   134°（略有点弯）→ 不唠叨；126°（明显弯）→ 出声提醒
+    const loose = createDetector('lyingLegRaise');
+    const rLoose = makeFrameRunner(loose);
+    rLoose.run(repeatF((p) => supineFrame({
+      hipAngle: 178 + (92 - 178) * Math.sin(Math.PI * p), kneeAngle: 134,
+    }), 1400, 3));
+    ok('仰卧抬腿：膝盖只弯一点点（134° > 130°）不提醒', !hasCue(rLoose, 'straightLegs'), cuesOf(rLoose).join(','));
+    ok('仰卧抬腿：膝盖 134° 照样计次', loose.validReps === 3, `实际 ${loose.validReps}`);
+    const tight = createDetector('lyingLegRaise');
+    const rTight = makeFrameRunner(tight);
+    rTight.run(repeatF((p) => supineFrame({
+      hipAngle: 178 + (92 - 178) * Math.sin(Math.PI * p), kneeAngle: 126,
+    }), 1400, 3));
+    ok('仰卧抬腿：膝盖弯过宽容线（126° < 130°）才提醒', hasCue(rTight, 'straightLegs'), cuesOf(rTight).join(','));
+  }
+  {
     // 腿绷直抬起来：不该出现「腿要绷直」的唠叨
     const det = createDetector('lyingLegRaise');
     const r = makeFrameRunner(det);

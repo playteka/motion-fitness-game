@@ -24,7 +24,7 @@ import {
 import { toMetric, LandmarkSmoother } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
 import { standingPose, ASPECT } from './synthetic-pose.mjs';
-import { GATE_LIMITS, ADVISORY_LIMITS } from '../src/engines.js';
+import { GATE_LIMITS, ADVISORY_LIMITS, LEG_STRAIGHT_MIN } from '../src/engines.js';
 import { getStepPlan } from '../src/steps.js';
 import { HOLD_PRIME_MS, HOLD_GRACE_MS } from '../src/detector-base.js';
 import { SQUAT, LUNGE, PUSHUP, BRIDGE, PLANK } from '../src/exercises.js';
@@ -395,6 +395,16 @@ console.log('\n[8] 判定进度条（画面上一格一格点亮的那条判据�
       JSON.stringify(st.map((s) => `${s.op}${s.value}/${s.item?.value}`)));
     ok('仰卧抬腿：计数线比「抬到垂直」宽松（122° 就算一次，104° 才算满深度）',
       st[2].value === 122 && meta.params.bottomP === 0.85, `count=${st[2].value} bottomP=${meta.params.bottomP}`);
+    // 「腿要绷直」是建议项：弹窗里列出来的就是识别器真正用的那条宽容线（130°，用户要求不要太严格）
+    const advice = exerciseSpecs('lyingLegRaise').groups.find((g) => g.titleKey === 'spec.group.advice');
+    const legRow = (advice?.items || []).find((it) => it.labelKey === 'spec.adviceLegStraight');
+    ok('仰卧抬腿：弹窗的建议项列出「腿尽量绷直 ≥ 130°」（只提醒、不扣次数）',
+      !!legRow && legRow.metricKey === 'metric.knee' && legRow.op === 'gte'
+      && legRow.value === LEG_STRAIGHT_MIN && LEG_STRAIGHT_MIN === 130,
+      JSON.stringify(legRow));
+    ok('仰卧抬腿：其它动作不会被塞进这条建议项',
+      !(exerciseSpecs('reverseCrunch').groups.find((g) => g.titleKey === 'spec.group.advice')?.items || [])
+        .some((it) => it.labelKey === 'spec.adviceLegStraight'));
   }
 
   // 通用屈伸类（仰卧抬起 / 站立屈伸 …）：最后一格必须**就是引擎计次那一刻**，

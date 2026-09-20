@@ -266,10 +266,10 @@ console.log('\n[3] 静态资源与模型文件');
     if (!entry || !entry[1].includes(`'${need}'`)) noFocus.push(`${meta.id}(${meta.params.metric})`);
   }
   ok('判据是关节角的动作都会在画面上标出该角度', noFocus.length === 0, noFocus.join(', '));
-  ok('仰卧抬腿：标「腰部角度」（判据是腰腿夹角）+ 膝角（用来看腿有没有绷直）',
+  ok('仰卧抬腿：标「胯」（判据是腰腿夹角，用户习惯的叫法）+ 膝角（用来看腿有没有绷直）',
     /lyingLegRaise:\s*\['hip',\s*'knee'\]/.test(focusBlock), focusBlock.slice(0, 80));
-  ok('「腰部角度」文案两种语言都有（debug.waist）',
-    Object.values(LOCALES).every((L) => !!L.debug && !!L.debug.waist),
+  ok('「胯」文案两种语言都有（debug.crotch）',
+    Object.values(LOCALES).every((L) => !!L.debug && !!L.debug.crotch),
     Object.keys(LOCALES).join(','));
   ok('判据不是关节角的动作不标角度（开合跳/波比跳/跳跃类不占画面）',
     !/jumpingJack:|burpee:/.test(focusBlock));

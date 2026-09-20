@@ -189,6 +189,13 @@ const GATE_HINT = {
  * 指标取值：一次动作里“来回变化的那个量”
  * ------------------------------------------------------------------ */
 
+/**
+ * 仰卧抬腿「腿要绷直」的宽容线：膝盖角度 ≥ 这个值就算绷直。
+ * 用户明确要求「腿要绷直，但不要太严格，膝盖角度大于 130° 都可以接受」——
+ * 所以只在这个角度以下才出声提醒，而且**只是提醒，不扣次数**（界面上的建议项也读这条常量）。
+ */
+export const LEG_STRAIGHT_MIN = 130;
+
 export const METRICS = {
   knee: (f) => f.kneeAngle,
   kneeBent: (f) => f.kneeBent,
@@ -394,9 +401,10 @@ class BendRepDetector extends DetectorBase {
     const advise = ADVISORY[this.gateName];
     if (advise) advise(f, this, now);
     // 仰卧抬腿（指标是腰-腿夹角、起始是躺平）：膝盖弯着也能把夹角凑到 90°，
-    // 所以腿没绷直时出声纠正 —— 只提醒、不拦计数（和其余「建议项」一个待遇）
+    // 所以腿没有绷直时出声纠正 —— 只提醒、不拦计数（和其余「建议项」一个待遇）。
+    // 宽容线 130°：不要太严格，膝盖角度大于 130° 就算绷直（用户要求）
     if (this.metricName === 'hip' && this.gateName === 'supineLow'
-      && pr > 0.25 && Number.isFinite(f.kneeAngle) && f.kneeAngle < 150) {
+      && pr > 0.25 && Number.isFinite(f.kneeAngle) && f.kneeAngle < LEG_STRAIGHT_MIN) {
       this.cue('straightLegs', null, 'warn', now, 9000);
     }
 

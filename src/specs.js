@@ -24,7 +24,7 @@
  */
 
 import { EXERCISE_MAP } from './catalog.js';
-import { GATE_LIMITS, SEQ_STAGE_LIMITS, ADVISORY_LIMITS, SIDE_METRICS } from './engines.js';
+import { GATE_LIMITS, SEQ_STAGE_LIMITS, ADVISORY_LIMITS, SIDE_METRICS, LEG_STRAIGHT_MIN } from './engines.js';
 import { HORIZONTAL_TILT } from './metrics.js';
 import { HOLD_PRIME_MS, HOLD_GRACE_MS } from './detector-base.js';
 import { getStepPlan, planKeyOf } from './steps.js';
@@ -141,7 +141,20 @@ function bendSpecs(meta) {
     }));
   }
   const gate = p.gate || 'stand';
-  return { count, posture: gateItems(gate), advice: advisoryItems(gate) };
+  const advice = advisoryItems(gate);
+  // 仰卧抬腿：判据是腰腿夹角，膝盖弯着也能凑到 90° —— 所以「腿绷直」是一条**建议项**
+  // （只语音提醒，不扣次数）。宽容线就是识别器真正用的那条常量，界面与判定不会各说一套。
+  if (metric === 'hip' && gate === 'supineLow') {
+    advice.push(item({
+      labelKey: 'spec.adviceLegStraight',
+      metricKey: 'metric.knee',
+      op: 'gte',
+      value: LEG_STRAIGHT_MIN,
+      unit: DEG,
+      noteKey: 'spec.note.adviceOnly',
+    }));
+  }
+  return { count, posture: gateItems(gate), advice };
 }
 
 /** 左右交替类：一侧「进入动作」、另一侧「回到休息位」，交替才算一次 */
