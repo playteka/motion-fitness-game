@@ -632,10 +632,11 @@ export function specStages(id) {
 
   // ① 姿势要求：计人类的动作只要第一条（站直 / 俯撑 / 仰卧…）；
   //    计时类动作没有「往复」过程，姿势的每一条就是一个台阶（撑起来 → 身体水平 → 手贴地），都收进来。
+  //    只有第一条标 pose：它代表「先进入这个动作的姿势」，其余几条按各自的指标画不同的图。
   const poseItems = (posture?.items || []).filter(isLiveItem);
   const isHold = meta?.kind === 'hold';
   const poseTake = isHold ? poseItems.slice(0, 4) : poseItems.slice(0, 1);
-  for (const it of poseTake) stages.push(toStage(it, { pose: true }));
+  poseTake.forEach((it, i) => stages.push(toStage(it, i === 0 ? { pose: true } : {})));
 
   // ② 计次判据里能实时判断的条目，按识别器检查顺序
   for (const it of count?.items || []) {

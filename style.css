@@ -502,40 +502,38 @@ kbd {
 .pose-hint.bad { border-color: rgba(248, 113, 113, 0.55); color: #ffd5d5; }
 .pose-hint.good { border-color: rgba(74, 222, 128, 0.5); color: #d6ffe4; }
 
-/* ---- 判定进度条：贴在画面底部，每识别到一个判据就点亮一格 ---- */
+/* ---- 判定进度条：贴在画面底部，每识别到一个关键帧就点亮一格线条图标 ----
+   整条一直显示：没识别到人 = 灰的（尚未开始），识别到人 = 彩色的（开始工作） */
 .criteria-bar {
   position: absolute;
   left: 50%;
   bottom: 14px;
   transform: translateX(-50%);
-  width: min(560px, 84%);
-  padding: 8px 12px 9px;
-  border-radius: 13px;
-  background: rgba(8, 15, 26, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  width: min(520px, 88%);
+  padding: 7px 10px 8px;
+  border-radius: 14px;
+  background: rgba(8, 15, 26, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.36);
   z-index: 5;
   pointer-events: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
 }
 .criteria-bar[hidden] { display: none; }
-.criteria-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 6px;
-}
-.criteria-title {
-  font-size: 11.5px;
-  letter-spacing: 0.4px;
-  color: var(--muted);
-}
+/* 还没识别到人：整条灰掉，表示「尚未开始」 */
+.criteria-bar.idle { background: rgba(8, 15, 26, 0.55); border-color: rgba(255, 255, 255, 0.07); }
+.criteria-bar.idle .criteria-seg { border-color: rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); }
+/* 识别到人且正在计数：彩色状态，表示「已经开始工作」 */
+.criteria-bar.active { border-color: rgba(56, 189, 248, 0.35); }
+.criteria-head { display: flex; justify-content: flex-end; margin-bottom: 2px; min-height: 0; }
 .criteria-earned {
   font-size: 13px;
   font-weight: 800;
   color: var(--accent);
-  min-height: 16px;
+  opacity: 0;
+  line-height: 1;
 }
+.criteria-earned:empty { display: none; }
 .criteria-earned.show { animation: criteriaPop 1.1s ease-out forwards; }
 @keyframes criteriaPop {
   0% { opacity: 0; transform: translateY(5px) scale(0.9); }
@@ -543,49 +541,43 @@ kbd {
   70% { opacity: 1; transform: translateY(0) scale(1); }
   100% { opacity: 0; transform: translateY(-6px) scale(1); }
 }
-.criteria-track { display: flex; gap: 5px; }
+.criteria-track { display: flex; gap: 6px; align-items: stretch; }
+/* 每一格只画一个线条图标（没有文字） */
 .criteria-seg {
   flex: 1 1 0;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  padding: 5px 4px;
-  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  padding: 3px 2px 2px;
+  border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.04);
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
-.criteria-seg-index {
-  font-size: 9.5px;
-  font-weight: 700;
-  color: var(--muted);
-  line-height: 1;
+.criteria-icon {
+  width: 30px;
+  height: 30px;
+  display: block;
+  fill: none;
+  stroke: rgba(203, 213, 225, 0.45);      /* 未达成：灰 */
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.criteria-seg-label {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: #cfe0f5;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
+/* 窄屏：格子少、图标跟着缩小一点，别把画面挤满 */
+@media (max-width: 640px) {
+  .criteria-icon { width: 24px; height: 24px; }
 }
-/* 已经识别到的格子：亮绿 + 勾 */
-.criteria-seg.done {
-  background: rgba(74, 222, 128, 0.18);
-  border-color: rgba(74, 222, 128, 0.6);
-}
-.criteria-seg.done .criteria-seg-label { color: #d8ffe6; }
-.criteria-seg.done .criteria-seg-index::after { content: ' ✓'; color: #4ade80; }
-/* 正在等的那一格：琥珀色描边，一眼看出「下一步做什么」 */
+/* 已经识别到的关键帧：亮绿 */
+.criteria-seg.done { background: rgba(74, 222, 128, 0.14); border-color: rgba(74, 222, 128, 0.55); }
+.criteria-seg.done .criteria-icon { stroke: #4ade80; }
+/* 正在等的那一格：琥珀色描边 + 图标高亮 */
 .criteria-seg.current {
-  background: rgba(251, 191, 36, 0.16);
+  background: rgba(251, 191, 36, 0.14);
   border-color: rgba(251, 191, 36, 0.7);
   transform: translateY(-2px);
 }
-.criteria-seg.current .criteria-seg-label { color: #ffe9b8; }
+.criteria-seg.current .criteria-icon { stroke: #fbbf24; }
 .criteria-seg.just { animation: segPop 0.55s cubic-bezier(0.2, 0.8, 0.3, 1); }
 @keyframes segPop {
   0% { transform: scale(0.86); }
@@ -597,25 +589,15 @@ kbd {
   font-weight: 800;
   color: #ffe066;
   line-height: 1;
-  min-height: 11px;
+  min-height: 0;
 }
-.criteria-cond {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #dbe9ff;
-  text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.criteria-bar.all-done { border-color: rgba(74, 222, 128, 0.55); }
+.criteria-seg-pts:empty { display: none; }
 
 /* 一次动作完成：进度条清零并闪一下，让「从头开始」看得见 */
 .criteria-bar.reset {
   border-color: rgba(74, 222, 128, 0.6);
   animation: criteriaReset 0.6s ease-out;
 }
-.criteria-bar.reset .criteria-cond { color: #d8ffe6; }
 @keyframes criteriaReset {
   0% { transform: translateX(-50%) scale(1.02); box-shadow: 0 0 22px rgba(74, 222, 128, 0.45); }
   60% { transform: translateX(-50%) scale(1); }
@@ -623,7 +605,7 @@ kbd {
 }
 
 /* 进度条出现时，把底部提示条往上让一格，避免两块叠在一起 */
-.stage.has-criteria .pose-hint { bottom: 96px; }
+.stage.has-criteria .pose-hint { bottom: 92px; }
 
 /* 建议项没达标（不拦人）与更柔和的提示配色 */
 .calib-item.soft { opacity: 0.72; }

@@ -14,6 +14,7 @@ import { PoseRenderer } from './render.js';
 import { AudioKit, TRACKS, getTrack, DEFAULT_TRACK } from './audio.js';
 import { Calibrator, requiredView } from './calibration.js';
 import { exerciseSpecs, specCondition, specStages, stageHolds, stageText } from './specs.js';
+import { iconSVG, uniqueStages } from './icons.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
 } from './i18n.js';
@@ -101,10 +102,17 @@ const state = {
   criteriaJust: -1,     // 刚刚点亮的那一格（用于播放「跳一下」动画）
   criteriaPts: [],      // 每一格上显示的分（那一步真的加了分才写）
   criteriaClearUntil: 0, // 刚清零后的展示期结束时间（这段时间进度条保持空的）
+  criteriaLive: false,   // 这一帧识别到人体了没（决定进度条是灰色还是彩色）
+  criteriaLostSince: 0,  // 从什么时候开始没识别到人（丢帧宽限用）
+  criteriaIcons: [],     // 每一格的线条图标（SVG 字符串，重建时生成一次）
+  criteriaContext: null, // 生成图标用的上下文（动作姿势/计划/门控）
 };
 
 /** 一次动作完成后，进度条保持「空的」多久（让清零看得见） */
 const CRITERIA_CLEAR_MS = 650;
+
+/** 丢掉识别多久才把进度条变灰并清零（识别本身会抖，短暂丢帧不算） */
+const CRITERIA_LIVE_GRACE_MS = 700;
 
 /** 收集控制台错误，供 ?probe=1 自检输出 */
 function captureConsole() {
@@ -473,7 +481,19 @@ function closeExerciseSettings() {
 
 /** 按当前动作重建进度条（换动作 / 重新校准时调用） */
 function buildCriteriaBar() {
-  state.criteriaStages = specStages(state.exerciseId);
+  const ex = localizedExercise(state.exerciseId);
+  const ctx = {
+    id: state.exerciseId,
+    posture: ex.posture,
+    kind: ex.kind,
+    plan: ex.plan,
+    gate: EXERCISE_MAP[state.exerciseId]?.params?.gate,
+    stages: specStages(state.exerciseId),
+  };
+  // 画出来一模一样的格子留一格就够（计时类动作里两条姿势要求常常画的是同一个姿势）
+  state.criteriaStages = uniqueStages(ctx.stages, ctx);
+  state.criteriaIcons = state.criteriaStages.map((s) => iconSVG(s, ctx));
+  state.criteriaContext = ctx;
   state.criteriaPts = new Array(state.criteriaStages.length).fill(0);
   resetCriteriaProgress();
   renderCriteriaBar();
@@ -512,12 +532,24 @@ function updateCriteria(frame, events, now) {
   const stages = state.criteriaStages;
   if (!stages.length) return;
 
+  // 「识别到人了吗」：没识别到 → 进度条整条变灰（表示还没开始工作）。
+  // 识别会抖动，所以给一点宽限：短暂丢帧不立刻变灰、也不清进度，丢久了才清零。
+  const seen = !!(frame && frame.ok && frame.bodyVisible !== false);
+  if (seen) state.criteriaLostSince = 0;
+  else if (!state.criteriaLostSince) state.criteriaLostSince = now;
+  const lostMs = seen ? 0 : now - state.criteriaLostSince;
+  const live = seen || lostMs < CRITERIA_LIVE_GRACE_MS;
+  if (live !== state.criteriaLive) {
+    state.criteriaLive = live;
+    if (!live) resetCriteriaProgress();
+  }
+
   // 这一帧加到的分（要领得分 / 满分奖励）先处理：清零展示期里也不能丢掉分数反馈
   const earned = (events || []).reduce((n, ev) => n + (Number.isFinite(ev.points) ? ev.points : 0), 0);
   if (earned > 0) {
     const el = $('criteriaEarned');
     if (el) {
-      el.textContent = `${t('spec.barScore')} +${earned}`;
+      el.textContent = `+${earned}`;
       el.classList.remove('show');
       // 重新触发一次动画（读一次 offsetWidth）
       void el.offsetWidth;
@@ -525,8 +557,9 @@ function updateCriteria(frame, events, now) {
     }
   }
 
-  // 刚清零的那一小段时间里不再判定，让「清零」这件事看得见
-  if (criteriaCleared(now)) {
+  // 刚清零的那一小段时间里不再判定，让「清零」这件事看得见；
+  // 也只有真正在计数（running）时才往前推进 —— 校准阶段只显示「识别到人了」的颜色
+  if (!live || state.session !== 'running' || criteriaCleared(now)) {
     renderCriteriaBar(now);
     return;
   }
@@ -549,43 +582,44 @@ function updateCriteria(frame, events, now) {
   renderCriteriaBar(now);
 }
 
-/** 画进度条（只有状态变化时才真的改 DOM，避免每帧重排） */
+/** 画进度条（只有状态变化时才真的改 DOM，避免每帧重排）—— 格子上只有线条图标，不写文字 */
 function renderCriteriaBar(now = performance.now()) {
   const bar = $('criteriaBar');
   const track = $('criteriaTrack');
   if (!bar || !track) return;
   const stages = state.criteriaStages;
-  const show = stages.length > 0 && !state.homeMode && state.session === 'running';
-  $('stage').classList.toggle('has-criteria', show);
-  bar.hidden = !show;
-  if (!show) return;
+  // 整条进度条**一直显示**在动作页上：没识别到人 / 没开始计数时是灰的（尚未开始），
+  // 识别到人而且正在计数时才有颜色（已经开始工作）。
+  const visible = stages.length > 0 && !state.homeMode;
+  const live = !!state.criteriaLive;
+  const active = state.session === 'running' && live;
+  $('stage').classList.toggle('has-criteria', visible);
+  bar.hidden = !visible;
+  if (!visible) return;
+  bar.classList.toggle('idle', !active);
+  bar.classList.toggle('active', active);
 
-  // 刚清零：进度条保持空的，并闪一下提示「这一轮完成，重新开始」
   const cleared = criteriaCleared(now);
-  bar.classList.toggle('reset', cleared);
+  bar.classList.toggle('reset', cleared && active);
 
   // 状态没变就不动 DOM
-  const sig = [state.exerciseId, state.criteriaIdx, state.criteriaJust, state.criteriaPts.join(','), cleared ? 'c' : ''].join('|');
+  const sig = [
+    state.exerciseId, state.criteriaIdx, state.criteriaJust, state.criteriaPts.join(','),
+    cleared ? 'c' : '', active ? 'a' : 'i',
+  ].join('|');
   if (track.dataset.sig !== sig) {
     track.dataset.sig = sig;
-    track.innerHTML = stages.map((st, i) => {
+    track.innerHTML = stages.map((s, i) => {
       const done = i <= state.criteriaIdx;
-      const cls = `criteria-seg${done ? ' done' : ''}${i === state.criteriaIdx + 1 ? ' current' : ''}${i === state.criteriaJust ? ' just' : ''}`;
+      const cls = `criteria-seg${done ? ' done' : ''}${active && i === state.criteriaIdx + 1 ? ' current' : ''}${i === state.criteriaJust ? ' just' : ''}`;
       const pts = state.criteriaPts[i] > 0 ? `+${state.criteriaPts[i]}` : '';
-      return `<div class="${cls}" data-i="${i}" data-done="${done ? 1 : 0}">`
-        + `<span class="criteria-seg-index">${i + 1}</span>`
-        + `<span class="criteria-seg-label">${esc(stageText(st).short)}</span>`
+      // 悬停提示里给完整判据（画面上不写文字，鼠标放上去才知道这一步要什么）
+      const title = esc(`${stageText(s).short} · ${stageText(s).cond}`);
+      return `<div class="${cls}" data-i="${i}" data-done="${done ? 1 : 0}" title="${title}">`
+        + (state.criteriaIcons?.[i] || '')
         + `<span class="criteria-seg-pts">${pts}</span></div>`;
     }).join('');
-    $('criteriaTitle').textContent = t('spec.barTitle');
   }
-
-  const allDone = state.criteriaIdx >= stages.length - 1;
-  bar.classList.toggle('all-done', allDone && !cleared);
-  const next = allDone ? null : stages[state.criteriaIdx + 1];
-  $('criteriaCond').textContent = cleared
-    ? t('spec.barCleared')
-    : (allDone ? t('spec.barDone') : stageText(next).cond);
 }
 
 function selectExercise(id) {
@@ -1559,6 +1593,9 @@ function loop() {
       const events = feedDetector(frame, now);
       handleEvents(events, now);
       updateCriteria(frame, events, now);
+    } else {
+      // 没在计数时也要跑一次：进度条要一直显示，并且按「有没有识别到人」切换灰/彩色
+      updateCriteria(frame, [], now);
     }
     renderCalibration(null);
     updateStatusHint(frame, now);

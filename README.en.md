@@ -372,43 +372,54 @@ The search box at the top finds exercises by name directly (type “push” or �
   The “② Set target” card in the side panel keeps just a one-line target readout, and its button opens the same modal.
 - An exercise that belongs to two categories (Jump Squat) appears in both blocks, and either card opens the same exercise.
 
-## 🟩 Judgement progress bar (the chain that lights up segment by segment)
+## 🟩 Judgement progress bar (the chain of line icons that lights up segment by segment)
 
-While you train, a **judgement progress bar** sits at the bottom of the video: this exercise's criteria are laid out as
-segments, and **every recognised pose lights up one more segment** — so you can see at a glance what has already been
-recognised and what is still missing. **Every completed rep resets it to zero**, and the next rep walks it again from the top.
+The exercise page **always shows** a judgement progress bar: this exercise's keyframes are laid out as segments, and each
+segment is a **line-art stick figure** showing what your body should look like at that keyframe. Every recognised pose
+lights up one more segment, so you can see what has already been recognised — and **every completed rep resets it to
+zero**, then the next rep walks it again from the top.
 
 Take the lunge (each segment holds the real threshold from the code):
 
 ```
-① Stance   ② Start   ③ Count   ④ Both   ⑤ Full
-≥145°      ≤146°     ≤152°     ≤158°    ≤128°
-✓          ✓         ✓         ⏳        ·
-                                ↑ waiting on this one
-        Next: Bend of the straighter leg ≤ 158°
+① Stance    ② Start    ③ Count    ④ Both     ⑤ Full
+≥145°       ≤146°      ≤152°      ≤158°      ≤128°
+ figure      figure     figure     figure     figure
+ ✓           ✓          ✓          ⏳         ·
 ```
 
+- **Two states**: with **nobody detected** the whole bar is grey (not started yet); once you are **detected and counting**
+  it turns coloured (working) — unmet segments are grey lines, met ones light up green, and the segment being waited on is
+  amber and lifted a little. Detection flickers, so a short dropout (under 0.7 s) neither greys the bar nor clears progress.
+- **Icons only, no text on the bar**: every icon is a stick figure drawn from that segment's own criterion — “Front knee
+  bend ≤ 152°” is drawn as a leg bent to exactly 152°; “Hip lift ≥ 0.22× torso length” lifts the glute bridge to that
+  height; “Lift ≥ 0.035× frame height” is drawn airborne; and for a supported pose like the push-up the **hand is pinned to
+  the floor while the body height follows the elbow angle** (the more the elbows bend, the lower the body). To keep small
+  differences such as 146° vs 152° readable the drawn bend is exaggerated a little, but the **order always matches the
+  criteria** (a harder criterion is drawn more extreme); the real numbers stay in the 📐 counting-thresholds modal, and
+  hovering a segment shows that segment's full criterion.
 - **How a segment lights up**: only the *next* segment is checked, so the bar has to be walked in order and never skips;
-  segments that are lit never go back out. When the last one lights, the bar turns green and reads “Every rule for this
-  rep is met”.
+  segments that are lit never go back out.
 - **A completed rep resets the bar to zero**: a rep is only finished when you are back in the start position, so after the
-  reset the bar **stays empty for 0.65 s** (it flashes green and reads “✓ Rep done — bar reset, starting over”) before the
-  Stance segment starts lighting up again. Without that pause the Stance segment would light up in the very same frame and
-  the reset would be invisible. A partial rep (one that didn't count) ends the rep too, and resets the bar the same way.
+  reset the bar **stays empty for 0.65 s** (it flashes green) before the first segment starts lighting up again. Without
+  that pause the first segment would light up in the very same frame and the reset would be invisible. A partial rep (one
+  that didn't count) ends the rep too, and resets the bar the same way.
 - **Matching feedback**: lighting a segment plays a light chime that rises step by step (the last one adds an octave); and
   if that step **actually earned points** (a form-step score or the perfect-round bonus) the points are printed on that
-  segment and a “Just earned +N” floats up. Points only appear when the detector really awards them — the bar never
-  jumps the gun just because a pose looks right.
-- **You always see what is missing**: the line under the bar always shows the **next** criterion with its real number,
-  e.g. “Front knee bend ≤ 152°” or “Bend of the straighter leg ≤ 158°”, so you never have to guess why a rep didn't count.
-- **How many segments**: squat 4 (stance → start 0.78 → count 0.62 → full 0.40); push-up 5 (plank → start 138° →
-  count 135° → full 118° → shoulder drop 0.20); jumping exercises add a final “Jump” segment (lift ≥ 0.035× frame
-  height); burpee 4 (stand → crouch → plank → jump); plank/side plank walk through pose conditions such as
-  “held up → off the floor → hands planted”.
-- **One source of truth**: the thresholds in the bar are the very same constants used by the detector and by the
-  📐 counting-thresholds modal (see `specStages` in `src/specs.js`), so the bar can never claim something the detector
-  does not do. `tests/test-specs.mjs` walks synthetic poses through it to prove the bar really advances segment by
-  segment and that a shallow movement never reaches the full-depth segment.
+  segment and a “+N” floats up. Points only appear when the detector really awards them — the bar never jumps the gun just
+  because a pose looks right.
+- **How many segments** (segments drawn identically are merged, so you never see a “fake second step”):
+  squat 4 (stand → half squat → squat → full depth); lunge 5 (stand → step → sink → back knee down → full depth);
+  push-up 5 (plank → elbow 138° → 135° → 118° → shoulder drop); jumping exercises add a final “Jump” segment (drawn
+  airborne); burpee 4 (stand → crouch → plank → jump); plank/side plank walk through “held up → off the floor → hands
+  planted”; the lying exercises (glute bridge / crunch / leg raise) follow the hip lift or the curl of the torso.
+- **One source of truth**: the thresholds behind the icons and the bar are the very same constants used by the detector and
+  by the 📐 counting-thresholds modal (see `specStages` in `src/specs.js` and `src/icons.js`), so the bar can never claim
+  something the detector does not do. `tests/test-specs.mjs` checks the angle inside each icon, that no icon overflows its
+  box, and walks synthetic poses through the bar to prove it advances segment by segment and that a shallow movement never
+  reaches the last segment.
+
+## 📐 Counting thresholds (inside the exercise-settings modal)
 
 ## 📐 Counting thresholds (inside the exercise-settings modal)
 
@@ -727,7 +738,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all six suites (1503 cases)
+npm test                       # run all six suites (1603 cases)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / matching structure of the Chinese and English READMEs
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -742,9 +753,9 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
 | `tests/test-detectors.mjs` | 247 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, plus the pre-workout calibration checks |
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 500 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; the judgement progress bar is walked through with synthetic poses (a shallow movement never reaches the full-depth segment); both languages are complete |
+| `tests/test-specs.mjs` | 601 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; the judgement progress bar is walked through with synthetic poses (a shallow movement never reaches the full-depth segment); both languages are complete |
 | `tests/test-page.mjs` | 310 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 287 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar, the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-app.mjs` | 286 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar, the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 

@@ -773,11 +773,7 @@ export default {
     seq3: 'Stage 3: plank',
     seq4: 'Stage 4: jump',
     seqWindow: 'Time limit for the whole sequence',
-    /* Judgement progress bar: one short label per segment, plus the bar's own copy */
-    barTitle: 'Judgement progress',
-    barScore: 'Just earned',
-    barDone: 'Every rule for this rep is met',
-    barCleared: '✓ Rep done — bar reset, starting over',
+    /* Judgement progress bar: each icon's short label is used in the hover tooltip */
     short: {
       stance: 'Stance',
       stand: 'Stand',

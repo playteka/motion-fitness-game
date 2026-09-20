@@ -775,10 +775,6 @@ export default {
     seq4: '第 4 段：起跳',
     seqWindow: '整套动作时限',
     /* 判定进度条：每一格的短标签（画面上空间很小，用最短的词）+ 进度条自身的文案 */
-    barTitle: '判定进度',
-    barScore: '刚拿到',
-    barDone: '这一轮的判据全过了',
-    barCleared: '✓ 这一轮完成，进度条清零，下一轮重新开始',
     short: {
       stance: '站姿',
       stand: '站立',

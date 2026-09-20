@@ -17,6 +17,9 @@ import { EXERCISE_MAP } from '../src/catalog.js';
 import {
   exerciseSpecs, specKeys, roundFor, specTextRows, specStages, stageText, stageHolds, SPEC_METRICS,
 } from '../src/specs.js';
+import {
+  stageIcon, iconSVG, iconAngle, drawnAngle, ICON_BOX, uniqueStages,
+} from '../src/icons.js';
 import { toMetric, LandmarkSmoother } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
 import { standingPose, ASPECT } from './synthetic-pose.mjs';
@@ -419,6 +422,118 @@ console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格'
     stageHolds(lungeStages[4], fake(90, 95), createDetector('lunge')));
   ok('箭步蹲：只到 140° 时最后一格过不了',
     !stageHolds(lungeStages[4], fake(140, 140), createDetector('lunge')));
+}
+
+/* ------------------------------------------------------------------ *
+ * 10. 关键帧线条图标（进度条上只画图标、不写文字）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[10] 关键帧线条图标');
+{
+  const iconCtx = (id) => {
+    const meta = EXERCISE_MAP[id];
+    return {
+      id,
+      posture: meta.posture,
+      kind: meta.kind,
+      plan: meta.plan,
+      gate: meta.params?.gate,
+      stages: specStages(id),
+    };
+  };
+
+  for (const id of ALL) {
+    const ctx = iconCtx(id);
+    const stages = uniqueStages(specStages(id), ctx);   // 进度条上真正显示的格子（去掉画得一模一样的）
+    const icons = stages.map((s) => stageIcon(s, ctx));
+    ok(`${id}：每一格都有图标（至少 3 条线 + 头）`,
+      icons.every((ic) => ic.lines.length >= 3 && ic.circles.length === 1),
+      JSON.stringify(icons.map((ic) => `${ic.lines.length}/${ic.circles.length}`)));
+    ok(`${id}：图标都画在 32×32 方框里（不越界、也不留空图）`,
+      icons.every((ic) => {
+        const xs = ic.lines.flatMap((l) => [l.a.x, l.b.x]).concat(ic.circles.map((c) => c.x - c.r));
+        const ys = ic.lines.flatMap((l) => [l.a.y, l.b.y]).concat(ic.circles.map((c) => c.y - c.r));
+        const w = Math.max(...xs) - Math.min(...xs);
+        const h = Math.max(...ys) - Math.min(...ys);
+        return Math.min(...xs) >= -0.5 && Math.max(...xs) <= ICON_BOX + 0.5
+          && Math.min(...ys) >= -0.5 && Math.max(...ys) <= ICON_BOX + 0.5
+          && Math.max(w, h) > 8;
+      }));
+    ok(`${id}：相邻两格的图标不一样（看得出在往下走）`,
+      icons.every((ic, i) => i === 0 || JSON.stringify(ic.pose.params) !== JSON.stringify(icons[i - 1].pose.params)),
+      JSON.stringify(icons.map((ic) => ic.pose.params)));
+    ok(`${id}：进度条至少有一格`, stages.length >= 1, String(stages.length));
+  }
+
+  // 图标里的角度必须来自判据（深蹲/箭步蹲/俯卧撑这类「关节角就是姿态」的判据）
+  const squatCtx = iconCtx('squat');
+  const squatStages = specStages('squat');
+  ok('深蹲：图标里的膝角随判据单调变深（蹲得越深画得越弯）', (() => {
+    const bends = squatStages.map((s) => 180 - drawnAngle(s, squatCtx));
+    return bends.every((v, i) => i === 0 || v >= bends[i - 1]);
+  })(), JSON.stringify(squatStages.map((s) => drawnAngle(s, squatCtx))));
+
+  const lungeCtx = iconCtx('lunge');
+  const lungeStages = specStages('lunge');
+  ok('箭步蹲：站姿那一格画的是站直的人（不是前折/趴下）',
+    stageIcon(lungeStages[0], lungeCtx).builder === 'stand'
+    && drawnAngle(lungeStages[0], lungeCtx) >= 170,
+    JSON.stringify(stageIcon(lungeStages[0], lungeCtx).pose));
+  ok('箭步蹲：前膝三格的图标角度与判据同序（146 比 152 更弯、128 最弯）', (() => {
+    const front = lungeStages.filter((s) => s.metric === 'frontKnee');
+    const drawn = front.map((s) => drawnAngle(s, lungeCtx));
+    return front.length === 3 && drawn[0] < drawn[1] && drawn[2] < drawn[1];
+  })(), JSON.stringify(lungeStages.filter((s) => s.metric === 'frontKnee').map((s) => drawnAngle(s, lungeCtx))));
+  ok('箭步蹲：图标里的膝角顺序与判据顺序一致（判据更严 → 画得更弯）', (() => {
+    const front = lungeStages.filter((s) => s.metric === 'frontKnee');
+    return front.every((s) => iconAngle(s, lungeCtx) === s.value);
+  })(), JSON.stringify(lungeStages.filter((s) => s.metric === 'frontKnee').map((s) => iconAngle(s, lungeCtx))));
+  ok('箭步蹲：「双腿」那一格画出了两条腿（后膝弯下来）', (() => {
+    const both = lungeStages.find((s) => s.metric === 'straighterKnee');
+    return both && stageIcon(both, lungeCtx).pose.params.backKnee < 170;
+  })());
+
+  const pushCtx = iconCtx('pushup');
+  const pushStages = specStages('pushup');
+  ok('俯卧撑：图标里的肘角 = 判据里的肘角', pushStages
+    .filter((s) => s.metric === 'elbow')
+    .every((s) => iconAngle(s, pushCtx) === s.value),
+  JSON.stringify(pushStages.filter((s) => s.metric === 'elbow').map((s) => iconAngle(s, pushCtx))));
+  ok('俯卧撑：肘弯得越多，图标里身体越低（撑地高度随肘角变小）', (() => {
+    const elbowStages = pushStages.filter((s) => s.metric === 'elbow');
+    const heights = elbowStages.map((s) => {
+      const ic = stageIcon(s, pushCtx);
+      // 手撑在地面上：身体高度 = 最低点（手）到肩的高度
+      const shoulderY = ic.lines[0].a.y;
+      const handY = Math.max(...ic.lines.flatMap((l) => [l.a.y, l.b.y]));
+      return handY - shoulderY;
+    });
+    return heights.every((v, i) => i === 0 || v <= heights[i - 1]);
+  })());
+  ok('俯卧撑：撑地类姿势用「手在地面」的画法（support）',
+    pushStages.filter((s) => s.metric === 'elbow').every((s) => stageIcon(s, pushCtx).pose.params.support === true));
+
+  ok('波比跳：「俯撑」那一段画的是趴下（不是站着）',
+    stageIcon(specStages('burpee')[2], iconCtx('burpee')).builder === 'lie',
+    JSON.stringify(stageIcon(specStages('burpee')[2], iconCtx('burpee')).pose.params));
+  ok('跳跃类：「起跳」那一格整幅图离地（头顶上方留白）', (() => {
+    const jump = specStages('squatJump').find((s) => s.metric === 'lift');
+    const ic = stageIcon(jump, iconCtx('squatJump'));
+    const top = Math.min(...ic.lines.flatMap((l) => [l.a.y, l.b.y]));
+    const bottom = Math.max(...ic.lines.flatMap((l) => [l.a.y, l.b.y]));
+    return top > 0 && bottom < ICON_BOX - 1;
+  })());
+  ok('拉伸类：体前屈画的是前折姿态（躯干折下去）', (() => {
+    const ic = stageIcon(specStages('standingForwardFold')[0], iconCtx('standingForwardFold'));
+    return ic.builder === 'lie' && ic.pose.params.face === 'fold';
+  })(), JSON.stringify(stageIcon(specStages('standingForwardFold')[0], iconCtx('standingForwardFold')).pose.params));
+
+  // SVG 输出：只有线条和圆（没有文字、没有色块）
+  const svg = iconSVG(specStages('lunge')[1], lungeCtx);
+  ok('图标 SVG 只有 line / circle（没有 text、没有 fill）',
+    /^<svg class="criteria-icon"/.test(svg) && !/<text/.test(svg) && !/fill=/.test(svg) && /<circle/.test(svg),
+    svg.slice(0, 120));
+  ok('图标 SVG 可解析（坐标都是有限数）', !/NaN|undefined/.test(svg), svg);
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

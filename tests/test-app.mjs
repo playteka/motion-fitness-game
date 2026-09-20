@@ -1163,32 +1163,42 @@ console.log('\n[8b] 判定进度条');
   const segCount = () => (segHtml().match(/<div class="[^"]*" data-i="/g) || []).length;
   const segAt = (i) => (segHtml().match(new RegExp(`<div class="[^"]*" data-i="${i}"[^>]*>`)) || [''])[0];
 
-  // 主页上不该出现
+  // 主页上不该出现（整页都没有视频框）
   api.showHome();
   ok('主页上不显示判定进度条', elements.get('criteriaBar').hidden === true);
 
   api.openExercise('squat');
-  ok('校准阶段不显示判定进度条（还没开始计数）', elements.get('criteriaBar').hidden === true);
+  ok('校准阶段进度条也在（一直显示在画面上）', elements.get('criteriaBar').hidden === false);
 
-  // 直接切到「训练中」，并备好这个动作的进度条
+  // 校准阶段：还没识别到人 → 灰色（尚未开始）
+  api.state.criteriaLive = false;
+  api.renderCriteriaBar();
+  ok('没识别到人时进度条是灰的（idle）', elements.get('criteriaBar').classList.contains('idle'));
+  ok('没识别到人时不点亮任何一格', api.state.criteriaIdx === -1, String(api.state.criteriaIdx));
+
+  // 识别到人 + 训练中 → 彩色（开始工作）
   api.buildCriteriaBar();
   api.state.session = 'running';
-  api.renderCriteriaBar();
+  api.updateCriteria(frameOf(178), [], 900);
   const squatStages = specStages('squat');
-  ok('训练中显示判定进度条', elements.get('criteriaBar').hidden === false);
-  ok('进度条格数 = 这个动作的判据步数', segCount() === squatStages.length,
+  ok('识别到人之后进度条进入彩色状态（active）',
+    elements.get('criteriaBar').classList.contains('active')
+    && elements.get('criteriaBar').classList.contains('idle') === false);
+  ok('进度条格数 = 这个动作的关键帧数', segCount() === squatStages.length,
     `${segCount()} vs ${squatStages.length}`);
-  ok('第一格是「站姿」', segHtml().includes('站姿'), segHtml().slice(0, 160));
-  ok('标题是「判定进度」', elements.get('criteriaTitle').textContent === '判定进度',
-    elements.get('criteriaTitle').textContent);
+  const visibleText = segHtml().replace(/\s(title)="[^"]*"/g, '');
+  ok('每一格画的是线条图标（svg），不是文字',
+    (segHtml().match(/<svg class="criteria-icon"/g) || []).length === segCount()
+    && !/[\u4e00-\u9fff]/.test(visibleText), segHtml().slice(0, 200));
+  ok('进度条上没有任何可见文字（格子只有图标）',
+    !/class="criteria-seg-(label|index)"/.test(segHtml()), segHtml().slice(0, 200));
+  ok('悬停提示里带判据（图标看不出数值时能查）',
+    /title="[^"]*(站姿|0\.86)[^"]*"/.test(segHtml()), segHtml().slice(0, 300));
 
   // 站着不动：只点亮「站姿」这一格
-  api.updateCriteria(frameOf(178), [], 1000);
   ok('站着时点亮「站姿」这一格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
-  ok('下一格显示的是「开始」的判据文字（真实阈值 0.78）',
-    elements.get('criteriaCond').textContent.includes('0.78'), elements.get('criteriaCond').textContent);
   ok('「站姿」那一格标记为已完成', /class="[^"]*done[^"]*" data-i="0"/.test(segAt(0)), segAt(0));
-  ok('「开始」那一格标记为正在等（current）', /class="[^"]*current[^"]*" data-i="1"/.test(segAt(1)), segAt(1));
+  ok('下一格标记为正在等（current）', /class="[^"]*current[^"]*" data-i="1"/.test(segAt(1)), segAt(1));
 
   // 一路蹲下去：进度条一格一格往前走
   const walked = [];
@@ -1200,31 +1210,24 @@ console.log('\n[8b] 判定进度条');
     walked.every((v, i) => i === 0 || v >= walked[i - 1]), walked.join(','));
   ok('蹲到底时走到最后一格（满分深度）', api.state.criteriaIdx === squatStages.length - 1,
     `${api.state.criteriaIdx + 1}/${squatStages.length}`);
-  ok('全部点亮后提示「判据全过」', elements.get('criteriaCond').textContent.includes('全过'),
-    elements.get('criteriaCond').textContent);
-  ok('最后一格也标记已完成', /class="[^"]*done[^"]*" data-i="\d+"/.test(segAt(squatStages.length - 1)),
-    segAt(squatStages.length - 1));
 
-  // 一步真的加了分 → 标在格子上，并飘一下「刚拿到 +N」
+  // 一步真的加了分 → 标在格子上，并飘一下「+N」
   api.resetCriteriaProgress();
   api.updateCriteria(frameOf(178), [], 2000);
   api.updateCriteria(frameOf(100), [{ type: 'step', points: 7, index: 1, total: 5, labelKey: 'x' }], 2100);
   ok('这一步加到的分标在格子上',
     segHtml().includes('+7'), segHtml());
-  ok('同时给出「刚拿到 +N」的反馈',
-    elements.get('criteriaEarned').textContent.includes('+7'), elements.get('criteriaEarned').textContent);
+  ok('同时飘一下「+N」（数字，不带文字）',
+    elements.get('criteriaEarned').textContent === '+7', elements.get('criteriaEarned').textContent);
 
   // 一次动作结束 → 进度条清零，并且**看得见地**保持空的，然后从头再走
-  api.state.criteriaIdx = 0;
   api.updateCriteria(frameOf(178), [], 5000);
   api.updateCriteria(frameOf(80), [], 5100);
   ok('这轮先把进度走到最后一格', api.state.criteriaIdx === squatStages.length - 1,
     String(api.state.criteriaIdx));
   api.handleEvents([{ type: 'rep', valid: true, index: 1, quality: 90, duration: 900 }], 5200);
   ok('做完一次动作后进度条清零', api.state.criteriaIdx === -1, String(api.state.criteriaIdx));
-  ok('清零后写着「这一轮完成、下一轮重新开始」',
-    elements.get('criteriaCond').textContent.includes('清零'), elements.get('criteriaCond').textContent);
-  ok('清零瞬间按钮/进度条有清零动画标记', elements.get('criteriaBar').classList.contains('reset'),
+  ok('清零瞬间进度条有清零动画标记', elements.get('criteriaBar').classList.contains('reset'),
     String(elements.get('criteriaBar').classList.contains('reset')));
   // 站在起始姿势（判据其实已满足）也不该立刻重新点亮
   api.updateCriteria(frameOf(178), [], 5300);
@@ -1234,8 +1237,6 @@ console.log('\n[8b] 判定进度条');
   // 展示期过去 → 从站姿重新开始
   api.updateCriteria(frameOf(178), [], 6000);
   ok('展示期过后从头开始（先点亮站姿）', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
-  ok('重新开始后不再显示「清零」提示',
-    !elements.get('criteriaCond').textContent.includes('清零'), elements.get('criteriaCond').textContent);
   ok('清零标记也撤掉了', elements.get('criteriaBar').classList.contains('reset') === false);
   // 半程动作也算「一次动作结束」，同样清零
   api.updateCriteria(frameOf(120), [], 6100);
@@ -1243,31 +1244,35 @@ console.log('\n[8b] 判定进度条');
   api.handleEvents([{ type: 'rep', valid: false, reason: 'depth' }], 6200);
   ok('半程动作结束后同样清零', api.state.criteriaIdx === -1, String(api.state.criteriaIdx));
 
-  // 换动作 → 格子跟着换（判据不同）
+  // 识别丢了：短暂丢帧保持不变（识别本来就会抖），丢久了才变灰并清零
+  api.updateCriteria({ ok: true, perSide: { L: { knee: 130 }, R: { knee: 150 } }, kneeExtended: 150 }, [], 6300);
+  const beforeLost = api.state.criteriaIdx;
+  api.updateCriteria({ ok: false }, [], 6400);
+  ok('刚丢一帧不会立刻变灰（给识别抖动留宽限）',
+    elements.get('criteriaBar').classList.contains('active') === true
+    && api.state.criteriaIdx === beforeLost, `${elements.get('criteriaBar').className} / ${api.state.criteriaIdx}`);
+  api.updateCriteria({ ok: false }, [], 7400);  ok('丢失识别超过宽限后进度条回到灰色（尚未开始）',
+    elements.get('criteriaBar').classList.contains('idle') === true
+    && api.state.criteriaIdx === -1, `${elements.get('criteriaBar').className} / ${api.state.criteriaIdx}`);
+
+  // 换动作 → 格子跟着换（判据不同 → 图标不同）
   api.openExercise('lunge');
   api.state.session = 'running';
   api.buildCriteriaBar();
-  api.renderCriteriaBar();
-  ok('换到箭步蹲后进度条重建（格数跟着判据链走、下一格是站姿 145°）',
-    segCount() === specStages('lunge').length && elements.get('criteriaCond').textContent.includes('145'),
-    `${segCount()} 格 / ${elements.get('criteriaCond').textContent}`);
-  api.updateCriteria({
-    ok: true, perSide: { L: { knee: 175 }, R: { knee: 175 } }, kneeExtended: 175,
-  }, [], 3000);
+  api.updateCriteria({ ok: true, perSide: { L: { knee: 175 }, R: { knee: 175 } }, kneeExtended: 175 }, [], 7000);
+  ok('换到箭步蹲后进度条重建（格数跟着关键帧走）',
+    segCount() === specStages('lunge').length, `${segCount()} 格`);
   ok('箭步蹲站着时只点亮「站姿」格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
   api.updateCriteria({
     ok: true, perSide: { L: { knee: 120 }, R: { knee: 150 } }, kneeExtended: 150,
-  }, [], 3100);
+  }, [], 7100);
   ok('箭步蹲蹲到 120°（两条腿都弯）后走到「满分」那一格',
     api.state.criteriaIdx === specStages('lunge').length - 1, String(api.state.criteriaIdx));
 
-  // 后腿不弯时，卡在「双腿」那一格（进度条会提示差在哪）
+  // 后腿不弯时，卡在「双腿」那一格
   api.resetCriteriaProgress();
-  api.updateCriteria({ ok: true, perSide: { L: { knee: 120 }, R: { knee: 172 } }, kneeExtended: 172 }, [], 3200);
-  ok('后腿几乎伸直时卡在「双腿」那一格',
-    api.state.criteriaIdx === 2, String(api.state.criteriaIdx));
-  ok('并提示差在哪一格（较直那条腿的膝角 ≤ 158°）',
-    elements.get('criteriaCond').textContent.includes('158'), elements.get('criteriaCond').textContent);
+  api.updateCriteria({ ok: true, perSide: { L: { knee: 120 }, R: { knee: 172 } }, kneeExtended: 172 }, [], 7200);
+  ok('后腿几乎伸直时卡在「双腿」那一格', api.state.criteriaIdx === 2, String(api.state.criteriaIdx));
 
   // 回主页 → 进度条隐藏
   api.showHome();
