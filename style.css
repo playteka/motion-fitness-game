@@ -793,6 +793,11 @@ kbd {
   line-height: 1.5;
   color: var(--muted);
 }
+/* 窄屏：判据换到指标名下面一行，避免数值被挤出去 */
+@media (max-width: 520px) {
+  .spec-row { grid-template-columns: minmax(0, 1fr); }
+  .spec-cond { text-align: left; white-space: normal; }
+}
 
 .live-stats {
   display: grid;
