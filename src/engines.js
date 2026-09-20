@@ -393,6 +393,12 @@ class BendRepDetector extends DetectorBase {
 
     const advise = ADVISORY[this.gateName];
     if (advise) advise(f, this, now);
+    // 仰卧抬腿（指标是腰-腿夹角、起始是躺平）：膝盖弯着也能把夹角凑到 90°，
+    // 所以腿没绷直时出声纠正 —— 只提醒、不拦计数（和其余「建议项」一个待遇）
+    if (this.metricName === 'hip' && this.gateName === 'supineLow'
+      && pr > 0.25 && Number.isFinite(f.kneeAngle) && f.kneeAngle < 150) {
+      this.cue('straightLegs', null, 'warn', now, 9000);
+    }
 
     if (this.stage === 'up') {
       if (pr >= this.enterP) {

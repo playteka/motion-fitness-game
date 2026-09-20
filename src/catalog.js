@@ -127,14 +127,20 @@ export const EXERCISES = [
   }),
   e('reverseCrunch', '🔃', 'core', {
     plan: 'repSupine', posture: 'supine', judge: 'hip', target: 15,
-    // 反向卷腹是「骨盆卷起、大腿转向胸口」：用髋角（躯干-大腿夹角）量最稳。
-    // 桌面位 ≈ 90°，卷到最上面 ≈ 60°；坐着/躺着不动时夹角更大，进度会落在 0 以下，不会乱计数。
+    // 反向卷腹是「骨盆卷起、大腿转向胸口」：同样用髋角（躯干-大腿夹角）量，
+    // 但起始是屈膝桌面位（≈90°），卷到最上面 ≈60°；坐着/躺着不动时夹角更大，不会乱计数。
     params: bend({ metric: 'hip', gate: 'supine', up: 92, down: 62, minRepMs: 340 }),
   }),
   e('lyingLegRaise', '🦿', 'core', {
     plan: 'repSupine', posture: 'supine', judge: 'hip', target: 15,
-    // 仰卧抬腿：腿伸直从贴地（髋角 ≈ 180°）抬到接近垂直（髋角 ≈ 90°）
-    params: bend({ metric: 'hip', gate: 'supineLow', up: 165, down: 100, minRepMs: 400 }),
+    // 仰卧抬腿：**判据就是腰部的角度**（腿和上身的夹角，hip）。
+    //   躺平、腿伸直贴地 ≈ 180°；腿绷直抬到垂直地面 ≈ 90°；放下来回到 ≈ 180°，如此循环。
+    //   up=180（起始，跟着用户自己躺平的角度自校准）/ down=90（抬到垂直）。
+    //   计数线松一点（looseP 0.65 ≈ 122°，腿抬过大约三分之二就算一次），
+    //   满分深度线 0.85 ≈ 104°（基本垂直），分数照深度给 —— 和「大体做到就计次」一致。
+    params: bend({
+      metric: 'hip', gate: 'supineLow', up: 180, down: 90, looseP: 0.65, minRepMs: 400,
+    }),
   }),
 
   /* ================= 全身 ================= */

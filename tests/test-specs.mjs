@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 「计次技术指标」自检（🎯 运动设定弹窗里那组数值）。
  *
  * 这里要守住的核心承诺是：**弹窗里显示的每一个数字都必须等于识别器真正使用的判定线**。
@@ -379,6 +379,24 @@ console.log('\n[8] 判定进度条（画面上一格一格点亮的那条判据�
     specStages('pushup').some((s) => s.alt && s.alt.metric === 'shoulderDrop' && s.alt.value === PUSHUP.dropMin),
     JSON.stringify(specStages('pushup').map((s) => `${s.metric}${s.alt ? '+' + s.alt.metric : ''}`)));
 
+  // 仰卧抬腿（用户描述）：躺平 180° → 腿绷直抬起 → 与上身 90°（腿垂直地面）→ 放回 180°，如此循环
+  {
+    const meta = EXERCISE_MAP.lyingLegRaise;
+    const st = specStages('lyingLegRaise');
+    ok('仰卧抬腿：起始线 180°、抬到垂直是 90°（用户给的数值）',
+      meta.params.up === 180 && meta.params.down === 90, `${meta.params.up}/${meta.params.down}`);
+    ok('仰卧抬腿：判据就是腰腿夹角（hip）', meta.params.metric === 'hip', String(meta.params.metric));
+    ok('仰卧抬腿关键帧：躺平 → 开始抬起 → 计次 → 放回躺平（最后一格 = 计次那一刻）',
+      st.length === 4 && st[0].kind === 'gate' && st[1].metric === 'hip' && st[2].metric === 'hip'
+      && st[st.length - 1].kind === 'finish',
+      JSON.stringify(st.map((s) => `${s.metric}:${s.kind}`)));
+    ok('仰卧抬腿：三个度数 = 开始 151° → 计次 122° → 放回 166°（角度一路变小再回到躺平）',
+      st[1].value === 151 && st[2].value === 122 && st[3].item.value === 166,
+      JSON.stringify(st.map((s) => `${s.op}${s.value}/${s.item?.value}`)));
+    ok('仰卧抬腿：计数线比「抬到垂直」宽松（122° 就算一次，104° 才算满深度）',
+      st[2].value === 122 && meta.params.bottomP === 0.85, `count=${st[2].value} bottomP=${meta.params.bottomP}`);
+  }
+
   // 通用屈伸类（仰卧抬起 / 站立屈伸 …）：最后一格必须**就是引擎计次那一刻**，
   // 不能是「永远成立」的假格子 —— 否则用户会看到「进度条满了却没计次」（真实踩过的坑：
   // 这里曾经写成 roundFor(0.16,'count') = 0 且 k = 6，progress ≤ 6 恒真）。
@@ -583,6 +601,27 @@ console.log('\n[10] 关键帧线条图标');
   // 图标里的角度必须来自判据（深蹲/箭步蹲/俯卧撑这类「关节角就是姿态」的判据）
   const squatCtx = iconCtx('squat');
   const squatStages = specStages('squat');
+
+  // 仰卧抬腿（用户描述的四格）：躺平（腿伸直、髋角 ≈180°）→ 抬起 → 抬到垂直（90°）→ 放回躺平
+  {
+    const ctxJ = iconCtx('lyingLegRaise');
+    const stJ = specStages('lyingLegRaise');
+    const icons = stJ.map((s) => stageIcon(s, ctxJ));
+    const gate = icons[0].pose.params;
+    ok('仰卧抬腿：起始格画的是「躺平 + 腿伸直」（不是躺着屈膝的臀桥/卷腹姿势）',
+      icons[0].builder === 'lie' && gate.hip >= 176 && gate.knee >= 172, JSON.stringify(gate));
+    ok('仰卧抬腿：抬起两格的髋角就是判据里的角度（151° / 122°），越抬越高',
+      icons[1].pose.criterion.hip === 151 && icons[2].pose.criterion.hip === 122
+      && icons[1].pose.params.hip > icons[2].pose.params.hip,
+      JSON.stringify(icons.map((ic) => ic.pose.params.hip)));
+    ok('仰卧抬腿：放回那一格带向下箭头（一眼看出是「控制着放回去」，也避免和起始格重样）',
+      icons[3].pose.params.mark === 'down' && icons[3].lines.length > icons[0].lines.length,
+      JSON.stringify(icons[3].pose.params));
+    ok('仰卧抬腿：四个关键帧图标互不相同（不会被「画得一样就合并」吃掉）',
+      new Set(stJ.map((s) => JSON.stringify(stageIcon(s, ctxJ).pose.params))).size === 4
+      && uniqueStages(stJ, ctxJ).length === 4,
+      JSON.stringify(stJ.map((s) => stageIcon(s, ctxJ).pose.params.hip)));
+  }
   ok('深蹲：图标里的膝角随判据单调变深（蹲得越深画得越弯）', (() => {
     const bends = squatStages.map((s) => 180 - drawnAngle(s, squatCtx));
     return bends.every((v, i) => i === 0 || v >= bends[i - 1]);

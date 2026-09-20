@@ -898,6 +898,7 @@ export default {
     lean: '上身保持直立，不要前倾或歪斜',
     pose: '姿势偏离了要领，先调整再继续',
     bothKnees: '两条腿都要弯下去：后腿也要屈膝下沉',
+    straightLegs: '腿要绷直：膝盖别弯，用腰腹把整条腿抬起来',
   },
 
   fam: {

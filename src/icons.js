@@ -331,6 +331,15 @@ export function poseFor(stage, ctx = {}) {
     if (ctx.metric === 'kneeSpread') {
       return { builder: 'jack', params: { legAngle: 5, armAngle: 152 }, criterion: { spread: 0 } };
     }
+    // 仰卧抬腿这类「躺平、腿伸直」的动作：起始格必须画**躺平 + 腿伸直**（≈180°），
+    // 而不是躺着屈膝的姿势（那是臀桥 / 卷腹的起始位，两个动作的判据完全不同）
+    if (ctx.metric === 'hip' && ctx.gate === 'supineLow') {
+      return {
+        builder: 'lie',
+        params: { tilt: 92, hip: 178, knee: 176, face: 'up', elbow: 172 },
+        criterion: { hip: 178 },
+      };
+    }
     return gatePose(posture, value, stages, metric, ctx);
   }
 
@@ -465,8 +474,20 @@ export function poseFor(stage, ctx = {}) {
         criterion: { shoulderDrop: value },
         drawn: { elbow: clamp(180 - (180 * clamp(value, 0, 0.5)) / 0.5, 95, 178) },
       };
-    case 'hip':
-      return { builder: 'lie', params: { tilt: 92, hip: value, knee: 172, face: 'up', elbow: 170 }, criterion: { hip: value }, drawn: { hip: value } };
+    case 'hip': {
+      // 仰卧类：髋角越大腿越贴地、越小腿越抬起来。回到起始位那一格加个向下箭头，
+      // 明确表示「控制着放回去」，也避免和起始格看起来一样
+      const finishing = stage?.kind === 'finish';
+      return {
+        builder: 'lie',
+        params: {
+          tilt: 92, hip: value, knee: 172, face: 'up', elbow: 170,
+          ...(finishing ? { mark: 'down' } : {}),
+        },
+        criterion: { hip: value },
+        drawn: { hip: value },
+      };
+    }
     case 'hipRise': {
       const rise = clamp(num(value, 0), 0, 0.6);
       // 「顶起」那一格（要求抬到 ≥0.22×躯干长）：画成髋部确实抬起来的臀桥顶，上面加一个向上的箭头

@@ -508,7 +508,7 @@ Take the lunge (the numbers are the constants in the code):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (794 assertions in the suite).
+> exactly on the detector's own progress line (845 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -571,7 +571,7 @@ Calibration only checks that you're in position — it never counts reps or awar
 | 🔥 Core | Dead Bug 🐞 | Reps | Left/right leg alternation | 16 reps |
 | 🔥 Core | Crunch 🌀 | Reps | Shoulder height off the floor | 20 reps |
 | 🔥 Core | Reverse Crunch 🔃 | Reps | Hip hinge | 15 reps |
-| 🔥 Core | Lying Leg Raise 🦿 | Reps | Hip hinge | 15 reps |
+| 🔥 Core | Lying Leg Raise 🦿 | Reps | Torso-to-leg angle (flat 180° → vertical 90°) | 15 reps |
 | 🤸 Full body | Burpee 💥 | Reps | Order of the whole sequence (squat → plank → jump) | 10 reps |
 | 🤸 Full body | Mountain Climber ⛰️ | Reps | Left/right leg alternation | 24 reps |
 | 🤸 Full body | Jumping Jack 🙌 | Reps | How wide your legs open | 50 reps |
@@ -720,6 +720,16 @@ On top of the 5 hand-written plans above, the remaining exercises share **family
 
 Timed family plans also give **+1 point for every second you hold**; if your form collapses for more than 1.2 seconds, the timer pauses and the voice reminds you.
 
+> **How the lying leg raise is judged**: the criterion is literally the **torso-to-leg angle** (the angle between your legs and
+> your upper body, in degrees) — **flat on the floor with straight legs ≈ 180°** → lift the straight leg so the angle shrinks →
+> **legs vertical, about 90° to your torso** → lower back to ≈ 180°, repeat.
+> `up = 180` is the starting line (self-calibrated to the flattest angle *you* actually reach) and `down = 90` is legs vertical.
+> The four bar segments are **flat → start lifting (≤151°) → count (≤122°) → back down flat (≥166°, with a down arrow)**:
+> past roughly two thirds counts as a rep, while near-vertical (≤104°) earns the full depth points.
+> The starting segment draws **lying flat with straight legs** (not the bent-knee glute-bridge/crunch pose); if you bend the
+> knee (which can still reach 90°), the voice reminds you — “keep the leg straight, lift the whole leg with your core” —
+> and that is **advice only, it never costs you a rep**.
+
 > **How the jumping jack is judged**: face the camera and the “open/close” is measured as the **horizontal distance
 > between your knees** (`kneeSpread`, in torso lengths) — feet together reads about 0.35 and a wide jump about 1.5, so
 > progress = (narrowest − current) / (narrowest − widest) and “together → open → together” is exactly one rep.
@@ -852,8 +862,8 @@ npm run test:app               # integration test that loads the real app.js wit
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
 | `tests/test-detectors.mjs` | 283 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
-| `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 794 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
+| `tests/test-engines.mjs` | 149 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
+| `tests/test-specs.mjs` | 845 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 349 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
 | `tests/test-app.mjs` | 350 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 

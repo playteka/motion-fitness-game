@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 通用识别引擎（engines.js）的自动化测试。
  *
  * 6 个经典动作由 exercises.js 里手写的识别器负责（见 test-detectors.mjs），
@@ -445,7 +445,8 @@ console.log('\n[1] bend 引擎：一次循环一次数');
   // 反向卷腹 / 仰卧抬腿：用髋角（躯干-大腿夹角，度）当指标，数值变小 = 抬起来
   const cases = [
     ['reverseCrunch', { rest: 90, top: 62 }],
-    ['lyingLegRaise', { rest: 175, top: 100 }],
+    // 仰卧抬腿（用户描述）：躺平 180° → 腿绷直抬到与上身 90°（垂直地面）→ 放回 180°
+    ['lyingLegRaise', { rest: 178, top: 92 }],
   ];
   for (const [id, v] of cases) {
     const det = createDetector(id);
@@ -463,6 +464,49 @@ console.log('\n[1] bend 引擎：一次循环一次数');
     const r = makeFrameRunner(det);
     r.run(repeatF((p) => supineFrame({ hipAngle: 100 + (60 - 100) * Math.sin(Math.PI * p) }), 1400, 4));
     ok('反向卷腹：起始位偏高（腿伸得比较直）也能计次', det.validReps === 4, `实际 ${det.validReps}`);
+  }
+  /* ---- 仰卧抬腿（用户描述：躺平 180° → 抬到垂直 90° → 放回 180°，如此循环） ---- */
+  {
+    // 起始是躺平：腿伸直贴地，髋角 ≈180°，此时进度应该接近 0（不会自己开始计一轮）；
+    // 抬到与上身 90°（腿垂直地面）时进度到顶（≥0.85 = 满分深度）
+    const det = createDetector('lyingLegRaise');
+    const r = makeFrameRunner(det);
+    r.run([{ f: supineFrame({ hipAngle: 178, kneeAngle: 176 }), ms: 900 }]);
+    ok('仰卧抬腿：躺平（髋角 178°）时进度为 0、不开始计次',
+      det.progress <= 0.05 && det.validReps === 0, `progress=${det.progress?.toFixed(2)}`);
+    r.run([{ f: supineFrame({ hipAngle: 92, kneeAngle: 176 }), ms: 700 }]);
+    ok('仰卧抬腿：抬到与上身 90°（腿垂直地面）时进度到顶（满分深度）',
+      det.progress >= 0.85, `progress=${det.progress?.toFixed(2)}`);
+  }
+  {
+    // 抬到一半多（133°）：不到计数线（122°），不算次数，但要出声（不留无声空档）
+    const det = createDetector('lyingLegRaise');
+    const r = makeFrameRunner(det);
+    r.run(repeatF((p) => supineFrame({
+      hipAngle: 178 + (133 - 178) * Math.sin(Math.PI * p), kneeAngle: 176,
+    }), 1400, 4));
+    ok('仰卧抬腿：只抬到 133°（不到计数线）不算次数', det.validReps === 0, `实际 ${det.validReps}`);
+    atLeast('仰卧抬腿：抬不够记成半程', det.partialReps, 3);
+    ok('仰卧抬腿：抬不够会提示「幅度再大一点」', hasCue(r, 'moreRange'), cuesOf(r).join(','));
+  }
+  {
+    // 膝盖弯着抬：髋角一样能凑到 90°，所以要**出声**提醒「腿要绷直」，但仍然计次（只提醒不拦）
+    const det = createDetector('lyingLegRaise');
+    const r = makeFrameRunner(det);
+    r.run(repeatF((p) => supineFrame({
+      hipAngle: 178 + (92 - 178) * Math.sin(Math.PI * p), kneeAngle: 110,
+    }), 1400, 4));
+    ok('仰卧抬腿：弯着膝盖抬，照样计次（提醒不拦计数）', det.validReps === 4, `实际 ${det.validReps}`);
+    ok('仰卧抬腿：弯膝盖时会提醒「腿要绷直」', hasCue(r, 'straightLegs'), cuesOf(r).join(','));
+  }
+  {
+    // 腿绷直抬起来：不该出现「腿要绷直」的唠叨
+    const det = createDetector('lyingLegRaise');
+    const r = makeFrameRunner(det);
+    r.run(repeatF((p) => supineFrame({
+      hipAngle: 178 + (92 - 178) * Math.sin(Math.PI * p), kneeAngle: 176,
+    }), 1400, 4));
+    ok('仰卧抬腿：腿绷直时不会念「腿要绷直」', !hasCue(r, 'straightLegs'), cuesOf(r).join(','));
   }
 }
 

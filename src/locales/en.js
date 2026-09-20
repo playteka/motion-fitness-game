@@ -897,6 +897,7 @@ export default {
     lean: 'Keep your torso upright — don’t lean or tilt forward',
     pose: 'Your form has drifted off the target — fix it before you continue',
     bothKnees: 'Bend both legs — the back leg has to bend and sink down too',
+    straightLegs: 'Keep the leg straight — don’t bend the knee, lift the whole leg with your core',
   },
 
   /* ---------------- Movement-family form templates ---------------- */
