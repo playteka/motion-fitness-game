@@ -226,6 +226,16 @@ console.log('\n[3] 静态资源与模型文件');
     && /ui\.gestureExit/.test(appSrc) && /ui\.gestureRetry/.test(appSrc));
   ok('手势判定要考虑镜像预览（否则左右手会反）', /mirror\s*\?\s*1\s*-\s*cx/.test(appSrc));
 
+  /* ---- 计时类读秒：每 5 秒播报一次（用户要求：平板支撑读「5 秒」「10 秒」…） ---- */
+  ok('读秒间隔写死为 5 秒', /HOLD_COUNT_EVERY\s*=\s*5/.test(appSrc));
+  ok('读秒接在识别之后、要领语音之前（同一帧里让读秒先说）',
+    /announceHoldCount\(state\.detector[\s\S]{0,80}handleEvents\(events, now\)/.test(appSrc));
+  ok('读秒走语音包的 sayTime（文案是「N 秒」/ 随语言变化）', /audio\.sayTime\(n \* 1000\)/.test(appSrc));
+  ok('和读秒撞车的要领语音会被让位（400ms 窗口）',
+    /holdCountAt \|\| -1e9\) > 400/.test(appSrc));
+  ok('计时归零时读秒重新装填（下一组从 5 秒开始）',
+    /sec <= 0[\s\S]{0,80}holdCountNext = HOLD_COUNT_EVERY/.test(appSrc));
+
   // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面
   const stageAt = html.indexOf('id="stage"');
   const toolbarAt = html.indexOf('class="stage-toolbar"');

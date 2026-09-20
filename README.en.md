@@ -732,9 +732,18 @@ Timed family plans also give **+1 point for every second you hold**; if your for
 | Valid rep +1 | A pentatonic rep tone + a spoken rep count |
 | A rep doesn't count | A low “pff” sound + a subtitle pointing out the problem |
 | Holding in a timed exercise | A soft tick every second + the score climbing steadily |
+| **Every 5 seconds while holding** | **The elapsed seconds are spoken — “5 seconds”, “10 seconds”, …** (plank, side plank and the folds alike), and the on-screen seconds pulse in step |
 | Goal reached / set ended | A celebration chord + goal floating text + a summary panel (score plus any form steps you missed) |
 
 Both sound effects and voice can be turned off with one click in the ⚙️ Settings dialog.
+
+> **Counting out loud in timed exercises**: a timed exercise like the plank **speaks the elapsed seconds every
+> 5 seconds** (“5 seconds”, “10 seconds”, “15 seconds” …). It reads the detector's own accumulated hold time, so
+> pausing (your form collapsed) and resuming continues the count instead of starting over, switching exercise or
+> resetting the counters re-arms it at 5 seconds, and a jump of several steps (a long interruption) only reads the
+> current one — never a burst of numbers. When a form-step line such as “hold steady for 10 seconds” lands in the same
+> frame, **the count wins** (the step still scores, ticks and chimes, it just isn't spoken) so the two never talk over
+> each other. With the voice switched off nothing is said, but the on-screen seconds still pulse.
 
 ---
 
@@ -838,8 +847,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 283 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
 | `tests/test-engines.mjs` | 141 | The generic engines: one rep per cycle, lenient vs strict, the boundaries for wobbles and speeding, posture gating, feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 794 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging; all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 340 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
-| `tests/test-app.mjs` | 332 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
+| `tests/test-page.mjs` | 345 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans |
+| `tests/test-app.mjs` | 344 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (counting thresholds included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary and Chinese/English switching |
 
 ---
 

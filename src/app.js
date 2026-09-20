@@ -112,6 +112,9 @@ const state = {
   criteriaLostSince: 0,  // 从什么时候开始没识别到人（丢帧宽限用）
   criteriaIcons: [],     // 每一格的线条图标（SVG 字符串，重建时生成一次）
   criteriaContext: null, // 生成图标用的上下文（动作姿势/计划/门控）
+  // ---- 计时类读秒（每 5 秒播报一次）----
+  holdCountNext: 5,      // 下一个要读的秒数（5 / 10 / 15 …）
+  holdCountAt: 0,        // 上一次读秒的时刻（用来让要领语音避让）
 };
 
 /** 一次动作完成后，进度条保持「空的」多久（让清零看得见） */
@@ -1209,6 +1212,38 @@ function pulseValue() {
   setTimeout(() => el.classList.remove('pop'), 160);
 }
 
+/* ------------------------------------------------------------------ *
+ * 计时类动作读秒：每 5 秒播报一次秒数
+ *
+ * 用户要求：平板支撑要读秒，每 5 秒读一次，语音播报「5 秒」「10 秒」…
+ * 计时类动作（平板支撑 / 侧平板 / 两种体前屈）都走这一段：
+ *   - 用识别器自己的 holdMs 算秒数（不是自己数帧），所以暂停/恢复后接着数，不会重头念；
+ *   - 计时归零（新一组 / 换动作 / 重置计数）→ 自动从 5 秒重新开始读；
+ *   - 和「要领达标」的语音撞在同一帧时让读秒先说，免得两句叠在一起听不清。
+ * ------------------------------------------------------------------ */
+
+/** 每隔几秒读一次 */
+const HOLD_COUNT_EVERY = 5;
+
+/** 语音 + 屏幕上同时跳一下秒数；返回这一帧要不要读 */
+function announceHoldCount(det, ex, now) {
+  if (!det || !ex || ex.kind !== 'hold') return false;
+  const sec = Math.floor((det.holdMs || 0) / 1000);
+  // 计时归零：重新装填，下一组从头从 5 秒开始读
+  if (sec <= 0) {
+    state.holdCountNext = HOLD_COUNT_EVERY;
+    return false;
+  }
+  if (sec < (state.holdCountNext || HOLD_COUNT_EVERY)) return false;
+  // 一次只读一个整数（暂停很久再恢复、秒数跳过了也只读当前这一档，不会连珠炮）
+  const n = sec - (sec % HOLD_COUNT_EVERY);
+  state.holdCountNext = n + HOLD_COUNT_EVERY;
+  state.holdCountAt = now;
+  audio.sayTime(n * 1000);   // 「5 秒」/「10 秒」…（语音开关关掉时自然不出声）
+  pulseValue();              // 屏幕上的秒数同时跳一下，听不见也看得见
+  return true;
+}
+
 function updatePipelineStatus() {
   const parts = [];
   if (camera.active) {
@@ -1764,7 +1799,8 @@ function handleEvents(events, now = performance.now()) {
       showScorePop(`+${ev.points}`);
       if (!state.saidSteps.has(ev.id)) {
         state.saidSteps.add(ev.id);
-        audio.sayStep(t(ev.labelKey));
+        // 和「5 秒 / 10 秒」读秒撞在同一帧时，让读秒先说：两句叠在一起谁都听不清
+        if (now - (state.holdCountAt || -1e9) > 400) audio.sayStep(t(ev.labelKey));
       }
       checkScoreMilestone(ev.score);
     } else if (ev.type === 'bonus') {
@@ -1918,6 +1954,8 @@ function loop() {
     // ---- 训练中：正常识别与计数 ----
     if (counting) {
       const events = feedDetector(frame, now);
+      // 计时类先读秒：这样同一帧里「保持 10 秒」的要领语音会让位给「10 秒」，不会两句叠在一起
+      announceHoldCount(state.detector, localizedExercise(state.exerciseId), now);
       handleEvents(events, now);
       updateCriteria(frame, events, now);
     } else {
@@ -2476,5 +2514,6 @@ window.__mfg = {
   showCriteriaTip, hideCriteriaTip,
   showGestureRings, hideGestureRings, updateGesture, triggerGesture, retrySet,
   gestureState, GESTURE_RINGS, GESTURE_HOLD_MS, RING_HIT,
+  announceHoldCount, HOLD_COUNT_EVERY,
   buildMusicTracks, selectMusicTrack,
 };

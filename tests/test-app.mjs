@@ -1564,6 +1564,75 @@ console.log('\n[8e] 开合跳');
   api.showHome();
 }
 
+/* ------------------------------------------------------------------ *
+ * 计时类每 5 秒读秒（用户要求：平板支撑播报「5 秒」「10 秒」…）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8f] 计时类每 5 秒读秒');
+{
+  const api = windowStub.__mfg;
+  const { localizedExercise } = await import('../src/exercises.js');
+  const said = [];
+  const origSay = api.audio.say.bind(api.audio);
+  api.audio.say = (txt, o) => { said.push(String(txt)); return origSay(txt, o); };
+  const step = (ms, now) => api.announceHoldCount(api.state.detector, localizedExercise(api.state.exerciseId), now);
+
+  api.openExercise('plank');
+  api.state.session = 'running';
+  ok('平板支撑是计时类（读秒逻辑适用）', localizedExercise('plank').kind === 'hold');
+  ok('读秒间隔就是 5 秒', api.HOLD_COUNT_EVERY === 5, String(api.HOLD_COUNT_EVERY));
+
+  const reads = [];
+  for (let sec = 1; sec <= 24; sec += 1) {
+    api.state.detector.holdMs = sec * 1000;
+    if (step(sec * 1000, 1000 + sec * 1000)) reads.push(sec);
+  }
+  ok('每 5 秒读一次：5 / 10 / 15 / 20 各读一次（中间不读）',
+    reads.join(',') === '5,10,15,20', reads.join(','));
+  ok('读到「5 秒」', said.includes('5 秒'), said.join(' | '));
+  ok('读到「10 秒」', said.includes('10 秒'), said.join(' | '));
+  ok('4 秒 / 6 秒这种非整档不读', !said.includes('4 秒') && !said.includes('6 秒'), said.join(' | '));
+  ok('每次读都是「数字 + 秒」', said.filter((x) => /^\d+ 秒$/.test(x)).length === 4, said.join(' | '));
+
+  // 计时归零（新一组 / 换动作 / 重置计数）→ 重新从 5 秒开始读
+  api.state.detector.holdMs = 0;
+  step(0, 40000);
+  api.state.detector.holdMs = 5000;
+  ok('计时归零后重新从 5 秒读起', step(5000, 41000) === true);
+
+  // 暂停很久再恢复（秒数跳档）→ 只读当前这一档，不连珠炮
+  said.length = 0;
+  api.state.detector.holdMs = 32000;
+  step(32000, 60000);
+  ok('秒数跳档时只读一次（不连珠炮）', said.length === 1 && said[0] === '30 秒', said.join(' | '));
+
+  // 计数类动作不该读秒
+  api.openExercise('squat');
+  api.state.session = 'running';
+  ok('计数类动作不读秒', step(5000, 70000) === false);
+
+  // 侧平板这种计时动作同样按 5 秒读（换动作 → 新识别器计时为 0 → 读秒重新装填）
+  api.openExercise('sidePlank');
+  api.state.session = 'running';
+  said.length = 0;
+  step(0, 79000);
+  api.state.detector.holdMs = 15000;
+  ok('侧平板支撑也按 5 秒读（计时类通用）', step(15000, 80000) === true && said[0] === '15 秒', said.join(' | '));
+
+  // 切到英文时读英文单位
+  api.changeLang('en');
+  api.openExercise('plank');
+  api.state.session = 'running';
+  said.length = 0;
+  step(0, 89000);
+  api.state.detector.holdMs = 5000;
+  step(5000, 90000);
+  ok('切到英文后读「5 seconds」', said.includes('5 seconds'), said.join(' | '));
+  api.changeLang('zh');
+
+  api.audio.say = origSay;
+  api.showHome();
+}
 
 console.log('\n[9] 语音播报健壮性');
 {
