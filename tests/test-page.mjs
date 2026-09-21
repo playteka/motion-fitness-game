@@ -294,6 +294,23 @@ console.log('\n[3] 静态资源与模型文件');
   ok('判据不是关节角的动作不标角度（开合跳/波比跳/跳跃类不占画面）',
     !/jumpingJack:|burpee:/.test(focusBlock));
 
+  /* ---- 膝：两条腿都在画面里时左右分别标（用户要求「分别显示左膝和右膝的度数」） ---- */
+  ok('膝标签按「两条腿是否都在画面里」分两种画法',
+    /if \(bothKneesVisible\(frame, P\(K\.L\), P\(K\.R\)\)\)/.test(renderSrc));
+  ok('「双腿都在画面里」复用识别器自己的判据（frame.legsVisible，和 🐞 面板同一个条件）',
+    /export function bothKneesVisible[\s\S]*?frame\.legsVisible === true/.test(renderSrc)
+    && /frame\.legsVisible === true/.test(renderSrc));
+  ok('左右膝读的是各自那一侧的角度（perSide.L.knee / perSide.R.knee），不是同一条腿抄两遍',
+    /frame\.perSide\[s\]\.knee/.test(renderSrc) && /for \(const s of \['L', 'R'\]\)/.test(renderSrc));
+  ok('一条腿看不清时退回单个「膝」（不硬说左右）',
+    /else if \(Number\.isFinite\(frame\.kneeAngle\)\)/.test(renderSrc));
+  ok('两种语言都有「左膝 / 右膝」词条',
+    Object.values(LOCALES).every((L) => L.debug?.kneeL === (L === LOCALES.en ? 'Left knee' : '左膝')
+      && L.debug?.kneeR === (L === LOCALES.en ? 'Right knee' : '右膝')),
+    Object.entries(LOCALES).map(([k, L]) => `${k}:${L.debug?.kneeL}/${L.debug?.kneeR}`).join(','));
+  ok('标签之间有防重叠处理（两个膝几乎重在一起时往上抬一行，不会叠成一团）',
+    /防重叠/.test(renderSrc) && /boxes\[i\]\.y -= boxes\[i\]\.h \+ base \* 2/.test(renderSrc));
+
   /* ---- 躯干倾角：用户要求「要在画面上显示躯干倾角的度数，类似『髋』『膝』的度数显示方法」 ---- */
   ok('躯干倾角用和髋 / 膝同一套画法（同一个 drawAngles 里画，不是另做的浮层）',
     /if \(showsTrunkAngle\(exerciseId\) && Number\.isFinite\(frame\.torsoIncl\)\)/.test(renderSrc));

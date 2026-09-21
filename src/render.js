@@ -65,6 +65,20 @@ export function showsTrunkAngle(exerciseId) {
   return (FOCUS[exerciseId] || []).length > 0;
 }
 
+/**
+ * 两条腿是不是都在画面里（用来决定「膝」标一个还是左右各标一个）。
+ *
+ * 判据用的是识别器自己算的那一条：`frame.legsVisible`（两侧「髋-膝-踝」可见度都 > 0.16，
+ * 和 🐞 面板里显示的「双腿可见」完全同一个条件），再确认两个膝关键点都落在画面内 ——
+ * 只要有一侧不满足，就退回标一个「膝」（侧拍时远侧腿常被躯干挡住，贸然标「左膝 / 右膝」会误导）。
+ */
+export function bothKneesVisible(frame, leftKnee, rightKnee) {
+  const inFrame = (p) => !!p && p.x > 0.02 && p.x < 0.98 && p.y > 0.02 && p.y < 0.98;
+  return frame.legsVisible === true
+    && inFrame(leftKnee) && inFrame(rightKnee)
+    && Number.isFinite(frame.perSide?.L?.knee) && Number.isFinite(frame.perSide?.R?.knee);
+}
+
 export class PoseRenderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -236,8 +250,19 @@ export class PoseRenderer {
     const K = { L: LM.L_KNEE, R: LM.R_KNEE };
     const A = { L: LM.L_ANKLE, R: LM.R_ANKLE };
 
-    if (focus.includes('knee') && Number.isFinite(frame.kneeAngle)) {
-      items.push({ at: P(K[side]), text: `${t('debug.knee')} ${Math.round(frame.kneeAngle)}°` });
+    // 膝：**两条腿都在画面里时，左右膝各标一个**（用户要求「分别显示左膝和右膝的度数」）；
+    // 只有一条腿看得清（侧拍时远侧腿常被躯干挡住）时仍旧只标一个「膝」，不做左右之分。
+    if (focus.includes('knee')) {
+      if (bothKneesVisible(frame, P(K.L), P(K.R))) {
+        for (const s of ['L', 'R']) {
+          items.push({
+            at: P(K[s]),
+            text: `${t(s === 'L' ? 'debug.kneeL' : 'debug.kneeR')} ${Math.round(frame.perSide[s].knee)}°`,
+          });
+        }
+      } else if (Number.isFinite(frame.kneeAngle)) {
+        items.push({ at: P(K[side]), text: `${t('debug.knee')} ${Math.round(frame.kneeAngle)}°` });
+      }
     }
     if (focus.includes('elbow') && Number.isFinite(frame.elbowAngle)) {
       items.push({ at: P(E[side]), text: `${t('debug.elbow')} ${Math.round(frame.elbowAngle)}°` });
@@ -278,20 +303,38 @@ export class PoseRenderer {
     ctx.font = `600 ${Math.round(base * 11)}px system-ui, "Microsoft YaHei", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (const it of items) {
-      const x = it.at.x * W;
-      const y = it.at.y * H - base * 14;
-      const w = ctx.measureText(it.text).width + base * 10;
+    const pillH = base * 16;
+    const boxes = items.map((it) => ({
+      text: it.text,
+      x: it.at.x * W,
+      y: it.at.y * H - base * 14,
+      w: ctx.measureText(it.text).width + base * 10,
+      h: pillH,
+    }));
+    // 防重叠：两个胶囊（例如侧拍站姿时左右膝几乎重在一起）撞上了，就把后面那个往上抬一行，
+    // 保证两个数字都看得见，而不是叠成一团。
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = 0; j < i; j += 1) {
+        let guard = 0;
+        while (guard < 4
+          && Math.abs(boxes[i].x - boxes[j].x) < (boxes[i].w + boxes[j].w) / 2
+          && Math.abs(boxes[i].y - boxes[j].y) < (boxes[i].h + boxes[j].h) / 2) {
+          boxes[i].y -= boxes[i].h + base * 2;
+          guard += 1;
+        }
+      }
+    }
+    for (const b of boxes) {
       ctx.save();
       // 平移到标签中心；镜像画面下再水平翻一次，抵消 CSS 的 scaleX(-1)，
       // 否则「膝 132°」会显示成左右颠倒的乱码。
-      ctx.translate(x, y);
+      ctx.translate(b.x, b.y);
       if (this.mirror) ctx.scale(-1, 1);
       ctx.fillStyle = 'rgba(8,16,28,0.72)';
-      roundRect(ctx, -w / 2, -base * 8, w, base * 16, base * 5);
+      roundRect(ctx, -b.w / 2, -b.h / 2, b.w, b.h, base * 5);
       ctx.fill();
       ctx.fillStyle = '#dff7ff';
-      ctx.fillText(it.text, 0, 0);
+      ctx.fillText(b.text, 0, 0);
       ctx.restore();
     }
     ctx.restore();

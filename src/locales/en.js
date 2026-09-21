@@ -238,6 +238,9 @@ export default {
     // Short name for the on-screen angle label (same length as “Hip / Knee”, so the pills never overlap)
     trunk: 'Trunk',
     knee: 'Knee',
+    // With both legs in frame the two knees are labelled separately (the user asked for it)
+    kneeL: 'Left knee',
+    kneeR: 'Right knee',
     elbow: 'Elbow',
     hip: 'Hip',
     bodyStraight: 'Body line',

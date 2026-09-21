@@ -806,6 +806,41 @@ console.log('\n[6] 火柴人开关');
       texts.some((x) => x.startsWith('髋')), texts.join(' | '));
     ok('深蹲：同样标出「躯干 xx°」',
       texts.some((x) => /^躯干\s+\d+°$/.test(x)), texts.join(' | '));
+
+    /* ---- 两条腿都在画面里时，左右膝分别标（用户要求） ---- */
+    {
+      const front = sp({ knee: 150, lean: 12, armDown: 0, ankleX: 1.0, view: 'front' });
+      const smF = new LS();
+      let fFront = { ok: false };
+      for (let i = 0; i <= 16; i++) {
+        fFront = cf(tm(smF.apply(front.map((q) => ({ ...q, v: q.visibility })), i / 30), A), null, i * 33, false, null);
+      }
+      texts.length = 0;
+      api.renderer.draw({ landmarks: front, frame: fFront, exerciseId: 'squat', status: 'ok' });
+      const leftK = texts.find((x) => x.startsWith('左膝'));
+      const rightK = texts.find((x) => x.startsWith('右膝'));
+      ok('正面深蹲（双腿都可见）：分别标出「左膝 xx°」和「右膝 xx°」',
+        fFront.legsVisible === true
+        && /^左膝\s+\d+°$/.test(leftK || '') && /^右膝\s+\d+°$/.test(rightK || ''),
+        `legsVisible=${fFront.legsVisible} | ${texts.join(' | ')}`);
+      ok('左右膝各标各的读数，不是同一个数字抄两遍',
+        !!leftK && !!rightK
+        && /^左膝\s+(\d+)°$/.exec(leftK)[1] !== /^右膝\s+(\d+)°$/.exec(rightK)[1],
+        `${leftK} / ${rightK}`);
+
+      // 远侧腿被躯干挡住（可见度 0.05）→ 退回单个「膝」，不做左右之分
+      const { LM: LMK } = await import('../src/geometry.js');
+      const hidden = front.map((p, i) => ([LMK.R_HIP, LMK.R_KNEE, LMK.R_ANKLE].includes(i)
+        ? { ...p, visibility: 0.05, v: 0.05 } : p));
+      const fHidden = cf(tm(hidden.map((q) => ({ ...q, v: q.visibility })), A), null, 999, false, null);
+      texts.length = 0;
+      api.renderer.draw({ landmarks: hidden, frame: fHidden, exerciseId: 'squat', status: 'ok' });
+      ok('一条腿看不清时不做左右之分（只标一个「膝」）',
+        fHidden.legsVisible === false
+        && texts.some((x) => /^膝\s+\d+°$/.test(x))
+        && !texts.some((x) => x.startsWith('左膝') || x.startsWith('右膝')),
+        `legsVisible=${fHidden.legsVisible} | ${texts.join(' | ')}`);
+    }
     // 没有角度判据的动作（跳跃离地、开合距离）不标角度，避免画面全是数字
     texts.length = 0;
     api.renderer.draw({ landmarks, frame, exerciseId: 'jumpingJack', status: 'ok' });

@@ -83,6 +83,13 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   (dark pill plus degrees, flipped together with the mirror view, and hidden together with the angle toggle) and it is anchored at
   the **middle of the torso, pushed out perpendicular to the torso** (beside the trunk when you stand, above the body when you lie
   down), so it never stacks on top of the other labels.
+- **With both legs in frame, the two knees are labelled separately** (the user asked: “when both legs are on screen, show the left
+  and right knee angles separately”): the screen then reads **“Left knee xx°”** and **“Right knee xx°”**, each measured on its own
+  side — for criteria like the lunge's “both knees must bend” you can see at a glance which leg is lagging. When only one leg is
+  clearly visible (the far leg hides behind the torso in a side view) it falls back to a single neutral **“Knee xx°”** rather than
+  guessing a side. “Both legs in frame” is the detector's own `frame.legsVisible` (hip-knee-ankle visibility above 0.16 on both
+  sides) — the very same condition the 🐞 panel shows as “Both legs visible”. If the two labels would land almost on top of each
+  other (standing side-on), one is automatically lifted a row so they never merge into a blob.
 - **Goal progress ring, best scores and workout history** (saved locally in your browser).
 - **Works offline**: the model and wasm are local files, so it runs with no internet at all — and no video is ever uploaded.
 
@@ -556,7 +563,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2053 assertions in the suite).
+> exactly on the detector's own progress line (2062 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -923,8 +930,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 284 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
 | `tests/test-engines.mjs` | 158 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 851 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 366 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour” and “the trunk tilt is labelled like Hip / Knee” |
-| `tests/test-app.mjs` | 376 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the three kinds of on-screen angle labels (Hip / Knee / trunk tilt) |
+| `tests/test-page.mjs` | 372 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee” and “the two knees are labelled separately” |
+| `tests/test-app.mjs` | 379 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
 
 ---
 
