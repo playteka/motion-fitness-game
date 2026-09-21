@@ -85,11 +85,18 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
     judging is paused and the hint bar below tells you what is missing, e.g. “lie down first”); ② **a correction was spoken within
     the last 2 seconds** (`now - state.lastCueAt < 2000`) — it stays amber for those 2 seconds even after you fix it, pointing at
     what was just said, then turns teal again by itself;
-  - **Grey** (`idle`): this frame **was not accepted as a valid person** (`frame.ok === false`: the 12 core joints average a
-    visibility of ≤ 0.16, or any single landmark drops to ≤ 0.03). Typical causes: you moved out of frame, you are too far from the
-    camera, the room is too dark or back-lit, or large parts of the body occlude each other. Grey is **not an error** — it recovers
-    as soon as you are back in frame; only when nobody is found at all does the skeleton **disappear entirely** (instead of turning
-    grey), and the status bar speaks “no person found”.
+  - **Grey** (`idle`): this frame **was not accepted as a valid person** (`frame.ok === false`; the exact rules live in the
+    constants at the top of `src/metrics.js`): the 12 core joints (shoulders / elbows / wrists / hips / knees / ankles) average a
+    visibility of ≤ 0.10, or **three or more** of the 15 judging points are invisible (visibility ≤ 0.02), or the **torso length
+    drops to ≤ 2% of the frame height** (all landmarks collapsed onto one point — the degenerate frames you get just before
+    tracking is lost). Typical causes: you moved out of frame, you are too far from the camera, the room is too dark or back-lit, or
+    large parts of the body occlude each other. Grey is **not an error** — it recovers as soon as you are back in frame; only when
+    nobody is found at all does the skeleton **disappear entirely** (instead of turning grey), and the status bar speaks “no person
+    found”.
+    > These thresholds were **loosened** after user feedback (they used to be “average ≤ 0.16, or any single landmark ≤ 0.03”):
+    > raising both hands out of frame, a foot leaving the picture, or the face and fingers being hidden all still count as “person
+    > detected” (the face and fingers never take part in judging), and a dimly lit room is tolerated down to an average visibility of
+    > 0.10. In exchange, a new “torso length must not collapse” rule keeps the degenerate frames out.
   - Note: the **dashed calibration silhouette** has its own three colours (bright sky-blue = nobody found yet, bright amber =
     adjusting, bright green = ready) — a different set from the skeleton's three.
 - **The screen also shows “Trunk xx°” (the trunk tilt)**: as the user asked — “show the trunk tilt in degrees on screen, the same
@@ -578,7 +585,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2062 assertions in the suite).
+> exactly on the detector's own progress line (2070 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -942,7 +949,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
-| `tests/test-detectors.mjs` | 284 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, and the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart) |
+| `tests/test-detectors.mjs` | 292 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
 | `tests/test-engines.mjs` | 158 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 851 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 372 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee” and “the two knees are labelled separately” |
@@ -1002,6 +1009,11 @@ motion-fitness-game/
     `enterHoldMs` / `exitHoldMs` are the jitter tolerances; `PUSHUP.elbowFull` 106 / `PUSHUP.looseElbow` 124;
     `BRIDGE.upRise` 0.22 and `minRepMs` 700; `PLANK.bodyStraight` 142;
   - `HoldDetector.graceMs`: the grace period for timed exercises (default 1200ms).
+  - **The “is this frame a person?” thresholds** (top of `src/metrics.js`, loosened after user feedback):
+    `PERSON_VIS_MEAN` 0.10 (average visibility of the core joints), `PERSON_VIS_MIN` 0.02 with `PERSON_VIS_SLACK` 2
+    (two of the 15 judging points may be invisible; from the third one on, visibility must be ≥ 0.02), and `PERSON_MIN_TORSO` 0.02
+    (torso length at least 2% of the frame height, which keeps collapsed degenerate frames out). `src/calibration.js` reads the same
+    `PERSON_VIS_MEAN`.
   - **One relaxed tier only**: `DetectorBase` no longer has a `strict` switch at all (roughly doing the movement counts; poor form
     only triggers a spoken correction plus a quality discount); the one counting rule left is that the keyframe chain on the progress bar is fully lit.
 

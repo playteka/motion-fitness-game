@@ -29,6 +29,35 @@ export const DEFAULT_CALIB = {
  */
 export const HORIZONTAL_TILT = 55;
 
+/**
+ * 「这一帧算不算识别到人」（`frame.ok`）的可见度门槛。
+ *
+ * 用户反馈原来的 **0.16 / 0.03 偏严**：明明站得清清楚楚也会时不时变灰、被判成「没找到人」。
+ * 所以整体放宽，并且把「最差点」这条改成**只看判定真正用得上的点、还允许两个点看不见**：
+ *
+ *   1. 核心关节（肩 / 肘 / 腕 / 髋 / 膝 / 踝，双侧共 12 个）的**平均**可见度 > `PERSON_VIS_MEAN`；
+ *   2. 判定用的 15 个点（上面 12 个 + 鼻 + 双脚）里，**第三差**的那个 > `PERSON_VIS_MIN`
+ *      —— 双手举出画面、脚在画面外、头侧过去这类正常情况（一两个点看不见）不再算「没人」；
+ *   3. 脸（眼睛 / 耳朵 / 嘴）和手指 6 个点**根本不参与判定**，原来它们也会被算进「最差点」，
+ *      一个手指被挡住就整帧作废 —— 这正是「明明识别得到却变灰」的主因，现在不再看了。
+ *
+ * 三个数一起导出，测试直接引用（免得以后改了代码、测试还在验旧值）。
+ */
+export const PERSON_VIS_MEAN = 0.10;   // 核心关节平均可见度（原来 0.16）
+export const PERSON_VIS_MIN = 0.02;    // 判定点里第三差的可见度（原来只看「任意点 ≥ 0.03」）
+export const PERSON_VIS_SLACK = 2;     // 允许几个判定点看不见（手举出画面 / 脚出画 / 头侧过去）
+
+/**
+ * 躯干长至少要占画面高度的这个比例，否则这一帧不算「人」。
+ *
+ * 门槛放宽之后要靠它挡住**退化帧**：跟踪快要丢失时，关键点会一起塌向同一个坐标，
+ * 此时「可见度」可能还是很高（滤波后的可见度是慢慢降下去的），但肩到髋的距离已经趋近 0 ——
+ * 这种帧喂给识别器会算出毫无意义的姿势（真机上表现为「丢帧瞬间乱跳一步」）。
+ * 2% 这个值远低于任何可用姿势（站好时躯干长约 0.25 ~ 0.35，校准建议身体占画面 30% 以上），
+ * 所以正常用户永远不会被它挡住。
+ */
+export const PERSON_MIN_TORSO = 0.02;
+
 const SIDE_IDX = {
   L: { shoulder: LM.L_SHOULDER, elbow: LM.L_ELBOW, wrist: LM.L_WRIST, hip: LM.L_HIP, knee: LM.L_KNEE, ankle: LM.L_ANKLE, heel: LM.L_HEEL, foot: LM.L_FOOT },
   R: { shoulder: LM.R_SHOULDER, elbow: LM.R_ELBOW, wrist: LM.R_WRIST, hip: LM.R_HIP, knee: LM.R_KNEE, ankle: LM.R_ANKLE, heel: LM.R_HEEL, foot: LM.R_FOOT },
@@ -225,7 +254,6 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   // 双手离地高度（俯卧撑类：手撑在地面 ≈0；手撑在椅子/箱子上会明显更高）
   const wristClearMin = Math.min(...['L', 'R'].map((s) => perSide[s].wristClear).filter(Number.isFinite));
 
-  const visMin = Math.min(...metric.map((p) => p.v ?? 1));
   // 只看核心关节的平均可见度：个别末端点（手指、耳朵）被遮挡不应该判定为“没人”
   const coreIdx = [
     LM.L_SHOULDER, LM.R_SHOULDER, LM.L_HIP, LM.R_HIP,
@@ -233,6 +261,12 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     LM.L_ELBOW, LM.R_ELBOW, LM.L_WRIST, LM.R_WRIST,
   ];
   const coreVis = coreIdx.reduce((s, i) => s + (metric[i].v ?? 1), 0) / coreIdx.length;
+
+  // 「最差点」只看判定用得上的 15 个点，并允许 PERSON_VIS_SLACK 个点看不见（见文件头的门槛说明）：
+  // 脸和手指不参与判定，不再拖后腿；双手举出画面、脚出画这类正常情况也不再判成「没人」。
+  const JUDGE_IDX = [...coreIdx, LM.NOSE, LM.L_FOOT, LM.R_FOOT];
+  const judgeVis = JUDGE_IDX.map((i) => metric[i].v ?? 1).sort((a, b) => a - b);
+  const visFloor = judgeVis[PERSON_VIS_SLACK] ?? 1;
 
   // 全身是否入镜：至少一侧“髋-膝-踝-肩-肘-腕”链条清楚可见；
   // 真机侧拍时远侧肢体可见度天然偏低，所以门槛放宽，并允许用核心关节平均可见度兜底
@@ -243,7 +277,7 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const legsVisible = legVisL > 0.16 && legVisR > 0.16;
 
   return {
-    ok: coreVis > 0.16 && visMin > 0.03,
+    ok: coreVis > PERSON_VIS_MEAN && visFloor > PERSON_VIS_MIN && torsoLen > PERSON_MIN_TORSO,
     t: now,
     side: best.s,
     perSide,
@@ -302,6 +336,7 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     bodyVisible,
     legsVisible,
     coreVis,
+    visFloor,
     groundY,
     shoulderWidth: shoulderW,
     hipWidth: hipW,

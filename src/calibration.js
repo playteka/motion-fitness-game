@@ -11,6 +11,9 @@
 
 import { EXERCISE_MAP as CATALOG_MAP } from './catalog.js';
 import { median } from './geometry.js';
+// 「识别到人」的可见度门槛和 metrics.js 用同一组常量：这样「火柴人已经变彩了、
+// 校准却还说没找到人」这种自相矛盾的情况不会出现（用户反馈门槛偏严后一起放宽）。
+import { PERSON_VIS_MEAN } from './metrics.js';
 
 /**
  * 目标轮廓与判定阈值（归一化画面坐标，x/y 都是画面宽/高的比例）。
@@ -439,7 +442,7 @@ export class Calibrator {
   /** 累计几帧地面位置后给出稳定的中位数，避免单帧抖动把地面线带偏 */
   observeGround(f) {
     if (!f || !f.ok || !Number.isFinite(f.groundY)) return;
-    if (f.coreVis < 0.2) return;
+    if (f.coreVis < PERSON_VIS_MEAN) return;
     this._ground.push(f.groundY);
     if (this._ground.length > 90) this._ground.shift();
     if (this._ground.length >= 12) this.groundY = median(this._ground);
@@ -462,9 +465,9 @@ export class Calibrator {
     const checks = [];
     const push = (id, ok) => checks.push({ id, ok, blocking: BLOCKING_CHECKS.has(id) });
 
-    // 可见度门槛放宽到 0.3：侧拍时远侧肢体天然容易被挡住，
-    // 原来的门槛会让「人明明在画面里」也判成不可见，从而卡住整个校准。
-    const visible = !!(f && f.ok && f.bodyVisible && f.coreVis > 0.2
+    // 可见度门槛跟识别器同源（PERSON_VIS_MEAN，见 metrics.js）：
+    // 侧拍时远侧肢体天然容易被挡住，门槛太严会让「人明明在画面里」也判成不可见，从而卡住整个校准。
+    const visible = !!(f && f.ok && f.bodyVisible && f.coreVis > PERSON_VIS_MEAN
       && f.perSide[f.side] && Number.isFinite(f.perSide[f.side].knee));
     push('visible', visible);
     if (!visible) {

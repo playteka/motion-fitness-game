@@ -9,7 +9,9 @@
  */
 
 import { toMetric, LandmarkSmoother, LM } from '../src/geometry.js';
-import { computeFrame } from '../src/metrics.js';
+import {
+  computeFrame, PERSON_VIS_MEAN, PERSON_VIS_MIN, PERSON_VIS_SLACK, PERSON_MIN_TORSO,
+} from '../src/metrics.js';
 import { createDetector } from '../src/exercises.js';
 import { specStages, stageHolds } from '../src/specs.js';
 import { EXERCISES } from '../src/catalog.js';
@@ -304,6 +306,59 @@ console.log('\n[0] 指标基线');
   const fProne = r.peek(pronePose({ hip: { x: 1.0, y: 0.68 }, bodyTilt: 63, elbow: 172, armDown: 0 }));
   if (DUMP) console.log('   俯撑:', dump(fProne));
   ok('俯撑：肩离地明显', fProne.shoulderClear > 0.5, `clear=${fProne.shoulderClear?.toFixed(2)}`);
+}
+
+/* ------------------------------------------------------------------ *
+ * [0b] 「这一帧算不算识别到人」的可见度门槛（用户反馈偏严 → 已放宽）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[0b] 识别门槛（可见度）');
+{
+  const CORE_ALL = [
+    LM.L_SHOULDER, LM.R_SHOULDER, LM.L_HIP, LM.R_HIP, LM.L_KNEE, LM.R_KNEE,
+    LM.L_ANKLE, LM.R_ANKLE, LM.L_ELBOW, LM.R_ELBOW, LM.L_WRIST, LM.R_WRIST,
+  ];
+  const frameFrom = (pose) => computeFrame(toMetric(pose.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT), null, 0, false, null);
+  const withVis = (pose, idx, v) => pose.map((p, i) => (idx.includes(i) ? { ...p, visibility: v } : p));
+  const base = standingPose({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' });
+
+  ok('门槛就是导出的三个常量（测试与代码不会各说一套）',
+    PERSON_VIS_MEAN === 0.10 && PERSON_VIS_MIN === 0.02 && PERSON_VIS_SLACK === 2,
+    `${PERSON_VIS_MEAN} / ${PERSON_VIS_MIN} / ${PERSON_VIS_SLACK}`);
+  ok('用户要求：比原来（0.16 / 0.03）更宽松',
+    PERSON_VIS_MEAN < 0.16 && PERSON_VIS_MIN < 0.03);
+
+  const clean = frameFrom(base);
+  ok('正常情况下是有效帧', clean.ok === true, `coreVis=${clean.coreVis?.toFixed(3)}`);
+
+  // 双手举出画面（两个腕点看不见）→ 仍然算有效帧（以前「任意一点 < 0.03」会整帧作废）
+  const handsOut = withVis(base, [LM.L_WRIST, LM.R_WRIST], 0);
+  const fHands = frameFrom(handsOut);
+  ok('两只手都出画（腕可见度 0）时仍算识别到人 —— 放宽的重点',
+    fHands.ok === true, `coreVis=${fHands.coreVis?.toFixed(3)} floor=${fHands.visFloor?.toFixed(3)}`);
+
+  // 第三个点也看不见 → 超出容忍（slack=2），判为无效
+  const threeOut = withVis(base, [LM.L_WRIST, LM.R_WRIST, LM.L_FOOT], 0);
+  ok('三个判定点看不见时才算「没人」',
+    frameFrom(threeOut).ok === false, `floor=${frameFrom(threeOut).visFloor?.toFixed(3)}`);
+
+  // 脸和手指不参与判定：它们全看不见也不该影响
+  const faceGone = withVis(base, [LM.NOSE, LM.L_EYE, LM.R_EYE, LM.L_EAR, LM.R_EAR, LM.MOUTH_L, LM.MOUTH_R,
+    LM.L_PINKY, LM.R_PINKY, LM.L_INDEX, LM.R_INDEX, LM.L_THUMB, LM.R_THUMB], 0);
+  ok('脸和手指（不参与判定的点）全看不见，也不影响「识别到人」',
+    frameFrom(faceGone).ok === true, `floor=${frameFrom(faceGone).visFloor?.toFixed(3)}`);
+
+  // 整体太暗 / 太远：核心关节平均可见度过低 → 无效
+  const dark = withVis(base, CORE_ALL, 0.05);
+  ok('核心关节平均可见度过低（0.05）时判为「没人」',
+    frameFrom(dark).ok === false, `coreVis=${frameFrom(dark).coreVis?.toFixed(3)}`);
+
+  // 退化帧：关键点全塌成同一个坐标（跟踪快丢失时会出现）→ 躯干长趋近 0，必须挡掉
+  const collapsed = base.map(() => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }));
+  const fCollapsed = frameFrom(collapsed);
+  ok('关键点全塌成一点（躯干长≈0）时判为「没人」，不会拿它算姿势',
+    fCollapsed.ok === false && fCollapsed.torsoLen <= PERSON_MIN_TORSO,
+    `torsoLen=${fCollapsed.torsoLen?.toFixed(4)}`);
 }
 
 function dump(f) {
