@@ -2290,23 +2290,25 @@ console.log('\n[12] 语音教练');
   }
 
 
-  // 5.2b) 快节奏动作（开合跳）：每 5 次才报一次数（用户要求），中间的次数不念
+  // 5.2b) 快节奏动作（开合跳 / 勾腿跳）：每 5 次才报一次数（用户要求），中间的次数不念
   {
     const same = api.state.exerciseId;
-    api.selectExercise('jumpingJack');
-    api.state.settings.voice = true;
-    api.state.detector = api.state.detector || savedDet;
-    api.state.repsSinceEncourage = 0;
-    const counts = [];
-    for (const n of [1, 4, 5, 6, 9, 10, 11, 14, 15, 19, 20]) {
-      said.length = 0;
-      api.state.detector.validReps = n;
-      api.handleEvents([{ type: 'rep', valid: true, index: n }]);
-      const spokeCount = said.some((s) => new RegExp(`^${n}\\b`).test(s.trim()));
-      if (spokeCount) counts.push(n);
+    for (const [id, name] of [['jumpingJack', '开合跳'], ['buttKick', '勾腿跳']]) {
+      api.selectExercise(id);
+      api.state.settings.voice = true;
+      api.state.detector = api.state.detector || savedDet;
+      api.state.repsSinceEncourage = 0;
+      const counts = [];
+      for (const n of [1, 4, 5, 6, 9, 10, 11, 14, 15, 19, 20]) {
+        said.length = 0;
+        api.state.detector.validReps = n;
+        api.handleEvents([{ type: 'rep', valid: true, index: n }]);
+        const spokeCount = said.some((s) => new RegExp(`^${n}\\b`).test(s.trim()));
+        if (spokeCount) counts.push(n);
+      }
+      ok(`${name}：只在 5 的整数倍报数（5 / 10 / 15 / 20），中间的次数不念`,
+        counts.join(',') === '5,10,15,20', `实际报了：${counts.join(',') || '（一次都没报）'}`);
     }
-    ok('开合跳：只在 5 的整数倍报数（5 / 10 / 15 / 20），中间的次数不念',
-      counts.join(',') === '5,10,15,20', `实际报了：${counts.join(',') || '（一次都没报）'}`);
     api.selectExercise(same);
     api.state.detector = savedDet;
   }

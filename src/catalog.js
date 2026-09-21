@@ -134,6 +134,8 @@ export const EXERCISES = [
     //   holdMs   一侧要连续保持 25ms 才算「在做」（原来 60ms ≈ 两帧，快动作中间抖一下就丢一次）
     //   minRepMs 两次之间至少 110ms（原来 180ms，快节奏时会把后面的次数直接吞掉）
     engine: 'alt', plan: 'standAlt', posture: 'stand', judge: 'leg', target: 20,
+    // 同样节奏很快（一秒约两下）：**每 5 次报一次数**（用户要求），别每次都念
+    speakEvery: 5,
     params: {
       gate: 'stand', metric: 'knee', cmp: 'lt',
       onValue: 100, offValue: 135, holdMs: 25, minRepMs: 110,
