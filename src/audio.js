@@ -402,13 +402,12 @@ export class AudioKit {
   /** 报要领：只在每个要领第一次完成时念出来，避免刷屏 */
   sayStep(label) { this.say(label, { rate: 1.2, minGapMs: 2200 }); }
 
-  /** 报分数 */
-  sayScore(n) {
-    const suffix = t('speech.scoreSuffix');
-    this.say(`${n} ${suffix}`.trim(), { rate: 1.3, minGapMs: 1500, pitch: 1.15 });
-  }
-
-  /** 报计时时长 */
+  /**
+   * 报计时时长（计时类动作的「5 秒 / 10 秒」）
+   *
+   * 注意：这里**故意没有「报分数」的方法** —— 用户明确要求「语音一律不报分数，只报次数和读秒」。
+   * 分数只出现在屏幕上（HUD、结算面板、训练记录）；跨过 50 分时改念一句激励语（见 app.js 的 checkScoreMilestone）。
+   */
   sayTime(ms) {
     const s = Math.max(0, Math.round(ms / 1000));
     const suffix = t('speech.secondSuffix');

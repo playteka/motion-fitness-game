@@ -171,7 +171,7 @@ export default {
     modelSwitchFail: 'Model switch failed: {msg}',
     fileProtocol: 'Opened over file:// — the browser will block the model and the camera. Run node preview-server.js and open http://127.0.0.1 instead.',
     half: 'Halfway there — keep it up!',
-    halfVoice: 'Halfway there, keep it up',
+    halfVoice: 'Halfway there — awesome, keep it up',
     milestone: '{score} points already!',
     goalVoice: 'Goal reached, awesome',
     cameraReady: 'Camera {w}×{h}',
@@ -1014,9 +1014,20 @@ export default {
 
   /* ---------------- Speech ---------------- */
   speech: {
-    encourage: ['Keep going', 'Great job', 'Stay with it', 'Nice work', 'Hold that form', 'Excellent'],
+    // Encouragement pool (the user asked for more emotional payoff): praise out loud, cycled in order
+    encourage: [
+      'Keep going', 'Great job', 'Excellent', 'Well done', 'Beautiful', 'Very nice',
+      'Perfect', 'Right on rhythm', 'Hold it', 'Stay steady', 'Great pacing', 'Keep it up',
+      'Stay with it', 'Do not stop', 'Looking strong', 'Getting smoother', 'Solid set', 'Keep breathing',
+      'A little more', 'You are crushing it', 'So much grit', 'Form is looking great', 'Rooting for you', 'Nice, just like that',
+    ],
+    // A louder line for a round with every keyframe cleared (perfect-round bonus)
+    praiseRound: ['Perfect!', 'Full marks, beautiful', 'Textbook form!', 'Spot on — every keyframe'],
+    // Appended to the set result when a set ends
+    praiseSet: ['Great work, give yourself a pat on the back', 'Nice session, you look strong today', 'Strong set, remember to hydrate', 'Keep it up, I love watching you train'],
     repSuffix: '',
     secondSuffix: 'seconds',
+    // Screen text only — the voice never reads the score (the user asked for that)
     scoreSuffix: 'points',
     start: 'Go',
     half: 'Halfway there, keep it up',
@@ -1025,6 +1036,7 @@ export default {
     noPerson: 'Step into the middle of the frame and keep your whole body in view',
     nextStep: 'Next: {label}. {hint}',
     nextStepNoHint: 'Next: {label}',
-    setSummary: 'Set done: {value} {unit}, score {score}',
+    // Spoken set result: **reps / duration plus a cheer, never the score** (the user asked for that)
+    setSummary: 'That set: {value} {unit} — {praise}',
   },
 };

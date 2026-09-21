@@ -2170,6 +2170,46 @@ console.log('\n[12] 语音教练');
   const encouraged = said.filter((s) => pool.includes(s));
   ok('满 3 次会给一句激励语', encouraged.length >= 1, `说了 ${said.join(' / ')}｜池子 ${pool.join('/')}`);
 
+  // 5.2a) 用户要求：语音**一律不报分数**；跨过 50 分改成念一句激励语
+  {
+    const base = api.state.lastScoreMilestone || 0;
+    said.length = 0;
+    api.state.coachAt = -Infinity;
+    // 清掉「上一句激励」的去重状态：去重命中时本来就该闭嘴，那不是这条用例要测的东西
+    api.audio._lastEncourage = null;
+    api.handleEvents([{ type: 'points', score: base + 60 }]);
+    const crossed = Math.floor((base + 60) / 50) * 50;
+    ok('跨过 50 分时不再念分数（不出现数字与「分」）',
+      said.length > 0 && !said.some((s) => /分|points/.test(s)), said.join(' / '));
+    ok('跨过 50 分时改念一句激励语',
+      said.some((s) => pool.includes(s)), said.join(' / '));
+    ok('跨过 50 分的档位被记住（不会重复念）', api.state.lastScoreMilestone === crossed,
+      `${api.state.lastScoreMilestone} vs ${crossed}`);
+  }
+
+  // 5.2b) 整轮满分（关键帧全做到）→ 补一句更热烈的夸奖
+  {
+    said.length = 0;
+    api.handleEvents([{ type: 'bonus', points: 6 }]);
+    await new Promise((r) => setTimeout(r, 1100));   // 夸奖延后 0.9 秒，等它说完
+    const roundPraise = (await import('../src/i18n.js')).t('speech.praiseRound');
+    ok('整轮满分时会念一句夸奖（完美 / 太漂亮了…）',
+      (Array.isArray(roundPraise) ? roundPraise : [roundPraise]).some((p) => said.includes(p)),
+      said.join(' / '));
+  }
+
+  // 5.2b-2) 激励语池要够大（用户要求「多给点情绪价值」）
+  {
+    const zhPool = (await import('../src/locales/zh.js')).default.speech.encourage;
+    const enPool = (await import('../src/locales/en.js')).default.speech.encourage;
+    ok('激励语池至少 20 句（用户要求多一些情绪价值）', zhPool.length >= 20, `${zhPool.length} 句`);
+    ok('中英激励语池长度一致（否则轮到的句子对不上）', zhPool.length === enPool.length,
+      `${zhPool.length} vs ${enPool.length}`);
+    ok('激励语里有「太棒了 / 优秀 / 加油」这类正面词',
+      zhPool.includes('太棒了') && zhPool.includes('优秀') && zhPool.includes('加油'), zhPool.slice(0, 6).join('/'));
+  }
+
+
   // 5.2b) 快节奏动作（开合跳）：每 10 次才报一次数（用户要求），中间的次数不念
   {
     const same = api.state.exerciseId;
@@ -2198,15 +2238,23 @@ console.log('\n[12] 语音教练');
   api.handleEvents([{ type: 'cue', code: 'depth', key: 'cues.squat.depth', params: null, level: 'warn' }]);
   ok('做起来之后纠正提示不再插话（2 秒间隔内不念）', said.length === 0, said.join(' / '));
 
-  // 6) 一组结束：念本组成绩
+  // 6) 一组结束：念本组成绩（**只念次数 + 一句夸奖，不念分数** —— 用户要求语音不报分数）
   said.length = 0;
   api.state.coachAt = -Infinity;
   api.state.detector = savedDet;
   if (api.state.detector) { api.state.detector.validReps = 7; api.state.detector.score = 42; }
   api.state.session = 'running';
   api.stopSession('user');
-  ok('一组结束时会念出本组成绩',
-    said.some((s) => s.includes('7') && s.includes('42')), said.join(' / '));
+  const summaryLine = said.find((s) => s.includes('7')) || '';
+  ok('一组结束时会念出本组次数',
+    /\b7\b/.test(summaryLine), said.join(' / '));
+  ok('一组结束的播报里**没有分数**（不念「42 分」）',
+    summaryLine !== '' && !summaryLine.includes('42') && !summaryLine.includes('分'), summaryLine);
+  const setPraise = (await import('../src/i18n.js')).t('speech.praiseSet');
+  ok('一组结束时会补一句夸奖（情绪价值）',
+    (Array.isArray(setPraise) ? setPraise : [setPraise]).some((p) => summaryLine.includes(p)), summaryLine);
+  ok('结算面板上仍然有分数（只是不念出来）',
+    elements.get('summaryGrid').innerHTML.includes('得分'), elements.get('summaryGrid').innerHTML.slice(0, 80));
 
   api.audio.say = origSay;
   api.state.settings.voice = true;

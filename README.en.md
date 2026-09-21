@@ -64,9 +64,13 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - **🐞 Metrics panel (with “Rep diagnosis”)**: besides the raw numbers (view, visibility, joint angles), the first line is a **rep diagnosis** —
   which stage the detector is in, the line it needs you to come back to for a rep to count, this rep’s minimum/peak, and **why the last attempt was not counted**
   (too shallow / too fast / too little range …). If counting looks wrong, read that line out and we can pinpoint it instead of guessing.
-- **Spoken counting in the selected language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
+- **Spoken counting in the selected language + sound effects**: hitting a form step plays a rising chime and the first time you hit a step it is spoken aloud. **The voice never reads the score** (the user asked for reps and seconds only) — when you cross
+  another 50 points it says an **encouragement** instead, and the score lives on screen (HUD, set summary, history).
 - **Motivation first, guidance moderate**: **every rep is spoken aloud**, every 3 reps you get an **encouragement**
-  (“Keep going / Great job / Stay with it / Nice work / Hold that form / Excellent”, rotating so it never repeats), and hitting your target celebrates you before adding another cheer;
+  (**a rotating pool of 24**: “Keep going / Great job / Excellent / Beautiful / Right on rhythm / You are crushing it / So much grit /
+  Getting smoother …”), hitting your target celebrates you before adding another cheer, a **round with every keyframe cleared** earns an
+  extra shout (“Perfect! / Full marks, beautiful …”), and a **set ending** says “that set: N reps” plus a cheer (“great work, give
+  yourself a pat on the back …”, again with no score);
   **very fast exercises are the exception**: a jumping jack takes about 0.6 s per rep, so counting every rep is both
   unintelligible and disruptive — it (`speakEvery: 10` in `catalog.js`) **speaks the count only every 10 reps**, the
   encouragement drops to the same every-10 rhythm, and the counting frame never also says an encouragement (two lines in one
@@ -589,7 +593,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2096 assertions in the suite).
+> exactly on the detector's own progress line (2106 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -857,12 +861,14 @@ Timed family plans also give **+1 point for every second you hold**; if your for
 | A form step is hit | **A single rising chime** + a `+12` point animation floating up on screen |
 | Every form step in the round complete | A three-note rising “perfect round” chord + floating points |
 | First time you hit each form step | **The form step is spoken aloud**; repeats only chime, no voice, so it never floods your ears |
-| Every 50 points crossed | A rising cue tone + the score announced by voice + a congratulatory subtitle |
+| Every 50 points crossed | A rising cue tone + **an encouragement spoken aloud** (never the score) + a subtitle reading “N points already!” |
 | Valid rep +1 | A pentatonic rep tone + a spoken rep count |
+| Every 3 reps (every 10 on fast exercises) | **An encouragement** (24 rotating lines: keep going / great job / excellent / you are crushing it …) |
+| Every keyframe in a round cleared | The perfect-round chord + floating text, then a cheer about 0.9 s later (perfect! / full marks, beautiful …) |
 | A rep doesn't count | A low “pff” sound + a subtitle pointing out the problem |
-| Holding in a timed exercise | A soft tick every second + the score climbing steadily |
+| Holding in a timed exercise | A soft tick every second + the score climbing steadily on screen |
 | **Every 5 seconds while holding** | **The elapsed seconds are spoken — “5 seconds”, “10 seconds”, …** (plank, side plank and the folds alike), and the on-screen seconds pulse in step |
-| Goal reached / set ended | A celebration chord + goal floating text + a summary panel (score plus any form steps you missed) |
+| Goal reached / set ended | A celebration chord + goal floating text + a summary panel (score plus any form steps you missed); the voice says only “that set: N reps” plus a cheer |
 
 Both sound effects and voice can be turned off with one click in the ⚙️ Settings dialog.
 
@@ -977,7 +983,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-engines.mjs` | 168 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 853 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 372 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee” and “the two knees are labelled separately” |
-| `tests/test-app.mjs` | 384 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
+| `tests/test-app.mjs` | 394 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
 
 ---
 

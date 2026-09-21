@@ -1581,9 +1581,16 @@ function stopSession(reason = 'user') {
   const doneCount = steps.filter((s) => s.done).length;
   const hasWork = value > 0 || det.partialReps > 0 || score > 0;
   if (hasWork) saveSession({ ex, value, partial: det.partialReps, reason, score });
-  // 本组结果也念出来（以语音为主：用户不必转头看小结卡）
+  // 本组结果也念出来（以语音为主：用户不必转头看小结卡）。
+  // **只念次数 / 时长 + 一句夸奖，不念分数**（用户要求：语音一律不报分数）——
+  // 分数照旧显示在结算面板与记录里。
   if (hasWork) {
-    audio.say(t('speech.setSummary', { value, unit: ex.unit, score }), { rate: 1.15, force: true });
+    state.setPraiseSeed = (state.setPraiseSeed || 0) + 1;
+    audio.say(t('speech.setSummary', {
+      value,
+      unit: ex.unit,
+      praise: poolLine('speech.praiseSet', state.setPraiseSeed),
+    }), { rate: 1.15, force: true });
   }
 
   const items = [
@@ -1999,6 +2006,11 @@ function handleEvents(events, now = performance.now()) {
       audio.bonus();
       showScorePop(`${t('ui.stepsAllDone')} +${ev.points}`, 'bonus');
       pulseScore();
+      // 整轮关键帧全做到：夸一句（用户要求「多给点情绪价值」）。
+      // 稍微延后一点：满分奖励和「计上一次」的报数常常在同一帧，晚 0.9 秒念才不会把报数顶掉。
+      state.roundPraiseSeed = (state.roundPraiseSeed || 0) + 1;
+      const praise = poolLine('speech.praiseRound', state.roundPraiseSeed);
+      if (praise) setTimeout(() => audio.say(praise, { rate: 1.18, force: true, pitch: 1.14 }), 900);
     } else if (ev.type === 'points') {
       audio.scoreTick();
       pulseScore();
@@ -2066,15 +2078,26 @@ function handleEvents(events, now = performance.now()) {
   }
 }
 
-/** 每跨过 50 分的整数倍就报一次分数 */
+/**
+ * 跨过 50 分的整数倍：**不再报分数**（用户要求语音一律不报分数，只报次数和读秒），
+ * 改成念一句**激励语** —— 分数跳档的那一刻正是最该夸的时候，屏幕上的提示牌仍然写着分数。
+ */
 function checkScoreMilestone(score) {
   const m = Math.floor(score / 50) * 50;
   if (m > 0 && m > state.lastScoreMilestone) {
     state.lastScoreMilestone = m;
     audio.milestone();
-    audio.sayScore(m);
+    audio.sayEncourage(m / 50 + (state.detector?.cycle || 0));
     setHint(t('status.milestone', { score: m }), 'good', 2000);
   }
+}
+
+/** 从词条池里按序号取一句（池子按顺序轮，天然不会连着重复） */
+function poolLine(key, index) {
+  const pool = t(key);
+  const list = Array.isArray(pool) ? pool : [String(pool)];
+  if (!list.length) return '';
+  return list[Math.abs(Math.round(index)) % list.length];
 }
 
 function onGoalReached() {
