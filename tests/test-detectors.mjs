@@ -1513,6 +1513,7 @@ function calibOnce(cal, lm, now) {
       boxJump: 'front',
       lunge: 'side',
       lungeBack: 'side',
+      buttKick: 'side',
       standingForwardFold: 'side',
       pushup: 'pushup',
       pushupWide: 'pushup',

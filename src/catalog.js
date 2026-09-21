@@ -118,9 +118,17 @@ export const EXERCISES = [
   e('bridge', '🌉', 'lower', {
     engine: 'builtin', plan: 'bridge', posture: 'supine', judge: 'rise', target: 15,
   }),
-  e('squatJump', '🚀', 'lower', {
+  e('squatJump', '🚀', 'full', {
+    // 用户要求：深蹲跳从「下肢」移到「全身」（全身现在 5 个：深蹲跳 / 波比跳 / 登山者 / 开合跳 / 跳箱）
     plan: 'jump', view: 'front', posture: 'stand', judge: 'flight', target: 12,
     params: bend({ metric: 'kneeBent', gate: 'stand', up: 168, down: 100, flight: true, flightMin: 0.035, minRepMs: 420 }),
+  }),
+  e('buttKick', '🏃', 'lower', {
+    // 勾腿跳（原地后勾腿 / 踢臀跳）：站姿左右交替，把脚跟往臀部勾。
+    // 判据是**膝盖弯曲度**：勾起来的那条腿膝角很小（脚跟靠近臀部），放下去伸直就换边。
+    // 左右交替交给 alt 引擎（和登山者、死虫式同一套），所以「左勾一次 + 右勾一次 = 1 次」。
+    engine: 'alt', plan: 'standAlt', posture: 'stand', judge: 'leg', target: 20,
+    params: { gate: 'stand', metric: 'knee', cmp: 'lt', onValue: 100, offValue: 150, minRepMs: 180 },
   }),
 
   /* ================= 核心 ================= */

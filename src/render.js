@@ -49,6 +49,8 @@ export const FOCUS = {
   // 仰卧抬腿：判据就是「腰腿夹角」（+ 膝角用来看腿有没有绷直）
   lyingLegRaise: ['hip', 'knee'],
   mountainClimber: ['knee', 'hip'],
+  // 勾腿跳：判据是「勾起来那条腿的膝角」（脚跟往臀部勾，膝角变小）
+  buttKick: ['knee'],
   boxJump: ['knee', 'hip'],
 };
 

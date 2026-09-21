@@ -847,6 +847,7 @@ const STEP_STAGE = {
   repProne: { setup: 'prone', lower: 'start', bottom: 'count', press: 'back' },
   repSupine: { setup: 'supine', engage: 'start', top: 'count', lower: 'back' },
   repAlt: { setup: '*gate', first: 'work', switch: 'rest', rhythm: 'rest' },
+  standAlt: { setup: '*gate', first: 'work', switch: 'rest', rhythm: 'rest' },
   sequence: { setup: 'stand', down: 'crouch', middle: 'holdPlank', finish: 'jump' },
   jump: { stance: 'stand', crouch: 'count', flight: 'jump', land: 'back' },
   plank: { setup: 'lift', align: 'holdPlank', hold3: '*last', hold10: '*last', hold30: '*last' },

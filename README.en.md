@@ -614,7 +614,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2079 assertions in the suite).
+> exactly on the detector's own progress line (2129 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -671,13 +671,14 @@ Calibration only checks that you're in position — it never counts reps or awar
 | 🦵 Lower body | Forward Lunge 🚶 | Reps | Front knee angle + back knee height | 16 reps |
 | 🦵 Lower body | Reverse Lunge ↩️ | Reps | Knee bend | 16 reps |
 | 🦵 Lower body | Glute Bridge 🌉 | Reps | Hip lift height | 15 reps |
-| 🦵 Lower body | Jump Squat 🚀 | Reps | Knee bend + both feet off the floor | 12 reps |
+| 🦵 Lower body | Butt Kick 🏃 | Reps | Knee bend (kicking your heels up, alternating legs) | 20 reps |
 | 🔥 Core | Plank 🧘 | Timed | Hold time | 45 sec |
 | 🔥 Core | Side Plank 🧎 | Timed | Whether your body position is on target (rough scoring) | 30 sec |
 | 🔥 Core | Dead Bug 🐞 | Reps | Left/right leg alternation | 16 reps |
 | 🔥 Core | Crunch 🌀 | Reps | Shoulder height off the floor | 20 reps |
 | 🔥 Core | Reverse Crunch 🔃 | Reps | Hip hinge | 15 reps |
 | 🔥 Core | Lying Leg Raise 🦿 | Reps | Torso-to-leg angle (flat 180° → vertical 90°) | 15 reps |
+| 🤸 Full body | Jump Squat 🚀 | Reps | Knee bend + both feet off the floor | 12 reps |
 | 🤸 Full body | Burpee 💥 | Reps | Order of the whole sequence (squat → plank → jump) | 10 reps |
 | 🤸 Full body | Mountain Climber ⛰️ | Reps | Left/right leg alternation | 24 reps |
 | 🤸 Full body | Jumping Jack 🙌 | Reps | How wide your legs open | 50 reps |
@@ -685,7 +686,9 @@ Calibration only checks that you're in position — it never counts reps or awar
 | 🧘 Stretching | Standing Forward Fold 🙇 | Timed | Whether your body position is on target | 30 sec |
 | 🧘 Stretching | Seated Forward Fold 🧎‍♂️ | Timed | Whether your body position is on target | 30 sec |
 
-> “Jump Squat” now lives only under Lower body (it was moved out of Full body), and the new “Jumping Jack” in Full body has a default target of **50 reps**.
+> “Jump Squat” has been moved back into **Full body** at the user's request (Full body now holds five: Jump Squat / Burpee /
+> Mountain Climber / Jumping Jack / Box Jump), and Lower body gained **“Butt Kick”** (standing in place, kicking your heels up
+> towards your glutes one leg at a time, default target 20 reps) — every exercise belongs to exactly one category.
 > The same exercise can still appear in more than one category — whatever you list in its `cats` array is where it shows up (right now each of the 22 exercises belongs to one category).
 > The judging basis is **what the camera actually measures**; exercises marked as **rough scoring** (Side Plank, Box Jump and so on) can only tell that
 > “your body position is roughly on target” — scoring and timing still work as usual, but don't treat them as a strict posture referee.
@@ -822,6 +825,7 @@ On top of the 5 hand-written plans above, the remaining exercises share **family
 | Prone bend | Wide / Diamond Push-Up | Set up in one straight line → bend your elbows and lower → reach the target depth → press back up |
 | Supine lift | Crunch, Reverse Crunch, Lying Leg Raise | Lie down → start the movement → lift all the way → lower back under control |
 | Alternating | Dead Bug, Mountain Climber | Get into position → first tuck/extend → switch sides → keep the rhythm |
+| Standing alternating | Butt Kick | Stand tall → kick one heel up → switch legs → keep the rhythm |
 | Multi-stage | Burpee | Stand → squat and plant your hands → complete the middle stage → stand up and finish |
 | Jump family | Jump Squat, Box Jump | Stand → bend your knees and load → **both feet off the floor** → land with bent knees |
 | Jumping Jack | Jumping Jack | Feet together → jump them open with both arms overhead → reach the widest spread → jump back together |
@@ -1003,9 +1007,9 @@ npm run test:app               # integration test that loads the real app.js wit
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
 | `tests/test-detectors.mjs` | 306 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
-| `tests/test-engines.mjs` | 168 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 811 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 367 | DOM wiring, module imports and exports, static assets, the category lists of all 21 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
+| `tests/test-engines.mjs` | 174 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation (including the new butt kick: one kick on each leg is one rep), whole sequences, and pausing/resuming the timer |
+| `tests/test-specs.mjs` | 840 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
+| `tests/test-page.mjs` | 382 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises (including “jump squat under Full body, butt kick under Lower body”) and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
 | `tests/test-app.mjs` | 409 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
 
 ---

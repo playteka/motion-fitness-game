@@ -522,6 +522,43 @@ export const STEP_PLANS = {
     ],
   },
 
+  /* 站立左右交替（勾腿跳这类「站着原地交替」的动作）—— 判据同样是左右交替，
+     但口令、要领、提示都要说「站着」的事，不能复用躺/趴那一套文案 */
+  standAlt: {
+    perCycle: true,
+    repBonus: 6,
+    steps: [
+      {
+        id: 'setup',
+        labelKey: 'steps.standAlt.setup.label',
+        points: 5,
+        check: (f, d) => d.gateOk,
+        hint: () => H('steps.standAlt.setup.hint'),
+      },
+      {
+        id: 'first',
+        labelKey: 'steps.standAlt.first.label',
+        points: 10,
+        check: (f, d) => d.validReps >= 1,
+        hint: () => H('steps.standAlt.first.hint'),
+      },
+      {
+        id: 'switch',
+        labelKey: 'steps.standAlt.switch.label',
+        points: 10,
+        check: (f, d) => d.validReps >= 2 && d.lastSide !== null,
+        hint: () => H('steps.standAlt.switch.hint'),
+      },
+      {
+        id: 'rhythm',
+        labelKey: 'steps.standAlt.rhythm.label',
+        points: 12,
+        check: (f, d) => d.validReps >= 4,
+        hint: () => H('steps.standAlt.rhythm.hint'),
+      },
+    ],
+  },
+
   /* 左右转体（俄罗斯转体） */
 
   /* 多段动作（波比跳这类一整套） */

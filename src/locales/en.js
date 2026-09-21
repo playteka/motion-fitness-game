@@ -338,6 +338,11 @@ export default {
       cameraHint: 'Face the camera and leave room above you',
       goal: 'Squat all the way down, then jump hard so both feet leave the floor',
     },
+    buttKick: {
+      name: 'Butt Kick',
+      cameraHint: 'Stand side-on to the camera and leave room front and back',
+      goal: 'Bounce lightly in place, kicking your heels up towards your glutes one leg at a time',
+    },
     sidePlank: {
       name: 'Side Plank',
       cameraHint: 'Turn sideways to the camera, lying on your side on one forearm',
@@ -559,6 +564,24 @@ export default {
       rhythm: {
         label: 'Keep a steady alternating rhythm',
         hint: 'Hold the rhythm — a few reps on each side',
+      },
+    },
+    standAlt: {
+      setup: {
+        label: 'Stand tall with room in front and behind',
+        hint: 'Stand tall and leave room front and back, then start kicking your heels up',
+      },
+      first: {
+        label: 'Kick one heel up',
+        hint: 'Kick one heel up towards your glutes to start',
+      },
+      switch: {
+        label: 'Switch legs and keep alternating',
+        hint: 'Switch to the other leg and keep alternating',
+      },
+      rhythm: {
+        label: 'Keep a steady alternating rhythm',
+        hint: 'Hold the rhythm — a few kicks on each leg',
       },
     },
     sequence: {
@@ -948,6 +971,10 @@ export default {
     repAlt: {
       howto: ['Set up your support position with your core tight and your body stable', 'Tuck or reach on one side while the other side stays still', 'Alternate sides with an even rhythm'],
       tips: ['Don’t let your hips swing side to side', 'Slower beats faster here', 'Stop if your lower back complains'],
+    },
+    standAlt: {
+      howto: ['Stand side-on to the camera with soft knees and an upright torso', 'Bounce lightly in place and kick one heel up towards your glutes', 'Switch legs and keep alternating with an even rhythm'],
+      tips: ['Get the heel as close to your glutes as you can — a partial kick still counts', 'Keep your torso upright and your eyes ahead, don’t lean forward or look down', 'Land softly on the balls of your feet'],
     },
     sequence: {
       howto: ['Stand up, then squat down and put your hands on the floor', 'Jump both feet back into a plank (add a push-up if you like)', 'Pull your legs in, stand up and finish with a jump'],

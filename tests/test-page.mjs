@@ -363,7 +363,7 @@ console.log('\n[3] 静态资源与模型文件');
       judged.every((id) => new RegExp(`\\b${id}:`).test(focusBlock)), judged.join(', '));
     ok('不标角度的动作（开合跳 / 波比跳 / 体前屈）不会多出一个躯干数字',
       clean.length > 0 && clean.every((id) => !new RegExp(`\\b${id}:`).test(focusBlock)), clean.join(', '));
-    ok('躯干倾角覆盖了全部「角度判定」的动作（17 个）', judged.length === 17, String(judged.length));
+    ok('躯干倾角覆盖了全部「角度判定」的动作（18 个）', judged.length === 18, String(judged.length));
   }
 
   // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面
@@ -400,13 +400,13 @@ console.log('\n[4] 动作库与界面一致性');
   // 动作库就是约定的动作清单（用户明确给定清单，多一个少一个都算回归）
   const EXPECT = {
     upper: ['pushup', 'pushupWide', 'pushupDiamond'],
-    lower: ['squat', 'squatSumo', 'lunge', 'lungeBack', 'bridge', 'squatJump'],
+    lower: ['squat', 'squatSumo', 'lunge', 'lungeBack', 'bridge', 'buttKick'],
     core: ['plank', 'sidePlank', 'deadBug', 'crunch', 'reverseCrunch', 'lyingLegRaise'],
-    full: ['burpee', 'mountainClimber', 'jumpingJack', 'boxJump'],
+    full: ['squatJump', 'burpee', 'mountainClimber', 'jumpingJack', 'boxJump'],
     stretch: ['standingForwardFold', 'seatedForwardFold'],
   };
   const expectIds = [...new Set(Object.values(EXPECT).flat())];
-  ok('动作库就是约定的 21 个动作（弓步跳已按用户要求删除）',
+  ok('动作库就是约定的 22 个动作（弓步跳已删除，新增勾腿跳，深蹲跳移到全身）',
     EXERCISES.map((x) => x.id).sort().join(',') === expectIds.sort().join(','),
     `实际 ${EXERCISES.length} 个：${EXERCISES.map((x) => x.id).join(',')}`);
   for (const [cat, ids] of Object.entries(EXPECT)) {
@@ -418,10 +418,17 @@ console.log('\n[4] 动作库与界面一致性');
   ok('每个分类都有动作', CATEGORIES.every((c) => EXERCISES.some((x) => x.cats.includes(c.id))),
     CATEGORIES.map((c) => `${c.id}:${EXERCISES.filter((x) => x.cats.includes(c.id)).length}`).join(' '));
   ok('动作 id 唯一', new Set(EXERCISES.map((x) => x.id)).size === EXERCISES.length);
-  // 用户指定的调整：深蹲跳只留在下肢；全身新增「开合跳」，默认目标 50 次
+  // 用户指定的调整：深蹲跳移到「全身」；下肢新增「勾腿跳」；全身有「开合跳」，默认目标 50 次
   const squatJump = EXERCISES.find((x) => x.id === 'squatJump');
-  ok('深蹲跳只在「下肢」分类里（已从全身移除）',
-    squatJump && squatJump.cats.join(',') === 'lower', squatJump?.cats.join(','));
+  ok('深蹲跳在「全身」分类里（用户要求从下肢移过去）',
+    squatJump && squatJump.cats.join(',') === 'full', squatJump?.cats.join(','));
+  const buttKick = EXERCISES.find((x) => x.id === 'buttKick');
+  ok('下肢新增「勾腿跳」（站立左右交替，默认目标 20 次）',
+    !!buttKick && buttKick.cats.join(',') === 'lower' && buttKick.target === 20,
+    `${buttKick?.cats.join(',')}/${buttKick?.target}`);
+  ok('勾腿跳用左右交替引擎 + 站立交替的计分方案',
+    buttKick?.engine === 'alt' && buttKick?.plan === 'standAlt', `${buttKick?.engine}/${buttKick?.plan}`);
+  ok('勾腿跳侧对镜头（才看得清脚跟有没有勾起来）', buttKick?.view === 'side', String(buttKick?.view));
   const jack = EXERCISES.find((x) => x.id === 'jumpingJack');
   ok('全身分类里有「开合跳」', !!jack && jack.cats.join(',') === 'full', jack?.cats.join(','));
   ok('开合跳默认目标 50 次', jack?.target === 50 && jack?.kind === 'rep', `${jack?.target}/${jack?.kind}`);
