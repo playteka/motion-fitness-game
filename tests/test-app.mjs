@@ -1812,7 +1812,8 @@ console.log('\n[8e] 开合跳');
   // 通用引擎的「站立」门控是识别器自己的布尔状态（detFlag: gateOk），桩里直接给上
   api.state.detector.gateOk = true;
   api.state.detector.active = true;
-  // 判据量的是 legSpread（膝 / 踝取较大值），阈值按用户反馈放宽到 0.54 / 0.73 / 0.54
+  // 判据量的是 legSpread（膝 / 踝取较大值），阈值按用户反馈放宽到 0.54 / 0.66 / 0.54
+  // （计次线又从 0.73 收到 0.66：用户反馈「0.73 可能太大了，适度调小一点」）
   api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 0.3 }, [], 1000);
   // 用户要求：开合跳节奏快，「开始」那一格一闪而过没意义 → 只留三帧
   ok('开合跳进度条 = 3 格（并拢站好 → 跳开 → 收回）', segCount() === 3, String(segCount()));
@@ -1822,13 +1823,16 @@ console.log('\n[8e] 开合跳');
   ok('跳开之后进度条往前走（跳开 → 开到最大，收回那一格要等真的并拢才亮）', (() => {
     api.state.detector.progress = 0.33;
     api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 0.6 }, [], 1100);
-    const mid = api.state.criteriaIdx;
+    const mid = api.state.criteriaIdx;                      // 0.60 < 0.66：还没到计次线
+    api.state.detector.progress = 0.6;
+    api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 0.68 }, [], 1150);
+    const counted = api.state.criteriaIdx;                  // 0.68 ≥ 0.66：点亮「跳开（计次）」
     api.state.detector.progress = 0.9;
     api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 1.1 }, [], 1200);
     const top = api.state.criteriaIdx;
     api.state.detector.progress = 0.05;
     api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 0.3 }, [], 1300);
-    return mid === 0 && top === 1 && api.state.criteriaIdx === 2;
+    return mid === 0 && counted === 1 && top === 1 && api.state.criteriaIdx === 2;
   })(), `mid=${api.state.criteriaIdx}`);
   ok('开合跳得分分配到三帧：并拢 4 / 跳开 7+14=21 / 收回 8 + 满轮 6',
     JSON.stringify(api.state.criteriaMax.map((r) => r.points)) === '[4,21,8]'
@@ -2243,7 +2247,7 @@ console.log('\n[12] 语音教练');
   }
 
 
-  // 5.2b) 快节奏动作（开合跳）：每 10 次才报一次数（用户要求），中间的次数不念
+  // 5.2b) 快节奏动作（开合跳）：每 5 次才报一次数（用户要求），中间的次数不念
   {
     const same = api.state.exerciseId;
     api.selectExercise('jumpingJack');
@@ -2251,15 +2255,15 @@ console.log('\n[12] 语音教练');
     api.state.detector = api.state.detector || savedDet;
     api.state.repsSinceEncourage = 0;
     const counts = [];
-    for (const n of [1, 2, 3, 9, 10, 11, 19, 20]) {
+    for (const n of [1, 4, 5, 6, 9, 10, 11, 14, 15, 19, 20]) {
       said.length = 0;
       api.state.detector.validReps = n;
       api.handleEvents([{ type: 'rep', valid: true, index: n }]);
       const spokeCount = said.some((s) => new RegExp(`^${n}\\b`).test(s.trim()));
       if (spokeCount) counts.push(n);
     }
-    ok('开合跳：只在 10 的整数倍报数（10 / 20），中间的次数不念',
-      counts.join(',') === '10,20', `实际报了：${counts.join(',') || '（一次都没报）'}`);
+    ok('开合跳：只在 5 的整数倍报数（5 / 10 / 15 / 20），中间的次数不念',
+      counts.join(',') === '5,10,15,20', `实际报了：${counts.join(',') || '（一次都没报）'}`);
     api.selectExercise(same);
     api.state.detector = savedDet;
   }

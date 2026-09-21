@@ -818,7 +818,8 @@ console.log('\n[4b] 开合跳计数');
 {
   // ===== 用户反馈「开合跳跳了很多次一次都没计上、卡在第三关键帧」 =====
   // 真实几何：膝盖只张开到 ~0.85（旧计数线 0.98，够不着），脚踝张到 ~1.2。
-  // 现在判据是「膝 / 踝取较大值」+ 计数线降到 0.73，所以这种真人的开合跳必须计得上。
+  // 现在判据是「膝 / 踝取较大值」+ 计数线 0.73（后来又按用户要求适度调到 0.66），
+  // 所以这种真人的开合跳必须计得上。
   const det = fresh('jumpingJack');
   const r = makeRunner(det);
   const realJack = (p) => {
@@ -836,6 +837,39 @@ console.log('\n[4b] 开合跳计数');
   ok('真实幅度的「跳开」读数：膝 < 0.98（旧门槛够不着）、合并值 ≥ 0.98',
     fRealOpen.kneeSpread < 0.98 && fRealOpen.legSpread >= 0.98,
     `knee=${fRealOpen.kneeSpread.toFixed(2)} leg=${fRealOpen.legSpread.toFixed(2)}`);
+}
+{
+  // ===== 用户反馈「0.73 可能太大了，适度调小一点」 → 计数线收到 0.66 =====
+  // 用合成骨架把「开合幅度」精确调到计数线两侧，逐档验证（参数 → 平滑后峰值的对应关系实测过：
+  // open = −0.015 → ≈0.70，open = −0.03 → ≈0.61）：
+  //   开合 ≈ 0.70（旧线 0.73 够不着、新线 0.66 够得着）→ 必须计次
+  //   开合 ≈ 0.61（新线也够不着）→ 不计次，但要有提示（不留无声空档）
+  const spreadPose = (open, close = -0.075) => (p) => {
+    const s = Math.sin(Math.PI * p);
+    return standingPose({
+      knee: 175, view: 'front',
+      spread: lerp(close, open, s),
+      spreadAnkle: lerp(close + 0.005, open + 0.01, s),
+    });
+  };
+  const fOk = makeRunner(fresh('jumpingJack')).peek(spreadPose(-0.015)(0.5));
+  const fLow = makeRunner(fresh('jumpingJack')).peek(spreadPose(-0.03)(0.5));
+  ok('合成骨架能把开合幅度调到「新线之上、旧线之下」（≈0.70，线：旧 0.73 / 新 0.66）',
+    fOk.legSpread > 0.66 && fOk.legSpread < 0.73 && fLow.legSpread < 0.66,
+    `0.70 → ${fOk.legSpread.toFixed(2)}；0.61 → ${fLow.legSpread.toFixed(2)}`);
+  {
+    const det = fresh('jumpingJack');
+    makeRunner(det).run(repeat(spreadPose(-0.015), 1000, 4));
+    atLeast('开合 0.70（旧线 0.73 不够、新线 0.66 够了）：照样计次', det.validReps, 3);
+  }
+  {
+    const det = fresh('jumpingJack');
+    const r = makeRunner(det);
+    r.run(repeat(spreadPose(-0.03), 1000, 4));
+    ok('开合 0.61（连新线也够不着）：不计次', det.validReps === 0, `实际 ${det.validReps}`);
+    atLeast('开合 0.61：记为半程并提醒做大一点（不留无声空档）', det.partialReps, 2);
+    ok('开合 0.61：会出声提示', r.cues.length > 0, r.cues.map((c) => c.code).join(','));
+  }
 }
 {
   // 只开一点点（远没到「宽松线」）：不计数、不记半程、也不出声

@@ -72,7 +72,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   extra shout (“Perfect! / Full marks, beautiful …”), and a **set ending** says “that set: N reps” plus a cheer (“great work, give
   yourself a pat on the back …”, again with no score);
   **very fast exercises are the exception**: a jumping jack takes about 0.6 s per rep, so counting every rep is both
-  unintelligible and disruptive — it (`speakEvery: 10` in `catalog.js`) **speaks the count only every 10 reps**, the
+  unintelligible and disruptive — it (`speakEvery: 5` in `catalog.js`) **speaks the count only every 5 reps**, the
   encouragement drops to the same every-10 rhythm, and the counting frame never also says an encouragement (two lines in one
   frame cancel each other out);
   form corrections are kept but run much less often (the same line is not repeated within 15–30 s, and less often once you are a few reps in), and “what comes next” is slowed to one line every 9 s
@@ -123,7 +123,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - **The jumping jack shows “Spread 0.83” on screen**: its criterion is not a joint angle but the **leg spread** (whichever is
   wider, knees or ankles, in torso lengths), so that is what the label reports — same pill, flipped together with the mirror view,
   right between your legs. The user asked “why does the jumping jack have no angle?”: because it is not judged by one (only the
-  angle-based exercises get a “Knee 132°”-style label). Reference values: **≥ 0.73 counts, ≤ 0.54 closes the rep**.
+  angle-based exercises get a “Knee 132°”-style label). Reference values: **≥ 0.66 counts, ≤ 0.54 closes the rep**.
 - **Goal progress ring + two record icons 🏆 / 📜**: **best scores** (your best set per exercise) and **workout history** (the last
   12 sets) both live in **modals opened from the top bar**, no longer taking up room on the exercise page (the user asked for that);
   the data is stored locally in your browser.
@@ -613,7 +613,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2128 assertions in the suite).
+> exactly on the detector's own progress line (2133 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -863,7 +863,7 @@ Timed family plans also give **+1 point for every second you hold**; if your for
 > (about 85 cm of knee separation), which a real jack never reaches. It now takes **the larger of knees and ankles** (never the
 > smaller, and it still works when the feet leave the frame and only the knees are visible), the reference range is tightened to
 > **0.30 – 1.25**, and — at the user's request — the bar keeps **only three keyframes** (at this pace the “start” frame flashes by in
-> 0.6 s and carries no information): **① Stance → ② Jump open (count ≥ 0.73, feet about 40 cm apart) → ③ Close (≤ 0.54)**, with the
+> 0.6 s and carries no information): **① Stance → ② Jump open (count ≥ 0.66) → ③ Close (≤ 0.54)**, with the
 > points becoming **4 / 21 / 8 + perfect-round 6** (still 39 per round); the shortest rep went from 300 ms to **400 ms** (a real jack
 > takes about 0.6–1.0 s, anything faster is treated as a twitch).
 > The “close” form step was also loosened to progress 0.45, because it has to be scored **before** the detector closes the rep —
@@ -875,7 +875,7 @@ Timed family plans also give **+1 point for every second you hold**; if your for
 > (for the jack: “Leg spread 0.83 (progress 52%)”), so exercises whose criterion is not a joint angle can be debugged by the numbers.
 > **The screen also labels “Spread 0.83” directly** (between your legs, in the same pill style as the angle labels) — the user asked
 > “why does the jumping jack show no angle?”, and the answer is that it is not judged by one; this number *is* its criterion, and
-> anything at or above 0.73 counts.
+> anything at or above 0.66 counts.
 
 ### Sound and voice feedback
 
@@ -886,7 +886,7 @@ Timed family plans also give **+1 point for every second you hold**; if your for
 | First time you hit each form step | **The form step is spoken aloud**; repeats only chime, no voice, so it never floods your ears |
 | Every 50 points crossed | A rising cue tone + **an encouragement spoken aloud** (never the score) + a subtitle reading “N points already!” |
 | Valid rep +1 | A pentatonic rep tone + a spoken rep count |
-| Every 3 reps (every 10 on fast exercises) | **An encouragement** (24 rotating lines: keep going / great job / excellent / you are crushing it …) |
+| Every 3 reps (every 5 on fast exercises) | **An encouragement** (24 rotating lines: keep going / great job / excellent / you are crushing it …) |
 | Every keyframe in a round cleared | The perfect-round chord + floating text, then a cheer about 0.9 s later (perfect! / full marks, beautiful …) |
 | A rep doesn't count | A low “pff” sound + a subtitle pointing out the problem |
 | Holding in a timed exercise | A soft tick every second + the score climbing steadily on screen |
@@ -1002,7 +1002,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
-| `tests/test-detectors.mjs` | 301 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
+| `tests/test-detectors.mjs` | 306 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
 | `tests/test-engines.mjs` | 168 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 853 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 379 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |

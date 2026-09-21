@@ -173,8 +173,8 @@ export const EXERCISES = [
   }),
   e('jumpingJack', '🙌', 'full', {
     plan: 'jumpingJack', view: 'front', posture: 'stand', judge: 'spread', target: 50,
-    // 动作节奏快、每次时间短：**每 10 次报一次数**（用户要求），别每次都念
-    speakEvery: 10,
+    // 动作节奏快、每次时间短：**每 5 次报一次数**（用户要求从 10 次改成 5 次），别每次都念
+    speakEvery: 5,
     // 开合跳：正对镜头，用**双腿开合幅度**（legSpread = 膝间距与踝间距里更大的那个）量「开合」——
     // 引擎会按用户自己的最窄站距自校准，站得开的人也准。
     // up < down：progress = (最窄 − 当前) / (最窄 − 最宽)，所以并拢 = 0、开到最大 = 1。
@@ -184,7 +184,7 @@ export const EXERCISES = [
     //   ② 「最宽」参考值定在 1.5 倍躯干长（≈ 85cm 膝距），真人的开合跳到不了。
     // 现在改成「膝 / 踝取较大值」，参考区间收到 0.30 ~ 1.25，计数进度也一起放松：
     //   ② 打开 enterP 0.25（≈ 0.54 倍躯干长就点亮「打开」）
-    //   ③ 计次 looseP 0.45（≈ 0.73 倍躯干长，脚张开约 40cm 就算一次）
+    //   ③ 计次 looseP 0.38（≈ 0.66 倍躯干长 —— 用户反馈 0.73 偏大，适度调小）
     //   满分深度 bottomP 0.80（≈ 1.06，真正跳到大开）
     //   收回 backP 0.25（回到自己最窄站距附近就算这一轮结束；要比要领「收回」那一格的
     //   0.45 更严，否则回位和计次会挤在同一帧上）
@@ -193,7 +193,7 @@ export const EXERCISES = [
     //   在这么快的节奏里一闪而过、没有信息量，靠 `skipEnter` 去掉（见 specs.js）。
     params: bend({
       metric: 'legSpread', gate: 'stand', up: 0.30, down: 1.25,
-      enterP: 0.25, looseP: 0.45, bottomP: 0.80, ignoreP: 0.35, backP: 0.25, minRepMs: 400,
+      enterP: 0.25, looseP: 0.38, bottomP: 0.80, ignoreP: 0.30, backP: 0.25, minRepMs: 400,
       skipEnter: true,
     }),
   }),
