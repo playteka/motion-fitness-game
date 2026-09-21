@@ -72,7 +72,8 @@ const e = (id, icon, cats, opts) => ({
 });
 
 /* ------------------------------------------------------------------ *
- * 动作库：上肢 3 / 下肢 6 / 核心 6 / 全身 5 / 拉伸 2（共 22 个动作）
+ * 动作库：上肢 3 / 下肢 6 / 核心 6 / 全身 4 / 拉伸 2（共 21 个动作）
+ * （「弓步跳」已按用户要求删除）
  * ------------------------------------------------------------------ */
 
 export const EXERCISES = [
@@ -204,10 +205,7 @@ export const EXERCISES = [
     // 现在和深蹲跳用的是同一条线，跳箱本来跳得就没那么高，再叠加校准地面线的误差，0.05 容易判不到。
     params: bend({ metric: 'kneeBent', gate: 'stand', up: 168, down: 100, flight: true, flightMin: 0.035, minRepMs: 500 }),
   }),
-  e('lungeJump', '⤴️', 'full', {
-    plan: 'jump', posture: 'stand', judge: 'flight', target: 14,
-    params: bend({ metric: 'kneeBent', gate: 'stand', up: 165, down: 110, flight: true, flightMin: 0.03, minRepMs: 380 }),
-  }),
+  // 「弓步跳（跳跃箭步蹲）」已按用户要求删除 —— 动作库现在 21 个动作（全身 4 个）。
 
   /* ================= 拉伸（计时，判定的是「姿势到位」） ================= */
   e('standingForwardFold', '🙇', 'stretch', {

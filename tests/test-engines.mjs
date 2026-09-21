@@ -317,9 +317,9 @@ console.log('\n[0] 引擎与目录');
   // createDetector(id) 必须按目录条目的 engine 字段选出对应的通用引擎
   const expected = {
     pushupWide: BendRepDetector, pushupDiamond: BendRepDetector, squatSumo: BendRepDetector,
-    lungeBack: BendRepDetector, lungeBack: BendRepDetector, crunch: BendRepDetector,
+    lungeBack: BendRepDetector, crunch: BendRepDetector,
     reverseCrunch: BendRepDetector, lyingLegRaise: BendRepDetector, squatJump: BendRepDetector,
-    lungeJump: BendRepDetector, boxJump: BendRepDetector,
+    boxJump: BendRepDetector,
     deadBug: AltRepDetector, mountainClimber: AltRepDetector,
     burpee: SequenceRepDetector,
     sidePlank: PoseHoldDetector, standingForwardFold: PoseHoldDetector, seatedForwardFold: PoseHoldDetector,
@@ -753,17 +753,6 @@ console.log('\n[5] bend 引擎：跳跃（离地）');
   ok('深蹲跳：真的离地 = 3 次', det.validReps === 3, `实际 ${det.validReps}`);
   ok('深蹲跳：没有半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
   ok('深蹲跳：离地时不再提示「要跳起来」', !hasCue(r, 'needJump'), cuesOf(r).join(','));
-}
-{
-  // 箭步跳（侧拍、门控 stand）：同一套离地判据
-  const noAir = makeRunner(createDetector('lungeJump'));
-  noAir.run(repeat(jumpCycle(false, { view: 'side' }), 1300, 3));
-  ok('箭步跳：脚不离地不计有效次数', noAir.det.validReps === 0 && hasCue(noAir, 'needJump'),
-    `实际 ${noAir.det.validReps} / ${cuesOf(noAir).join(',')}`);
-  const air = createDetector('lungeJump');
-  const rAir = makeRunner(air);
-  rAir.run(repeat(jumpCycle(true, { view: 'side' }), 1300, 3));
-  ok('箭步跳：真的离地 = 3 次', air.validReps === 3, `实际 ${air.validReps}`);
 }
 {
   // 有校准地面线时，离地判定直接对着地面线算（不再依赖会漂移的滚动基准）：

@@ -2,7 +2,7 @@
 
 [中文](README.md) · [English](README.en.md)
 
-A small fitness game that uses an ordinary webcam for motion tracking: **22 exercises** split into five categories — **Upper body / Lower body / Core / Full body / Stretching**,
+A small fitness game that uses an ordinary webcam for motion tracking: **21 exercises** split into five categories — **Upper body / Lower body / Core / Full body / Stretching**,
 with a home page where you pick an exercise by category and start training right away; **rep exercises count reps automatically and timed exercises time themselves**,
 and **scoring runs form step by form step** — every form step you hit instantly earns points, rings a chime, and is spoken aloud.
 
@@ -30,7 +30,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - [Settings modal (language / model / sound)](#settings-modal-language--model--sound)
 - [Pre-workout calibration](#pre-workout-calibration)
 - [How to use it (camera angle matters)](#how-to-use-it-camera-angle-matters)
-- [Exercise library overview (22 exercises)](#exercise-library-overview-22-exercises)
+- [Exercise library overview (21 exercises)](#exercise-library-overview-21-exercises)
 - [Scoring rules](#scoring-rules)
 - [Languages](#languages)
 - [Can't fit into the outline or getting no response? Four checks](#cant-fit-into-the-outline-or-getting-no-response-four-checks)
@@ -428,7 +428,7 @@ The search box at the top finds exercises by name directly (type “push” or �
   and the **📐 keyframe criteria and scoring** group below (one row per keyframe with its criterion and its points).
   The “② Set target” card in the side panel keeps just a one-line target readout, and its button opens the same modal.
 - An exercise can belong to several categories at once (list more than one in `cats` and it shows up in each block, with every card
-  opening the same exercise); today each of the 22 exercises belongs to exactly one category.
+  opening the same exercise); today each of the 21 exercises belongs to exactly one category.
 
 **The two big numbers in the top-left corner**: the **rep count** (or the **seconds** for timed exercises) sits at the top, and the
 **score sits directly underneath it** — the user asked for “the score to be near the count, for example below it, and in a different
@@ -614,7 +614,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2135 assertions in the suite).
+> exactly on the detector's own progress line (2079 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -659,7 +659,7 @@ Calibration only checks that you're in position — it never counts reps or awar
 
 ---
 
-## Exercise library overview (22 exercises)
+## Exercise library overview (21 exercises)
 
 | Category | Exercise (icon) | Type | Judging basis | Default target |
 |---|---|---|---|---|
@@ -682,7 +682,6 @@ Calibration only checks that you're in position — it never counts reps or awar
 | 🤸 Full body | Mountain Climber ⛰️ | Reps | Left/right leg alternation | 24 reps |
 | 🤸 Full body | Jumping Jack 🙌 | Reps | How wide your legs open | 50 reps |
 | 🤸 Full body | Box Jump 🦘 | Reps | Knee bend + both feet off the floor (rough scoring) | 10 reps |
-| 🤸 Full body | Jumping Lunge ⤴️ | Reps | Knee bend + both feet off the floor | 14 reps |
 | 🧘 Stretching | Standing Forward Fold 🙇 | Timed | Whether your body position is on target | 30 sec |
 | 🧘 Stretching | Seated Forward Fold 🧎‍♂️ | Timed | Whether your body position is on target | 30 sec |
 
@@ -809,7 +808,7 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 
 ### About the exercises that are not in this list
 
-> This version of the exercise library was trimmed to the 22 exercises on the given list, and Static Glute Bridge isn't one of them — if you want it back,
+> This version of the exercise library was trimmed to the 21 exercises on the given list, and Static Glute Bridge isn't one of them — if you want it back,
 > copy the `bridge` entry in `src/catalog.js`, change `kind` to `'hold'`, and run `npm test` once more
 > (the detection engine and the scoring plan are both already there — see [Tuning scores and thresholds yourself](#tuning-scores-and-thresholds-yourself)).
 
@@ -824,7 +823,7 @@ On top of the 5 hand-written plans above, the remaining exercises share **family
 | Supine lift | Crunch, Reverse Crunch, Lying Leg Raise | Lie down → start the movement → lift all the way → lower back under control |
 | Alternating | Dead Bug, Mountain Climber | Get into position → first tuck/extend → switch sides → keep the rhythm |
 | Multi-stage | Burpee | Stand → squat and plant your hands → complete the middle stage → stand up and finish |
-| Jump family | Jump Squat, Jumping Lunge, Box Jump | Stand → bend your knees and load → **both feet off the floor** → land with bent knees |
+| Jump family | Jump Squat, Box Jump | Stand → bend your knees and load → **both feet off the floor** → land with bent knees |
 | Jumping Jack | Jumping Jack | Feet together → jump them open with both arms overhead → reach the widest spread → jump back together |
 | Timed (posture) | Side Plank | Get into position → body in one straight line → hold 3 / 10 / 30 seconds |
 | Timed (stretch) | Standing Forward Fold, Seated Forward Fold | Enter the stretch → breathe and relax → hold 10 / 20 seconds |
@@ -1004,9 +1003,9 @@ npm run test:app               # integration test that loads the real app.js wit
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
 | `tests/test-detectors.mjs` | 306 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
-| `tests/test-engines.mjs` | 170 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 853 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 379 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
+| `tests/test-engines.mjs` | 168 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
+| `tests/test-specs.mjs` | 811 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
+| `tests/test-page.mjs` | 367 | DOM wiring, module imports and exports, static assets, the category lists of all 21 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
 | `tests/test-app.mjs` | 409 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
 
 ---
@@ -1021,7 +1020,7 @@ motion-fitness-game/
 ├─ src/
 │  ├─ i18n.js            ★ i18n core (t / setLang / applyI18n)
 │  ├─ locales/           ★ the two locale files: zh.js / en.js
-│  ├─ catalog.js         ★ the exercise library: five categories + 22 exercises (icon, type, engine, thresholds, judging basis)
+│  ├─ catalog.js         ★ the exercise library: five categories + 21 exercises (icon, type, engine, thresholds, judging basis)
 │  ├─ geometry.js        geometry and signal processing (angles, One Euro smoothing)
 │  ├─ metrics.js         per-frame exercise metrics (joint angles, hip lift, floor clearance, body straightness…)
 │  ├─ steps.js           ★ the scored form steps per exercise (condition + points + hint key)

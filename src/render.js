@@ -37,7 +37,6 @@ export const FOCUS = {
   squatJump: ['knee', 'hip'],
   lunge: ['knee', 'hip'],
   lungeBack: ['knee', 'hip'],
-  lungeJump: ['knee', 'hip'],
   pushup: ['elbow', 'hip'],
   pushupWide: ['elbow'],
   pushupDiamond: ['elbow'],

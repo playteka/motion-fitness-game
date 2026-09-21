@@ -335,11 +335,6 @@ export default {
       cameraHint: '侧对摄像头，前后脚分开站',
       goal: '一条腿向后撤一大步，双膝弯曲下蹲',
     },
-    lungeJump: {
-      name: '弓步跳（跳跃箭步蹲）',
-      cameraHint: '侧对摄像头，留出前后空间',
-      goal: '箭步蹲下后向上跳起，双脚离地',
-    },
     squatJump: {
       name: '深蹲跳',
       cameraHint: '正对摄像头，留出向上的空间',

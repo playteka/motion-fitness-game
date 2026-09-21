@@ -363,7 +363,7 @@ console.log('\n[3] 静态资源与模型文件');
       judged.every((id) => new RegExp(`\\b${id}:`).test(focusBlock)), judged.join(', '));
     ok('不标角度的动作（开合跳 / 波比跳 / 体前屈）不会多出一个躯干数字',
       clean.length > 0 && clean.every((id) => !new RegExp(`\\b${id}:`).test(focusBlock)), clean.join(', '));
-    ok('躯干倾角覆盖了全部「角度判定」的动作（18 个）', judged.length === 18, String(judged.length));
+    ok('躯干倾角覆盖了全部「角度判定」的动作（17 个）', judged.length === 17, String(judged.length));
   }
 
   // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面
@@ -402,11 +402,11 @@ console.log('\n[4] 动作库与界面一致性');
     upper: ['pushup', 'pushupWide', 'pushupDiamond'],
     lower: ['squat', 'squatSumo', 'lunge', 'lungeBack', 'bridge', 'squatJump'],
     core: ['plank', 'sidePlank', 'deadBug', 'crunch', 'reverseCrunch', 'lyingLegRaise'],
-    full: ['burpee', 'mountainClimber', 'jumpingJack', 'boxJump', 'lungeJump'],
+    full: ['burpee', 'mountainClimber', 'jumpingJack', 'boxJump'],
     stretch: ['standingForwardFold', 'seatedForwardFold'],
   };
   const expectIds = [...new Set(Object.values(EXPECT).flat())];
-  ok('动作库就是约定的 22 个动作',
+  ok('动作库就是约定的 21 个动作（弓步跳已按用户要求删除）',
     EXERCISES.map((x) => x.id).sort().join(',') === expectIds.sort().join(','),
     `实际 ${EXERCISES.length} 个：${EXERCISES.map((x) => x.id).join(',')}`);
   for (const [cat, ids] of Object.entries(EXPECT)) {

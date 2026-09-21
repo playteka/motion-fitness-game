@@ -333,11 +333,6 @@ export default {
       cameraHint: 'Stand side-on to the camera with your feet split front and back',
       goal: 'Step one leg far back and bend both knees to sink down',
     },
-    lungeJump: {
-      name: 'Jumping Lunge',
-      cameraHint: 'Stand side-on to the camera and leave room front and back',
-      goal: 'Sink into a lunge, then jump up so both feet leave the floor',
-    },
     squatJump: {
       name: 'Jump Squat',
       cameraHint: 'Face the camera and leave room above you',

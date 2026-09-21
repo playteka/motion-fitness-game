@@ -70,7 +70,8 @@ console.log('\n[1] 每个动作都有技术指标');
       JSON.stringify([...new Set(items.map((it) => it.op))]));
     ok(`${id}：带指标的条目一定带比较符`, items.every((it) => !it.metricKey || it.op || it.textKey));
   }
-  ok('动作库里 22 个动作都有指标', ALL.length === 22 && ALL.every((id) => itemsOf(id).length > 0), `实际 ${ALL.length}`);
+  ok('动作库里 21 个动作都有指标（弓步跳已删除）',
+    ALL.length === 21 && ALL.every((id) => itemsOf(id).length > 0), `实际 ${ALL.length}`);
 }
 
 /* ------------------------------------------------------------------ *
