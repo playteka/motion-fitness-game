@@ -1491,6 +1491,27 @@ console.log('\n[8b] 判定进度条');
     }
     ok('计时类每秒加分时同样不重建 DOM（格子还是同一批元素）',
       segs().length === holdEls.length && segs().every((c, i) => c === holdEls[i]), `${segs().length}`);
+
+    // 用户反馈「运动时进度条抖得很厉害」：**渲染过程不许写任何影响布局的内联样式**
+    // （宽高 / 位移 / 字号 / margin 之类）。几何一动，整条就会跟着抖一下。
+    {
+      const LAYOUT_KEYS = ['width', 'height', 'transform', 'fontSize', 'margin', 'padding', 'top', 'bottom', 'left', 'right', 'position'];
+      const before = new Map();
+      const watch = (el) => { if (el && !before.has(el)) before.set(el, { ...el.style }); };
+      watch(elements.get('criteriaBar'));
+      for (const c of segs()) { watch(c); watch(c.querySelector('.criteria-seg-pts')); }
+      api.updateCriteria({ ok: true, torsoIncl: 70, shoulderClear: 0.6, wristClear: 0.4, hipLineDev: 0, bodyStraight: 175, kneeClear: 0.6, elbowAngle: 90 },
+        [{ type: 'points', points: 1, tick: true }], 4000);
+      api.renderCriteriaBar(4100);
+      const touched = [];
+      for (const [el, snap] of before) {
+        for (const k of LAYOUT_KEYS) {
+          if (String(el.style[k] ?? '') !== String(snap[k] ?? '')) touched.push(`${el.id || 'seg'}.${k}`);
+        }
+      }
+      ok('渲染进度条时不写任何影响布局的内联样式（几何不变 → 不可能抖）',
+        touched.length === 0, touched.join(', '));
+    }
     api.openExercise('squat');
     api.buildCriteriaBar();
     api.state.session = 'running';

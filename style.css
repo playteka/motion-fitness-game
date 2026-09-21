@@ -585,12 +585,16 @@ kbd {
   place-items: center;
   padding: 4px 4px 3px;
   border-radius: 12px;
+  /* 边框宽度**三态一致（都是 1px）**：变成「正在等」时只换颜色 + 加一圈外发光。
+     以前 `current` 用 2px 边框，格子内容区会窄掉 2px，里面的图标跟着缩放一下 ——
+     每点亮一格就抖一次，用户反馈「进度条抖得厉害」。 */
   border: 1px dashed rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.015);
   /* 格子可接收鼠标：移上去会在进度条上方显示这一格的判定标准 */
   pointer-events: auto;
   cursor: help;
-  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  /* 只过渡颜色类属性：位置 / 尺寸一概不动（transition 里不写 transform / width / height） */
+  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 /* 图标放大到铺满格子高度（横躺的姿势会长一些，站姿高一些，都是等比缩放不变形） */
 .criteria-icon {
@@ -643,11 +647,12 @@ kbd {
   border: 3px solid #0b1422;
   box-shadow: 0 0 18px rgba(74, 222, 128, 0.95);
 }
-/* 正在等的那一格：琥珀色粗描边 + 轻轻呼吸，指出「下一步做这个」 */
+/* 正在等的那一格：琥珀色描边（**宽度不变，只换颜色 + 加一圈外环**）+ 轻轻呼吸，指出「下一步做这个」 */
 .criteria-seg.current {
-  border: 2px solid #fbbf24;
+  border: 1px solid #fbbf24;
   background: rgba(251, 191, 36, 0.14);
-  transform: translateY(-2px);
+  /* 用外发光当「粗描边」，而不是真的加粗边框：不影响任何尺寸，也不会有位移 */
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.55);
   animation: segBreath 1.6s ease-in-out infinite;
 }
 .criteria-seg.current .criteria-icon { stroke: #fcd34d; stroke-width: 2; }
@@ -655,16 +660,19 @@ kbd {
   0%, 100% { box-shadow: 0 0 0 rgba(251, 191, 36, 0); }
   50% { box-shadow: 0 0 16px rgba(251, 191, 36, 0.5); }
 }
-/* 动效敏感的用户：保留颜色对比，去掉呼吸/弹跳 */
+/* 动效敏感的用户：保留颜色对比，去掉呼吸/闪动 */
 @media (prefers-reduced-motion: reduce) {
   .criteria-seg.current { animation: none; }
   .criteria-seg.just { animation: none; }
+  .criteria-bar.reset { animation: none; }
 }
-.criteria-seg.just { animation: segPop 0.55s cubic-bezier(0.2, 0.8, 0.3, 1); }
-@keyframes segPop {
-  0% { transform: scale(0.86); }
-  45% { transform: scale(1.09); }
-  100% { transform: scale(1); }
+/* 刚点亮的那一格：**只用外发光闪一下**，不再做「放大 → 弹回」的缩放动画 ——
+   缩放会让这一格（连同右上角的大对勾）瞬间变大再缩回，用户反馈看起来就是在抖。
+   现在「点亮了」靠三重静态区别表达：亮绿底 + 加粗绿线条 + 大对勾徽标。 */
+.criteria-seg.just { animation: segFlash 0.55s ease-out; }
+@keyframes segFlash {
+  0% { box-shadow: 0 0 22px rgba(74, 222, 128, 0.9), 0 0 0 2px rgba(74, 222, 128, 0.75); }
+  100% { box-shadow: 0 0 16px rgba(74, 222, 128, 0.4), inset 0 0 14px rgba(74, 222, 128, 0.14); }
 }
 /* 每一格上的分：**拿到**了就是大号亮色数字（垫一个深色药丸底，看清），
    还没拿到的用灰色小字标出「这一格可得多少」—— 用户要求「字体大一点，让人看清楚」 */
@@ -680,6 +688,10 @@ kbd {
   background: rgba(8, 15, 26, 0.72);
   white-space: nowrap;
   pointer-events: none;
+  /* 固定一个最小宽度并居中：分数从 +0 涨到 +120 时药丸不会一秒一变宽
+     （药丸靠右对齐，一变宽整个就往左挪一点，看起来像在抖） */
+  min-width: 3.2em;
+  text-align: center;
 }
 .criteria-seg-pts.max {
   font-size: 12px;
@@ -690,11 +702,12 @@ kbd {
   color: #fde047;
   background: rgba(8, 15, 26, 0.82);
   box-shadow: 0 0 12px rgba(253, 224, 71, 0.45);
-  animation: criteriaPtsPop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.6);
+  /* 药丸本身不位移：只做一次很轻的淡入（不做回弹缩放，避免看起来在抖） */
+  animation: criteriaPtsPop 0.28s ease-out;
 }
 @keyframes criteriaPtsPop {
-  0% { transform: scale(0.4); opacity: 0.2; }
-  100% { transform: scale(1); opacity: 1; }
+  0% { opacity: 0.35; }
+  100% { opacity: 1; }
 }
 .criteria-seg-pts:empty { display: none; }
 /* 图标里的判据角度数字（描边做底，压在线条上也看得清） */
@@ -704,15 +717,16 @@ kbd {
 .criteria-seg.done .criteria-icon { color: #bbf7d0; }
 .criteria-seg.current .criteria-icon { color: #fde68a; }
 
-/* 一次动作完成：进度条清零并闪一下，让「从头开始」看得见 */
+/* 一次动作完成：进度条清零并闪一下，让「从头开始」看得见。
+   注意**不能缩放整条**（以前 scale(1.02)）：这条有 1180px 宽，缩放一下就是整条左右各撑开十几像素，
+   每做完一次抖一下 —— 用户反馈「进度条抖得厉害」的主因之一。现在只闪边框与光晕（纯绘制，不动几何）。 */
 .criteria-bar.reset {
   border-color: rgba(74, 222, 128, 0.6);
   animation: criteriaReset 0.6s ease-out;
 }
 @keyframes criteriaReset {
-  0% { transform: translateX(-50%) scale(1.02); box-shadow: 0 0 22px rgba(74, 222, 128, 0.45); }
-  60% { transform: translateX(-50%) scale(1); }
-  100% { transform: translateX(-50%) scale(1); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); }
+  0% { box-shadow: 0 0 26px rgba(74, 222, 128, 0.55); border-color: rgba(74, 222, 128, 0.95); }
+  100% { box-shadow: 0 6px 20px rgba(0, 0, 0, 0.36); border-color: rgba(74, 222, 128, 0.6); }
 }
 
 /* 进度条出现时，把底部提示条往上让一格（进度条现在占得更高），避免两块叠在一起 */

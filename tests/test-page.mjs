@@ -199,8 +199,39 @@ console.log('\n[3] 静态资源与模型文件');
   ok('图标里的判据角度数字有深色描边打底（压在线条上也看得清）',
     /class="criteria-deg"/.test(fs.readFileSync(path.join(ROOT, 'src/icons.js'), 'utf8'))
     && /paint-order="stroke"/.test(fs.readFileSync(path.join(ROOT, 'src/icons.js'), 'utf8')));
-  ok('正在等的那一格：琥珀粗描边 + 呼吸动画',
-    /border:\s*2px solid #fbbf24/.test(segCurrent) && /animation:/.test(segCurrent));
+  ok('正在等的那一格：琥珀描边 + 外环 + 呼吸动画（边框宽度不变）',
+    /border:\s*1px solid #fbbf24/.test(segCurrent) && /box-shadow:\s*0 0 0 2px/.test(segCurrent)
+    && /animation:/.test(segCurrent));
+
+  /* ---- 用户反馈「运动时进度条抖动得很厉害」：状态变化**一律不许改几何** ----
+     打钩、加分、点亮下一格都只能改颜色 / 光晕 / 透明度，不能改边框宽度、尺寸或位置，
+     否则每点亮一格整条就会跟着动一下。 */
+  {
+    const borderWidth = (block) => {
+      const m = /border(?:-width)?:\s*([\d.]+)px/.exec(block);
+      return m ? Number(m[1]) : null;
+    };
+    const segDone = /(?:^|\n)\.criteria-seg\.done\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+    ok('三种状态的格子边框宽度完全一致（1px）—— 状态变化不会让格子里面的图标缩放',
+      borderWidth(segBase) === 1 && borderWidth(segDone) === 1 && borderWidth(segCurrent) === 1,
+      `${borderWidth(segBase)} / ${borderWidth(segDone)} / ${borderWidth(segCurrent)}`);
+    ok('「正在等」那一格不做位移（不再 translateY(-2px)）', !/translateY/.test(segCurrent));
+    ok('格子的过渡只含颜色类属性（不含 transform / width / height）',
+      /transition:/.test(segBase) && !/transition:[^;]*(transform|width|height)/.test(segBase), segBase);
+    const keyframes = (name) => {
+      const m = new RegExp(`@keyframes ${name}\\s*\\{([\\s\\S]*?)\\n\\}`).exec(css);
+      return m ? m[1] : '';
+    };
+    ok('「刚点亮」的闪动只用光晕（segFlash 里没有 transform 缩放）',
+      /\.criteria-seg\.just\s*\{\s*animation:\s*segFlash/.test(css) && !/transform/.test(keyframes('segFlash')),
+      keyframes('segFlash').slice(0, 60));
+    ok('一格做完时的整条闪动不缩放整条（criteriaReset 里没有 transform）',
+      /\.criteria-bar\.reset/.test(css) && !/transform/.test(keyframes('criteriaReset')),
+      keyframes('criteriaReset').slice(0, 60));
+    ok('分数药丸的弹入不做缩放（criteriaPtsPop 里没有 transform）',
+      !/transform/.test(keyframes('criteriaPtsPop')), keyframes('criteriaPtsPop').slice(0, 60));
+    ok('旧的缩放动画 segPop 已删除', !/@keyframes segPop/.test(css));
+  }
 
   // 用户要求：分数要放在和次数靠近的地方（次数下方），而且字体要换个颜色
   const scoreBlock = /(?:^|\n)\.hud-score\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';

@@ -499,9 +499,23 @@ Take the lunge (each segment holds the real threshold from the code):
   segment that actually changed. It used to rebuild the whole bar's HTML on every point or advance, which swapped the
   elements out and replayed the colour transition, the breathing highlight, the tick and the score pop **from the start** —
   once a second (timed exercises score every second) that is a visible jitter. Now a frame with no state change performs
-  **zero DOM writes** (guarded by two assertions in `tests/test-app.mjs`: “class change count = 0” and “the elements are
-  always the same ones”), and the “+N this frame” label above the bar has a fixed height so it can no longer push the whole
-  bar down when it appears.
+  **zero DOM writes** (guarded by assertions in `tests/test-app.mjs`: “class change count = 0”, “the elements are always the
+  same ones”, and “rendering writes no layout-affecting inline styles”), and the “+N this frame” label above the bar has a fixed
+  height so it can no longer push the whole bar down when it appears.
+- **A state change never moves any geometry** (the second time the user reported “the bar shakes badly during a workout”, it
+  turned out to be animations changing sizes and positions):
+  - all three segment states (not done / done / waiting) use the **same 1 px border** — “waiting” used to have a 2 px border, which
+    narrowed the content box by 2 px and rescaled the icon inside, so every keyframe made the bar twitch;
+  - “waiting” no longer applies `translateY(-2px)`; the thick amber edge is now an **outer glow** (`box-shadow: 0 0 0 2px`) and
+    the breathing animation only changes the glow;
+  - the “just lit” flash went from “scale up 9% and bounce back” to a **pure glow pulse**, so the big tick badge no longer grows
+    and shrinks with it;
+  - the end-of-rep whole-bar hint **no longer scales the bar** (it is 1180 px wide, so `scale(1.02)` pushed it out by a dozen pixels
+    on each side every single rep) — it now flashes the border and glow only;
+  - the score pill has a fixed minimum width and is centred, so growing from `+0` to `+120` no longer widens it once a second and
+    shoves the pill to the left.
+  All of these constraints are locked by `tests/test-page.mjs` (identical border width across the three states, no `transform` in
+  the keyframes, no `transform/width/height` in the transitions), so the animations cannot creep back in.
 - **How many segments** (segments drawn identically are merged, so you never see a “fake second step”):
   squat 4 (stand → half squat → squat → back to standing); lunge 5 (stand → step → sink → back knee down → back to standing);
   push-up 4 (plank → elbow ≤146° → count at ≤138° or a 0.14 shoulder drop → back at the top);
@@ -593,7 +607,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2106 assertions in the suite).
+> exactly on the detector's own progress line (2114 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -982,8 +996,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 301 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
 | `tests/test-engines.mjs` | 168 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 853 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 372 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee” and “the two knees are labelled separately” |
-| `tests/test-app.mjs` | 394 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
+| `tests/test-page.mjs` | 379 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
+| `tests/test-app.mjs` | 395 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
 
 ---
 
