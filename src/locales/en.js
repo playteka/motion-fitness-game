@@ -256,6 +256,8 @@ export default {
     progress: 'progress',
     sound: 'Sound',
     state: 'State',
+    // Whether the dashed body outline was drawn this frame (✗ once you are recognised)
+    outline: 'Outline',
     yes: '✓',
     no: '✗',
     count: 'Rep diagnosis',

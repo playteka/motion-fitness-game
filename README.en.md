@@ -2,7 +2,7 @@
 
 [中文](README.md) · [English](README.en.md)
 
-A small fitness game that uses an ordinary webcam for motion tracking: **21 exercises** split into five categories — **Upper body / Lower body / Core / Full body / Stretching**,
+A small fitness game that uses an ordinary webcam for motion tracking: **22 exercises** split into five categories — **Upper body / Lower body / Core / Full body / Stretching**,
 with a home page where you pick an exercise by category and start training right away; **rep exercises count reps automatically and timed exercises time themselves**,
 and **scoring runs form step by form step** — every form step you hit instantly earns points, rings a chime, and is spoken aloud.
 
@@ -30,7 +30,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - [Settings modal (language / model / sound)](#settings-modal-language--model--sound)
 - [Pre-workout calibration](#pre-workout-calibration)
 - [How to use it (camera angle matters)](#how-to-use-it-camera-angle-matters)
-- [Exercise library overview (21 exercises)](#exercise-library-overview-21-exercises)
+- [Exercise library overview (22 exercises)](#exercise-library-overview-22-exercises)
 - [Scoring rules](#scoring-rules)
 - [Languages](#languages)
 - [Can't fit into the outline or getting no response? Four checks](#cant-fit-into-the-outline-or-getting-no-response-four-checks)
@@ -52,6 +52,8 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - **Pre-workout calibration**: before you start there's a **dashed body silhouette** in the frame (it only traces your outer shape — you don't need to line up your joints), and a text prompt above the video tells you
   “move into the dashed outline”; **as long as a body is detected and your whole body is in frame you're cleared to start** (about 0.6 seconds), while
   distance, centering, height, camera angle and holding still are only recommendations (marked with “·” in the panel) and no longer block the start.
+  The outline is hidden **the moment recognition succeeds** — it only exists to lead you into position, and it is never drawn during the
+  countdown, the workout or a pause (see [Pre-workout calibration](#pre-workout-calibration)).
 - **Form steps scored one at a time**: each exercise is broken into 4–5 judgeable steps — hit one and you immediately get points, a chime, and a checkmark;
   finishing every step in a round earns a perfect-round bonus, and hold exercises give **+1 point for every second you hold**.
 - **The keyframes are the only criteria**: every exercise is split into 4–5 keyframes on the progress bar — **clear one and it lights up and scores**;
@@ -106,7 +108,8 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
     > detected” (the face and fingers never take part in judging), and a dimly lit room is tolerated down to an average visibility of
     > 0.10. In exchange, a new “torso length must not collapse” rule keeps the degenerate frames out.
   - Note: the **dashed calibration silhouette** has its own three colours (bright sky-blue = nobody found yet, bright amber =
-    adjusting, bright green = ready) — a different set from the skeleton's three.
+    adjusting, bright green = in position but not yet held for 0.6 s) — a different set from the skeleton's three.
+    **Roughly 0.6 s after it turns green the whole outline disappears** (you've been recognised), so you never see it mid-workout.
 - **The screen also shows “Trunk xx°” (the trunk tilt)**: as the user asked — “show the trunk tilt in degrees on screen, the same
   way ‘Hip’ and ‘Knee’ are shown” — every one of the 18 exercises that already prints joint angles (the standing / plank / lying /
   kneeling exercises whose criteria are angles) now also gets a **trunk tilt** label. It is drawn **exactly like “Hip” and “Knee”**
@@ -335,6 +338,7 @@ Then open this in your browser:
 
 The first time in, click “Start camera” → choose “Allow” in the browser prompt → pick an exercise → **move into the dashed body outline on screen**;
 the moment your whole body is recognised (the dashed outline disappears), the 3-2-1 countdown fires automatically and counting begins.
+**Once you are in the workout state (countdown / counting / paused) the dashed outline never comes back.**
 
 > ⚠️ **Don't just double-click `index.html`**. When you open it over `file://`, the browser blocks the camera and the wasm load,
 > so you have to go through `http://127.0.0.1:...` (localhost counts as a secure context).
@@ -402,8 +406,23 @@ When you film from the side, the outline flips left to right automatically to ma
 
 Once the two mandatory checks pass and stay that way for about 0.6 s, the **dashed outline disappears at once** (that is the signal that your whole body has been recognised),
 and the 3-2-1 countdown then fires automatically to start counting — there is no button to click.
-When a set ends you go back to calibration: this time the outline stays green, and you start the next set yourself with “Start set” (or Space) —
+When a set ends you go back to calibration: this time the outline **also disappears the moment you are recognised**, and you start the next set yourself with “Start set” (or Space) —
 so you can rest and look at the summary first instead of being pulled straight into the next set.
+
+**How the dashed outline behaves (one rule for every exercise): it is only there while you are *not* in position — it goes away the moment you are.**
+
+| When | Outline | Why |
+|---|---|---|
+| No body detected yet | drawn (bright sky-blue, with “can't find you” on screen) | tells you to get into the picture |
+| Body detected, not in position yet | drawn (bright amber + exactly what's off) | guides you into the outline (nearer/farther, left/right, turn to face or side on) |
+| In position and held (including the rest state after a set) | **not drawn** | you're set up — the outline would only cover you |
+| Countdown / counting / paused | **never drawn** (not a single frame) | the screen belongs to the skeleton, the angle labels and the progress bar |
+| You drift out of position again | drawn again (after a 0.3 s flicker grace) | leads you back into the outline |
+
+> During a workout the dashed outline can never appear: the main loop has a hard guard that forces
+> `outline = null` whenever the session is countdown / running / paused, and a test walks every single
+> frame of all 22 exercises to pin that invariant down. To check it yourself, the 🐞 metrics panel now has an
+> “**Outline ✓/✗**” item showing whether that frame drew it — after you're recognised it must be ✗.
 
 > If you're not in position, the text prompt above the video and the calibration panel both spell out exactly what to do (for example “move a little toward the camera”, “shift a little to the right”, “face the camera”),
 > so you're never left wondering what's wrong.
@@ -428,7 +447,7 @@ The search box at the top finds exercises by name directly (type “push” or �
   and the **📐 keyframe criteria and scoring** group below (one row per keyframe with its criterion and its points).
   The “② Set target” card in the side panel keeps just a one-line target readout, and its button opens the same modal.
 - An exercise can belong to several categories at once (list more than one in `cats` and it shows up in each block, with every card
-  opening the same exercise); today each of the 21 exercises belongs to exactly one category.
+  opening the same exercise); today each of the 22 exercises belongs to exactly one category.
 
 **The two big numbers in the top-left corner**: the **rep count** (or the **seconds** for timed exercises) sits at the top, and the
 **score sits directly underneath it** — the user asked for “the score to be near the count, for example below it, and in a different
@@ -614,7 +633,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2151 assertions in the suite).
+> exactly on the detector's own progress line (2162 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -659,7 +678,7 @@ Calibration only checks that you're in position — it never counts reps or awar
 
 ---
 
-## Exercise library overview (21 exercises)
+## Exercise library overview (22 exercises)
 
 | Category | Exercise (icon) | Type | Judging basis | Default target |
 |---|---|---|---|---|
@@ -811,7 +830,7 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 
 ### About the exercises that are not in this list
 
-> This version of the exercise library was trimmed to the 21 exercises on the given list, and Static Glute Bridge isn't one of them — if you want it back,
+> This version of the exercise library was trimmed to the 22 exercises on the given list, and Static Glute Bridge isn't one of them — if you want it back,
 > copy the `bridge` entry in `src/catalog.js`, change `kind` to `'hold'`, and run `npm test` once more
 > (the detection engine and the scoring plan are both already there — see [Tuning scores and thresholds yourself](#tuning-scores-and-thresholds-yourself)).
 
@@ -975,7 +994,8 @@ The language dropdown in ⚙️ Settings picks it up automatically; the README l
 
 ```
 View Side ✓(0.18) · Full body ✓ · Both legs visible ✓ · Trunk lean 6° · Knee 176° · Elbow 172° ·
-Hip 172° · Body line 175° · Hip lift -0.98 · Thigh from horizontal 88° · Visibility 0.94 · State running
+Hip 172° · Body line 175° · Hip lift -0.98 · Thigh from horizontal 88° · Visibility 0.94 ·
+Outline ✗ · State running
 ```
 
 Read them like this:
@@ -987,6 +1007,7 @@ Read them like this:
 | `No person detected` | Too far / too close, backlighting, or a background the same color as your clothes | Move closer, face the light source, change clothes, or use a higher-resolution camera |
 | `Trunk lean` stuck above 32° | The camera is tilted or you're standing crooked | Straighten the camera (or level it with a book) |
 | The numbers look fine but nothing gets checked off | You're stuck right on a step's threshold | The status bar spells out exactly how far off you are (for example, “your squat depth is now at 62% (100% = thighs level)”) |
+| `Outline ✓` while `State running` | This should never happen (the outline must be gone once you're recognised) | Note the state and the exercise and report it — a hard guard plus a frame-by-frame test cover the three workout states, so seeing this would be a new bug |
 
 ---
 
@@ -1035,7 +1056,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-engines.mjs` | 181 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation (including the butt kick: one kick on each leg is one rep, fast cadences keep up, and the `switched` flag), whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 845 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria (including the standing butt-kick figures) and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 382 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises (including “jump squat under Full body, butt kick under Lower body”) and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
-| `tests/test-app.mjs` | 419 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
+| `tests/test-app.mjs` | 430 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 22 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
 
 ---
 
@@ -1049,7 +1070,7 @@ motion-fitness-game/
 ├─ src/
 │  ├─ i18n.js            ★ i18n core (t / setLang / applyI18n)
 │  ├─ locales/           ★ the two locale files: zh.js / en.js
-│  ├─ catalog.js         ★ the exercise library: five categories + 21 exercises (icon, type, engine, thresholds, judging basis)
+│  ├─ catalog.js         ★ the exercise library: five categories + 22 exercises (icon, type, engine, thresholds, judging basis)
 │  ├─ geometry.js        geometry and signal processing (angles, One Euro smoothing)
 │  ├─ metrics.js         per-frame exercise metrics (joint angles, hip lift, floor clearance, body straightness…)
 │  ├─ steps.js           ★ the scored form steps per exercise (condition + points + hint key)

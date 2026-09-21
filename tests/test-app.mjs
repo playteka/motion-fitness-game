@@ -1055,8 +1055,8 @@ console.log('\n[8] 运动前校准流程');
   }
   ok('留在原地再次识别完成，也只停在「可以开始」而不是自动开始',
     api.state.session === 'ready', api.state.session);
-  ok('这一轮保留绿色轮廓，等用户自己点开始',
-    outlineAfterSet && outlineAfterSet.status === 'ready', JSON.stringify(outlineAfterSet));
+  ok('这一轮识别成功后轮廓立刻收起（休息态不再留一条绿色轮廓）',
+    outlineAfterSet === null, JSON.stringify(outlineAfterSet));
   ok('这一轮提示条给出「开始训练」的话',
     elements.get('calibPromptMain').textContent.includes('开始训练'),
     elements.get('calibPromptMain').textContent);
@@ -2424,6 +2424,194 @@ console.log('\n[13] 最佳成绩 / 运动记录（两个图标 + 弹窗）');
     elements.get('historyList').innerHTML.slice(0, 60));
   ok('清空后给了一句反馈（提示条）', elements.get('cueLine').textContent.includes('清空'),
     elements.get('cueLine').textContent);
+}
+
+/* ------------------------------------------------------------------ *
+ * [14] 虚线轮廓的显示时机（跑真实主循环，全 22 个动作）
+ *
+ * 用户要求：**刚开始识别人体的时候画面里有虚线人体轮廓，识别成功进入运动状态后就要隐藏。**
+ * 这一段的做法不是「看代码觉得对」，而是真的把 loop() 一帧一帧跑起来，
+ * 记录每一帧交给渲染器的 outline，然后按会话状态分类断言：
+ *   没找到人 → 画；还没就位 → 画；识别成功（含休息态）→ 不画；倒计时/计数/暂停 → 一帧都不画。
+ * 放在最后：它会驱动摄像头/推理桩跑完整流程，别影响前面的用例。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[14] 虚线轮廓：识别成功就隐藏（真实主循环，全 22 个动作）');
+{
+  const { toMetric: tm, LM: LMK } = await import('../src/geometry.js');
+  const { ASPECT: A, standingPose: sp } = await import('./synthetic-pose.mjs');
+  const api = windowStub.__mfg;
+
+  ok('测试能驱动真实主循环（__mfg 暴露了 loop）', typeof api.loop === 'function');
+
+  // 摄像头 + 推理打桩：loop() 因此能真的跑完「没找到人 → 就位 → 倒计时 → 计数 → 暂停 → 收工」
+  const savedStream = api.camera.stream;
+  const savedDetect = api.engine.detect;
+  const savedEngineReady = api.state.engineReady;
+  const savedDraw = api.renderer.draw;
+  const savedPerf = globalThis.performance;
+  api.camera.stream = { getTracks: () => [], getVideoTracks: () => [] };
+  api.camera.video.readyState = 4;
+  api.state.engineReady = true;
+
+  // 可控时钟：校准要「保持 0.6 秒」才算识别成功，靠真实时间跑 22 个动作太慢，
+  // 所以这里给主循环一个每帧走 33.4ms 的假时钟（app.js 里所有计时都走 performance.now）。
+  let clock = 5_000_000;
+  const fakePerf = { now: () => clock, timeOrigin: savedPerf.timeOrigin };
+  Object.defineProperty(globalThis, 'performance', { value: fakePerf, configurable: true, writable: true });
+  windowStub.performance = fakePerf;
+
+  let pose = null;
+  api.engine.detect = () => (pose ? { landmarks: pose, worldLandmarks: null } : null);
+
+  /** 每一帧交给渲染器的 outline（连同当时的会话状态）——一路累积，最后整体查一遍 */
+  const frames = [];
+  const since = () => frames.length;
+  const sliceFrom = (i) => frames.slice(i);
+  api.renderer.draw = (o) => {
+    frames.push({ session: api.state.session, outline: o?.outline ?? null });
+  };
+
+  /** 把姿势缩放到校准目标大小并摆到画面中间（同 [8]） */
+  const fit = (lm, { k = 0.78, cx0 = 0.5, groundY = 0.92, dx = 0 } = {}) => {
+    const ankleY = Math.max(lm[LMK.L_ANKLE].y, lm[LMK.R_ANKLE].y);
+    const cx = (lm[LMK.L_HIP].x + lm[LMK.R_HIP].x + lm[LMK.L_SHOULDER].x + lm[LMK.R_SHOULDER].x) / 4;
+    return lm.map((p) => ({ ...p, x: cx0 + dx + (p.x - cx) * k, y: groundY + (p.y - ankleY) * k }));
+  };
+
+  let t = 4_000_000;
+  const pump = (lm, n = 1) => {
+    pose = lm;
+    for (let i = 0; i < n; i++) {
+      clock += 33.4;                      // 假时钟往前走一帧（33.4ms ≈ 30fps）
+      t += 33.4;
+      api.camera.video.currentTime = t;   // 每帧都变，主循环才会真的渲染
+      api.state.engineReady = true;       // 摄像头/模型桩：始终视为就绪
+      if (!api.camera.stream) api.camera.stream = { getTracks: () => [], getVideoTracks: () => [] };
+      api.loop();
+    }
+  };
+
+  const idle = fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }));
+  const offSpot = fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: 0.9 });
+  const at = (list, fn) => list.filter(fn);
+  const drawn = (list) => at(list, (f) => f.outline !== null);
+  const WORK = new Set(['countdown', 'running', 'paused']);
+
+  const bad = { search: [], keep: [], work: [], rest: [], back: [] };
+  let reachedRunning = 0;
+
+  for (const meta of EXERCISES) {
+    const tag = `${meta.icon} ${meta.id}`;
+    api.openExercise(meta.id);
+
+    // ① 还没识别到人体：画面里必须有「找人」的虚线轮廓
+    let i0 = since();
+    pump(null, 3);
+    const noBody = sliceFrom(i0);
+    if (!(noBody.length === 3 && noBody.every((f) => f.outline && f.outline.status === 'search'))) {
+      bad.search.push(`${tag}：${noBody.map((f) => (f.outline ? f.outline.status : 'null')).join(',')}`);
+    }
+
+    // ② 站进画面 → 保持住 → 自动进入运动状态（倒计时 → 计数）
+    i0 = since();
+    pump(idle, 40);
+    const settle = sliceFrom(i0);
+    const calibFrames = at(settle, (f) => f.session === 'calibrating');
+    if (calibFrames.length && drawn(calibFrames).length !== calibFrames.length) {
+      bad.keep.push(`${tag}：校准阶段有 ${calibFrames.length - drawn(calibFrames).length} 帧没画轮廓`);
+    }
+    if (!settle.some((f) => f.session === 'countdown')) {
+      bad.keep.push(`${tag}：站好后没有自动进入倒计时（${settle[settle.length - 1]?.session}）`);
+    }
+
+    // 倒计时用时间兜底推进（主循环里本来就有的那条兜底），然后真的跑一段计数
+    api.state.countdownStartedAt = clock - 4000;
+    i0 = since();
+    pump(idle, 25);
+    const work = sliceFrom(i0);
+    if (work.some((f) => f.session === 'running')) reachedRunning += 1;
+    if (drawn(work).length) {
+      bad.work.push(`${tag}：倒计时/计数期间画了 ${drawn(work).length} 帧轮廓（${work.find((f) => f.outline)?.session}）`);
+    }
+
+    // ③ 暂停也不该画
+    api.pauseSession();
+    i0 = since();
+    pump(idle, 3);
+    if (drawn(sliceFrom(i0)).length) bad.work.push(`${tag}：暂停时画了轮廓`);
+
+    // ④ 一组结束回到校准：**识别成功后同样不再画轮廓**（不再留一条绿色轮廓）
+    api.stopSession('goal');
+    i0 = since();
+    pump(idle, 40);
+    const rest = sliceFrom(i0);
+    if (api.state.session !== 'ready') bad.rest.push(`${tag}：休息态没有停在「可以开始」（${api.state.session}）`);
+    const restReady = at(rest, (f) => f.session === 'ready' || f.session === 'countdown');
+    if (!restReady.length || drawn(restReady).length) {
+      bad.rest.push(`${tag}：休息态就位后还画了 ${drawn(restReady).length} 帧轮廓`);
+    }
+    if (!drawn(at(rest, (f) => f.session === 'calibrating')).length) {
+      bad.rest.push(`${tag}：休息态还没站好时也不画轮廓（那就没有引导了）`);
+    }
+
+    // ⑤ 站偏（离开就位状态）→ 轮廓重新出现，把人领回轮廓里。
+    // 这里要跑够 16 帧（≈0.53 秒）：站偏后还有 300ms 的抖动宽限（flickerGraceMs），
+    // 单帧不达标不该让轮廓一闪一闪的。
+    i0 = since();
+    pump(offSpot, 16);
+    if (!drawn(sliceFrom(i0)).length) bad.back.push(`${tag}：站偏后轮廓没有重新出现`);
+  }
+
+  const all = EXERCISES.map((e) => e.id).join(',');
+  ok('这一段覆盖了全部动作（22 个）', EXERCISES.length === 22, all);
+  ok('每个动作都真的进入了计数状态（不是空跑）', reachedRunning === EXERCISES.length,
+    `实际 ${reachedRunning}/${EXERCISES.length}`);
+  ok('没识别到人体时，画面里画「找人」的虚线轮廓（亮蓝）', bad.search.length === 0,
+    bad.search.slice(0, 3).join(' | '));
+  ok('就位之前轮廓一直在（一直引导你站进轮廓里）', bad.keep.length === 0,
+    bad.keep.slice(0, 3).join(' | '));
+  ok('倒计时 / 计数 / 暂停期间**一帧都不画**虚线轮廓', bad.work.length === 0,
+    bad.work.slice(0, 3).join(' | '));
+  ok('识别成功后不再画轮廓（休息态也不留绿色轮廓）', bad.rest.length === 0,
+    bad.rest.slice(0, 3).join(' | '));
+  ok('站偏（离开就位状态）后轮廓重新出现', bad.back.length === 0,
+    bad.back.slice(0, 3).join(' | '));
+
+  // 硬性不变量（把跑过的每一帧都翻一遍，不只看抽样出来的那几段）：
+  // 训练三态（countdown / running / paused）里**绝不允许**出现 dashed outline。
+  const total = frames.length;
+  const workFrames = at(frames, (f) => WORK.has(f.session));
+  const workDrawn = drawn(workFrames);
+  ok(`跑过的每一帧都符合「训练中不画轮廓」（共 ${total} 帧，其中训练态 ${workFrames.length} 帧）`,
+    total > 1000 && workFrames.length > 500 && workDrawn.length === 0,
+    `训练态画了 ${workDrawn.length} 帧：${workDrawn.slice(0, 3).map((f) => f.session).join(',')}`);
+  ok('校准态（还没就位）的帧里轮廓是常态：确实在引导',
+    drawn(at(frames, (f) => f.session === 'calibrating')).length > 100,
+    String(drawn(at(frames, (f) => f.session === 'calibrating')).length));
+
+  // 🐞 面板里能直接看到「这一帧画没画虚线轮廓」，排查「还有轮廓」时不用猜
+  api.state.settings.debug = true;
+  api.renderDebug(null, { kind: 'front', status: 'adjust' });
+  const outlineOn = elements.get('debugLine').textContent;
+  api.renderDebug(null, null);
+  const outlineOff = elements.get('debugLine').textContent;
+  ok('🐞 面板显示「虚线轮廓」这一帧画了没（画了 ✓ / 没画 ✗）',
+    outlineOn.includes('虚线轮廓') && outlineOn.includes('✓')
+    && outlineOff.includes('虚线轮廓') && outlineOff.includes('✗'),
+    `${outlineOn} / ${outlineOff}`);
+  api.state.settings.debug = false;
+
+  // 恢复现场
+  api.renderer.draw = savedDraw;
+  api.engine.detect = savedDetect;
+  api.state.engineReady = savedEngineReady;
+  api.camera.stream = savedStream;
+  api.camera.video.currentTime = 0;
+  Object.defineProperty(globalThis, 'performance', { value: savedPerf, configurable: true, writable: true });
+  windowStub.performance = savedPerf;
+  api.toCalibration({ silent: true });
+  api.state.session = 'idle';
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {

@@ -1285,12 +1285,14 @@ function diagText() {
 }
 
 /** 实时指标面板：把识别器“看到的”数字直接摆出来，方便自己判断机位问题 */
-function renderDebug(f) {
+function renderDebug(f, outline = null) {
   const el = $('debugLine');
   if (!state.settings.debug) { if (!el.hidden) el.hidden = true; return; }
   el.hidden = false;
+  // 虚线轮廓这一帧画了没：排查「识别成功了轮廓还挂在画面上」时看这一行
+  const outlineTxt = `${t('debug.outline')} ${outline ? t('debug.yes') : t('debug.no')}`;
   if (!f || !f.ok) {
-    el.textContent = `${t('debug.count')} ${diagText()} · ${t('debug.noPerson')}`;
+    el.textContent = `${t('debug.count')} ${diagText()} · ${outlineTxt} · ${t('debug.noPerson')}`;
     return;
   }
   const n = (v, d = 0) => (Number.isFinite(v) ? v.toFixed(d) : '—');
@@ -1321,6 +1323,7 @@ function renderDebug(f) {
     `${t('debug.thighFromHoriz')} ${n(f.thighFromHoriz)}°`,
     `${t('debug.visibility')} ${n(f.coreVis, 2)}`,
     `🔊 ${t('debug.sound')} ${snd.ctx}/${snd.voices}`,
+    outlineTxt,
     `${t('debug.state')} ${state.session}`,
   ].filter(Boolean).join(' · ');
 }
@@ -1856,7 +1859,15 @@ function renderCalibPrompt(calib) {
 
 /**
  * 校准阶段的一帧处理：跑就位判定，识别完成后按设置自动进入运动状态。
- * 返回这一帧要画的虚线轮廓参数（自动进入时返回 null → 虚线框立刻消失）。
+ * 返回这一帧要画的虚线轮廓参数（**识别成功后一律返回 null** → 虚线轮廓立刻消失）。
+ *
+ * 虚线轮廓的职责只有一条：**在你还没就位时告诉你要站到哪儿**。
+ * 所以它的显示规则是「没就位才画，一就位就消失」，对所有动作、所有阶段都一样：
+ *   - 没找到人 / 没站好      → 画（亮蓝 / 亮琥珀，画面上的提示条同时告诉你怎么调整）；
+ *   - 就位判定通过并保持住   → 立刻隐藏（第一次自动开始、一组做完的休息态都是这样）。
+ * 为什么以前「休息态」会一直留一条绿色轮廓：那一轮故意不自动开始，轮廓被当成
+ * 「你已经站好了，可以点开始」的指示灯留着；用户反馈「进了运动状态还有虚线轮廓」，
+ * 于是改成统一规则 —— 轮廓只做引导，不做指示灯（就位后由提示条与「开始训练」按钮负责）。
  */
 function calibrationStep(frame, now) {
   const calib = state.calibrator.update(frame, now);
@@ -1898,13 +1909,14 @@ function calibrationStep(frame, now) {
         state.autoStart = false;   // 自动开始失败：退回手动，避免把用户卡在绿色轮廓上
         console.error('auto start failed:', err);
         renderCalibration(calib);
-        return outlineOf('ready');
+        return null;               // 识别已经成功：轮廓照样收起来，别再挂在画面上
       }
     }
-    // 一组结束后的再次校准：轮廓转绿留在画面上，等用户自己点「开始训练」
+    // 一组结束后的再次校准：这一轮不自动开始，等用户自己点「开始训练」。
+    // 轮廓同样立刻收起 —— 就位了就不再需要引导（提示条会写「点开始训练」）。
     audio.say(t('calib.doneVoice'), { rate: 1.15, force: true });
     renderCalibration(calib);
-    return outlineOf('ready');
+    return null;
   }
 
   renderCalibration(calib);
@@ -1913,6 +1925,9 @@ function calibrationStep(frame, now) {
   coachSay(t(calib.hintKey, calib.hintParams), {
     gapMs: 2600, dedupeMs: 12000, key: `calib:${calib.hintKey}`,
   });
+  // 已经就位（这一轮校准早就完成、session 已是 ready）后又回到就位状态：轮廓依旧不画。
+  // 只有真的离开就位状态（人出画、站偏）时轮廓才重新出现，用来把人领回轮廓里。
+  if (calib.done) return null;
   return outlineOf(!frame.ok ? 'search' : (calib.ready ? 'ready' : 'adjust'));
 }
 
@@ -2221,6 +2236,14 @@ function loop() {
     updateStatusHint(frame, now);
   }
 
+  // 硬性不变量：**倒计时 / 训练中 / 暂停 这三态一律不画虚线轮廓**。
+  // 上面的分支已经保证了这一点，这里再兜一道 —— 以后新增状态分支时，不会因为
+  // 漏写 outline = null 就把校准用的虚线轮廓带进训练画面（用户反馈过这个现象：
+  // 「进了运动状态还在，进度条都在走了轮廓还留着」）。
+  if (state.session === 'countdown' || state.session === 'running' || state.session === 'paused') {
+    outline = null;
+  }
+
   // 计时
   if (counting) {
     const dt = clamp(now - state.lastTick, 0, 250);
@@ -2242,7 +2265,7 @@ function loop() {
   }
 
   // 实时指标（调试用）
-  renderDebug(frame);
+  renderDebug(frame, outline);
 
   // 绘制
   const status = !frame.ok ? 'idle'
@@ -2764,7 +2787,7 @@ boot();
 
 // 调试/自动化测试用的内部句柄（页面本身不依赖它）
 window.__mfg = {
-  state, engine, camera, audio, renderer,
+  state, engine, camera, audio, renderer, loop,
   selectExercise, startSession, pauseSession, resumeSession, stopSession, toCalibration, beginCountdown,
   feedDetector, handleEvents, updateHud, renderSteps, renderDebug, updatePipelineStatus,
   calibrationStep, renderCalibration, syncFullscreenSupport, finishCountdown, updateStatusHint,

@@ -258,6 +258,8 @@ export default {
     progress: '进度',
     sound: '声音',
     state: '状态',
+    // 虚线人体轮廓这一帧画了没（识别成功就该是 ✗）
+    outline: '虚线轮廓',
     yes: '✓',
     no: '✗',
     count: '计数诊断',
