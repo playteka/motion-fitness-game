@@ -77,6 +77,21 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
   push-up, and **“Hip”** — the torso-to-leg angle — plus the knee for the lying leg raise), so you can see how far you
   are from the line while you move. Exercises judged by something that is not a joint angle (jumping jack, burpee, the jump
   family) print nothing, so the picture never fills up with numbers.
+  **The skeleton colour is the “am I good right now?” signal** (`app.js` picks a status every frame and `render.js` maps it through
+  `COLORS`):
+  - **Teal** (`ok`, the default): a person is tracked and judging is running normally (the posture gate passed), with no correction
+    spoken in the last 2 seconds — keep doing what you are doing;
+  - **Amber** (`warn`) covers two cases: ① **you are not yet in the posture this exercise requires** (`det.active === false`, so
+    judging is paused and the hint bar below tells you what is missing, e.g. “lie down first”); ② **a correction was spoken within
+    the last 2 seconds** (`now - state.lastCueAt < 2000`) — it stays amber for those 2 seconds even after you fix it, pointing at
+    what was just said, then turns teal again by itself;
+  - **Grey** (`idle`): this frame **was not accepted as a valid person** (`frame.ok === false`: the 12 core joints average a
+    visibility of ≤ 0.16, or any single landmark drops to ≤ 0.03). Typical causes: you moved out of frame, you are too far from the
+    camera, the room is too dark or back-lit, or large parts of the body occlude each other. Grey is **not an error** — it recovers
+    as soon as you are back in frame; only when nobody is found at all does the skeleton **disappear entirely** (instead of turning
+    grey), and the status bar speaks “no person found”.
+  - Note: the **dashed calibration silhouette** has its own three colours (bright sky-blue = nobody found yet, bright amber =
+    adjusting, bright green = ready) — a different set from the skeleton's three.
 - **The screen also shows “Trunk xx°” (the trunk tilt)**: as the user asked — “show the trunk tilt in degrees on screen, the same
   way ‘Hip’ and ‘Knee’ are shown” — every one of the 18 exercises that already prints joint angles (the standing / plank / lying /
   kneeling exercises whose criteria are angles) now also gets a **trunk tilt** label. It is drawn **exactly like “Hip” and “Knee”**
