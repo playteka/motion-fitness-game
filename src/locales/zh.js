@@ -249,6 +249,8 @@ export default {
     hipRise: '髋抬起',
     thighFromHoriz: '大腿离水平',
     visibility: '可见度',
+    // 🐞 面板里那一行「这个动作真正在判的量」
+    progress: '进度',
     sound: '声音',
     state: '状态',
     yes: '✓',
@@ -722,6 +724,8 @@ export default {
     hip: '髋关节角度',
     ankleSpread: '双踝横向距离',
     kneeSpread: '双膝开合距离',
+    // 开合跳现在量的是「膝 / 踝里更大的那个」：真人跳开时脚张得比膝盖大
+    legSpread: '双腿开合距离',
     body: '身体直线角',
     trunk: '躯干倾角',
     torsoIncl: '躯干倾角',

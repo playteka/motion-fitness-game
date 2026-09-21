@@ -233,6 +233,15 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const ankleClear = (groundRef - Math.min(P(LM.L_ANKLE).y, P(LM.R_ANKLE).y)) / torsoLen; // 脚离地高度（跳跃 >0）
   const kneeSpread = Math.abs(P(LM.L_KNEE).x - P(LM.R_KNEE).x) / torsoLen;   // 双膝横向距离（相扑/蝴蝶/青蛙式）
   const ankleSpread = Math.abs(P(LM.L_ANKLE).x - P(LM.R_ANKLE).x) / torsoLen; // 双踝横向距离（前后/左右站距）
+  /**
+   * 双腿开合幅度：膝间距与踝间距里**更大的那个**（开合跳用）。
+   *
+   * 真人跳开时**脚的张开幅度明显大于膝盖**（腿是往外撑的，膝盖只走到中间），
+   * 所以只量膝盖会低估开合幅度 —— 用户反馈「开合跳跳了很多次一次都没计上、卡在第三关键帧」，
+   * 实测就是这个原因：膝盖读数卡在 0.8~0.9，而当时的计数线要求 0.98。
+   * 取两者的较大值：谁张开得多就用谁，脚出画只看得见膝盖时也照样能用。
+   */
+  const legSpread = Math.max(kneeSpread, ankleSpread);
   // 双手相对髋部中线的偏移（俄罗斯转体：左右转体时正负翻转）
   const wristMidX = (P(LM.L_WRIST).x + P(LM.R_WRIST).x) / 2;
   const wristTwist = (wristMidX - hipMid.x) / torsoLen;
@@ -324,6 +333,7 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     ankleClear,
     kneeSpread,
     ankleSpread,
+    legSpread,
     wristTwist,
     armRaised,
     inverted,

@@ -59,7 +59,7 @@ export const METRIC_UNITS = {
   knee: DEG, kneeBent: DEG, kneeExtended: DEG, elbow: DEG, elbowBent: DEG, elbowExtended: DEG,
   hip: DEG, ankle: DEG, body: DEG, trunk: DEG, torsoIncl: DEG,
   shoulderClear: TORSO, kneeClear: TORSO, hipClear: TORSO, wristClear: TORSO, wristClearMin: TORSO,
-  hipRise: TORSO, armRaised: TORSO, kneeSpread: TORSO,
+  hipRise: TORSO, armRaised: TORSO, kneeSpread: TORSO, legSpread: TORSO,
   hipLineDevAbs: TORSO, valgus: TORSO, shoulderDrop: TORSO, wristTwist: TORSO,
   backKneeDrop: SHIN, hipAboveKnee: SHIN,
 };
@@ -510,6 +510,7 @@ export const SPEC_METRICS = {
   hipAboveKnee: (f) => f.hipAboveKnee,
   armRaised: (f) => f.armRaised,
   kneeSpread: (f) => f.kneeSpread,
+  legSpread: (f) => f.legSpread,
   ankleSpread: (f) => f.ankleSpread,
   hipLineDevAbs: (f) => Math.abs(f.hipLineDev),
   valgus: (f) => f.valgus,

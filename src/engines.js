@@ -233,6 +233,7 @@ export const METRICS = {
   wristClear: (f) => f.wristClearMin,
   armRaised: (f) => f.armRaised,
   kneeSpread: (f) => f.kneeSpread,
+  legSpread: (f) => f.legSpread,
   trunk: (f) => f.torsoIncl,
 };
 

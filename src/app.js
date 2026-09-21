@@ -14,7 +14,7 @@ import { PoseRenderer } from './render.js';
 import { AudioKit, TRACKS, getTrack, DEFAULT_TRACK } from './audio.js';
 import { Calibrator, requiredView } from './calibration.js';
 import {
-  exerciseSpecs, specCondition, specStages, stageHolds, stageText, stagePoints, stageIndexForStep,
+  exerciseSpecs, specCondition, specStages, stageHolds, stageText, stagePoints, stageIndexForStep, SPEC_METRICS,
 } from './specs.js';
 import { getStepPlan } from './steps.js';
 import { iconSVG, uniqueStages } from './icons.js';
@@ -1270,8 +1270,12 @@ function renderDebug(f) {
   const viewName = f.view === 'front' ? t('debug.viewFront') : t('debug.viewSide');
   // 计数诊断：识别器的内部判定状态（为什么这一下没计上）
   const diag = diagText();
+  // 这个动作**真正在判的那个指标**的实时读数 + 进度：
+  // 开合跳这类「判据不是关节角」的动作以前面板里看不到被判的量，调不动也没法自查 —— 现在都摆出来。
+  const judged = judgedMetricLine(f, n);
   el.textContent = [
     `${t('debug.count')} ${diag || '—'}`,
+    judged,
     `${t('debug.view')} ${viewName}${mark(f.view === wantView)}(${n(f.viewRatio, 2)})`,
     `${t('debug.bodyVisible')} ${mark(f.bodyVisible)}`,
     `${t('debug.legsVisible')} ${mark(f.legsVisible)}`,
@@ -1285,7 +1289,26 @@ function renderDebug(f) {
     `${t('debug.visibility')} ${n(f.coreVis, 2)}`,
     `🔊 ${t('debug.sound')} ${snd.ctx}/${snd.voices}`,
     `${t('debug.state')} ${state.session}`,
-  ].join(' · ');
+  ].filter(Boolean).join(' · ');
+}
+
+/**
+ * 「本动作判的是哪个量」那一行：`🎯 双腿开合距离 0.83（进度 52%）`。
+ *
+ * 指标名走 specs.js 的同一份映射（`metric.<名字>`，和 🎯 运动设定弹窗里显示的名字完全一致），
+ * 数值走 `SPEC_METRICS`（识别器真正在判的那个量）。判据不是本表里的量（手写识别器）时不显示这一行。
+ */
+function judgedMetricLine(f, n) {
+  const meta = EXERCISE_MAP[state.exerciseId];
+  const name = meta?.params?.metric;
+  const read = name && SPEC_METRICS[name];
+  if (!read) return '';
+  const value = read(f, state.detector);
+  if (!Number.isFinite(value)) return '';
+  const pct = Number.isFinite(state.detector?.progress)
+    ? `（${t('debug.progress')} ${Math.round(Math.max(0, Math.min(1, state.detector.progress)) * 100)}%）`
+    : '';
+  return `🎯 ${t(`metric.${name}`)} ${n(value, 2)}${pct}`;
 }
 
 /** 要领清单：已完成的打勾，当前该做哪一步高亮 */

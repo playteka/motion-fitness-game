@@ -406,7 +406,9 @@ export const STEP_PLANS = {
         id: 'close',
         labelKey: 'steps.jumpingJack.close.label',
         points: 8,
-        check: (f, d) => d.peak >= 0.5 && d.progress <= 0.30,
+        // 收回这一格要**在「这一轮结束」之前**就判到：识别器收轮的回位线是 0.25，
+        // 而要领判定用的是上一帧的进度，所以门槛要留出余量（0.45），否则永远差一点点、拿不到整轮满分
+        check: (f, d) => d.peak >= 0.5 && d.progress <= 0.45,
         hint: () => H('steps.jumpingJack.close.hint'),
       },
     ],

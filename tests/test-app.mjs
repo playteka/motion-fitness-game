@@ -704,6 +704,27 @@ console.log('\n[5] 诊断面板');
   ok('指标面板列出全身可见度', dbg.includes('全身'), dbg);
   ok('指标面板列出关节角度', dbg.includes('膝') && dbg.includes('躯干倾角'), dbg);
 
+  // 用户反馈「开合跳一次都没计上」时，面板里看不到被判的那个量 —— 现在每个动作都显示
+  // 「🎯 本动作判的量 + 进度」，方便自查（也对齐 🎯 运动设置弹窗里的名字）
+  {
+    const jack = sp({ knee: 175, view: 'front', spread: 0.05, spreadAnkle: 0.09 });
+    const smJ = new LS();
+    let fj = { ok: false };
+    for (let i = 0; i < 20; i++) fj = cf(tm(smJ.apply(jack.map((q) => ({ ...q, v: q.visibility })), i / 30), A), null, i * 33, false, null);
+    api.selectExercise('jumpingJack');
+    api.state.detector.gateOk = true;
+    api.state.detector.progress = 0.62;
+    api.renderDebug(fj);
+    const jdbg = elements.get('debugLine').textContent;
+    ok('指标面板显示「本动作真正在判的量」（开合跳：双腿开合距离 + 进度）',
+      jdbg.includes('双腿开合距离') && jdbg.includes('进度') && /0\.\d\d/.test(jdbg), jdbg);
+    // 手写识别器（深蹲）判的是它自己的内部量，没有这一行也不该报错
+    api.selectExercise('squat');
+    api.renderDebug(f);
+    ok('手写识别器的动作不显示那一行、也不报错',
+      !elements.get('debugLine').textContent.includes('双腿开合距离'), elements.get('debugLine').textContent.slice(0, 80));
+  }
+
   api.state.settings.debug = false;
   api.renderDebug(f);
   ok('关闭指标面板后隐藏', elements.get('debugLine').hidden === true);
@@ -1758,20 +1779,21 @@ console.log('\n[8e] 开合跳');
   // 通用引擎的「站立」门控是识别器自己的布尔状态（detFlag: gateOk），桩里直接给上
   api.state.detector.gateOk = true;
   api.state.detector.active = true;
-  api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, kneeSpread: 0.35 }, [], 1000);
+  // 判据量的是 legSpread（膝 / 踝取较大值），阈值按用户反馈放宽到 0.54 / 0.73 / 0.49
+  api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 0.3 }, [], 1000);
   ok('开合跳进度条 = 4 格（并拢 → 打开 → 开到最大 → 收回）', segCount() === 4, String(segCount()));
   ok('开合跳每一格都画了图标（正面开合的火柴人）',
     (iconHtml().match(/<svg class="criteria-icon"/g) || []).length === 4, iconHtml().slice(0, 120));
   ok('站着并拢时只点亮「站立」这一格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
   ok('跳开之后进度条往前走（打开 → 开到最大，收回那一格要等真的并拢才亮）', (() => {
     api.state.detector.progress = 0.33;
-    api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, kneeSpread: 0.8 }, [], 1100);
+    api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 0.6 }, [], 1100);
     const mid = api.state.criteriaIdx;
     api.state.detector.progress = 0.9;
-    api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, kneeSpread: 1.5 }, [], 1200);
+    api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 1.1 }, [], 1200);
     const top = api.state.criteriaIdx;
     api.state.detector.progress = 0.05;
-    api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, kneeSpread: 0.35 }, [], 1300);
+    api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 0.3 }, [], 1300);
     return mid === 1 && top === 2 && api.state.criteriaIdx === 3;
   })(), `mid=${api.state.criteriaIdx}`);
   ok('开合跳得分分配到关键帧：并拢 4 / 打开 7 / 开到最大 14 / 收回 8 + 满轮 6',

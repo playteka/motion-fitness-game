@@ -247,6 +247,8 @@ export default {
     hipRise: 'Hip lift',
     thighFromHoriz: 'Thigh from horizontal',
     visibility: 'Visibility',
+    // The 🐞 panel line showing the quantity this exercise is actually judged by
+    progress: 'progress',
     sound: 'Sound',
     state: 'State',
     yes: '✓',
@@ -721,6 +723,8 @@ export default {
     hip: 'Hip angle',
     ankleSpread: 'Ankle separation',
     kneeSpread: 'Knee separation',
+    // The jumping jack now measures whichever is wider (knees or ankles): real jacks spread the feet further
+    legSpread: 'Leg spread',
     body: 'Body line angle',
     trunk: 'Trunk tilt',
     torsoIncl: 'Trunk tilt',

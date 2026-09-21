@@ -94,6 +94,7 @@ export function standingPose(o = {}) {
     hipDX = 0,
     hipDY = 0,
     spread = 0,
+    spreadAnkle = null,
   } = o;
 
   const st = shinTilt === null ? Math.min(26, Math.max(0, (180 - knee) * 0.24)) : shinTilt;
@@ -106,7 +107,7 @@ export function standingPose(o = {}) {
   const shoulder = add(hip, up(lean), SEG.torso);
   const arm = armFromShoulder(shoulder, armDown, elbow);
 
-  return assemble({ hip, shoulder, knee: kneePos, ankle, ...arm, facing, view, ground, spread });
+  return assemble({ hip, shoulder, knee: kneePos, ankle, ...arm, facing, view, ground, spread, spreadAnkle });
 }
 
 /**
@@ -191,7 +192,7 @@ export function twoLegPose(o = {}) {
 /** 由关键关节位置拼出 33 点，并按朝向镜像 */
 function assemble(p) {
   const {
-    hip, shoulder, knee, ankle, elbow, wrist, facing = 1, view = 'side', sideB = null, spread = 0,
+    hip, shoulder, knee, ankle, elbow, wrist, facing = 1, view = 'side', sideB = null, spread = 0, spreadAnkle = null,
   } = p;
   const mir = (q) => (facing === 1 ? q : { x: ASPECT - q.x, y: q.y });
 
@@ -223,8 +224,11 @@ function assemble(p) {
   // 正面视角时两腿要左右分开（真人就是这样），否则膝间距为 0 会被误判成膝盖内扣。
   // o.spread 是额外的横向张开量（开合跳这类「双腿开合」的动作要用它）。
   const extra = view === 'front' ? spread : 0;
+  // o.spreadAnkle：只把**脚**再往外挪（真人跳开时腿是往外撑的，脚张得比膝盖大得多，
+  // 开合跳的真实几何就靠它来复现；见 metrics.js 里 legSpread 的说明）。
+  const extraA = view === 'front' ? (spreadAnkle ?? spread) : 0;
   const latK = view === 'front' ? SEG.hipW / 2 + 0.02 + extra : 0;
-  const latA = view === 'front' ? SEG.hipW / 2 + 0.03 + extra : 0;
+  const latA = view === 'front' ? SEG.hipW / 2 + 0.03 + extraA : 0;
   const shiftX = (q, dx) => ({ x: q.x + dx, y: q.y, z: q.z ?? 0 });
 
   set(LM.L_KNEE, shiftX(knee, latK), nearVis);

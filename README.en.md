@@ -585,7 +585,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2090 assertions in the suite).
+> exactly on the detector's own progress line (2095 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -823,13 +823,26 @@ Timed family plans also give **+1 point for every second you hold**; if your for
 >   your shoulders more than 1× torso length off the floor, which that one line already blocks).
 >   The dead bug shares the older `supineLow` gate and still checks both lines.
 
-> **How the jumping jack is judged**: face the camera and the “open/close” is measured as the **horizontal distance
-> between your knees** (`kneeSpread`, in torso lengths) — feet together reads about 0.35 and a wide jump about 1.5, so
+> **How the jumping jack is judged**: face the camera and the “open/close” is measured as the **leg spread**
+> (`legSpread` — **whichever is wider, the knees or the ankles**, in torso lengths), so
 > progress = (narrowest − current) / (narrowest − widest) and “together → open → together” is exactly one rep.
 > The line follows **the narrowest stance you personally hold** (the engine's `effUp` self-calibration), so someone who
-> naturally stands wide still gets counted. Speed is normal here (the shortest rep is 0.3 s by default) and only a quick
-> bounce is filtered out. The keyframe icons are **front-view stick figures**: feet together (arms down) → open (legs
-> spread, hands overhead) → widest → back together (with a down arrow, meaning “return to the start position”).
+> naturally stands wide still gets counted.
+>
+> The user reported “the jumping jack never counted, it got stuck on the third keyframe”, and the cause was a criterion that was
+> too strict: ① it measured **only the knees** — in a real jack the legs push outwards so the **feet spread much further than the
+> knees**, leaving knee readings of 0.8–0.9 against a counting line of 0.98; ② the “widest” reference was set at 1.5× torso length
+> (about 85 cm of knee separation), which a real jack never reaches. It now takes **the larger of knees and ankles** (never the
+> smaller, and it still works when the feet leave the frame and only the knees are visible), the reference range is tightened to
+> **0.30 – 1.25**, and the four segments became **① Stance → ② Open ≥ 0.54 → ③ Count ≥ 0.73 (feet about 40 cm apart) → ④ Close ≤ 0.54**;
+> the shortest rep went from 300 ms to **400 ms** (a real jack takes about 0.6–1.0 s, anything faster is treated as a twitch).
+> The “close” form step was also loosened to progress 0.45, because it has to be scored **before** the detector closes the rep —
+> otherwise it always misses by one frame and the perfect-round bonus never lands.
+>
+> Speed is normal here and only a quick bounce is filtered out. The keyframe icons are **front-view stick figures**: feet together
+> (arms down) → open (legs spread, hands overhead) → widest → back together (with a down arrow, meaning “return to the start
+> position”). The 🐞 metrics panel now also shows **“🎯 the quantity this exercise is actually judged by, plus progress”**
+> (for the jack: “Leg spread 0.83 (progress 52%)”), so exercises whose criterion is not a joint angle can be debugged by the numbers.
 
 ### Sound and voice feedback
 
@@ -954,11 +967,11 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
-| `tests/test-detectors.mjs` | 298 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
+| `tests/test-detectors.mjs` | 301 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
 | `tests/test-engines.mjs` | 168 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 853 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 372 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee” and “the two knees are labelled separately” |
-| `tests/test-app.mjs` | 381 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
+| `tests/test-app.mjs` | 383 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
 
 ---
 

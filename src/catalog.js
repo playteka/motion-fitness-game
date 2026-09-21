@@ -170,10 +170,24 @@ export const EXERCISES = [
   }),
   e('jumpingJack', '🙌', 'full', {
     plan: 'jumpingJack', view: 'front', posture: 'stand', judge: 'spread', target: 50,
-    // 开合跳：正对镜头，用**双膝横向距离**（kneeSpread）量「开合」——
-    // 并拢站好 ≈ 0.35，跳开站宽 ≈ 1.5（引擎会按用户自己的最窄站距自校准，站得开的人也准）。
+    // 开合跳：正对镜头，用**双腿开合幅度**（legSpread = 膝间距与踝间距里更大的那个）量「开合」——
+    // 引擎会按用户自己的最窄站距自校准，站得开的人也准。
     // up < down：progress = (最窄 − 当前) / (最窄 − 最宽)，所以并拢 = 0、开到最大 = 1。
-    params: bend({ metric: 'kneeSpread', gate: 'stand', up: 0.35, down: 1.5, minRepMs: 300 }),
+    //
+    // 用户反馈「开合跳跳了很多次一次都没计上、卡在第三关键帧」。原因是原来的判据太严：
+    //   ① 只量膝盖 —— 真人跳开时脚张得比膝盖大得多，膝盖读数只有 0.8~0.9，而当时的计数线要求 0.98；
+    //   ② 「最宽」参考值定在 1.5 倍躯干长（≈ 85cm 膝距），真人的开合跳到不了。
+    // 现在改成「膝 / 踝取较大值」，参考区间收到 0.30 ~ 1.25，计数进度也一起放松：
+    //   ② 打开 enterP 0.25（≈ 0.54 倍躯干长就点亮「打开」）
+    //   ③ 计次 looseP 0.45（≈ 0.73 倍躯干长，脚张开约 40cm 就算一次）
+    //   满分深度 bottomP 0.80（≈ 1.06，真正跳到大开）
+    //   收回 backP 0.25（回到自己最窄站距附近就算这一轮结束；要比要领「收回」那一格的
+    //   0.45 更严，否则回位和计次会挤在同一帧上）
+    //   最短一轮 400ms（真人开合跳一轮约 0.6~1.0 秒，400ms 以下只当是抖了一下）
+    params: bend({
+      metric: 'legSpread', gate: 'stand', up: 0.30, down: 1.25,
+      enterP: 0.25, looseP: 0.45, bottomP: 0.80, ignoreP: 0.35, backP: 0.25, minRepMs: 400,
+    }),
   }),
   e('boxJump', '🦘', 'full', {
     plan: 'jump', view: 'front', posture: 'stand', judge: 'flight', target: 10, rough: true,

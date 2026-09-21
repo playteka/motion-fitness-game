@@ -19,6 +19,12 @@ import { isSupineGate } from './engines.js';
 
 export const ICON_BOX = 32;
 
+/**
+ * 「用双腿开合幅度当判据」的动作（开合跳）：`kneeSpread` 是老的按膝盖量的口径，
+ * `legSpread` 现在用「膝 / 踝取较大值」（见 metrics.js）。两个名字都画正面开合的火柴人。
+ */
+const isSpreadMetric = (m) => m === 'legSpread' || m === 'kneeSpread';
+
 /** 人体各段长度（图标单位） */
 const SEG = { shin: 5.2, thigh: 5.2, torso: 6.4, upper: 3.1, fore: 3.0, head: 1.55 };
 
@@ -223,7 +229,7 @@ const STRAIGHT_KNEE = 174;
 /**
  * 开合跳 / 立姿开合类（正面）：**双腿按开合角张开、手臂按上举角摆动**。
  *
- * 判据是「双膝横向距离」（kneeSpread），所以画出来的就是那个开合幅度：
+ * 判据是「双腿开合幅度」（legSpread = 膝间距与踝间距里更大的那个），所以画出来的就是那个开合幅度：
  * 并拢站好 = 两腿几乎竖直、手臂自然下垂；开到最大 = 两腿向外张开、双手举过头顶。
  * 这一套在网上没有「侧视骨架」对应物，所以单独写一个正面构建器 ——
  * 站立类的 buildStand 是侧视的，用它画开合跳会把「开」画成「前后迈步」。
@@ -331,7 +337,7 @@ export function poseFor(stage, ctx = {}) {
   if (metric === 'frontKnee' || metric === 'straighterKnee') return lungePose(stage, stages);
   if (isPose) {
     // 开合跳这类「正面对镜头的开合动作」：起始格画并拢站直（手臂放下）
-    if (ctx.metric === 'kneeSpread') {
+    if (isSpreadMetric(ctx.metric)) {
       return { builder: 'jack', params: { legAngle: 5, armAngle: 152 }, criterion: { spread: 0 } };
     }
     // 仰卧抬腿这类「躺平、腿伸直」的动作：起始格必须画**躺平 + 腿伸直**（≈180°），
@@ -346,7 +352,7 @@ export function poseFor(stage, ctx = {}) {
     return gatePose(posture, value, stages, metric, ctx);
   }
 
-  if (metric === 'kneeSpread') {
+  if (isSpreadMetric(metric)) {
     // 「开到最大」那一格：腿张开的角度由判据值决定，手臂同步举过头顶
     const open = stage.op === 'gte' || stage.op === 'gt';
     if (!open) {

@@ -229,9 +229,10 @@ const BRIDGE_TOP = { hipY: 0.68, thighUp: 90, knee: 90, torsoUp: 233.5 };
 
 /**
  * 开合跳：正对镜头，双脚并拢 ↔ 打开。
- * `spread` 是合成骨架额外的横向张开量，实测 kneeSpread = 0.688 + spread × 6.25：
+ * `spread` 是合成骨架额外的横向张开量（膝与踝同步挪），实测 kneeSpread = 0.688 + spread × 6.25：
  *   spread = −0.075 → kneeSpread ≈ 0.22（双脚并拢）
- *   spread = +0.130 → kneeSpread ≈ 1.5（跳开到最宽）
+ *   spread = +0.130 → kneeSpread ≈ 1.5（跳开到最宽，比真人夸张）
+ * 真人的开合跳脚张得比膝盖大得多，那种几何用 `spreadAnkle` 单独控制脚踝（见下面 [4b] 的用例）。
  */
 const JACK_CLOSED = -0.075;
 const JACK_OPEN = 0.13;
@@ -791,7 +792,7 @@ console.log('\n[4] 臀桥计数');
 }
 
 /* ------------------------------------------------------------------ *
- * 开合跳（通用 bend 引擎 + 双膝开合距离）
+ * 开合跳（通用 bend 引擎 + 双腿开合距离 legSpread）
  * ------------------------------------------------------------------ */
 
 console.log('\n[4b] 开合跳计数');
@@ -807,32 +808,59 @@ console.log('\n[4b] 开合跳计数');
     && r.reps.filter((x) => x.valid).every((x, i) => x.index === i + 1 && x.quality > 0 && x.duration > 0));
   const fOpen = makeRunner(fresh('jumpingJack')).peek(jackPose(0.5));
   const fClosed = makeRunner(fresh('jumpingJack')).peek(jackPose(0));
-  ok('开合跳：判据量的是双膝开合距离（并拢 ≈ 0.22、打开 ≈ 1.5）',
-    fClosed.kneeSpread < 0.4 && fOpen.kneeSpread > 1.2,
-    `${fClosed.kneeSpread.toFixed(2)} → ${fOpen.kneeSpread.toFixed(2)}`);
+  ok('开合跳：判据量的是双腿开合距离（膝 / 踝取较大值；并拢 < 0.4、大开 > 1.2）',
+    fClosed.legSpread < 0.4 && fOpen.legSpread > 1.2,
+    `${fClosed.legSpread.toFixed(2)} → ${fOpen.legSpread.toFixed(2)}`);
+  ok('开合跳：双腿开合距离取的是膝与踝里更大的那个（真人跳开时脚张得更大）',
+    fOpen.legSpread === Math.max(fOpen.kneeSpread, fOpen.ankleSpread),
+    `leg=${fOpen.legSpread.toFixed(2)} knee=${fOpen.kneeSpread.toFixed(2)} ankle=${fOpen.ankleSpread.toFixed(2)}`);
+}
+{
+  // ===== 用户反馈「开合跳跳了很多次一次都没计上、卡在第三关键帧」 =====
+  // 真实几何：膝盖只张开到 ~0.85（旧计数线 0.98，够不着），脚踝张到 ~1.2。
+  // 现在判据是「膝 / 踝取较大值」+ 计数线降到 0.73，所以这种真人的开合跳必须计得上。
+  const det = fresh('jumpingJack');
+  const r = makeRunner(det);
+  const realJack = (p) => {
+    const s = Math.sin(Math.PI * p);
+    return standingPose({
+      knee: 175, view: 'front',
+      spread: lerp(-0.075, 0.022, s),        // 膝盖：并拢 ≈0.22 → 张开 ≈0.85
+      spreadAnkle: lerp(-0.07, 0.075, s),    // 脚踝：并拢 ≈0.24 → 张开 ≈1.18
+    });
+  };
+  r.run(repeat(realJack, 1000, 4));
+  ok('开合跳（真实幅度：膝 0.85 / 踝 1.18）：4 个开合计 4 次',
+    det.validReps === 4, `实际 ${det.validReps}`);
+  const fRealOpen = makeRunner(fresh('jumpingJack')).peek(realJack(0.5));
+  ok('真实幅度的「跳开」读数：膝 < 0.98（旧门槛够不着）、合并值 ≥ 0.98',
+    fRealOpen.kneeSpread < 0.98 && fRealOpen.legSpread >= 0.98,
+    `knee=${fRealOpen.kneeSpread.toFixed(2)} leg=${fRealOpen.legSpread.toFixed(2)}`);
 }
 {
   // 只开一点点（远没到「宽松线」）：不计数、不记半程、也不出声
+  // （放宽计数线之后，「只开一点点」的幅度也要跟着往下调：合并读数 ≈ 0.5，仍在静默线以内）
   const det = fresh('jumpingJack');
   const r = makeRunner(det);
-  r.run(repeat((p) => jackPose(p, JACK_CLOSED, 0.0), 1000, 4));
+  r.run(repeat((p) => jackPose(p, JACK_CLOSED, -0.04), 1000, 4));
   ok('开合跳：只开一点点不算次数', det.validReps === 0, `实际 ${det.validReps}`);
   ok('开合跳：只开一点点不记半程、也不出声',
     det.partialReps === 0 && r.cues.length === 0, `半程 ${det.partialReps} / 提示 ${r.cues.map((c) => c.code).join(',')}`);
 }
 {
-  // 站得本来就开（并拢不了）的人：引擎按他自己的最窄站距自校准，照样计数
+  // 站得本来就开（并不拢脚）的人：引擎按他自己的最窄站距自校准，照样计数
+  // （合成骨架的「站得开」= 双脚相距约 35cm：legSpread ≈ 0.62 → 1.87）
   const det = fresh('jumpingJack');
   const r = makeRunner(det);
-  r.run(repeat((p) => jackPose(p, 0.02, 0.22), 1000, 4));
+  r.run(repeat((p) => jackPose(p, -0.02, 0.18), 1000, 4));
   atLeast('开合跳：站得本来就开的人也算得出次数（按自己的最窄站距自校准）', det.validReps, 3);
   void r;
 }
 {
-  // 快得不像人：只记半程 + 「太快了」（和臀桥的抖动用例同口径：快动作一律不算有效次数）
+  // 快得不像人：只记半程 + 「太快了」（最短一轮 400ms，这里一轮 330ms）
   const det = fresh('jumpingJack');
   const r = makeRunner(det);
-  r.run(repeat((p) => jackPose(p), 220, 6));
+  r.run(repeat((p) => jackPose(p), 330, 8));
   ok('开合跳：过快不刷有效次数', det.validReps <= 1, `实际 ${det.validReps}`);
   atLeast('开合跳：过快记成半程', det.partialReps, 3);
   ok('开合跳：过快提示「太快了」', r.cues.some((c) => c.code === 'tooFast'), r.cues.map((c) => c.code).join(','));
