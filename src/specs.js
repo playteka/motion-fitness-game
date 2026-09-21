@@ -780,8 +780,11 @@ export function specStages(id) {
       });
     }
   } else {
-    // 通用屈伸类：姿势（门控）→ 开始 → 计次 →[要跳起来]→ 回到起始位（计次那一刻）
-    pushItem(pick('spec.enterLine'), { kind: 'enter' });
+    // 通用屈伸类：姿势（门控）→[开始]→ 计次 →[要跳起来]→ 回到起始位（计次那一刻）
+    //   `params.skipEnter` 的动作（开合跳这类节奏很快的）**不画「开始」那一格**：
+    //   用户要求快节奏动作只留三帧（并拢 → 跳开 → 收回），「开始」在 0.6 秒的一轮里一闪而过，
+    //   既看不清也没有信息量。
+    if (!meta.params?.skipEnter) pushItem(pick('spec.enterLine'), { kind: 'enter' });
     pushItem(pick('spec.countLine'), { kind: 'count' });
     pushItem(pick('spec.flight'), { kind: 'count' });
     const backP = Number.isFinite(meta.params?.backP) ? meta.params.backP : 0.16;
@@ -838,7 +841,9 @@ const STEP_STAGE = {
   pushup: { setup: 'prone', lower: 'start', depth: 'count', press: 'back' },
   bridge: { setup: 'supine', lift: 'count', top: 'count', lower: 'down' },
   repStand: { stance: 'stand', lower: 'start', bottom: 'count', up: 'back' },
-  jumpingJack: { stance: 'stand', open: 'start', wide: 'count', close: 'back' },
+  // 开合跳只画三格（`skipEnter`，用户要求）：并拢站好（stance）→ 跳开（open 属于这一格）
+  // → 收回并拢（close）。中间的「开始」那一格被去掉了，所以「打开」这一步的分归到「跳开」那一格。
+  jumpingJack: { stance: 'stand', open: 'count', wide: 'count', close: 'back' },
   repProne: { setup: 'prone', lower: 'start', bottom: 'count', press: 'back' },
   repSupine: { setup: 'supine', engage: 'start', top: 'count', lower: 'back' },
   repAlt: { setup: '*gate', first: 'work', switch: 'rest', rhythm: 'rest' },

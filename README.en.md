@@ -67,6 +67,10 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - **Spoken counting in the selected language + sound effects**: hitting a form step plays a rising chime, the first time you hit a step it's spoken aloud, and your score is announced every 50 points.
 - **Motivation first, guidance moderate**: **every rep is spoken aloud**, every 3 reps you get an **encouragement**
   (“Keep going / Great job / Stay with it / Nice work / Hold that form / Excellent”, rotating so it never repeats), and hitting your target celebrates you before adding another cheer;
+  **very fast exercises are the exception**: a jumping jack takes about 0.6 s per rep, so counting every rep is both
+  unintelligible and disruptive — it (`speakEvery: 10` in `catalog.js`) **speaks the count only every 10 reps**, the
+  encouragement drops to the same every-10 rhythm, and the counting frame never also says an encouragement (two lines in one
+  frame cancel each other out);
   form corrections are kept but run much less often (the same line is not repeated within 15–30 s, and less often once you are a few reps in), and “what comes next” is slowed to one line every 9 s
   — the airtime goes to counting and encouragement, so you barely need to watch the screen.
 - **🎶 Four selectable background tracks**: all synthesised live (no space taken, no internet needed) — pick one under “🎵 Background track” in the settings:
@@ -585,7 +589,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2095 assertions in the suite).
+> exactly on the detector's own progress line (2096 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -834,8 +838,10 @@ Timed family plans also give **+1 point for every second you hold**; if your for
 > knees**, leaving knee readings of 0.8–0.9 against a counting line of 0.98; ② the “widest” reference was set at 1.5× torso length
 > (about 85 cm of knee separation), which a real jack never reaches. It now takes **the larger of knees and ankles** (never the
 > smaller, and it still works when the feet leave the frame and only the knees are visible), the reference range is tightened to
-> **0.30 – 1.25**, and the four segments became **① Stance → ② Open ≥ 0.54 → ③ Count ≥ 0.73 (feet about 40 cm apart) → ④ Close ≤ 0.54**;
-> the shortest rep went from 300 ms to **400 ms** (a real jack takes about 0.6–1.0 s, anything faster is treated as a twitch).
+> **0.30 – 1.25**, and — at the user's request — the bar keeps **only three keyframes** (at this pace the “start” frame flashes by in
+> 0.6 s and carries no information): **① Stance → ② Jump open (count ≥ 0.73, feet about 40 cm apart) → ③ Close (≤ 0.54)**, with the
+> points becoming **4 / 21 / 8 + perfect-round 6** (still 39 per round); the shortest rep went from 300 ms to **400 ms** (a real jack
+> takes about 0.6–1.0 s, anything faster is treated as a twitch).
 > The “close” form step was also loosened to progress 0.45, because it has to be scored **before** the detector closes the rep —
 > otherwise it always misses by one frame and the perfect-round bonus never lands.
 >
@@ -971,7 +977,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-engines.mjs` | 168 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 853 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 372 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee” and “the two knees are labelled separately” |
-| `tests/test-app.mjs` | 383 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
+| `tests/test-app.mjs` | 384 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
 
 ---
 

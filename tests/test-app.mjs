@@ -1779,13 +1779,14 @@ console.log('\n[8e] 开合跳');
   // 通用引擎的「站立」门控是识别器自己的布尔状态（detFlag: gateOk），桩里直接给上
   api.state.detector.gateOk = true;
   api.state.detector.active = true;
-  // 判据量的是 legSpread（膝 / 踝取较大值），阈值按用户反馈放宽到 0.54 / 0.73 / 0.49
+  // 判据量的是 legSpread（膝 / 踝取较大值），阈值按用户反馈放宽到 0.54 / 0.73 / 0.54
   api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 0.3 }, [], 1000);
-  ok('开合跳进度条 = 4 格（并拢 → 打开 → 开到最大 → 收回）', segCount() === 4, String(segCount()));
+  // 用户要求：开合跳节奏快，「开始」那一格一闪而过没意义 → 只留三帧
+  ok('开合跳进度条 = 3 格（并拢站好 → 跳开 → 收回）', segCount() === 3, String(segCount()));
   ok('开合跳每一格都画了图标（正面开合的火柴人）',
-    (iconHtml().match(/<svg class="criteria-icon"/g) || []).length === 4, iconHtml().slice(0, 120));
+    (iconHtml().match(/<svg class="criteria-icon"/g) || []).length === 3, iconHtml().slice(0, 120));
   ok('站着并拢时只点亮「站立」这一格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
-  ok('跳开之后进度条往前走（打开 → 开到最大，收回那一格要等真的并拢才亮）', (() => {
+  ok('跳开之后进度条往前走（跳开 → 开到最大，收回那一格要等真的并拢才亮）', (() => {
     api.state.detector.progress = 0.33;
     api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 0.6 }, [], 1100);
     const mid = api.state.criteriaIdx;
@@ -1794,11 +1795,11 @@ console.log('\n[8e] 开合跳');
     const top = api.state.criteriaIdx;
     api.state.detector.progress = 0.05;
     api.updateCriteria({ ok: true, torsoIncl: 6, kneeClear: 0.8, hipClear: 1.5, legSpread: 0.3 }, [], 1300);
-    return mid === 1 && top === 2 && api.state.criteriaIdx === 3;
+    return mid === 0 && top === 1 && api.state.criteriaIdx === 2;
   })(), `mid=${api.state.criteriaIdx}`);
-  ok('开合跳得分分配到关键帧：并拢 4 / 打开 7 / 开到最大 14 / 收回 8 + 满轮 6',
-    JSON.stringify(api.state.criteriaMax.map((r) => r.points)) === '[4,7,14,8]'
-    && api.state.criteriaMax[3].bonus === 6,
+  ok('开合跳得分分配到三帧：并拢 4 / 跳开 7+14=21 / 收回 8 + 满轮 6',
+    JSON.stringify(api.state.criteriaMax.map((r) => r.points)) === '[4,21,8]'
+    && api.state.criteriaMax[2].bonus === 6,
     JSON.stringify(api.state.criteriaMax));
   api.showHome();
 }
@@ -2168,6 +2169,28 @@ console.log('\n[12] 语音教练');
   const pool = Array.isArray(poolRaw) ? poolRaw : [String(poolRaw)];
   const encouraged = said.filter((s) => pool.includes(s));
   ok('满 3 次会给一句激励语', encouraged.length >= 1, `说了 ${said.join(' / ')}｜池子 ${pool.join('/')}`);
+
+  // 5.2b) 快节奏动作（开合跳）：每 10 次才报一次数（用户要求），中间的次数不念
+  {
+    const same = api.state.exerciseId;
+    api.selectExercise('jumpingJack');
+    api.state.settings.voice = true;
+    api.state.detector = api.state.detector || savedDet;
+    api.state.repsSinceEncourage = 0;
+    const counts = [];
+    for (const n of [1, 2, 3, 9, 10, 11, 19, 20]) {
+      said.length = 0;
+      api.state.detector.validReps = n;
+      api.handleEvents([{ type: 'rep', valid: true, index: n }]);
+      const spokeCount = said.some((s) => new RegExp(`^${n}\\b`).test(s.trim()));
+      if (spokeCount) counts.push(n);
+    }
+    ok('开合跳：只在 10 的整数倍报数（10 / 20），中间的次数不念',
+      counts.join(',') === '10,20', `实际报了：${counts.join(',') || '（一次都没报）'}`);
+    api.selectExercise(same);
+    api.state.detector = savedDet;
+  }
+
   // 5.3) 纠正提示在做过几次之后明显降频（gapMs 更大）
   said.length = 0;
   api.state.detector.validReps = 6;

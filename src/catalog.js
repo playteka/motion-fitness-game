@@ -65,6 +65,9 @@ const e = (id, icon, cats, opts) => ({
   target: opts.target || (opts.kind === 'hold' ? 30 : 12),
   unitKey: opts.kind === 'hold' ? SEC : REP,
   rough: !!opts.rough,
+  // 语音报数的节奏：默认每做一个都报数；节奏很快的动作（开合跳）写 10 = 每 10 次才报一次
+  // （用户反馈「动作太快，每次都报数根本听不清」）。同一个数字也用来降低「激励语」的频率。
+  speakEvery: Math.max(1, opts.speakEvery || 1),
   params: opts.params || {},
 });
 
@@ -170,6 +173,8 @@ export const EXERCISES = [
   }),
   e('jumpingJack', '🙌', 'full', {
     plan: 'jumpingJack', view: 'front', posture: 'stand', judge: 'spread', target: 50,
+    // 动作节奏快、每次时间短：**每 10 次报一次数**（用户要求），别每次都念
+    speakEvery: 10,
     // 开合跳：正对镜头，用**双腿开合幅度**（legSpread = 膝间距与踝间距里更大的那个）量「开合」——
     // 引擎会按用户自己的最窄站距自校准，站得开的人也准。
     // up < down：progress = (最窄 − 当前) / (最窄 − 最宽)，所以并拢 = 0、开到最大 = 1。
@@ -184,9 +189,12 @@ export const EXERCISES = [
     //   收回 backP 0.25（回到自己最窄站距附近就算这一轮结束；要比要领「收回」那一格的
     //   0.45 更严，否则回位和计次会挤在同一帧上）
     //   最短一轮 400ms（真人开合跳一轮约 0.6~1.0 秒，400ms 以下只当是抖了一下）
+    //   关键帧只留三格（用户要求）：并拢站好 → 跳开（计次）→ 收回，中间那一格「开始」
+    //   在这么快的节奏里一闪而过、没有信息量，靠 `skipEnter` 去掉（见 specs.js）。
     params: bend({
       metric: 'legSpread', gate: 'stand', up: 0.30, down: 1.25,
       enterP: 0.25, looseP: 0.45, bottomP: 0.80, ignoreP: 0.35, backP: 0.25, minRepMs: 400,
+      skipEnter: true,
     }),
   }),
   e('boxJump', '🦘', 'full', {

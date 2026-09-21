@@ -1956,10 +1956,18 @@ function coachSay(text, { gapMs = 2500, dedupeMs = 12000, key = '' } = {}) {
 /**
  * 语音策略（用户反馈：指导太多、缺少鼓励）：
  *   - **每做一个动作都要报数**（sayRep 用 force，不会被别的提示吞掉）；
+ *     节奏特别快的动作例外：`catalog.js` 里写 `speakEvery: 10` 的动作（开合跳）**每 10 次才报一次**
+ *     —— 用户反馈「动作太快，每次都报数根本听不清」，而且报数本身也会拖慢节奏；
  *   - 每 ENCOURAGE_EVERY 次给一句**激励**（加油 / 太棒了 / 继续坚持 …），轮换不重复；
+ *     快节奏动作同样按 `speakEvery` 降频（10 次说一句），不然一组 50 次要念十几句；
  *   - 纠正提示保留但**适度**：同一句话长去重、组内做过 3 次之后进一步降频。
  */
 const ENCOURAGE_EVERY = 3;
+
+/** 这个动作每做几次报一次数 / 说一句激励（catalog 里的 speakEvery，默认 1 = 每次都报） */
+function speakEveryOf() {
+  return Math.max(1, EXERCISE_MAP[state.exerciseId]?.speakEvery || 1);
+}
 
 /** 屏幕上的激励语：跟语音同一个池子，轮着显示，不重复上一句 */
 function pickEncourageHint(seed) {
@@ -2010,8 +2018,10 @@ function handleEvents(events, now = performance.now()) {
         pulseValue();
         pulseScore();
         audio.rep(det.validReps);
-        // **每做一个都报数**（用户明确要求）：报数用 force 打断上一句，不会被吞掉
-        audio.sayRep(det.validReps);
+        // 报数节奏：默认**每做一个都报数**（用户明确要求，用 force 打断上一句，不会被吞掉）；
+        // 快节奏动作（开合跳 speakEvery: 10）只在 10 的整数倍报一次 —— 每次时间太短，念了也听不清。
+        const speakEvery = speakEveryOf();
+        if (det.validReps % speakEvery === 0) audio.sayRep(det.validReps);
         state.repsSinceEncourage = (state.repsSinceEncourage || 0) + 1;
         state.maxRepsSinceEncourage = Math.max(state.maxRepsSinceEncourage || 0, state.repsSinceEncourage);
         const half = Math.ceil(state.target / 2);
@@ -2022,8 +2032,10 @@ function handleEvents(events, now = performance.now()) {
         } else if (running && det.validReps >= state.target && !state.goalHit) {
           state.goalHit = true;
           onGoalReached();
-        } else if (state.repsSinceEncourage >= ENCOURAGE_EVERY) {
-          // 隔几次给一句激励 —— 语音以「鼓励」为主，而不是只挑毛病
+        } else if (state.repsSinceEncourage >= Math.max(ENCOURAGE_EVERY, speakEvery)
+          && !(speakEvery > 1 && det.validReps % speakEvery === 0)) {
+          // 隔几次给一句激励 —— 语音以「鼓励」为主，而不是只挑毛病（快节奏动作同样降频）。
+          // 报数那一帧（speakEvery 的整数倍）让给报数：两句挤在同一帧，后一句会把报数顶掉。
           state.repsSinceEncourage = 0;
           audio.sayEncourage(det.validReps / ENCOURAGE_EVERY + det.cycle);
           setHint(pickEncourageHint(det.validReps), 'good', 1500);
