@@ -115,6 +115,57 @@ function buildStand({
 }
 
 /**
+ * 勾腿跳（站立勾腿）：**侧视站姿**，一条腿的脚跟往臀部勾起来。
+ *
+ * 为什么单独写一个：勾腿跳的判据（`oneSide` / `otherSide`）是「左右交替」这类分侧指标，
+ * 落到通用分支里会被画成**躺着**的图（那是死虫式 / 登山者的样子），
+ * 用户反馈「勾腿跳进度条上的图标应该是站立勾腿跳的图标」。
+ *
+ * @param o.kickKnee 勾起来那条腿的膝角（度），越小说明脚跟勾得越靠近臀部
+ * @param o.kicked   'near' = 勾近侧腿（腿画在身体这一侧）；'far' = 勾远侧腿（往后一点，颜色一样但位置不同）
+ */
+function buildKick({ kickKnee = 100, kicked = 'near' } = {}) {
+  const lines = [];
+  const circles = [];
+  const hip = { x: 0, y: 0 };
+
+  // 支撑腿：几乎伸直，脚踩在地上（稍微往后一点，符合勾腿跳的站姿）
+  const supThigh = kicked === 'near' ? 3 : 6;
+  const supKnee = add(hip, down(supThigh), SEG.thigh);
+  const supAnkle = add(supKnee, down(supThigh - 3), SEG.shin);
+  lines.push(seg(hip, supKnee), seg(supKnee, supAnkle));
+
+  // 勾起来的那条腿：大腿向后下方，小腿折回上方 —— 脚跟贴近臀部，膝角就是 kickKnee
+  const kick = clamp(num(kickKnee, 100), 55, 175);
+  const t = kicked === 'near' ? -16 : -26;          // 大腿相对竖直向后（负 = 向后）
+  const s = t - (180 - kick);                        // 小腿：与大腿夹角 = 膝角
+  const kickKneeP = add(hip, down(t), SEG.thigh);
+  const kickAnkle = add(kickKneeP, down(s), SEG.shin);
+  lines.push(seg(hip, kickKneeP), seg(kickKneeP, kickAnkle));
+
+  const lowest = Math.max(supAnkle.y, supKnee.y, kickKneeP.y);
+
+  // 躯干直立、手臂自然摆动（勾腿跳时手臂在体侧小幅摆动），画在最后免得被腿压住
+  const shoulder = add(hip, up(4), SEG.torso);
+  lines.push(seg(hip, shoulder));
+  const armDown = kicked === 'near' ? -12 : 14;
+  const elbowP = add(shoulder, down(armDown), SEG.upper);
+  const wrist = add(elbowP, down(armDown - 26), SEG.fore);
+  lines.push(seg(shoulder, elbowP), seg(elbowP, wrist));
+  const head = add(shoulder, up(4), SEG.head * 1.6);
+  circles.push({ x: head.x, y: head.y, r: SEG.head });
+
+  const shift = (p) => ({
+    x: p.x * STAND_SCALE + STAND_HIP_X,
+    y: (p.y - lowest) * STAND_SCALE + STAND_FLOOR,
+  });
+  return {
+    lines: lines.map((l) => seg(shift(l.a), shift(l.b))),
+    circles: circles.map((c) => ({ ...shift(c), r: c.r * STAND_SCALE })),
+  };
+}
+
+/**
  * 双段肢体求解（肩→肘→手，或髋→膝→踝）：给定两段长度和肘/膝角，
  * 求中间关节的位置。撑地类姿势靠它保证「手贴在地面上、身体高度由肘角决定」——
  * 肘弯得越多，身体越低，这正是俯卧撑真实的样子。
@@ -335,6 +386,20 @@ export function poseFor(stage, ctx = {}) {
   const isPose = !!stage?.pose;
 
   if (metric === 'frontKnee' || metric === 'straighterKnee') return lungePose(stage, stages);
+  // 勾腿跳（站立左右交替勾腿）：所有格子都画**站姿勾腿**的火柴人 ——
+  // 第一格站直、第二格勾近侧腿、第三格勾远侧腿（换另一条腿）。
+  // 不这么特判的话，oneSide / otherSide 会落到通用分支画成躺着的图（那是死虫式/登山者）。
+  if (ctx.plan === 'standAlt') {
+    if (isPose) return { builder: 'stand', params: { knee: 176, lean: 3, armDown: 8 }, criterion: { knee: 176 } };
+    const kicking = stage.kind === 'finish' ? 'far' : 'near';
+    const kickKnee = num(value, 100);
+    return {
+      builder: 'kick',
+      params: { kickKnee, kicked: kicking },
+      criterion: { knee: kickKnee },
+      drawn: { knee: kickKnee },
+    };
+  }
   if (isPose) {
     // 开合跳这类「正面对镜头的开合动作」：起始格画并拢站直（手臂放下）
     if (isSpreadMetric(ctx.metric)) {
@@ -559,7 +624,8 @@ function gatePose(posture, value, stages, metric, ctx = {}) {
 export function stageIcon(stage, ctx = {}) {
   const pose = poseFor(stage, ctx);
   const built = pose.builder === 'lie' ? buildLie(pose.params)
-    : (pose.builder === 'jack' ? buildJack(pose.params) : buildStand(pose.params));
+    : (pose.builder === 'jack' ? buildJack(pose.params)
+      : (pose.builder === 'kick' ? buildKick(pose.params) : buildStand(pose.params)));
   const lines = built.lines.concat(markLines(pose.params?.mark, pose.builder));
   return { lines, circles: built.circles, pose, builder: pose.builder, params: pose.params };
 }

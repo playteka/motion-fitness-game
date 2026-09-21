@@ -898,6 +898,54 @@ console.log('\n[6] alt 引擎：左右交替');
     `active=${lying.active}`);
 }
 {
+  // ===== 用户反馈「动作比较快，识别不到位、没有及时计次」：把时序门槛放松后再验一遍 =====
+  const kickFrame = (kick) => ({
+    ok: true, torsoIncl: 10, kneeClear: 0.5, hipClear: 1.0,
+    perSide: {
+      L: { knee: kick === 'L' ? 78 : 168 },
+      R: { knee: kick === 'R' ? 78 : 168 },
+    },
+  });
+  // 快节奏：每边 ~140ms（原来 minRepMs 180 会把后面几次直接吞掉）
+  const fast = createDetector('buttKick');
+  const rFast = makeFrameRunner(fast);
+  rFast.run([{ f: kickFrame('L'), ms: 140 }, { f: kickFrame('R'), ms: 140 },
+    { f: kickFrame('L'), ms: 140 }, { f: kickFrame('R'), ms: 140 },
+    { f: kickFrame('L'), ms: 140 }, { f: kickFrame('R'), ms: 140 }]);
+  atLeast('勾腿跳：快节奏（每边 140ms）也能跟上计数（≥5 次）', fast.validReps, 5);
+  // 支撑腿没有那么直（跳起来时两条腿都弯着）也要能判：offValue 放宽到 135°
+  const airborne = createDetector('buttKick');
+  const rAir = makeFrameRunner(airborne);
+  const airFrame = (kick) => ({
+    ok: true, torsoIncl: 10, kneeClear: 0.5, hipClear: 1.0,
+    perSide: {
+      L: { knee: kick === 'L' ? 80 : 142 },   // 没勾的那条腿只有 142°（< 原来的 150°）
+      R: { knee: kick === 'R' ? 80 : 142 },
+    },
+  });
+  rAir.run([{ f: airFrame('L'), ms: 300 }, { f: airFrame('R'), ms: 300 },
+    { f: airFrame('L'), ms: 300 }, { f: airFrame('R'), ms: 300 }]);
+  ok('勾腿跳：没勾的那条腿只到 142°（原来会判不到「另一侧在休息」）也能计次',
+    airborne.validReps === 4, `实际 ${airborne.validReps}`);
+}
+{
+  // ===== `switched` 标记：进度条最后一格（换边）就是计次那一刻 =====
+  const kickFrame = (kick) => ({
+    ok: true, torsoIncl: 10, kneeClear: 0.5, hipClear: 1.0,
+    perSide: { L: { knee: kick === 'L' ? 70 : 170 }, R: { knee: kick === 'R' ? 70 : 170 } },
+  });
+  const det = createDetector('buttKick');
+  const r = makeFrameRunner(det);
+  ok('勾腿跳：一开始 switched = false（最后一格没亮）', det.switched === false, String(det.switched));
+  r.run([{ f: kickFrame('L'), ms: 400 }, { f: kickFrame('R'), ms: 400 }]);
+  ok('勾腿跳：换边成功（计次）之后 switched = true（最后一格点亮）',
+    det.validReps === 2 && det.switched === true, `reps=${det.validReps} switched=${det.switched}`);
+  // 再勾一次左腿：新的一侧刚开始做的那一帧就清掉标记（下面一格重新走）
+  r.run([{ f: kickFrame('L'), ms: 34 }]);
+  ok('勾腿跳：开始新的一侧时 switched 清回 false（下一轮重新点亮）',
+    det.switched === false, String(det.switched));
+}
+{
   // 门控：站着做登山者
   const det = createDetector('mountainClimber');
   const r = makeFrameRunner(det);

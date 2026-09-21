@@ -849,7 +849,7 @@ export default {
     adviceBackKnee: '后膝接近地面',
     adviceLegStraight: '腿尽量绷直（膝盖角度）',
     altOn: '一侧进入动作',
-    altOff: '另一侧回到休息位',
+    altSwitch: '换另一条腿也做到',
     altHold: '动作保持时间',
     altGap: '两次计数的间隔',
     twistAmount: '上身左右转体幅度',
@@ -872,6 +872,8 @@ export default {
       drop: '下沉',
       work: '发力',
       rest: '还原',
+      // 左右交替的最后一格：换另一条腿也做到（换边那一刻计次）
+      switch: '换边',
       prone: '俯撑',
       supine: '仰卧',
       side: '侧卧',
@@ -919,7 +921,8 @@ export default {
       bodyStraight: '身体不成一条直线时只出声纠正、质量分打折，不扣次数。',
       shoulderOnFloor: '肩要贴在地面上（超过这条线说明人没躺下）。',
       altOn: '一侧的指标进入这个范围才算「这一侧在做」。',
-      altOff: '另一侧必须回到这个范围：一左一右交替才算一次。',
+      altSwitch: '另一条腿也要做到同样的幅度（≤{v}°），换边成功的那一刻就计一次；'
+        + '刚做完的那条腿要先回到 ≥{rest}°，两次之间至少间隔 {gap} 秒。',
       altHold: '做动作的一侧要保持这么久才计一次（滤掉抖动）。',
       altGap: '两次计数之间至少间隔这么久。',
       twistAmount: '上身左右转到这个幅度以外才算一次转体。',

@@ -179,12 +179,17 @@ function altSpecs(meta) {
         noteKey: 'spec.note.altOn',
       }),
       item({
-        labelKey: 'spec.altOff',
+        labelKey: 'spec.altSwitch',
         metricKey: 'metric.otherSide',
-        op: cmpLt ? 'gte' : 'lte',
-        value: roundFor(offValue, unit),
+        op: cmpLt ? 'lte' : 'gte',
+        value: roundFor(onValue, unit),
         unit,
-        noteKey: 'spec.note.altOff',
+        noteKey: 'spec.note.altSwitch',
+        noteParams: {
+          v: roundFor(onValue, unit),
+          rest: roundFor(offValue, unit),
+          gap: roundFor(minRepMs / 1000, S),
+        },
       }),
       item({ labelKey: 'spec.altHold', op: 'gte', value: roundFor(holdMs / 1000, S), unit: S, noteKey: 'spec.note.altHold' }),
       item({ labelKey: 'spec.altGap', op: 'gte', value: roundFor(minRepMs / 1000, S), unit: S, noteKey: 'spec.note.altGap' }),
@@ -615,7 +620,7 @@ const SHORT_LABEL = {
   'spec.seq3': 'spec.short.holdPlank',
   'spec.seq4': 'spec.short.jump',
   'spec.altOn': 'spec.short.work',
-  'spec.altOff': 'spec.short.rest',
+  'spec.altSwitch': 'spec.short.switch',
   'spec.plankHard': 'spec.short.holdPlank',
   'spec.plankSoft': 'spec.short.line',
   'spec.plankKnee': 'spec.short.knee',
@@ -741,9 +746,12 @@ export function specStages(id) {
       },
     });
   } else if (meta.engine === 'alt') {
-    // 左右交替：一侧发力 → 另一侧还原（交替成立那一刻计次）
+    // 左右交替：一侧发力 → **换另一条腿也做到**（换边成立那一刻计次）。
+    // 用户要求「第二格之后应该是『勾腿』『勾另一条腿』」—— 所以最后一格的判据就是
+    // 「另一条腿也做到同样的幅度」，点亮它的那一刻正是识别器计次的那一刻
+    // （用识别器自己的 switched 标记，不靠「另一侧回到休息位」这种中间条件）。
     pushItem(pick('spec.altOn'), { kind: 'count' });
-    pushItem(pick('spec.altOff'), { kind: 'finish' });
+    pushItem(pick('spec.altSwitch'), { kind: 'finish', detFlag: 'switched' });
   } else if (meta.engine === 'sequence') {
     // 多段动作：按顺序每一段都要做到，最后一段完成即计次
     const seq = count.filter((it) => /^spec\.seq\d+$/.test(it.labelKey));
@@ -846,8 +854,9 @@ const STEP_STAGE = {
   jumpingJack: { stance: 'stand', open: 'count', wide: 'count', close: 'back' },
   repProne: { setup: 'prone', lower: 'start', bottom: 'count', press: 'back' },
   repSupine: { setup: 'supine', engage: 'start', top: 'count', lower: 'back' },
-  repAlt: { setup: '*gate', first: 'work', switch: 'rest', rhythm: 'rest' },
-  standAlt: { setup: '*gate', first: 'work', switch: 'rest', rhythm: 'rest' },
+  // 左右交替类：最后一格是「换另一条腿也做到」（= 计次那一刻）
+  repAlt: { setup: '*gate', first: 'work', switch: 'switch', rhythm: 'switch' },
+  standAlt: { setup: '*gate', first: 'work', switch: 'switch', rhythm: 'switch' },
   sequence: { setup: 'stand', down: 'crouch', middle: 'holdPlank', finish: 'jump' },
   jump: { stance: 'stand', crouch: 'count', flight: 'jump', land: 'back' },
   plank: { setup: 'lift', align: 'holdPlank', hold3: '*last', hold10: '*last', hold30: '*last' },

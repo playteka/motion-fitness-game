@@ -1792,6 +1792,49 @@ console.log('\n[8d] 每个动作做完一组都有两个圆环');
  * 开合跳（新增在「全身」分类里）
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * [8e2] 勾腿跳：三格进度条 + 图标 + 最后一格由「换边成功」点亮
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8e2] 勾腿跳');
+{
+  const api = windowStub.__mfg;
+  const segEls = () => elements.get('criteriaTrack').children;
+  const segCount = () => segEls().length;
+  const iconHtml = () => segEls().map((c) => c.innerHTML).join('');
+  const { specStages } = await import('../src/specs.js');
+  api.openExercise('buttKick');
+  ok('勾腿跳默认目标 = 20 次', api.state.target === 20, String(api.state.target));
+  api.buildCriteriaBar();
+  api.state.session = 'running';
+  api.state.criteriaLive = true;
+  api.state.detector.gateOk = true;
+  api.state.detector.active = true;
+  const stages = specStages('buttKick');
+  ok('勾腿跳进度条 = 3 格（站立 → 勾腿 → 换另一条腿勾）', segCount() === 3, String(segCount()));
+  ok('勾腿跳每一格都画了图标（站姿勾腿的火柴人，不是躺着的图）',
+    (iconHtml().match(/<svg class="criteria-icon"/g) || []).length === 3, iconHtml().slice(0, 100));
+  const iconPaths = (iconHtml().match(/<line /g) || []).length;
+  ok('勾腿跳的后两格图标是勾腿姿势（线条数比「站立」那格多）', iconPaths >= 3 * 6, String(iconPaths));
+
+  // 第一格：站着（门控过了）就点亮
+  api.state.detector.switched = false;
+  api.updateCriteria({ ok: true, torsoIncl: 10, kneeClear: 0.5, hipClear: 1.0, perSide: { L: { knee: 170 }, R: { knee: 170 } } }, [], 1000);
+  ok('勾腿跳：站着时只点亮「站立」这一格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
+  // 勾起来一条腿（膝角 80°）：点亮「勾腿」那一格
+  api.updateCriteria({ ok: true, torsoIncl: 10, kneeClear: 0.5, hipClear: 1.0, perSide: { L: { knee: 80 }, R: { knee: 168 } } }, [], 1100);
+  ok('勾腿跳：勾起来一条腿（膝角 80° ≤100°）点亮「勾腿」那一格',
+    api.state.criteriaIdx === 1, String(api.state.criteriaIdx));
+  // 最后一格用识别器自己的「换边成功」标记：没换边不亮，换边了才亮（= 计次那一刻）
+  ok('勾腿跳：还没换边时最后一格不亮（switched = false）',
+    api.state.criteriaIdx === 1, String(api.state.criteriaIdx));
+  api.state.detector.switched = true;
+  api.updateCriteria({ ok: true, torsoIncl: 10, kneeClear: 0.5, hipClear: 1.0, perSide: { L: { knee: 168 }, R: { knee: 80 } } }, [], 1200);
+  ok('勾腿跳：换边成功（识别器 switched = true）时最后一格点亮 —— 也就是计次那一刻',
+    api.state.criteriaIdx === stages.length - 1, String(api.state.criteriaIdx));
+  api.showHome();
+}
+
 console.log('\n[8e] 开合跳');
 {
   const api = windowStub.__mfg;

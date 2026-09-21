@@ -849,7 +849,7 @@ export default {
     adviceBackKnee: 'Back knee close to the floor',
     adviceLegStraight: 'Keep the leg straight (knee angle)',
     altOn: 'One side enters the movement',
-    altOff: 'The other side returns to rest',
+    altSwitch: 'The other side does it too',
     altHold: 'How long the movement must be held',
     altGap: 'Gap between two counted reps',
     twistAmount: 'Twist range of the upper body',
@@ -872,6 +872,8 @@ export default {
       drop: 'Sink',
       work: 'Work',
       rest: 'Return',
+      // Last segment for alternating exercises: the other leg does it too (that is the counting moment)
+      switch: 'Switch',
       prone: 'Plank',
       supine: 'Supine',
       side: 'Side',
@@ -919,7 +921,8 @@ export default {
       bodyStraight: 'A body that is not in one line only triggers a spoken reminder and a discounted quality score — it never costs you a rep.',
       shoulderOnFloor: 'The shoulders must stay on the floor (past this line means you are not lying down).',
       altOn: 'One side has to enter this range to count as “working”.',
-      altOff: 'The other side must return to this range: alternating left and right is what counts a rep.',
+      altSwitch: 'The other side has to reach the same range (≤{v}°); the moment the switch lands, one rep is counted. '
+        + 'The side you just used has to come back to ≥{rest}°, and two reps have to be at least {gap} s apart.',
       altHold: 'The working side has to stay there this long to count once (filters out jitter).',
       altGap: 'At least this much time between two counted reps.',
       twistAmount: 'The upper body must twist past this range to count a twist.',

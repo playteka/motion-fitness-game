@@ -127,8 +127,17 @@ export const EXERCISES = [
     // 勾腿跳（原地后勾腿 / 踢臀跳）：站姿左右交替，把脚跟往臀部勾。
     // 判据是**膝盖弯曲度**：勾起来的那条腿膝角很小（脚跟靠近臀部），放下去伸直就换边。
     // 左右交替交给 alt 引擎（和登山者、死虫式同一套），所以「左勾一次 + 右勾一次 = 1 次」。
+    //
+    // 参数按用户反馈「动作比较快、识别不到位、没有及时计次」调过（这动作一秒能勾两下）：
+    //   onValue  勾起来的膝角门槛（≤100°）
+    //   offValue 刚做完那条腿要回到 ≥135°（原来 150°：快节奏时两腿都在 140° 上下，判不到「另一侧在休息」）
+    //   holdMs   一侧要连续保持 25ms 才算「在做」（原来 60ms ≈ 两帧，快动作中间抖一下就丢一次）
+    //   minRepMs 两次之间至少 110ms（原来 180ms，快节奏时会把后面的次数直接吞掉）
     engine: 'alt', plan: 'standAlt', posture: 'stand', judge: 'leg', target: 20,
-    params: { gate: 'stand', metric: 'knee', cmp: 'lt', onValue: 100, offValue: 150, minRepMs: 180 },
+    params: {
+      gate: 'stand', metric: 'knee', cmp: 'lt',
+      onValue: 100, offValue: 135, holdMs: 25, minRepMs: 110,
+    },
   }),
 
   /* ================= 核心 ================= */

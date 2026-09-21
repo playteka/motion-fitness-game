@@ -655,6 +655,33 @@ console.log('\n[10] 关键帧线条图标');
       && uniqueStages(stJ, ctxJ).length === 4,
       JSON.stringify(stJ.map((s) => stageIcon(s, ctxJ).pose.params.hip)));
   }
+  // 勾腿跳（用户要求）：站立 → 勾腿（≤100°）→ 换另一条腿勾（≤100°），而且图标必须是**站姿勾腿**
+  {
+    const ctxK = iconCtx('buttKick');
+    const stK = specStages('buttKick');
+    const icons = stK.map((s) => stageIcon(s, ctxK));
+    ok('勾腿跳：三格 = 站立 → 勾腿 → 换另一条腿勾（最后一格 = 计次那一刻）',
+      stK.length === 3 && stK[0].kind === 'gate' && stK[1].kind === 'count' && stK[2].kind === 'finish'
+      && stK[1].value === 100 && stK[2].value === 100 && stK[2].metric === 'otherSide',
+      JSON.stringify(stK.map((s) => `${s.kind}:${s.metric}${s.op}${s.value}`)));
+    ok('勾腿跳：三格图标都是站姿（第一格站直，后两格是「站立勾腿」而不是躺着的图）',
+      icons[0].builder === 'stand' && icons[1].builder === 'kick' && icons[2].builder === 'kick',
+      icons.map((ic) => ic.builder).join(','));
+    ok('勾腿跳：后两格画的就是那个膝角（100°），而且一近一远（换另一条腿）',
+      icons[1].pose.params.kickKnee === 100 && icons[2].pose.params.kickKnee === 100
+      && icons[1].pose.params.kicked === 'near' && icons[2].pose.params.kicked === 'far',
+      JSON.stringify(icons.map((ic) => ic.pose.params)));
+    ok('勾腿跳：三格图标互不相同（不会被「画得一样就合并」吃掉）',
+      new Set(stK.map((s) => JSON.stringify(stageIcon(s, ctxK).pose.params))).size === 3
+      && uniqueStages(stK, ctxK).length === 3);
+    ok('勾腿跳：最后一格判据用识别器自己的「换边成功」标记（点亮即计次）',
+      stK[2].detFlag === 'switched', String(stK[2].detFlag));
+    ok('勾腿跳：最后一格的补充说明带上了「回到 ≥135°/最短间隔 0.11 秒」的参数',
+      stK[2].item.noteKey === 'spec.note.altSwitch'
+      && stK[2].item.noteParams?.rest === 135 && stK[2].item.noteParams?.gap === 0.11,
+      JSON.stringify(stK[2].item.noteParams));
+  }
+
   ok('深蹲：图标里的膝角随判据单调变深（蹲得越深画得越弯）', (() => {
     const bends = squatStages.map((s) => 180 - drawnAngle(s, squatCtx));
     return bends.every((v, i) => i === 0 || v >= bends[i - 1]);

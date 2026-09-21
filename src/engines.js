@@ -535,6 +535,15 @@ class AltRepDetector extends DetectorBase {
     this.lastAt = 0;
     this.gateOk = false;
     this._badFrames = 0;
+    /**
+     * 「已经换到另一条腿了」。
+     *
+     * 进度条最后一格用它点亮：左右交替类动作**换边成功的那一刻就是计次那一刻**，
+     * 而「另一侧回到休息位」只是一个中间条件 —— 用它当最后一格的判据，
+     * 用户会看到「最后一格亮了却没计次」。这个标记在计次时置 true，
+     * 新的一侧开始做（换边的第一帧）时清掉，所以每次交替只会亮一次。
+     */
+    this.switched = false;
   }
 
   /** 某一侧「正在做」的判定 */
@@ -585,6 +594,7 @@ class AltRepDetector extends DetectorBase {
     if (target !== this.sideNow) {
       this.sideNow = target;
       this.sideSince = target ? now : 0;
+      if (target) this.switched = false;   // 新的一侧刚开始做：还没换过边
       return;
     }
     if (!target) return;
@@ -598,6 +608,7 @@ class AltRepDetector extends DetectorBase {
     this.reps = this.validReps;
     this.cycleHadValidRep = true;
     this.phase = 'work';
+    this.switched = true;   // 换另一条腿成功 = 计次那一刻（进度条最后一格就是这一格）
     this.emit({
       type: 'rep', valid: true, index: this.validReps, quality: 82, side: target, duration: 0,
     });
