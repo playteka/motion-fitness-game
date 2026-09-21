@@ -240,6 +240,8 @@ export default {
     // 画面上的角度标注用短名（和「髋 / 膝」一个长度，胶囊不会宽到互相压住）
     trunk: '躯干',
     knee: '膝',
+    // 开合跳画面上的读数（判据是开合幅度，不是角度）
+    legSpread: '开合',
     // 两条腿都在画面里时左右分开标（用户要求「分别显示左膝和右膝的度数」）
     kneeL: '左膝',
     kneeR: '右膝',
@@ -657,6 +659,9 @@ export default {
     noResult: '没有找到匹配的动作',
     back: '返回主页',
     openSettings: '设置',
+    // 两个新的顶栏图标（内容都在弹窗里）
+    openBest: '最佳成绩',
+    openHistory: '运动记录',
     rough: '粗略判定',
     judgeBy: '判定依据：{what}',
     start: '进入训练',
@@ -678,6 +683,13 @@ export default {
       + '做到一格就亮一格，所有关键帧都做到就计一次。',
     cameraGroup: '📹 机位与画面',
     camera: '机位提示：{what}',
+  },
+
+  /* 两个弹窗（最佳成绩 / 运动记录）的说明文字 */
+  records: {
+    bestLead: '每个动作练得最好的一次（次数 / 时长 + 得分），只保存在这台设备的浏览器里。',
+    historyLead: '最近 12 组训练：时间、动作、成绩与得分。',
+    cleared: '训练记录已清空（最佳成绩也一起清了）',
   },
 
   settings: {

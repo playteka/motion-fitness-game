@@ -865,10 +865,22 @@ console.log('\n[6] 火柴人开关');
         && !texts.some((x) => x.startsWith('左膝') || x.startsWith('右膝')),
         `legsVisible=${fHidden.legsVisible} | ${texts.join(' | ')}`);
     }
-    // 没有角度判据的动作（跳跃离地、开合距离）不标角度，避免画面全是数字
+    // 没有角度判据的动作（跳跃离地、开合距离）不标角度，避免画面全是数字。
+    // 但开合跳的判据是「双腿开合幅度」，所以画面上显示那个幅度（用户问「开合跳怎么没有角度」）。
     texts.length = 0;
     api.renderer.draw({ landmarks, frame, exerciseId: 'jumpingJack', status: 'ok' });
-    ok('判据不是关节角的动作（开合跳）不标角度', texts.length === 0, texts.join(' | '));
+    ok('开合跳：不标任何角度（它的判据不是关节角）',
+      !texts.some((x) => x.includes('°')), texts.join(' | '));
+    ok('开合跳：改标「开合 x.xx」（就是识别器真正在判的那个量）',
+      texts.some((x) => /^开合\s+\d+\.\d\d$/.test(x)), texts.join(' | '));
+    {
+      // 真帧里读的就是 frame.legSpread（膝 / 踝取较大值）
+      const jackFrame = { ...frame, legSpread: 0.82 };
+      texts.length = 0;
+      api.renderer.draw({ landmarks, frame: jackFrame, exerciseId: 'jumpingJack', status: 'ok' });
+      ok('开合跳：读数跟着 legSpread 走（0.82 → 屏幕显示 0.82）',
+        texts.includes('开合 0.82'), texts.join(' | '));
+    }
     api.renderer.mirror = true;
   }
 
@@ -2280,6 +2292,87 @@ console.log('\n[12] 语音教练');
   api.audio.say = origSay;
   api.state.settings.voice = true;
   api.toCalibration({ silent: true });
+}
+
+/* ------------------------------------------------------------------ *
+ * [13] 最佳成绩 / 运动记录：顶栏两个图标 + 弹窗（用户要求：不再放在动作页里）
+ *
+ * 放在最后：这一段会切主页 / 换动作 / 派发 Esc，先跑的用例对会话状态有期待，别影响它们。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[13] 最佳成绩 / 运动记录（两个图标 + 弹窗）');
+{
+  const api = windowStub.__mfg;
+
+  ok('动作页侧栏里不再有「最佳成绩」卡片',
+    !/<h2 class="card-title" data-i18n="ui\.best"><\/h2>/.test(html));
+  ok('动作页侧栏里不再有「训练记录」卡片（连清空按钮一起搬走）',
+    !/<ul class="history-list" id="historyList">/.test(html.split('id="historyModal"')[0]));
+  ok('两个新图标（🏆 最佳成绩 / 📜 运动记录）在顶栏里',
+    /id="btnBest"/.test(html) && /id="btnHistory"/.test(html)
+    && /🏆/.test(html) && /📜/.test(html));
+  {
+    const span = (from, to) => html.slice(html.indexOf(from), html.indexOf(to));
+    ok('列表被搬进了弹窗里（recordList / historyList / 清空按钮都在弹窗中）',
+      span('id="bestModal"', 'id="historyModal"').includes('id="recordList"')
+      && span('id="historyModal"', '<script').includes('id="historyList"')
+      && span('id="historyModal"', '<script').includes('id="btnClearHistory"'));
+  }
+
+  // 点图标打开弹窗（打开时会先把列表刷成最新的）
+  api.openExercise('squat');
+  store.set('mfg.records.v1', JSON.stringify({ squat: { value: 12, score: 340 } }));
+  store.set('mfg.history.v1', JSON.stringify([
+    { at: Date.now(), exerciseId: 'squat', value: 12, score: 340, partial: 1, reached: true },
+  ]));
+  elements.get('btnBest').dispatch('click');
+  const recText = elements.get('recordList').children.map((c) => c.innerHTML).join(' | ');
+  ok('点 🏆 打开最佳成绩弹窗，并列出记录（12 次 / 340 分）',
+    elements.get('bestModal').hidden === false
+    && recText.includes('12') && recText.includes('340'), recText.slice(0, 100));
+  elements.get('bestBackdrop').dispatch('click');
+  ok('点背景关闭最佳成绩弹窗', elements.get('bestModal').hidden === true);
+
+  elements.get('btnHistory').dispatch('click');
+  const histText = elements.get('historyList').children.map((c) => c.innerHTML).join(' | ');
+  ok('点 📜 打开运动记录弹窗，并列出最近一组（动作名 + 成绩）',
+    elements.get('historyModal').hidden === false && histText.includes('12') && /深蹲|Squat/.test(histText),
+    histText.slice(0, 100));
+
+  // Esc 关闭（记录弹窗优先于「结束本组」）。注意：keydown 上挂着一个一次性的
+  // 「首次手势解锁音频」监听器，把它原样还原，别影响后续用例。
+  const snapshot = {};
+  for (const ev of ['pointerdown', 'keydown', 'touchstart']) snapshot[ev] = [...(documentStub._listeners[ev] || [])];
+  api.state.session = 'idle';
+  documentStub.dispatch('keydown', { key: 'Escape' });
+  for (const [ev, list] of Object.entries(snapshot)) documentStub._listeners[ev] = list;
+  ok('Esc 关闭运动记录弹窗（不会误当成「结束本组」）',
+    elements.get('historyModal').hidden === true && api.state.session === 'idle', api.state.session);
+
+  // 回主页也关掉（不留悬空弹窗）
+  elements.get('btnBest').dispatch('click');
+  api.showHome();
+  ok('返回主页时记录弹窗自动关闭', elements.get('bestModal').hidden === true);
+
+  // 清空按钮搬进弹窗后仍然有效，并给一句反馈
+  api.openExercise('squat');
+  store.set('mfg.history.v1', JSON.stringify([
+    { at: Date.now(), exerciseId: 'squat', value: 12, score: 340, partial: 0, reached: true },
+  ]));
+  store.set('mfg.records.v1', JSON.stringify({ squat: { value: 12, score: 340 } }));
+  windowStub.confirm = () => true;
+  globalThis.confirm = () => true;   // app.js 里是裸调用 confirm()，桩要同时改全局那一份
+  elements.get('btnHistory').dispatch('click');
+  elements.get('btnClearHistory').dispatch('click');
+  ok('弹窗里的「清空」能真的清掉记录与最佳成绩',
+    (store.get('mfg.history.v1') === '[]') && (store.get('mfg.records.v1') === '{}'),
+    `${store.get('mfg.history.v1')} / ${store.get('mfg.records.v1')}`);
+  ok('清空后列表显示空态文案',
+    elements.get('historyList').children.map((c) => c.innerHTML).join('').includes('暂无')
+    || elements.get('historyList').innerHTML.includes('暂无'),
+    elements.get('historyList').innerHTML.slice(0, 60));
+  ok('清空后给了一句反馈（提示条）', elements.get('cueLine').textContent.includes('清空'),
+    elements.get('cueLine').textContent);
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {

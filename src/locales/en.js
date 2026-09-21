@@ -238,6 +238,8 @@ export default {
     // Short name for the on-screen angle label (same length as “Hip / Knee”, so the pills never overlap)
     trunk: 'Trunk',
     knee: 'Knee',
+    // The on-screen readout for the jumping jack (its criterion is a spread, not an angle)
+    legSpread: 'Spread',
     // With both legs in frame the two knees are labelled separately (the user asked for it)
     kneeL: 'Left knee',
     kneeR: 'Right knee',
@@ -656,6 +658,9 @@ export default {
     noResult: 'No matching exercise found',
     back: 'Back to home',
     openSettings: 'Settings',
+    // Two new top-bar icons (their contents live in modals)
+    openBest: 'Best scores',
+    openHistory: 'Workout history',
     rough: 'Rough scoring',
     judgeBy: 'Scored by: {what}',
     start: 'Start training',
@@ -681,6 +686,13 @@ export default {
   },
 
   /* ---------------- Settings ---------------- */
+  /* Text for the two modals (best scores / workout history) */
+  records: {
+    bestLead: 'Your best set per exercise (reps / duration plus score), stored only in this browser on this device.',
+    historyLead: 'Your last 12 sets: time, exercise, result and score.',
+    cleared: 'History cleared (best scores were cleared with it)',
+  },
+
   settings: {
     title: 'Settings',
     close: 'Close',

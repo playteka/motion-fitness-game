@@ -5,6 +5,7 @@
 import { LM, SKELETON_EDGES } from './geometry.js';
 import { t } from './i18n.js';
 import { outlinePath } from './calibration.js';
+import { EXERCISE_MAP } from './catalog.js';
 
 const COLORS = {
   ok: '#34e5c4',
@@ -63,6 +64,19 @@ export const FOCUS = {
  */
 export function showsTrunkAngle(exerciseId) {
   return (FOCUS[exerciseId] || []).length > 0;
+}
+
+/**
+ * 「开合跳」这类**判据不是关节角、而是双腿开合幅度**的动作：画面上显示实时开合幅度。
+ *
+ * 用户问「开合跳怎么没有角度」—— 因为它的判据本来就不是关节角（是两腿张开多宽，
+ * 单位是躯干长；见 metrics.js 的 legSpread）。别的动作画面上有「膝 132°」这种角度标签，
+ * 它一个数字都没有，看起来像坏了 —— 所以这里给它一个同款胶囊：「开合 0.83」，
+ * 显示的正是识别器真正在判的那个量（计数线 0.73、收回线 0.54，见 🎯 运动设定弹窗）。
+ */
+export function showsSpreadReadout(exerciseId) {
+  const metric = EXERCISE_MAP[exerciseId]?.params?.metric;
+  return metric === 'legSpread' || metric === 'kneeSpread';
 }
 
 /**
@@ -296,6 +310,19 @@ export class PoseRenderer {
           at: { x: (sm.x + hm.x) / 2 + (nx * gapPx) / W, y: (sm.y + hm.y) / 2 + (ny * gapPx) / H },
           text: `${t('debug.trunk')} ${Math.round(frame.torsoIncl)}°`,
         });
+      }
+    }
+
+    // 开合跳：判据是「双腿开合幅度」而不是关节角，所以标的是这个幅度（同款胶囊、同样跟着镜像翻转）。
+    // 锚点取双腿中段（两膝中点 ↔ 两踝中点的中点），腿张开 / 并拢时数字就在腿中间动。
+    if (showsSpreadReadout(exerciseId)) {
+      const spread = Number.isFinite(frame.legSpread) ? frame.legSpread : frame.kneeSpread;
+      const lk = P(LM.L_KNEE);
+      const rk = P(LM.R_KNEE);
+      const la = P(LM.L_ANKLE);
+      const ra = P(LM.R_ANKLE);
+      if (Number.isFinite(spread) && lk && rk && la && ra) {
+        items.push({ at: mid(mid(lk, rk), mid(la, ra)), text: `${t('debug.legSpread')} ${spread.toFixed(2)}` });
       }
     }
 

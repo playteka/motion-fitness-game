@@ -362,6 +362,7 @@ function showHome({ syncRoute = true } = {}) {
   $('btnExercise').hidden = true;   // 运动设定只在动作页出现
   closeSettings();
   closeExerciseSettings();
+  closeRecordsModal();
   buildHome();
   updateButtons();
   if (syncRoute) setRoute('#/');
@@ -419,6 +420,36 @@ function openSettings() {
 function closeSettings() {
   const modal = $('settingsModal');
   if (modal) modal.hidden = true;
+}
+
+/* ------------------------------------------------------------------ *
+ * 最佳成绩 / 运动记录弹窗
+ *
+ * 用户要求：这两块内容**不要再放在动作页里**，改成顶栏两个图标（🏆 / 📜）+ 弹窗显示。
+ * 列表本身还是用同一套渲染（renderRecords / renderHistory），只是被搬进了弹窗的容器里。
+ * ------------------------------------------------------------------ */
+
+function recordsModalOpen() {
+  return !$('bestModal').hidden || !$('historyModal').hidden;
+}
+
+/** 打开某个「记录类」弹窗：先把列表刷成最新的，再显示（顺序保证不会闪旧数据） */
+function openRecordsModal(which) {
+  const modal = $(which === 'best' ? 'bestModal' : 'historyModal');
+  if (!modal) return;
+  if (which === 'best') renderRecords(); else renderHistory();
+  modal.hidden = false;
+  const title = $(which === 'best' ? 'bestTitle' : 'historyTitle');
+  if (title) title.textContent = t(which === 'best' ? 'ui.best' : 'ui.history');
+  const first = modal.querySelector('button');
+  if (first) first.focus({ preventScroll: true });
+}
+
+function closeRecordsModal() {
+  const best = $('bestModal');
+  const hist = $('historyModal');
+  if (best) best.hidden = true;
+  if (hist) hist.hidden = true;
 }
 
 /* ------------------------------------------------------------------ *
@@ -2550,12 +2581,20 @@ function bindUI() {
   });
   $('targetInput').addEventListener('change', (e) => setTarget(e.target.value));
 
+  $('btnBest').addEventListener('click', () => openRecordsModal('best'));
+  $('btnHistory').addEventListener('click', () => openRecordsModal('history'));
+  $('btnCloseBest').addEventListener('click', () => closeRecordsModal());
+  $('btnCloseHistory').addEventListener('click', () => closeRecordsModal());
+  $('bestBackdrop').addEventListener('click', () => closeRecordsModal());
+  $('historyBackdrop').addEventListener('click', () => closeRecordsModal());
+
   $('btnClearHistory').addEventListener('click', () => {
     if (!confirm(t('ui.clearConfirm'))) return;
     saveList(STORE.history, []);
     saveList(STORE.records, {});
     renderHistory();
     renderRecords();
+    setCueLine(t('records.cleared'));
   });
 
   document.addEventListener('keydown', (e) => {
@@ -2571,6 +2610,7 @@ function bindUI() {
     }
     if (e.key === 'Escape') {
       // 弹窗优先关闭；其次是结束本组
+      if (recordsModalOpen()) { closeRecordsModal(); return; }
       if (exerciseSettingsOpen()) { closeExerciseSettings(); return; }
       if (settingsOpen()) { closeSettings(); return; }
       stopSession('user');
@@ -2729,6 +2769,7 @@ window.__mfg = {
   setTarget, changeLang, refreshForLang,
   buildHome, showHome, showWorkout, openExercise, openSettings, closeSettings,
   openExerciseSettings, closeExerciseSettings, renderExerciseSettings,
+  openRecordsModal, closeRecordsModal, recordsModalOpen, renderRecords, renderHistory,
   buildCriteriaBar, updateCriteria, resetCriteriaProgress, renderCriteriaBar,
   showCriteriaTip, hideCriteriaTip,
   showGestureRings, hideGestureRings, updateGesture, triggerGesture, retrySet,

@@ -27,6 +27,15 @@
                 data-i18n-title="exercise.open" data-i18n-aria="exercise.open">
           <span aria-hidden="true">🎯</span>
         </button>
+        <!-- 最佳成绩 / 运动记录：内容都放在弹窗里，不再占动作页的地方（用户要求） -->
+        <button class="icon-btn" id="btnBest" type="button"
+                data-i18n-title="home.openBest" data-i18n-aria="home.openBest">
+          <span aria-hidden="true">🏆</span>
+        </button>
+        <button class="icon-btn" id="btnHistory" type="button"
+                data-i18n-title="home.openHistory" data-i18n-aria="home.openHistory">
+          <span aria-hidden="true">📜</span>
+        </button>
         <button class="icon-btn" id="btnSettings" type="button"
                 data-i18n-title="home.openSettings" data-i18n-aria="home.openSettings">
           <span aria-hidden="true">⚙️</span>
@@ -227,19 +236,6 @@
           <p class="summary-note" id="summaryNote"></p>
         </section>
 
-        <section class="card">
-          <h2 class="card-title" data-i18n="ui.best"></h2>
-          <ul class="record-list" id="recordList"></ul>
-        </section>
-
-        <section class="card">
-          <div class="card-title-row">
-            <h2 class="card-title" data-i18n="ui.history"></h2>
-            <button class="mini-btn" id="btnClearHistory" type="button" data-i18n="ui.clear"></button>
-          </div>
-          <ul class="history-list" id="historyList"></ul>
-        </section>
-
         <section class="card muted">
           <h2 class="card-title" data-i18n="ui.shortcuts"></h2>
           <p class="keys" data-i18n-html="ui.shortcutsText"></p>
@@ -348,6 +344,45 @@
         <div class="modal-group">
           <h3 class="modal-group-title" data-i18n="exercise.cameraGroup"></h3>
           <p class="modal-hint" id="exerciseCamera"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 最佳成绩弹窗（每个动作的最好一次） ================= -->
+  <div class="modal" id="bestModal" hidden>
+    <div class="modal-backdrop" id="bestBackdrop"></div>
+    <div class="modal-card modal-card--narrow" role="dialog" aria-modal="true" aria-labelledby="bestTitle">
+      <div class="modal-head">
+        <h2 id="bestTitle" data-i18n="ui.best"></h2>
+        <button class="icon-btn" id="btnCloseBest" type="button"
+                data-i18n-title="ui.close" data-i18n-aria="ui.close">
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint" data-i18n="records.bestLead"></p>
+        <ul class="record-list" id="recordList"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 运动记录弹窗（最近的训练历史） ================= -->
+  <div class="modal" id="historyModal" hidden>
+    <div class="modal-backdrop" id="historyBackdrop"></div>
+    <div class="modal-card modal-card--narrow" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+      <div class="modal-head">
+        <h2 id="historyTitle" data-i18n="ui.history"></h2>
+        <button class="icon-btn" id="btnCloseHistory" type="button"
+                data-i18n-title="ui.close" data-i18n-aria="ui.close">
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint" data-i18n="records.historyLead"></p>
+        <ul class="history-list" id="historyList"></ul>
+        <div class="btn-row">
+          <button class="ghost-btn" id="btnClearHistory" type="button" data-i18n="ui.clear"></button>
         </div>
       </div>
     </div>

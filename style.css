@@ -1394,6 +1394,9 @@ kbd {
 }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .modal-head h2 { font-size: 17px; margin: 0; }
+/* 记录类弹窗（最佳成绩 / 运动记录）：内容是一串列表，窄一点更好读 */
+.modal-card--narrow { width: min(460px, calc(100vw - 32px)); }
+.modal-card--narrow .modal-body { gap: 10px; }
 .modal-body { display: flex; flex-direction: column; gap: 18px; }
 .modal-group-title {
   font-size: 12px;
