@@ -433,7 +433,7 @@ Take the lunge (each segment holds the real threshold from the code):
 
 ```
 ① Stance    ② Start    ③ Count    ④ Both     ⑤ Back (counts)
-≥145°       ≤146°      ≤152°      ≤158°      stand up
+≥145°       ≤146°      ≤138°      ≤146°      stand up
  figure      figure     figure     figure     figure
  ✓           ✓          ✓          ✓          ⏳
 ```
@@ -450,10 +450,10 @@ Take the lunge (each segment holds the real threshold from the code):
   (48 px disc, a 34 px tick, 3 px ring, outer glow) plus a glow on the whole segment; the segment being waited on = thick amber border with a slow
   breathing pulse. Detection flickers, so a short dropout (under 0.7 s) neither greys the bar nor clears progress.
 - **Icons first; numbers only when icons can't tell the segments apart**: every icon is a stick figure drawn from that
-  segment's own criterion — “Front knee bend ≤ 152°” is drawn as a leg bent to exactly 152°; “Hip lift ≥ 0.22× torso
+  segment's own criterion — “Front knee bend ≤ 138°” is drawn as a leg bent to exactly 138°; “Hip lift ≥ 0.22× torso
   length” lifts the glute bridge to that height; “Lift ≥ 0.035× frame height” is drawn airborne; and for a supported pose
   like the push-up the **hand is pinned to the floor while the body height follows the elbow angle** (the more the elbows
-  bend, the lower the body). To keep small differences such as 146° vs 152° readable the drawn bend is exaggerated a
+  bend, the lower the body). To keep small differences such as 146° vs 138° readable the drawn bend is exaggerated a
   little, but the **order always matches the criteria** (a harder criterion is drawn more extreme).
 - **When two segments really do look alike, the criterion's angle is printed inside the icon**: if one exercise has two
   segments on the same joint angle and the two angles are within 12° of each other, every such segment on that chain gets
@@ -464,7 +464,7 @@ Take the lunge (each segment holds the real threshold from the code):
   supine bent knees`. Segments 1 and 3 are the same pose, so segment 2 carries an **up arrow** and segment 3 a
   **down arrow** — you can tell at a glance that the last one is “coming back down to the floor”.
   **The rep is counted the moment you are back on the floor**, i.e. the moment segment 3 lights up.
-- **Hover a segment → the criterion for that segment appears above the bar** (for example “Sink · front knee bend ≤ 152°”),
+- **Hover a segment → the criterion for that segment appears above the bar** (for example “Sink · front knee bend ≤ 138°”),
   together with how many points that keyframe is worth; it collapses again when you move the mouse away.
 - **How a segment lights up**: only the *next* segment is checked, so the bar has to be walked in order and never skips;
   segments that are lit never go back out. Where a segment has a line, it prefers the **detector's own dynamic line**
@@ -565,9 +565,9 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 |---|---|---|
 | ① Stance | Both legs extended ≥ 145° | +4 |
 | ② Start | Front knee bend ≤ 146° | +11 |
-| ③ Count | Front knee bend ≤ 152° | +11 |
-| ④ Both legs | Knee angle of the straighter leg ≤ 158° | +14 |
-| ⑤ Return · **rep counted here** | Rise 60% of the way back from this rep’s deepest point, or 8° above it | +8 + perfect-round 6 |
+| ③ Count | Front knee bend ≤ 138° | +11 |
+| ④ Both legs | Knee angle of the straighter leg ≤ 146° | +14 |
+| ⑤ Return · **rep counted here** | Rise 65% of the way back from this rep’s deepest point, or 8° above it | +8 + perfect-round 6 |
 | Form reminder | Back knee close to the floor (spoken only, never costs reps) | Back-knee height off the floor ≤ 0.66× shin |
 
 > Each segment also carries its own extra criteria, for example the squat’s first segment adds “Also required: face the camera,
@@ -585,7 +585,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2070 assertions in the suite).
+> exactly on the detector's own progress line (2090 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -694,13 +694,18 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 | ⑥ Drive through your front foot back to standing | Both legs straight again (after first sinking down) | +8 |
 | 🎁 All form steps complete for the round | All 6 steps above hit within the same round | +6 |
 
-> **A lunge doesn't require a 90° front knee**: bending the front knee to **152°** (about 20° down from standing) already counts, and
-> the `enter`/`exit` lines both follow **how straight you personally stand** — compressed readings (standing tall reading only 140°)
-> don't cause bogus counts, and deep squatters don't lose reps. The “too fast” check only applies to rounds where you really sank down.
+> **Both lunges (forward and backward) now ask for more knee bend in the later keyframes** (the user reported they felt “too
+> sensitive — the later keyframes could demand a bigger knee bend”): the forward lunge's counting line moved from **152° to
+> 138°** (about 35° of bend from standing), and the backward lunge's from progress 0.55 to **0.70** (a front knee around
+> **123°**); the full-depth lines were deepened to match (forward 128° → **122°**, backward 0.85 → **0.92**, about 110°).
+> **A 90° front knee is still not required**: a half lunge still counts — only “a quick dip of the front leg / bending to just
+> 15x°” no longer adds up. Those cases are logged as partial reps with a spoken “sink a little deeper”, never silently ignored.
+> The `enter`/`exit` lines still follow **how straight you personally stand** (compressed readings never cause bogus counts), and the
+> “too fast” check only applies to rounds where you really sank down.
 
 > **A lunge requires *both* knees to bend (no front-leg-only dipping)**: watching the front knee alone lets a quick front-leg dip score a rep.
-> The detector now also tracks the **straighter leg (the back one)**: it has to bend to **158°** or less (or at least **12°** below how straight
-> you personally stand, whichever is stricter) for the rep to be valid. Moving only the front leg is logged as a partial rep and the voice coach
+> The detector now also tracks the **straighter leg (the back one)**: it has to bend to **146°** or less (or at least **18°** below how straight
+> you personally stand, whichever is stricter — these used to be 158°/12°) for the rep to be valid. Moving only the front leg is logged as a partial rep and the voice coach
 > says “Bend both legs: the back leg has to bend and sink too”. A back leg that bends less but genuinely bends still counts — the lenient baseline stands.
 > The 🐞 panel's “Both knees (back/line)” line shows this round's measured value and the line.
 
@@ -949,11 +954,11 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
-| `tests/test-detectors.mjs` | 292 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
-| `tests/test-engines.mjs` | 158 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 851 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
+| `tests/test-detectors.mjs` | 298 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
+| `tests/test-engines.mjs` | 168 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation, whole sequences, and pausing/resuming the timer |
+| `tests/test-specs.mjs` | 853 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 372 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee” and “the two knees are labelled separately” |
-| `tests/test-app.mjs` | 379 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
+| `tests/test-app.mjs` | 381 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, and the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt) |
 
 ---
 

@@ -499,11 +499,13 @@ console.log('\n[2] 箭步蹲计数');
   ok('轻微晃动不反复提示', r.cues.filter((c) => c.code === 'lungeDepth').length === 0);
 }
 {
-  // 用户明确要求：**前膝不到 90° 也算一次**，只要大体做到位
+  // 用户先要求「前膝不到 90° 也算一次」，后来又反馈「太灵敏了，后面几个关键帧对膝盖弯曲的
+  // 要求可以更大一些」—— 所以计数线收到 138°：**半程箭步蹲照样计次（不用 90°）**，
+  // 但「只弯到 15x° 就回来」不再凑数（下面另有专门的用例守着这条）。
   for (const [d, label, min] of [
-    [0.35, '前膝只弯到约 149°', 3],
-    [0.5, '前膝只弯到约 135°', 3],
-    [0.6, '前膝只弯到约 127°', 3],
+    [0.55, '前膝弯到约 137°（刚过计数线）', 3],
+    [0.7, '前膝弯到约 126°（半程）', 3],
+    [1.0, '前膝弯到约 105°（标准）', 3],
   ]) {
     const det = fresh('lunge');
     const r = makeRunner(det);
@@ -514,7 +516,21 @@ console.log('\n[2] 箭步蹲计数');
   }
 }
 {
+  // 收紧之后：浅一点的箭步蹲（前膝只到 14x°）不再算一次，而是记为半程 + 出声提示
+  for (const d of [0.3, 0.4, 0.45]) {
+    const det = fresh('lunge');
+    const r = makeRunner(det);
+    r.run(repeat(lungeMix(d), 1800, 3));
+    ok(`浅箭步蹲（深度 ${d}，前膝只到 15x°）不再计次`,
+      det.validReps === 0, `实际 ${det.validReps}`);
+    ok(`浅箭步蹲（深度 ${d}）记为半程并出声`,
+      det.partialReps >= 2 && r.cues.length > 0,
+      `半程 ${det.partialReps} / 提示 ${r.cues.map((c) => c.code).join(',')}`);
+  }
+}
+{
   // 下沉深度扫描：只要真的蹲下去了（> 站姿晃动），要么计进次数，要么给出纠正提示——不留“无声空档”
+  // （收紧计数线之后，「不够深」的那一档会走「两条腿都要弯 / 下沉不够」的提示，同样不算空档）
   const rows = [0.4, 0.45, 0.5, 0.55, 0.6].map((d) => {
     const det = fresh('lunge');
     const r = makeRunner(det);
@@ -523,7 +539,7 @@ console.log('\n[2] 箭步蹲计数');
       d,
       valid: det.validReps,
       partial: det.partialReps,
-      hint: r.cues.some((c) => c.code === 'lungeDepth' || c.code === 'backknee' || c.code === 'alternate'),
+      hint: r.cues.some((c) => ['lungeDepth', 'backknee', 'alternate', 'bothKnees'].includes(c.code)),
     };
   });
   ok('下沉扫描：没有“既不计次数也不提示”的空档', rows.every((row) => row.valid > 0 || row.hint),

@@ -650,6 +650,28 @@ console.log('\n[3] bend 引擎：晃动与过快的边界');
   ok('幅度不足：提示「再做大一点」', hasCue(r, 'moreRange'), cuesOf(r).join(','));
 }
 
+{
+  // 用户要求：向后箭步蹲「后面几个关键帧对膝盖弯曲的要求更大」——计数线 0.55 → 0.70
+  // 现在前膝要弯到约 122° 以内才算一次（收紧前弯到约 137° 就算）；浅的照样出声纠正，只是不计次
+  for (const [kneeMin, label] of [[110, '前膝弯到约 110°'], [120, '前膝弯到约 120°']]) {
+    const det = createDetector('lungeBack');
+    const r = makeRunner(det);
+    r.run(repeat(kneeCycle(kneeMin), 1600, 4));
+    atLeast(`${label} 计次（不要求 90°）`, det.validReps, 3);
+    ok(`${label} 不误记半程`, det.partialReps === 0, `实际 ${det.partialReps}`);
+  }
+  for (const kneeMin of [130, 135]) {
+    const det = createDetector('lungeBack');
+    const r = makeRunner(det);
+    r.run(repeat(kneeCycle(kneeMin), 1600, 4));
+    ok(`向后箭步蹲：前膝只弯到约 ${kneeMin}° 不再计次（收紧前会算一次）`,
+      det.validReps === 0, `实际 ${det.validReps}`);
+    atLeast(`向后箭步蹲：前膝只弯到约 ${kneeMin}° 记为半程`, det.partialReps, 3);
+    ok(`向后箭步蹲：前膝只弯到约 ${kneeMin}° 会出声纠正`,
+      r.cues.length > 0, cuesOf(r).join(',') || '（没有任何提示）');
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * [4] bend 引擎：姿势门控
  * ------------------------------------------------------------------ */

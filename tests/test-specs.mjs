@@ -265,12 +265,12 @@ console.log('\n[5c] 界面上最终看到的文字');
 {
   const rows = specTextRows('lunge');
   const row = (name) => rows.find((r) => r.name === name);
-  const countRow = rows.find((r) => r.cond.includes('152'));
-  ok('中文：箭步蹲的计次行读得通', /前膝屈角 ≤ 152°/.test(countRow.cond), countRow.cond);
-  ok('中文：双腿门槛行在（较直那条腿 ≤ 158°）',
-    rows.some((r) => /较直那条腿的膝角 ≤ 158°/.test(r.cond)), JSON.stringify(rows.map((r) => r.cond).slice(0, 6)));
-  ok('中文：回程是文字说明（带 60% / 8°）',
-    rows.some((r) => /回升 60%/.test(r.cond) && /8°/.test(r.cond)));
+  const countRow = rows.find((r) => r.cond.includes('138'));
+  ok('中文：箭步蹲的计次行读得通', /前膝屈角 ≤ 138°/.test(countRow.cond), countRow.cond);
+  ok('中文：双腿门槛行在（较直那条腿 ≤ 146°）',
+    rows.some((r) => /较直那条腿的膝角 ≤ 146°/.test(r.cond)), JSON.stringify(rows.map((r) => r.cond).slice(0, 6)));
+  ok('中文：回程是文字说明（带 65% / 8°）',
+    rows.some((r) => /回升 65%/.test(r.cond) && /8°/.test(r.cond)));
   ok('中文：时间类数值带单位且有空隙（≥ 0.45 秒）',
     rows.some((r) => /≥ 0.45 秒/.test(r.cond)), JSON.stringify(rows.map((r) => r.cond).filter((c) => /0\.45/.test(c))));
   ok('中文：区间型指标只写一次单位（膝角区间 20°–160°）',
@@ -279,7 +279,7 @@ console.log('\n[5c] 界面上最终看到的文字');
 
   setLang('en', { persist: false });
   const en = specTextRows('lunge').map((r) => r.cond).join(' | ');
-  ok('英文：同一批数值（152° / 158°）用英文渲染', /≤ 152°/.test(en) && /≤ 158°/.test(en), en.slice(0, 120));
+  ok('英文：同一批数值（138° / 146°）用英文渲染', /≤ 138°/.test(en) && /≤ 146°/.test(en), en.slice(0, 120));
   ok('英文：单位是「× torso length」', /torso length/.test(specTextRows('plank').map((r) => r.cond).join(' ')));
   ok('英文：没有残留中文', !/[\u4e00-\u9fff]/.test(
     ALL.map((id) => specTextRows(id).map((r) => r.group + r.name + r.cond + r.note).join('')).join(''),
@@ -371,16 +371,19 @@ console.log('\n[8] 判定进度条（画面上一格一格点亮的那条判据�
     }
   }
 
-  // 用户举的例子：箭步蹲的链 = 站姿 → 开始(146°) → 计次(152°) → 双腿 → 回位（最后一格 = 计次那一刻）
+  // 用户举的例子：箭步蹲的链 = 站姿 → 开始(146°) → 计次(138°) → 双腿 → 回位（最后一格 = 计次那一刻）
+  // 用户后来又要求「后面几个关键帧对膝盖弯曲的要求更大」：计次 152° → 138°、双腿 158° → 146°
   const lunge = specStages('lunge');
-  ok('箭步蹲进度条：站姿 → 146° → 152° → 双腿 → 回位',
+  ok('箭步蹲进度条：站姿 → 146° → 138° → 双腿 → 回位',
     lunge.length === 5
     && lunge[0].metric === 'kneeExtended' && lunge[0].value === 145
     && lunge[1].metric === 'frontKnee' && lunge[1].value === 146
-    && lunge[2].metric === 'frontKnee' && lunge[2].value === 152
-    && lunge[3].metric === 'straighterKnee' && lunge[3].value === 158
+    && lunge[2].metric === 'frontKnee' && lunge[2].value === 138
+    && lunge[3].metric === 'straighterKnee' && lunge[3].value === 146
     && lunge[4].kind === 'finish',
     JSON.stringify(lunge.map((s) => `${s.metric}${s.op}${s.value}:${s.kind}`)));
+  ok('箭步蹲：计次那一格比「开始」更弯（否则点一下前腿就能凑一次）',
+    lunge[2].value < lunge[1].value, `${lunge[1].value} → ${lunge[2].value}`);
   const squat = specStages('squat');
   ok('深蹲进度条：站姿 0.86 → 开始 0.78 → 计次 0.62 → 回位（深度分不再单独占一格）',
     squat[0].value === 0.86 && squat[1].value === 0.78 && squat[2].value === 0.62
@@ -503,7 +506,7 @@ console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格'
   ok('没识别到人时不点亮任何一格',
     !stageHolds(squatStages[0], { ok: false }, createDetector('squat')));
 
-  // 箭步蹲：两条腿都弯才能过「双腿」那一格（真实阈值 158°）
+  // 箭步蹲：两条腿都弯才能过「双腿」那一格（真实阈值 146°；用户要求后几格更严，原来 158°）
   const lungeStages = specStages('lunge');
   const lungeBoth = lungeStages.findIndex((s) => s.metric === 'straighterKnee');
   const lungeFinish = lungeStages.length - 1;
@@ -512,8 +515,10 @@ console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格'
     perSide: { L: { knee: frontKnee }, R: { knee: backKnee } },
     kneeExtended,
   });
-  ok('箭步蹲：前膝 130°、后膝 150° 时「双腿」这一格过得了',
-    stageHolds(lungeStages[lungeBoth], fake(130, 150), createDetector('lunge')));
+  ok('箭步蹲：前膝 130°、后膝 140° 时「双腿」这一格过得了',
+    stageHolds(lungeStages[lungeBoth], fake(130, 140), createDetector('lunge')));
+  ok('箭步蹲：后膝只弯到 150°（旧门槛够、新门槛不够）时「双腿」这一格过不了',
+    !stageHolds(lungeStages[lungeBoth], fake(130, 150), createDetector('lunge')));
   ok('箭步蹲：前膝 130° 但后膝几乎伸直（172°）时「双腿」这一格过不了',
     !stageHolds(lungeStages[lungeBoth], fake(130, 172), createDetector('lunge')));
   ok('箭步蹲：站着不动时连「开始」那一格都过不了',
@@ -660,11 +665,12 @@ console.log('\n[10] 关键帧线条图标');
     stageIcon(lungeStages[0], lungeCtx).builder === 'stand'
     && drawnAngle(lungeStages[0], lungeCtx) >= 170,
     JSON.stringify(stageIcon(lungeStages[0], lungeCtx).pose));
-  ok('箭步蹲：前膝三格的图标角度与判据同序（146 比 152 更弯、128 最弯）', (() => {
-    const front = lungeStages.filter((s) => s.metric === 'frontKnee');
+  ok('箭步蹲：「计次」那一格比「开始」画得更弯（判据 138° 比 146° 严，图标也跟着更弯）', (() => {
+    const front = lungeStages.filter((s) => s.metric === 'frontKnee' && s.kind !== 'finish');
     const drawn = front.map((s) => drawnAngle(s, lungeCtx));
-    return front.length === 3 && drawn[0] < drawn[1] && drawn[2] < drawn[1];
-  })(), JSON.stringify(lungeStages.filter((s) => s.metric === 'frontKnee').map((s) => drawnAngle(s, lungeCtx))));
+    return front.length === 2 && front[0].value === 146 && front[1].value === 138
+      && drawn[1] < drawn[0];
+  })(), JSON.stringify(lungeStages.filter((s) => s.metric === 'frontKnee').map((s) => `${s.kind}:${s.value}→${Math.round(drawnAngle(s, lungeCtx))}`)));
   ok('箭步蹲：图标里的膝角顺序与判据顺序一致（判据更严 → 画得更弯）', (() => {
     const front = lungeStages.filter((s) => s.metric === 'frontKnee');
     return front.every((s) => iconAngle(s, lungeCtx) === s.value);

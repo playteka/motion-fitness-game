@@ -452,10 +452,13 @@ console.log('\n[1b] 运动设定弹窗');
   }
 
   api.selectExercise('lunge');
-  ok('切到箭步蹲后指标跟着换', specHtml().includes('152') && !specHtml().includes('135'),
-    specHtml().slice(0, 200));
-  ok('箭步蹲：列出「两条腿都要弯」的门槛（≤158°）', specHtml().includes('158'), specHtml().slice(0, 200));
-  ok('箭步蹲：说明回程按自己的幅度算（没有固定角度）', specHtml().includes('回升 60%'), specHtml().slice(0, 300));
+  // 用户要求「后面几个关键帧对膝盖弯曲的要求更大」：计次 152° → 138°、双腿 158° → 146°
+  ok('切到箭步蹲后指标跟着换（计次线 138°）',
+    specHtml().includes('138') && !specHtml().includes('152'), specHtml().slice(0, 200));
+  ok('箭步蹲：计次那一格比「开始」更弯（138° 比 146° 严）',
+    specHtml().includes('前膝屈角 ≤ 138°') && specHtml().includes('前膝屈角 ≤ 146°'), specHtml().slice(0, 300));
+  ok('箭步蹲：列出「两条腿都要弯」的门槛（≤146°）', specHtml().includes('≤ 146°'), specHtml().slice(0, 200));
+  ok('箭步蹲：说明回程按自己的幅度算（没有固定角度）', specHtml().includes('回升 65%'), specHtml().slice(0, 300));
 
   api.selectExercise('plank');
   ok('平板支撑：列出计时类指标（姿势稳定后开始计时 0.25 秒）',
@@ -1536,10 +1539,16 @@ console.log('\n[8b] 判定进度条');
     segCount() === specStages('lunge').length, `${segCount()} 格`);
   ok('箭步蹲站着时只点亮「站姿」格', api.state.criteriaIdx === 0, String(api.state.criteriaIdx));
   api.updateCriteria({
-    ok: true, perSide: { L: { knee: 120 }, R: { knee: 150 } }, kneeExtended: 150,
+    ok: true, perSide: { L: { knee: 120 }, R: { knee: 140 } }, kneeExtended: 140,
   }, [], 7100);
-  ok('箭步蹲蹲到 120°（两条腿都弯）后走到「双腿」那一格',
+  ok('箭步蹲蹲到 120°/140°（两条腿都弯过 146°）后走到「双腿」那一格',
     api.state.criteriaIdx === specStages('lunge').length - 2, String(api.state.criteriaIdx));
+
+  // 后腿弯得不够（150° > 新的 146° 门槛）时，卡在「双腿」那一格
+  api.resetCriteriaProgress();
+  api.updateCriteria({ ok: true, perSide: { L: { knee: 120 }, R: { knee: 150 } }, kneeExtended: 150 }, [], 7150);
+  ok('后腿只弯到 150° 时过不了「双腿」那一格（门槛已收到 146°）',
+    api.state.criteriaIdx === 2, String(api.state.criteriaIdx));
 
   // 后腿不弯时，卡在「双腿」那一格
   api.resetCriteriaProgress();

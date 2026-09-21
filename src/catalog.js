@@ -99,7 +99,17 @@ export const EXERCISES = [
   }),
   e('lungeBack', '↩️', 'lower', {
     plan: 'repStand', posture: 'stand', judge: 'knee', target: 16,
-    params: bend({ metric: 'kneeBent', gate: 'stand', up: 165, down: 105, minRepMs: 520 }),
+    // 向后箭步蹲（通用屈伸引擎）：up = 站直读数、down = 沉到底读数。
+    // 用户反馈「前后箭步蹲都太灵敏了，后面几个关键帧对膝盖弯曲的要求可以更大一些」——
+    // 所以把**跟膝盖弯曲有关的那两格**收紧（进度 = (up − v)/(up − down)，越大越深）：
+    //   ③ 计次   looseP 0.55 → 0.70（前膝 ≈ 123° 以内，到半程箭步蹲才计次）
+    //   满分深度 bottomP 0.85 → 0.92（≈ 110°）
+    // ② 开始（enterP 0.32）和 ⑤ 回位（backP 0.16）不动：那两格说的不是「膝盖弯多少」，
+    // 动回位线只会把每一轮拖长，还会和「太快了」的节奏判定打架。
+    params: bend({
+      metric: 'kneeBent', gate: 'stand', up: 165, down: 105,
+      looseP: 0.70, bottomP: 0.92, minRepMs: 520,
+    }),
   }),
   e('bridge', '🌉', 'lower', {
     engine: 'builtin', plan: 'bridge', posture: 'supine', judge: 'rise', target: 15,
