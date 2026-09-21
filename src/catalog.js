@@ -137,7 +137,11 @@ export const EXERCISES = [
     // 同样节奏很快（一秒约两下）：**每 5 次报一次数**（用户要求），别每次都念
     speakEvery: 5,
     params: {
-      gate: 'stand', metric: 'knee', cmp: 'lt',
+      // 门控用 standUpright（只看躯干竖直 + 肩高于髋，都**不依赖地面线**）：
+      // 用户反馈「我明明站好了、躯干倾角只有几度，却总说我没站好」——
+      // 普通 stand 门控还要求「膝离地 ≥0.28、髋离地 ≥0.55 倍躯干长」，这两个量以校准地面线为基准，
+      // 地面线一旦偏了（脚出画 / 校准时没站到位）就会一直判不过。
+      gate: 'standUpright', metric: 'knee', cmp: 'lt',
       onValue: 100, offValue: 135, holdMs: 25, minRepMs: 110,
     },
   }),

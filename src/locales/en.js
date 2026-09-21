@@ -247,6 +247,9 @@ export default {
     hip: 'Hip',
     bodyStraight: 'Body line',
     hipRise: 'Hip lift',
+    // Floor-relative values used by the standing gate (they differ a lot between standing and lying)
+    kneeClear: 'Knee off floor',
+    hipClear: 'Hip off floor',
     thighFromHoriz: 'Thigh from horizontal',
     visibility: 'Visibility',
     // The 🐞 panel line showing the quantity this exercise is actually judged by
@@ -760,6 +763,8 @@ export default {
     torsoIncl: 'Trunk tilt',
     hipAboveKnee: 'Hip above knee',
     hipRise: 'Hip lift',
+    // Criterion name for the standing gate: how much higher the shoulders are than the hips
+    shoulderAboveHip: 'Shoulders above hips',
     hipClear: 'Hip height off the floor',
     kneeClear: 'Knee height off the floor',
     shoulderClear: 'Shoulder height off the floor',
@@ -828,6 +833,7 @@ export default {
     holdStraight: 'Body line angle',
     pose: {
       stand: 'Standing position',
+      standUpright: 'Standing upright (no floor line needed)',
       standWide: 'Standing, legs apart',
       prone: 'Push-up position',
       supine: 'Lying on your back, knees bent',

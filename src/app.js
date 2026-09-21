@@ -1316,6 +1316,8 @@ function renderDebug(f) {
     `${t('debug.hip')} ${n(f.hipAngle)}°`,
     `${t('debug.bodyStraight')} ${n(f.bodyStraight)}°`,
     `${t('debug.hipRise')} ${n(f.hipRise, 2)}`,
+    `${t('debug.kneeClear')} ${n(f.kneeClear, 2)}`,
+    `${t('debug.hipClear')} ${n(f.hipClear, 2)}`,
     `${t('debug.thighFromHoriz')} ${n(f.thighFromHoriz)}°`,
     `${t('debug.visibility')} ${n(f.coreVis, 2)}`,
     `🔊 ${t('debug.sound')} ${snd.ctx}/${snd.voices}`,

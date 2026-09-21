@@ -60,6 +60,8 @@ export const METRIC_UNITS = {
   hip: DEG, ankle: DEG, body: DEG, trunk: DEG, torsoIncl: DEG,
   shoulderClear: TORSO, kneeClear: TORSO, hipClear: TORSO, wristClear: TORSO, wristClearMin: TORSO,
   hipRise: TORSO, armRaised: TORSO, kneeSpread: TORSO, legSpread: TORSO,
+  // 「肩高于髋」和 hipRise 是同一个量，只是给「站立门控」用了一个更直白的名字
+  shoulderAboveHip: TORSO,
   hipLineDevAbs: TORSO, valgus: TORSO, shoulderDrop: TORSO, wristTwist: TORSO,
   backKneeDrop: SHIN, hipAboveKnee: SHIN,
 };
@@ -512,6 +514,7 @@ export const SPEC_METRICS = {
   wristClear: (f) => f.wristClearMin,
   wristClearMin: (f) => f.wristClearMin,
   hipRise: (f) => f.hipRise,
+  shoulderAboveHip: (f) => f.hipRise,
   hipAboveKnee: (f) => f.hipAboveKnee,
   armRaised: (f) => f.armRaised,
   kneeSpread: (f) => f.kneeSpread,
@@ -629,6 +632,7 @@ const SHORT_LABEL = {
   'spec.viewFront': 'spec.short.stance',
   'spec.viewSide': 'spec.short.stance',
   'spec.pose.stand': 'spec.short.stand',
+  'spec.pose.standUpright': 'spec.short.stand',
   'spec.pose.standWide': 'spec.short.stand',
   'spec.pose.prone': 'spec.short.prone',
   'spec.pose.supine': 'spec.short.supine',

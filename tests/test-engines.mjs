@@ -867,9 +867,10 @@ console.log('\n[6] alt 引擎：左右交替');
   ok('登山者：两侧都没动不计数', det.validReps === swapped, `实际 ${det.validReps}`);
 }
 {
-  // 勾腿跳（新增的站立左右交替动作，手搓帧）：一条腿勾起来（膝角小）、另一条伸直
+  // 勾腿跳（站立左右交替，手搓帧）：一条腿勾起来（膝角小）、另一条伸直。
+  // 门控是 standUpright：靠 hipRise（肩高于髋）判断站姿，**不看地面线**
   const kickFrame = (kick) => ({
-    ok: true, torsoIncl: 10, kneeClear: 0.5, hipClear: 1.0,
+    ok: true, torsoIncl: 10, hipRise: 1.0, kneeClear: 0.5, hipClear: 1.0,
     perSide: {
       L: { knee: kick === 'L' ? 65 : 170 },
       R: { knee: kick === 'R' ? 65 : 170 },
@@ -890,17 +891,37 @@ console.log('\n[6] alt 引擎：左右交替');
   const swapped = det.validReps;
   r.run([{ f: kickFrame(null), ms: 1000 }]);
   ok('勾腿跳：两条腿都伸直（没勾）不计数', det.validReps === swapped, `实际 ${det.validReps}`);
-  // 门控：站着才算（这条动作要求站姿）
+}
+{
+  // ===== 用户反馈「我明明站好了、躯干倾角只有几度，它却总说我没站好」 =====
+  // 门控从 stand 换成 standUpright：**不再看「膝离地 / 髋离地」这两个依赖地面线的量**。
+  // 下面这帧里躯干只有 8°、肩高于髋 1.0×躯干长（确实是站着），但地面线相关的值很糟（膝离地 0.05、髋离地 0.2）
+  // —— 旧的 stand 门控会判不过（这正是用户遇到的坑），新门控必须放行。
+  const standingButBadFloor = (kick) => ({
+    ok: true, torsoIncl: 8, hipRise: 1.0, kneeClear: 0.05, hipClear: 0.2,
+    perSide: {
+      L: { knee: kick === 'L' ? 70 : 170 },
+      R: { knee: kick === 'R' ? 70 : 170 },
+    },
+  });
+  const stand = createDetector('buttKick');
+  const rStand = makeFrameRunner(stand);
+  rStand.run([{ f: standingButBadFloor('L'), ms: 400 }, { f: standingButBadFloor('R'), ms: 400 }]);
+  ok('勾腿跳：站着（躯干 8°、肩高于髋）就放行 —— 即使地面线相关的值很差',
+    stand.active === true && stand.validReps === 2, `active=${stand.active} reps=${stand.validReps}`);
+  ok('勾腿跳：门控用的是「不依赖地面线」的那一版（catalog 里写的是 standUpright）',
+    EXERCISE_MAP.buttKick.params.gate === 'standUpright', String(EXERCISE_MAP.buttKick.params.gate));
+  // 躺下 / 卧姿：躯干横过来 + 肩并不比髋高 → 门控拦住
   const lying = createDetector('buttKick');
   const rLie = makeFrameRunner(lying);
-  rLie.run([{ f: { ok: true, torsoIncl: 80, kneeClear: 0.5, hipClear: 0.4, perSide: { L: { knee: 65 }, R: { knee: 170 } } }, ms: 1500 }]);
-  ok('勾腿跳：不是站姿时不进判定（门控拦住）', lying.active === false && lying.validReps === 0,
-    `active=${lying.active}`);
+  rLie.run([{ f: { ok: true, torsoIncl: 80, hipRise: 0.1, perSide: { L: { knee: 65 }, R: { knee: 170 } } }, ms: 1500 }]);
+  ok('勾腿跳：躺下（躯干 80°、肩不比髋高）时不进判定（门控拦住）',
+    lying.active === false && lying.validReps === 0, `active=${lying.active}`);
 }
 {
   // ===== 用户反馈「动作比较快，识别不到位、没有及时计次」：把时序门槛放松后再验一遍 =====
   const kickFrame = (kick) => ({
-    ok: true, torsoIncl: 10, kneeClear: 0.5, hipClear: 1.0,
+    ok: true, torsoIncl: 10, hipRise: 1.0, kneeClear: 0.5, hipClear: 1.0,
     perSide: {
       L: { knee: kick === 'L' ? 78 : 168 },
       R: { knee: kick === 'R' ? 78 : 168 },
@@ -917,7 +938,7 @@ console.log('\n[6] alt 引擎：左右交替');
   const airborne = createDetector('buttKick');
   const rAir = makeFrameRunner(airborne);
   const airFrame = (kick) => ({
-    ok: true, torsoIncl: 10, kneeClear: 0.5, hipClear: 1.0,
+    ok: true, torsoIncl: 10, hipRise: 1.0, kneeClear: 0.5, hipClear: 1.0,
     perSide: {
       L: { knee: kick === 'L' ? 80 : 142 },   // 没勾的那条腿只有 142°（< 原来的 150°）
       R: { knee: kick === 'R' ? 80 : 142 },
@@ -931,7 +952,7 @@ console.log('\n[6] alt 引擎：左右交替');
 {
   // ===== `switched` 标记：进度条最后一格（换边）就是计次那一刻 =====
   const kickFrame = (kick) => ({
-    ok: true, torsoIncl: 10, kneeClear: 0.5, hipClear: 1.0,
+    ok: true, torsoIncl: 10, hipRise: 1.0, kneeClear: 0.5, hipClear: 1.0,
     perSide: { L: { knee: kick === 'L' ? 70 : 170 }, R: { knee: kick === 'R' ? 70 : 170 } },
   });
   const det = createDetector('buttKick');

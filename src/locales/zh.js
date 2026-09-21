@@ -249,6 +249,9 @@ export default {
     hip: '髋',
     bodyStraight: '身体直线',
     hipRise: '髋抬起',
+    // 站姿门控要用的两个地面相关量（站着与躺下差很多，排查「说我站不好」时看这两行）
+    kneeClear: '膝离地',
+    hipClear: '髋离地',
     thighFromHoriz: '大腿离水平',
     visibility: '可见度',
     // 🐞 面板里那一行「这个动作真正在判的量」
@@ -761,6 +764,8 @@ export default {
     torsoIncl: '躯干倾角',
     hipAboveKnee: '髋比膝高',
     hipRise: '髋部抬起高度',
+    // 「站立门控」用的判据名：肩比髋高多少（和 hipRise 同一个量，说法更适合站姿）
+    shoulderAboveHip: '肩高于髋',
     hipClear: '髋离地高度',
     kneeClear: '膝离地高度',
     shoulderClear: '肩离地高度',
@@ -828,6 +833,7 @@ export default {
     holdStraight: '身体直线角',
     pose: {
       stand: '站立姿势',
+      standUpright: '站直（不依赖地面线）',
       standWide: '站立、两腿分开',
       prone: '俯撑姿势',
       supine: '仰卧屈膝',

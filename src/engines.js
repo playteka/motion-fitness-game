@@ -44,6 +44,20 @@ export const GATE_LIMITS = {
     hipClear: [0.55, null],
     ankleSpread: [0.35, null],
   },
+  /**
+   * 站立（**不依赖地面线**的版本）：躯干接近竖直 + 肩明显高于髋。
+   *
+   * 勾腿跳用它。为什么不用普通 `stand` 门控：那个门控还要「膝离地 ≥0.28、髋离地 ≥0.55 倍躯干长」，
+   * 这两个量都以**校准地面线**为基准 —— 地面线一旦偏了（脚出画、校准时人没站到位），
+   * 站得笔直也会被判成「没站好」。用户反馈「我明明站好了、躯干倾角只有几度，它却总说我没站好」，
+   * 查下来就是卡在这两条地面相关的条件上。
+   * 「肩高于髋」是**身体自己跟自己比**：站着 ≈ 1.0×躯干长，躺着 ≈ 0，所以躺下 / 卧姿一定过不了，
+   * 但和地面线在哪完全无关。两个条件也都不依赖机位距离。
+   */
+  standUpright: {
+    torsoIncl: [null, 52],
+    shoulderAboveHip: [0.5, null],
+  },
   /** 俯撑（俯卧撑 / 平板 / 登山者）：躯干接近水平 + 肩离地 + 手在地面 */
   prone: {
     torsoIncl: [32, null],
@@ -140,6 +154,9 @@ export const GATES = {
   supineLow: (f) => inLimit(f.torsoIncl, GATE_LIMITS.supineLow.torsoIncl)
     && inLimit(f.shoulderClear, GATE_LIMITS.supineLow.shoulderClear),
   supineFlat: (f) => inLimit(f.shoulderClear, GATE_LIMITS.supineFlat.shoulderClear),
+  /** 站立（不依赖地面线）：躯干竖直 + 肩高于髋 —— 见 GATE_LIMITS.standUpright 的说明 */
+  standUpright: (f) => inLimit(f.torsoIncl, GATE_LIMITS.standUpright.torsoIncl)
+    && inLimit(f.hipRise, GATE_LIMITS.standUpright.shoulderAboveHip),
   /** 空心支撑：肩和腿都稍微离地 */
   hollow: (f) => f.torsoIncl > 36 && f.shoulderClear > 0.12 && f.shoulderClear < 0.7
     && f.kneeClear > 0.12 && f.kneeClear < 0.9,
@@ -185,7 +202,7 @@ export const GATES = {
 
 /** 每个门控对应「现在该怎么做」的提示键后缀 */
 const GATE_HINT = {
-  stand: 'stand', standWide: 'stand', standOneLeg: 'stand', standWall: 'stand',
+  stand: 'stand', standWide: 'stand', standUpright: 'stand', standOneLeg: 'stand', standWall: 'stand',
   standHeelUp: 'stand', standArmCross: 'stand', standFold: 'stand',
   prone: 'prone', proneHigh: 'prone', proneFloor: 'prone', proneLift: 'prone',
   supine: 'supine', supineLow: 'supine', supineFlat: 'supine', hollow: 'supine', crab: 'supine',
