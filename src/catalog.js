@@ -199,7 +199,10 @@ export const EXERCISES = [
   }),
   e('boxJump', '🦘', 'full', {
     plan: 'jump', view: 'front', posture: 'stand', judge: 'flight', target: 10, rough: true,
-    params: bend({ metric: 'kneeBent', gate: 'stand', up: 168, down: 100, flight: true, flightMin: 0.05, minRepMs: 500 }),
+    // 跳箱（粗略判定）：判据是「整个人离地」。离地门槛从 0.05 收到 **0.035**
+    // （用户反馈「离地高度 ≥ 0.05×画面高可能还是大了，稍微再调小一点」）——
+    // 现在和深蹲跳用的是同一条线，跳箱本来跳得就没那么高，再叠加校准地面线的误差，0.05 容易判不到。
+    params: bend({ metric: 'kneeBent', gate: 'stand', up: 168, down: 100, flight: true, flightMin: 0.035, minRepMs: 500 }),
   }),
   e('lungeJump', '⤴️', 'full', {
     plan: 'jump', posture: 'stand', judge: 'flight', target: 14,

@@ -803,14 +803,27 @@ console.log('\n[5] bend 引擎：跳跃（离地）');
   ok('没有地面线时退回滚动基准：同一姿势不会一直累加次数',
     noCalib.det.validReps === 0, `有效 ${noCalib.det.validReps}`);
 }{
-  // 跳箱：离地门槛更高（flightMin 0.05），抬到 0.09 才算数
+  // 跳箱：离地门槛 0.035（用户反馈原来的 0.05 偏大，已调小；深蹲跳用的也是 0.035）
   const low = makeRunner(createDetector('boxJump'));
   low.run(repeat(jumpCycle(false), 1300, 3));
   ok('跳箱：脚不离地不计有效次数', low.det.validReps === 0, `实际 ${low.det.validReps}`);
   const det = createDetector('boxJump');
   const r = makeRunner(det);
   r.run(repeat(jumpCycle(true, { dy: 0.09 }), 1300, 3));
-  ok('跳箱：抬得够高 = 3 次', det.validReps === 3, `实际 ${det.validReps}`);
+  ok('跳箱：抬得够高（0.09）= 3 次', det.validReps === 3, `实际 ${det.validReps}`);
+  // 调小之后：抬到 0.045（旧门槛 0.05 判不到、新门槛 0.035 能判到）也要算
+  const lower = createDetector('boxJump');
+  const rLower = makeRunner(lower);
+  rLower.run(repeat(jumpCycle(true, { dy: 0.045 }), 1300, 3));
+  ok('跳箱：抬到 0.045（旧线 0.05 不够、新线 0.035 够了）= 3 次',
+    lower.validReps === 3, `实际 ${lower.validReps}`);
+  // 新门槛之下（0.02）仍旧不算：别把「踮一下脚」当成跳起来
+  const below = createDetector('boxJump');
+  const rBelow = makeRunner(below);
+  rBelow.run(repeat(jumpCycle(true, { dy: 0.02 }), 1300, 3));
+  ok('跳箱：抬到 0.02（低于新门槛）= 0 次，并提示要跳起来',
+    below.validReps === 0 && hasCue(rBelow, 'needJump'),
+    `有效 ${below.validReps} / ${cuesOf(rBelow).join(',')}`);
 }
 {
   // 离地基线是「最近 3 秒身体最低点」：站着一动不动永远不会被判成离地
