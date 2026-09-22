@@ -1806,7 +1806,8 @@ console.log('\n[8e2] 勾腿跳');
   const iconHtml = () => segEls().map((c) => c.innerHTML).join('');
   const { specStages } = await import('../src/specs.js');
   api.openExercise('buttKick');
-  ok('勾腿跳默认目标 = 20 次', api.state.target === 20, String(api.state.target));
+  ok('勾腿跳默认目标是「限时 60 秒」（用户要求改成定时计次）',
+    api.state.target === 60, String(api.state.target));
   api.buildCriteriaBar();
   api.state.session = 'running';
   api.state.criteriaLive = true;
@@ -2102,7 +2103,41 @@ console.log('\n[8g] 开合跳：限时计数（60 秒看能跳多少次）');
   ok('最佳成绩里记下「7 次 / 3 秒」（改动后的时长不会让成绩说不清）',
     rec && rec.value === 7 && rec.seconds === 3, JSON.stringify(rec));
 
-  // ---- ③ 回归：普通计数动作不会被「时间」结束 ----
+  // ---- ③ 勾腿跳同样适用（用户要求「勾腿跳也改为在固定时长内计次，比如 1 分钟」）----
+  const kick = localizedExercise('buttKick');
+  ok('勾腿跳也是限时计数，默认 60 秒', kick.timed === true && kick.seconds === 60);
+  api.openExercise('buttKick');
+  ok('打开勾腿跳后目标就是 60 秒（时长单独存，不会读到旧的「20 次」）',
+    api.state.target === 60, String(api.state.target));
+  ok('勾腿跳的目标单位是秒、时长预设同样是 30/45/60/90/120 秒',
+    elements.get('targetUnit').textContent === '秒'
+    && elements.get('targetChips').children.map((c) => c.textContent).join(',') === '30 秒,45 秒,60 秒,90 秒,120 秒',
+    `${elements.get('targetUnit').textContent} / ${elements.get('targetChips').children.length}`);
+  ok('🎯 运动设定里同样写明了「限时计数」与时长',
+    elements.get('exerciseTime').hidden === false
+    && elements.get('exerciseTime').textContent.includes('60'), elements.get('exerciseTime').textContent);
+  // 用 3 秒跑完一组，核对「时间到」这条线在 alt 引擎的动作上也一样生效
+  api.setTarget(3);
+  api.openExercise('buttKick');
+  api.setTarget(3);
+  pump(30);
+  api.state.countdownStartedAt = clock - 4000;
+  pump(2);
+  ok('勾腿跳也能进入计数（限时计数不挑引擎）', api.state.session === 'running', api.state.session);
+  api.state.detector.validReps = 41;
+  pump(95);
+  ok('勾腿跳时间到同样立刻停止计次', api.state.timeUp === true
+    && api.feedDetector(null, clock).length === 0);
+  pump(130);                                  // 庆祝动画走完 → 自动结算
+  const kickRec = JSON.parse(store.get('mfg.records.v1') || '{}').buttKick;
+  ok('勾腿跳的最佳成绩也记成「41 次 / 3 秒」',
+    kickRec && kickRec.value === 41 && kickRec.seconds === 3, JSON.stringify(kickRec));
+  ok('勾腿跳的结算说明同样写「3 秒时间到：完成 41 次」',
+    elements.get('summaryNote').textContent.includes('3 秒时间到')
+    && elements.get('summaryNote').textContent.includes('41'), elements.get('summaryNote').textContent);
+  api.state.settings.seconds.buttKick = 60;    // 还原成默认 60 秒
+
+  // ---- ④ 回归：普通计数动作不会被「时间」结束 ----
   api.openExercise('squat');
   ok('深蹲不是限时计数', localizedExercise('squat').timed === false);
   pump(30);

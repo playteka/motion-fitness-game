@@ -149,7 +149,11 @@ export const EXERCISES = [
     //   offValue 刚做完那条腿要回到 ≥135°（原来 150°：快节奏时两腿都在 140° 上下，判不到「另一侧在休息」）
     //   holdMs   一侧要连续保持 25ms 才算「在做」（原来 60ms ≈ 两帧，快动作中间抖一下就丢一次）
     //   minRepMs 两次之间至少 110ms（原来 180ms，快节奏时会把后面的次数直接吞掉）
-    engine: 'alt', plan: 'standAlt', posture: 'stand', judge: 'leg', target: 20,
+    engine: 'alt', plan: 'standAlt', posture: 'stand', judge: 'leg',
+    // 用户要求：勾腿跳也改成**限时计数**（和开合跳同一套）—— 固定 60 秒，看能勾多少次。
+    // `seconds` = 这一组的时间上限，`target` 按秒解释；计次规则不变（站好 → 勾一条腿 →
+    // 换另一条腿也勾到，换边那一刻算一次）。
+    seconds: 60, target: 60,
     // 同样节奏很快（一秒约两下）：**每 5 次报一次数**（用户要求），别每次都念
     speakEvery: 5,
     params: {

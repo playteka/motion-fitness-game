@@ -180,7 +180,8 @@ export default {
     milestone: '已经拿到 {score} 分！',
     goalVoice: '目标完成，太棒了',
     // 限时计数：开始时说明时长，结束时喊时间到
-    timedGo: '⏱ {sec} 秒计时开始，看看你能跳多少次！',
+    // （开合跳、勾腿跳共用这一句，所以用「做多少次」这种两种动作都合适的说法）
+    timedGo: '⏱ {sec} 秒计时开始，看你能做多少次！',
     timeUpVoice: '时间到，太棒了',
     cameraReady: '摄像头 {w}×{h}',
     cameraOff: '摄像头未开启',
@@ -358,7 +359,7 @@ export default {
     buttKick: {
       name: '勾腿跳',
       cameraHint: '侧对摄像头，留出前后空间',
-      goal: '原地轻跳，左右交替把脚跟往臀部勾起来',
+      goal: '原地轻跳，左右交替把脚跟往臀部勾起来 —— 限时 60 秒，看你能勾多少次',
     },
     sidePlank: {
       name: '侧平板支撑',

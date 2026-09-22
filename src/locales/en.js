@@ -356,7 +356,7 @@ export default {
     buttKick: {
       name: 'Butt Kick',
       cameraHint: 'Stand side-on to the camera and leave room front and back',
-      goal: 'Bounce lightly in place, kicking your heels up towards your glutes one leg at a time',
+      goal: 'Bounce lightly in place, kicking your heels up towards your glutes one leg at a time — 60 seconds timed, see how many you can do',
     },
     sidePlank: {
       name: 'Side Plank',

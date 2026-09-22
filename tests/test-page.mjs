@@ -426,9 +426,16 @@ console.log('\n[4] 动作库与界面一致性');
   ok('深蹲跳在「全身」分类里（用户要求从下肢移过去）',
     squatJump && squatJump.cats.join(',') === 'full', squatJump?.cats.join(','));
   const buttKick = EXERCISES.find((x) => x.id === 'buttKick');
-  ok('下肢新增「勾腿跳」（站立左右交替，默认目标 20 次）',
-    !!buttKick && buttKick.cats.join(',') === 'lower' && buttKick.target === 20,
+  ok('下肢新增「勾腿跳」（站立左右交替）',
+    !!buttKick && buttKick.cats.join(',') === 'lower',
     `${buttKick?.cats.join(',')}/${buttKick?.target}`);
+  // 用户要求：勾腿跳也改成限时计数（1 分钟看能勾多少次）
+  ok('勾腿跳 = 限时计数：固定 60 秒（计次规则不变）',
+    isTimedReps(buttKick) === true && buttKick?.seconds === 60 && buttKick?.target === 60,
+    `${buttKick?.seconds}/${buttKick?.target}`);
+  ok('勾腿跳的目标单位是秒、成绩单位是次',
+    targetUnitKey(buttKick) === 'ui.secondsUnit' && buttKick?.unitKey === 'ui.repsUnit'
+    && localizedExercise('buttKick').targetUnit === '秒' && localizedExercise('buttKick').unit === '次');
   ok('勾腿跳用左右交替引擎 + 站立交替的计分方案',
     buttKick?.engine === 'alt' && buttKick?.plan === 'standAlt', `${buttKick?.engine}/${buttKick?.plan}`);
   ok('勾腿跳侧对镜头（才看得清脚跟有没有勾起来）', buttKick?.view === 'side', String(buttKick?.view));
@@ -443,8 +450,8 @@ console.log('\n[4] 动作库与界面一致性');
   ok('isTimedReps 只认「计数类 + 配了秒数」的动作', isTimedReps(jack) === true
     && isTimedReps(EXERCISES.find((x) => x.id === 'squat')) === false
     && isTimedReps(EXERCISES.find((x) => x.id === 'plank')) === false);
-  ok('只有开合跳是限时计数（其他动作的结束条件都还是次数 / 保持时长）',
-    EXERCISES.filter((x) => isTimedReps(x)).map((x) => x.id).join(',') === 'jumpingJack',
+  ok('限时计数就是「开合跳 + 勾腿跳」两个（其他动作的结束条件都还是次数 / 保持时长）',
+    EXERCISES.filter((x) => isTimedReps(x)).map((x) => x.id).sort().join(',') === 'buttKick,jumpingJack',
     EXERCISES.filter((x) => isTimedReps(x)).map((x) => x.id).join(','));
   ok('限时计数：目标单位是秒、成绩单位是次（两个单位不能混）',
     targetUnitKey(jack) === 'ui.secondsUnit' && jack.unitKey === 'ui.repsUnit'
