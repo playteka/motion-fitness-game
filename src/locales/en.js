@@ -257,6 +257,9 @@ export default {
     hip: 'Hip',
     bodyStraight: 'Body line',
     hipRise: 'Hip lift',
+    // The standing gate (butt kick) judges the positive form “shoulders above hips”: about +1.0 standing,
+    // and it is the exact negative of “Hip lift” right above
+    shoulderAboveHip: 'Shoulders above hips',
     // Floor-relative values used by the standing gate (they differ a lot between standing and lying)
     kneeClear: 'Knee off floor',
     hipClear: 'Hip off floor',

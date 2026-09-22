@@ -643,7 +643,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2215 assertions in the suite).
+> exactly on the detector's own progress line (2230 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -972,10 +972,21 @@ both with an adjustable duration in 🎯.
 > 0.5× torso length above the hips”. The user reported “I *was* standing, my trunk tilt is only a few degrees, but it keeps saying
 > I am not standing” — the regular `stand` gate also demands “knee ≥ 0.28 and hip ≥ 0.55 torso lengths off the floor”, and both of
 > those are measured from the **calibrated floor line**: once that line drifts (feet out of frame, or the calibration caught you out
-> of position) a perfectly upright stance can never pass. “Shoulders above hips” compares the body with itself — about 1.0× torso
+> of position) a perfectly upright stance can never pass. “Shoulders above hips” compares the body with itself — about +1.0× torso
 > length standing, about 0 lying down — so it still tells the two apart while being completely independent of where the floor line
-> happens to be. The 🐞 metrics panel now also prints “Knee off floor / Hip off floor / Hip lift”, so a future “it says I'm not
-> standing” report can be read straight off those numbers.
+> happens to be.
+>
+> ⚠️ **That gate hit a sign trap — written down here so it never happens again**: image y grows downwards, so “shoulders above hips”
+> is the **positive** quantity `shoulderAboveHip = (hip.y − shoulder.y)/torsoLen` (≈ **+1.0** standing), while the older “hip lift” is
+> its exact negative `hipRise = (shoulder.y − hip.y)/torsoLen` (≈ **−1.0** standing, and only the glute bridge uses it).
+> The gate was first written as `hipRise ≥ 0.5` — which demands the hips half a torso *above* the shoulders (practically a
+> headstand) — so no matter how correctly you stood, the gate could never pass and the app kept saying
+> “**you're not in position for this move yet**” (exactly what the user reported). The gate now uses the positive
+> `shoulderAboveHip`, and `tests/test-detectors.mjs` carries **real-frame** baseline checks (synthetic pose → `computeFrame`):
+> standing must give `shoulderAboveHip ≈ +1.0` and `hipRise ≈ −1.0`, lying down must be blocked. The older hand-written frames had
+> encoded the same mistake as the code, so a fully green suite could not catch it.
+> The 🐞 metrics panel prints **both** numbers (“Hip lift” / “Shoulders above hips”, exact negatives of each other), so any future
+> “it says I'm not standing” report can be read straight off those two lines.
 >
 > **It is “timed counting” too** (the user asked for one minute of butt kicks to see how many you can do) — a fixed 60 seconds that
 > settles automatically, with the result being the number of kicks inside those 60 seconds. The rep rule, keyframes, criteria and
@@ -1050,8 +1061,8 @@ The language dropdown in ⚙️ Settings picks it up automatically; the README l
 
 ```
 View Side ✓(0.18) · Full body ✓ · Both legs visible ✓ · Trunk lean 6° · Knee 176° · Elbow 172° ·
-Hip 172° · Body line 175° · Hip lift -0.98 · Thigh from horizontal 88° · Visibility 0.94 ·
-Outline ✗ · State running
+Hip 172° · Body line 175° · Hip lift -0.98 · Shoulders above hips 0.98 · Thigh from horizontal 88° ·
+Visibility 0.94 · Outline ✗ · State running
 ```
 
 Read them like this:
@@ -1062,6 +1073,7 @@ Read them like this:
 | `Full body ✗` | Some body parts are out of frame | Back up 1–2 steps so you're in frame from head to feet |
 | `No person detected` | Too far / too close, backlighting, or a background the same color as your clothes | Move closer, face the light source, change clothes, or use a higher-resolution camera |
 | `Trunk lean` stuck above 32° | The camera is tilted or you're standing crooked | Straighten the camera (or level it with a book) |
+| The butt kick keeps saying “you're not in position for this move yet” | Its standing gate watches “shoulders above hips” | Look at **`Shoulders above hips`**: standing it should read **≈ +1.0** (with `Hip lift ≈ −1.0`). If it is near 0 or negative you really are lying down / folded over; if both lines look right and the exercise still refuses to start judging, that is a bug — read the line out to me |
 | The numbers look fine but nothing gets checked off | You're stuck right on a step's threshold | The status bar spells out exactly how far off you are (for example, “your squat depth is now at 62% (100% = thighs level)”) |
 | `Outline ✓` while `State running` | This should never happen (the outline must be gone once you're recognised) | Note the state and the exercise and report it — a hard guard plus a frame-by-frame test cover the three workout states, so seeing this would be a new bug |
 
@@ -1108,11 +1120,11 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
-| `tests/test-detectors.mjs` | 306 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
-| `tests/test-engines.mjs` | 181 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation (including the butt kick: one kick on each leg is one rep, fast cadences keep up, and the `switched` flag), whole sequences, and pausing/resuming the timer |
+| `tests/test-detectors.mjs` | 319 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the **sign baseline for the standing gate (butt kick) on real frames** (standing gives `Shoulders above hips ≈ +1.0` and `Hip lift ≈ −1.0` and passes the gate; lying down or standing on your head is blocked; real frames alternating legs still count reps), the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
+| `tests/test-engines.mjs` | 182 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor, and the butt kick gate judging “shoulders above hips” rather than “hip lift”), feet off the floor when jumping, left/right alternation (including the butt kick: one kick on each leg is one rep, fast cadences keep up, and the `switched` flag), whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 845 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria (including the standing butt-kick figures) and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 390 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises (including “jump squat under Full body, butt kick under Lower body”) and the completeness of their scoring plans, the timed-counting declaration (`isTimedReps` / target unit in seconds / result unit in reps / exactly the jumping jack and the butt kick / the “timed counting” wording in both languages), plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
-| `tests/test-app.mjs` | 475 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (both the jumping jack and the butt kick: seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), fullscreen (the video frame is what gets enlarged, going home leaves fullscreen, ending a set alone does not, and no fullscreen API call happens when you were never fullscreen), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 22 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
+| `tests/test-app.mjs` | 476 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (both the jumping jack and the butt kick: seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), fullscreen (the video frame is what gets enlarged, going home leaves fullscreen, ending a set alone does not, and no fullscreen API call happens when you were never fullscreen), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 22 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
 
 ---
 

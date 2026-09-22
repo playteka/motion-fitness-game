@@ -51,8 +51,15 @@ export const GATE_LIMITS = {
    * 这两个量都以**校准地面线**为基准 —— 地面线一旦偏了（脚出画、校准时人没站到位），
    * 站得笔直也会被判成「没站好」。用户反馈「我明明站好了、躯干倾角只有几度，它却总说我没站好」，
    * 查下来就是卡在这两条地面相关的条件上。
-   * 「肩高于髋」是**身体自己跟自己比**：站着 ≈ 1.0×躯干长，躺着 ≈ 0，所以躺下 / 卧姿一定过不了，
-   * 但和地面线在哪完全无关。两个条件也都不依赖机位距离。
+   *
+   * 两个条件都不依赖地面线、也不依赖机位距离：
+   *   torsoIncl        躯干相对竖直的倾角（站直 ≈ 0°）
+   *   shoulderAboveHip **正数 = 肩在髋上方**（站立 ≈ +1.0，仰卧 ≈ 0，臀桥/倒立为负）
+   *
+   * ⚠️ 符号坑（务必记着）：这里用的是 `shoulderAboveHip`（正数版），**不是 `hipRise`**。
+   * 两者互为相反数（`hipRise = −shoulderAboveHip`，它是「髋抬到肩上方」的量，臀桥在用）。
+   * 这里曾经写成 `inLimit(f.hipRise, [0.5, null])` —— 等于要求「髋比肩高半条躯干」（几乎倒立），
+   * 于是站得再标准也永远过不了门控，画面上一直提示「还没进入这个动作的姿势」。
    */
   standUpright: {
     torsoIncl: [null, 52],
@@ -154,9 +161,9 @@ export const GATES = {
   supineLow: (f) => inLimit(f.torsoIncl, GATE_LIMITS.supineLow.torsoIncl)
     && inLimit(f.shoulderClear, GATE_LIMITS.supineLow.shoulderClear),
   supineFlat: (f) => inLimit(f.shoulderClear, GATE_LIMITS.supineFlat.shoulderClear),
-  /** 站立（不依赖地面线）：躯干竖直 + 肩高于髋 —— 见 GATE_LIMITS.standUpright 的说明 */
+  /** 站立（不依赖地面线）：躯干竖直 + 肩高于髋 —— 见 GATE_LIMITS.standUpright 的说明（注意符号） */
   standUpright: (f) => inLimit(f.torsoIncl, GATE_LIMITS.standUpright.torsoIncl)
-    && inLimit(f.hipRise, GATE_LIMITS.standUpright.shoulderAboveHip),
+    && inLimit(f.shoulderAboveHip, GATE_LIMITS.standUpright.shoulderAboveHip),
   /** 空心支撑：肩和腿都稍微离地 */
   hollow: (f) => f.torsoIncl > 36 && f.shoulderClear > 0.12 && f.shoulderClear < 0.7
     && f.kneeClear > 0.12 && f.kneeClear < 0.9,

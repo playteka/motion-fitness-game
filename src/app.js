@@ -1395,6 +1395,9 @@ function renderDebug(f, outline = null) {
     `${t('debug.hip')} ${n(f.hipAngle)}°`,
     `${t('debug.bodyStraight')} ${n(f.bodyStraight)}°`,
     `${t('debug.hipRise')} ${n(f.hipRise, 2)}`,
+    // 站立门控（勾腿跳用的 standUpright）判的是**正数版**「肩高于髋」：
+    // 站着 ≈ +1.0，躺下 ≈ 0。两行互为相反数，排查「说我没站好」看这一行。
+    `${t('debug.shoulderAboveHip')} ${n(f.shoulderAboveHip, 2)}`,
     `${t('debug.kneeClear')} ${n(f.kneeClear, 2)}`,
     `${t('debug.hipClear')} ${n(f.hipClear, 2)}`,
     `${t('debug.thighFromHoriz')} ${n(f.thighFromHoriz)}°`,

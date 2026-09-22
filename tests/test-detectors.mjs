@@ -13,6 +13,7 @@ import {
   computeFrame, PERSON_VIS_MEAN, PERSON_VIS_MIN, PERSON_VIS_SLACK, PERSON_MIN_TORSO,
 } from '../src/metrics.js';
 import { createDetector } from '../src/exercises.js';
+import { GATES, GATE_LIMITS, inLimit } from '../src/engines.js';
 import { specStages, stageHolds } from '../src/specs.js';
 import { EXERCISES } from '../src/catalog.js';
 import {
@@ -1162,6 +1163,106 @@ console.log('\n[7] 按动作要领计分');
     `knee=${f.kneeAngle?.toFixed(1)}`);
   r.run([{ pose: bad, ms: 1500 }]);
   ok('远侧腿估歪时依然能拿到站姿分', det.stepStatus()[0].done === true, `得分 ${det.score}`);
+}
+
+/* ------------------------------------------------------------------ *
+ * 站立门控（勾腿跳的 standUpright）的**符号**：用真实帧验证，而不是手搓数字
+ *
+ * 用户反馈：「勾腿跳总是说我还没有进入这个动作的姿势」。
+ * 原因：门控里写的是 `hipRise ≥ 0.5`（「髋抬起」），而 hipRise 在**站着**时是 **−1.0**
+ *（画面 y 向下增长，肩在髋上方 → shoulderY − hipY 是负数），
+ * 这条判据等于要求「髋比肩高半条躯干」（几乎倒立），于是站得再标准也永远过不了门控，
+ * 画面上一直提示「还没进入这个动作的姿势」。
+ * 门控现在用**正数版** `shoulderAboveHip = −hipRise`（站着 ≈ +1.0、仰卧 ≈ 0）。
+ *
+ * 为什么以前的测试没抓到：那一批用例用的是**手搓帧**（`hipRise: 1.0`），
+ * 手搓的数字和代码犯的是同一个错，测试自然全绿。所以这一段一律走
+ * 合成姿势 → `computeFrame` 的真实管线，把量与符号一起钉住。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[7b] 站立门控的符号（真实帧）');
+{
+  /** 把姿势缩放到画面里（踝部对齐地面线、身体居中）—— 与校准用例同一个摆法 */
+  const fit = (lm, { k = 0.78, centerX = 0.5, groundY = 0.92 } = {}) => {
+    const ankleY = Math.max(lm[LM.L_ANKLE].y, lm[LM.R_ANKLE].y);
+    const cx = (lm[LM.L_HIP].x + lm[LM.R_HIP].x + lm[LM.L_SHOULDER].x + lm[LM.R_SHOULDER].x) / 4;
+    return lm.map((p) => ({ ...p, x: centerX + (p.x - cx) * k, y: groundY + (p.y - ankleY) * k }));
+  };
+  const frameOf = (lm, now = 0) => computeFrame(toMetric(
+    lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT,
+  ), null, now, false, null);
+
+  // 站直（侧拍、正拍各来一帧）：肩必须明显在髋上方 → shoulderAboveHip 是正数
+  for (const view of ['side', 'front']) {
+    const f = frameOf(fit(standingPose({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view })));
+    ok(`真实${view === 'side' ? '侧' : '正'}拍站立帧：肩高于髋是**正数** ≈ +1.0`,
+      f.shoulderAboveHip > 0.8, `shoulderAboveHip=${f.shoulderAboveHip.toFixed(2)}`);
+    ok(`真实${view === 'side' ? '侧' : '正'}拍站立帧：髋抬起 = −肩高于髋（互为相反数）`,
+      Math.abs(f.hipRise + f.shoulderAboveHip) < 1e-9,
+      `${f.hipRise.toFixed(2)} vs ${f.shoulderAboveHip.toFixed(2)}`);
+    ok(`真实${view === 'side' ? '侧' : '正'}拍站立帧能通过勾腿跳的站立门控（躯干 ≈5°、肩高于髋 ≈1.0）`,
+      GATES.standUpright(f) === true, `torsoIncl=${f.torsoIncl.toFixed(1)}`);
+    // 反向保险：站着时 hipRise 一定是负的 —— 如果门控误用它（要求 ≥0.5），这一帧就会被判失败。
+    // 这条断言就是那个 bug 的「安全绳」：有人把门控改回 hipRise，这里立刻会红。
+    ok(`（安全绳）站立帧的 hipRise 是负数，所以门控绝不能拿它当「肩高于髋」用`,
+      f.hipRise < -0.8 && !inLimit(f.hipRise, GATE_LIMITS.standUpright.shoulderAboveHip),
+      `hipRise=${f.hipRise.toFixed(2)}`);
+  }
+
+  // 仰卧（臀桥起始）：肩髋齐平 → 不是站姿，必须被拦住
+  const lie = frameOf(fit(supinePose({ knee: 90 }), { groundY: 0.8 }));
+  ok('真实仰卧帧：肩高于髋 ≈ 0（躺下不该算站着）',
+    Math.abs(lie.shoulderAboveHip) < 0.5, `shoulderAboveHip=${lie.shoulderAboveHip.toFixed(2)}`);
+  ok('真实仰卧帧被站立门控拦住（躺下 → 提示先站起来）',
+    GATES.standUpright(lie) === false, `torsoIncl=${lie.torsoIncl.toFixed(1)}`);
+
+  // 勾腿跳本身：真实帧 + 真实识别器，站着就该进入判定（active）并计次
+  const det = createDetector('buttKick');
+  /** 把一条腿的小腿绕膝盖折过去（模拟「脚跟往臀部勾」），折 115° ⇒ 膝角 ≈ 65° */
+  const foldLeg = (lm, side, foldDeg) => {
+    const hip = lm[LM[`${side}_HIP`]];
+    const knee = lm[LM[`${side}_KNEE`]];
+    const ankle = lm[LM[`${side}_ANKLE`]];
+    const thighDir = Math.atan2(knee.y - hip.y, knee.x - hip.x);
+    const shinLen = Math.hypot(ankle.x - knee.x, ankle.y - knee.y) || 0.2;
+    const a = thighDir + (foldDeg * Math.PI) / 180;
+    lm[LM[`${side}_ANKLE`]] = {
+      ...ankle, x: knee.x + Math.cos(a) * shinLen, y: knee.y + Math.sin(a) * shinLen,
+    };
+    return lm;
+  };
+  const kickFrame = (which, now) => {
+    const lm = fit(standingPose({ knee: 172, lean: 5, armDown: 0, ankleX: 1.0, view: 'side' }))
+      .map((p) => ({ ...p }));
+    if (which) foldLeg(lm, which, 115);
+    return frameOf(lm, now);
+  };
+
+  let now = 1000;
+  const fStand = kickFrame('L', now);
+  det.update(fStand, now);
+  ok('真实勾腿跳帧：站着（肩高于髋 >0.5）时识别器进入判定（gateOk = true）',
+    det.gateOk === true && det.active === true,
+    `gateOk=${det.gateOk} torsoIncl=${fStand.torsoIncl.toFixed(1)} shoulderAboveHip=${fStand.shoulderAboveHip.toFixed(2)}`);
+  // 每一侧「勾住」约 0.35 秒（真人一秒勾两下）：按 30fps 一帧帧喂，
+  // 因为识别器要求同一侧连续保持 holdMs 才认（换边那一帧只算「进入这一侧」）
+  const holdKick = (which, ms) => {
+    const end = now + ms;
+    while (now < end) {
+      now += 33.4;
+      det.update(kickFrame(which, now), now);
+    }
+  };
+  for (const w of ['L', 'R', 'L', 'R']) holdKick(w, 350);
+  ok('真实勾腿跳帧：左右交替能计到次数（不是一直卡在门控上）', det.validReps >= 3,
+    `validReps=${det.validReps}`);
+
+  // 反面：把肩膀压到髋下面（等于「髋高于肩」，也就是旧代码要求的那种姿势）→ 门控必须拦住，
+  // 说明门控确实在判「肩高于髋」，而不是恒真
+  const inverted = frameOf(fit(standingPose({ knee: 176, lean: 175, armDown: 0, ankleX: 1.0, view: 'side' })));
+  ok('反例：肩低于髋（躯干倒过来）时站立门控拦住',
+    GATES.standUpright(inverted) === false,
+    `shoulderAboveHip=${inverted.shoulderAboveHip.toFixed(2)} torsoIncl=${inverted.torsoIncl.toFixed(1)}`);
 }
 
 /* ------------------------------------------------------------------ *

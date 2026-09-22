@@ -60,7 +60,8 @@ export const METRIC_UNITS = {
   hip: DEG, ankle: DEG, body: DEG, trunk: DEG, torsoIncl: DEG,
   shoulderClear: TORSO, kneeClear: TORSO, hipClear: TORSO, wristClear: TORSO, wristClearMin: TORSO,
   hipRise: TORSO, armRaised: TORSO, kneeSpread: TORSO, legSpread: TORSO,
-  // 「肩高于髋」和 hipRise 是同一个量，只是给「站立门控」用了一个更直白的名字
+  // 「肩高于髋」（正数 = 肩在髋上方，站立 ≈ +1.0）是**站立门控**用的量；
+  // hipRise 是它的相反数（髋抬到肩上方，臀桥在用）—— 两个量的单位和正负都不同，别混用
   shoulderAboveHip: TORSO,
   hipLineDevAbs: TORSO, valgus: TORSO, shoulderDrop: TORSO, wristTwist: TORSO,
   backKneeDrop: SHIN, hipAboveKnee: SHIN,
@@ -514,7 +515,8 @@ export const SPEC_METRICS = {
   wristClear: (f) => f.wristClearMin,
   wristClearMin: (f) => f.wristClearMin,
   hipRise: (f) => f.hipRise,
-  shoulderAboveHip: (f) => f.hipRise,
+  // 站立门控判的是**正数版**（肩在髋上方）；写成 hipRise 会变成负数、显示与实际判定相反
+  shoulderAboveHip: (f) => f.shoulderAboveHip,
   hipAboveKnee: (f) => f.hipAboveKnee,
   armRaised: (f) => f.armRaised,
   kneeSpread: (f) => f.kneeSpread,

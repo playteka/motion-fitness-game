@@ -260,6 +260,8 @@ export default {
     hip: '髋',
     bodyStraight: '身体直线',
     hipRise: '髋抬起',
+    // 站立门控（勾腿跳）判的是正数版「肩高于髋」：站着 ≈ +1.0；它和「髋抬起」互为相反数
+    shoulderAboveHip: '肩高于髋',
     // 站姿门控要用的两个地面相关量（站着与躺下差很多，排查「说我站不好」时看这两行）
     kneeClear: '膝离地',
     hipClear: '髋离地',

@@ -158,6 +158,20 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
 
   const shoulderClear = (groundRef - shoulderMid.y) / torsoLen;      // 肩离地高度（躯干长为单位）
   const hipRise = (shoulderMid.y - hipMid.y) / torsoLen;             // 髋相对肩的高度（臀桥用）
+  /**
+   * 「肩比髋高多少」（躯干长为单位）—— **正数 = 肩在髋上方**。
+   *
+   * 注意符号：画面坐标 y 向下增长，所以
+   *   站立：肩在髋上方 → shoulderAboveHip ≈ **+1.0**（同时 hipRise ≈ −1.0）
+   *   仰卧：肩髋齐平   → ≈ 0
+   *   臀桥：髋抬到肩上方 → **负数**（hipRise 这时才是正数）
+   *
+   * 为什么要有这个「和 hipRise 互为相反数」的量：站姿门控（`standUpright`）问的是
+   * 「肩是不是明显在髋上方」，用正数表达最不容易写反 —— 曾经这里写成
+   * `hipRise ≥ 0.5`（等于要求人几乎是倒立），结果勾腿跳永远提示「还没进入这个动作的姿势」。
+   * 门控一律用这个正数版本，`hipRise` 只留给臀桥。
+   */
+  const shoulderAboveHip = (hipMid.y - shoulderMid.y) / torsoLen;
   const kneeClear = (groundRef - P(idx.knee).y) / torsoLen;          // 膝离地高度
   const wristClear = (groundRef - P(idx.wrist).y) / torsoLen;        // 手离地高度
   const hipLineDev = signedLineDev(shoulderMid, P(idx.ankle), hipMid) / torsoLen; // >0 塌腰, <0 撅臀
@@ -304,6 +318,7 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     trunkLean,
     shoulderClear,
     hipRise,
+    shoulderAboveHip,
     kneeClear,
     wristClear,
     hipLineDev,
