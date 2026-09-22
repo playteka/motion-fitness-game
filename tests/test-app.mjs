@@ -1840,6 +1840,8 @@ console.log('\n[8e2] 勾腿跳');
 console.log('\n[8e] 开合跳');
 {
   const api = windowStub.__mfg;
+  const { localizedExercise } = await import('../src/exercises.js');
+  const { isTimedReps } = await import('../src/catalog.js');
   const segEls = () => elements.get('criteriaTrack').children;
   const segCount = () => segEls().length;
   const iconHtml = () => segEls().map((c) => c.innerHTML).join('');
@@ -1850,8 +1852,25 @@ console.log('\n[8e] 开合跳');
     documentStub.querySelectorAll('.cat-block').length === 5, `${documentStub.querySelectorAll('.cat-block').length}`);
 
   api.openExercise('jumpingJack');
-  ok('开合跳默认目标 = 50 次', api.state.target === 50, String(api.state.target));
-  ok('目标输入框也跟着显示 50', String(elements.get('targetInput').value) === '50', String(elements.get('targetInput').value));
+  ok('开合跳默认目标是「限时 60 秒」（用户要求改成定时计次）',
+    api.state.target === 60 && localizedExercise('jumpingJack').timed === true, String(api.state.target));
+  ok('目标输入框也跟着显示 60', String(elements.get('targetInput').value) === '60', String(elements.get('targetInput').value));
+  ok('目标单位是「秒」而不是「次」（成绩才是次数）',
+    elements.get('targetUnit').textContent === '秒'
+    && localizedExercise('jumpingJack').unit === '次',
+    `${elements.get('targetUnit').textContent} / ${localizedExercise('jumpingJack').unit}`);
+  ok('时长预设是秒（30/45/60/90/120），不是次数',
+    elements.get('targetChips').children.map((c) => c.textContent).join(',') === '30 秒,45 秒,60 秒,90 秒,120 秒',
+    elements.get('targetChips').children.map((c) => c.textContent).join(','));
+  ok('🎯 运动设定里写明了「限时计数」的规则与时长',
+    elements.get('exerciseTime').hidden === false
+    && elements.get('exerciseTime').textContent.includes('60'), elements.get('exerciseTime').textContent);
+  // 「+ / −」按 15 秒一步（时长不是次数，一步 1 秒太慢）
+  elements.get('tPlus').dispatch('click');
+  ok('时长加减按钮按 15 秒一步', api.state.target === 75, String(api.state.target));
+  api.setTarget(60);
+  ok('改回 60 秒后时长存进 settings.seconds（不会和「次数」那个字段混在一起）',
+    api.state.settings.seconds.jumpingJack === 60, JSON.stringify(api.state.settings.seconds));
   api.buildCriteriaBar();
   api.state.session = 'running';
   // 通用引擎的「站立」门控是识别器自己的布尔状态（detFlag: gateOk），桩里直接给上
@@ -1956,7 +1975,157 @@ console.log('\n[8f] 计时类每 5 秒读秒');
   api.showHome();
 }
 
-console.log('\n[9] 语音播报健壮性');
+/* ------------------------------------------------------------------ *
+ * [8g] 开合跳：限时计数（用户要求「固定 60 秒，看能跳多少次」）
+ *
+ * 两段：
+ *   ① 剩余时间播报的节奏（直接调函数，精确到「哪一档报一次」）；
+ *   ② 跑**真实主循环**把一组时间跑完（目标临时改成 3 秒，否则要跑 60 秒的帧），
+ *      核对：时间到 → 立刻停止计次、用时停在上限、结算 = 「N 次」+ 100%、记录带时长，
+ *      以及「普通计数动作不会被时间结束」（回归保护）。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8g] 开合跳：限时计数（60 秒看能跳多少次）');
+{
+  const api = windowStub.__mfg;
+  const { localizedExercise } = await import('../src/exercises.js');
+  const { LM: LMK } = await import('../src/geometry.js');
+  const { standingPose: sp } = await import('./synthetic-pose.mjs');
+  const said = [];
+  const origSay = api.audio.say.bind(api.audio);
+  api.audio.say = (txt, o) => { said.push(String(txt)); return origSay(txt, o); };
+
+  api.openExercise('jumpingJack');
+  const jack = localizedExercise('jumpingJack');
+  api.setTarget(60);
+  ok('开合跳是限时计数，默认 60 秒', jack.timed === true && api.state.target === 60, `${jack.timed}/${api.state.target}`);
+
+  // ---- ① 剩余时间播报：45 / 30 / 15 秒各一次，最后 5 秒单独喊 ----
+  api.state.timeCallsSaid = null;
+  api.state.timeUp = false;
+  const calls = [];
+  for (const left of [50, 45, 40, 30, 20, 15, 10, 5, 2]) {
+    api.state.elapsedMs = (60 - left) * 1000;
+    if (api.announceTimeLeft(jack, 1000)) calls.push(left);
+  }
+  ok('剩余时间只在 45 / 30 / 15 秒各报一次（中间的秒数不念）',
+    calls.join(',') === '45,30,15,5', calls.join(','));
+  ok('播报文案是「还剩 N 秒」', said.includes('还剩 45 秒') && said.includes('还剩 30 秒')
+    && said.includes('还剩 15 秒'), said.join(' | '));
+  ok('最后 5 秒换成冲刺话术', said.includes('最后 5 秒，冲刺！'), said.join(' | '));
+  api.state.timeUp = true;
+  ok('时间到之后不再报剩余时间', api.announceTimeLeft(jack, 2000) === false);
+  api.state.timeUp = false;
+  ok('普通计数动作不会被时间结束（不报剩余时间）',
+    api.announceTimeLeft(localizedExercise('squat'), 3000) === false
+    && api.announceTimeLeft(localizedExercise('plank'), 3000) === false);
+
+  // ---- ② 真实主循环：把一组时间跑完 ----
+  const savedStream = api.camera.stream;
+  const savedDetect = api.engine.detect;
+  const savedReady = api.state.engineReady;
+  const savedPerf = globalThis.performance;
+  api.camera.stream = { getTracks: () => [], getVideoTracks: () => [] };
+  api.camera.video.readyState = 4;
+  api.state.engineReady = true;
+  let clock = 8_000_000;
+  const fakePerf = { now: () => clock, timeOrigin: savedPerf.timeOrigin };
+  Object.defineProperty(globalThis, 'performance', { value: fakePerf, configurable: true, writable: true });
+  windowStub.performance = fakePerf;
+
+  // 校准要求「全身在画面里」，所以姿势要按校准目标大小摆好（同 [8] / [14]）
+  const fit = (lm, { k = 0.78, cx0 = 0.5, groundY = 0.92 } = {}) => {
+    const ankleY = Math.max(lm[LMK.L_ANKLE].y, lm[LMK.R_ANKLE].y);
+    const cx = (lm[LMK.L_HIP].x + lm[LMK.R_HIP].x + lm[LMK.L_SHOULDER].x + lm[LMK.R_SHOULDER].x) / 4;
+    return lm.map((p) => ({ ...p, x: cx0 + (p.x - cx) * k, y: groundY + (p.y - ankleY) * k }));
+  };
+  const pose = fit(sp({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }));
+  api.engine.detect = () => ({ landmarks: pose, worldLandmarks: null });
+  let vt = 8_000_000;
+  const pump = (n) => {
+    for (let i = 0; i < n; i++) {
+      clock += 33.4;
+      vt += 33.4;
+      api.camera.video.currentTime = vt;
+      api.state.engineReady = true;
+      if (!api.camera.stream) api.camera.stream = { getTracks: () => [], getVideoTracks: () => [] };
+      api.loop();
+    }
+  };
+
+  // 目标临时改成 3 秒：功能一样，测试不用真跑 60 秒的帧
+  api.setTarget(3);
+  api.openExercise('jumpingJack');
+  api.setTarget(3);
+  ok('时长改成 3 秒后，目标与单位都跟着变（秒）', api.state.target === 3, String(api.state.target));
+  pump(30);                                   // 站好 → 校准完成 → 倒计时
+  ok('校准完成后自动进入倒计时', api.state.session === 'countdown', api.state.session);
+  api.state.countdownStartedAt = clock - 4000; // 用主循环里的时间兜底推进倒计时
+  pump(2);
+  ok('倒计时结束进入计数', api.state.session === 'running', api.state.session);
+  ok('HUD 显示剩余时间（⏱ 剩余 N / 3 秒）',
+    /剩余\s*3\s*\/\s*3\s*秒/.test(elements.get('hudSub').textContent), elements.get('hudSub').textContent);
+  ok('计时开始时画面上的提示写明了时长',
+    elements.get('cueLine').textContent.includes('3 秒'), elements.get('cueLine').textContent);
+
+  // 这一组跳了 7 次（计数本身由 tests/test-detectors.mjs 逐帧验证，这里只关心「时间」这条线）
+  api.state.detector.validReps = 7;
+  pump(95);                                   // 3 秒 ≈ 90 帧
+  ok('时间到：进入「停止计次」状态', api.state.timeUp === true);
+  ok('时间到时仍然停在 running（先放庆祝动画，2.6 秒后才结算）',
+    api.state.session === 'running', api.state.session);
+  ok('时间到后 feedDetector 直接返回空（多跳的几下不算进这一组）',
+    Array.isArray(api.feedDetector(null, clock)) && api.feedDetector(null, clock).length === 0);
+  const repsAtTimeUp = api.state.detector.validReps;
+  pump(40);                                   // 庆祝动画里继续跳
+  ok('庆祝动画期间次数不再增加', api.state.detector.validReps === repsAtTimeUp,
+    `${repsAtTimeUp} → ${api.state.detector.validReps}`);
+  ok('本组用时停在上限（不会跑到 3 秒以上）', api.state.elapsedMs === 3000, String(api.state.elapsedMs));
+  ok('HUD 的剩余时间归零（不会出现负数）',
+    /剩余\s*0\s*\/\s*3\s*秒/.test(elements.get('hudSub').textContent), elements.get('hudSub').textContent);
+
+  // 庆祝动画走完 → 自动结算（之后必然回到「校准 / 就位等开始」这两态之一）
+  pump(90);
+  ok('时间到后自动结算（离开 running，回到等下一组的状态）',
+    (api.state.session === 'calibrating' || api.state.session === 'ready')
+    && api.state.afterSet === true && !/running|paused/.test(api.state.session), api.state.session);
+  const grid = elements.get('summaryGrid').innerHTML;
+  ok('结算面板里的成绩是「7 次」（成绩单位仍是次数）', /7 次/.test(grid), grid.slice(0, 200));
+  ok('结算面板里的完成度按时间算 = 100%', /100%/.test(grid), grid.slice(0, 200));
+  ok('结算面板里的本组用时 = 00:03', /00:03/.test(grid), grid.slice(0, 200));
+  ok('结算说明写明「3 秒时间到：完成 7 次」',
+    elements.get('summaryNote').textContent.includes('3 秒时间到')
+    && elements.get('summaryNote').textContent.includes('7'), elements.get('summaryNote').textContent);
+  ok('一组结束的播报是「3 秒完成 7 次 + 夸奖」（不念分数）',
+    said.some((x) => x.includes('3 秒完成 7 次')), said.join(' | '));
+  const rec = JSON.parse(store.get('mfg.records.v1') || '{}').jumpingJack;
+  ok('最佳成绩里记下「7 次 / 3 秒」（改动后的时长不会让成绩说不清）',
+    rec && rec.value === 7 && rec.seconds === 3, JSON.stringify(rec));
+
+  // ---- ③ 回归：普通计数动作不会被「时间」结束 ----
+  api.openExercise('squat');
+  ok('深蹲不是限时计数', localizedExercise('squat').timed === false);
+  pump(30);
+  api.state.countdownStartedAt = clock - 4000;
+  pump(2);
+  pump(1900);                                 // 跑 60 秒以上
+  ok('普通计数动作跑过 60 秒也不会被时间结束（只有限时计数才看时间）',
+    api.state.session === 'running' && api.state.timeUp === false
+    && api.state.elapsedMs > 60_000,
+    `${api.state.session}/${api.state.timeUp}/${Math.round(api.state.elapsedMs)}`);
+
+  // 恢复现场
+  api.engine.detect = savedDetect;
+  api.state.engineReady = savedReady;
+  api.camera.stream = savedStream;
+  api.camera.video.currentTime = 0;
+  api.state.session = 'idle';
+  Object.defineProperty(globalThis, 'performance', { value: savedPerf, configurable: true, writable: true });
+  windowStub.performance = savedPerf;
+  api.audio.say = origSay;
+  api.state.settings.seconds.jumpingJack = 60;   // 把测试里临时改的 3 秒还回默认 60 秒
+  api.showHome();
+}
 {
   const { AudioKit } = await import('../src/audio.js');
   const spoken = [];

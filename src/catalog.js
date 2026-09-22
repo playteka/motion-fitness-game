@@ -9,12 +9,16 @@
  *   icon        图标（emoji，主页与动作页都用它）
  *   cats        所属分类（一个动作可以属于多个分类，例如 ['lower','full'] 就会在两块里出现）
  *   kind        'rep'（计数）| 'hold'（计时）
+ *   seconds     限时计数的时长（秒）。>0 时这个动作变成**「限时计数」**：
+ *               这一组固定跑 N 秒（`target` 也按秒解释），时间到自动结算；
+ *               次数照旧按关键帧一格一格计 —— 成绩就是「这段时间里完成了多少次」。
+ *               为 0（默认）= 普通计数，做到目标次数才结束。
  *   engine      'builtin' | 'bend' | 'alt' | 'twist' | 'sequence' | 'hold'
  *   plan        计分方案（steps.js 里的 STEP_PLANS 键）
  *   view        校准要求：'front' 正对镜头 | 'side' 侧对镜头
  *   posture     校准轮廓形态：stand / prone / supine / side / seated
  *   judge       判定依据（界面显示的小字，i18n 键 judge.*）
- *   target      默认目标（次数 / 秒）
+ *   target      默认目标（次数 / 秒；限时计数类是秒）
  *   params      引擎参数（见 engines.js 顶部注释）
  *   rough       true = 摄像头只能粗略判定（界面会写明「粗略判定」，README 也有说明）
  */
@@ -56,6 +60,8 @@ const e = (id, icon, cats, opts) => ({
   icon,
   cats: Array.isArray(cats) ? cats : [cats],
   kind: opts.kind || 'rep',
+  // 限时计数：这一组固定跑这么多秒（0 = 普通计数，做到目标次数为止）
+  seconds: Math.max(0, Math.round(opts.seconds || 0)),
   // 计时类默认走 hold 引擎，计数类默认走 bend 引擎（需要别的引擎时显式写 engine）
   engine: opts.engine || (opts.kind === 'hold' ? 'hold' : 'bend'),
   plan: opts.plan || (opts.kind === 'hold' ? 'holdPose' : 'repStand'),
@@ -71,8 +77,18 @@ const e = (id, icon, cats, opts) => ({
   params: opts.params || {},
 });
 
+/**
+ * 是不是「限时计数」：计数类动作 + 配了秒数。
+ * 这类动作**计次规则完全不变**（还是按关键帧一格一格来），只是「什么时候算完成」
+ * 从「做到目标次数」换成「时间到」——成绩 = 这段时间里完成了几次。
+ */
+export const isTimedReps = (meta) => !!meta && meta.kind !== 'hold' && (meta.seconds || 0) > 0;
+
+/** 这个动作的目标是以什么为单位：计时类与限时计数类是「秒」，其余是「次」 */
+export const targetUnitKey = (meta) => (meta.kind === 'hold' || isTimedReps(meta) ? SEC : REP);
+
 /* ------------------------------------------------------------------ *
- * 动作库：上肢 3 / 下肢 6 / 核心 6 / 全身 4 / 拉伸 2（共 21 个动作）
+ * 动作库：上肢 3 / 下肢 6 / 核心 6 / 全身 5 / 拉伸 2（共 22 个动作）
  * （「弓步跳」已按用户要求删除）
  * ------------------------------------------------------------------ */
 
@@ -196,7 +212,13 @@ export const EXERCISES = [
     params: { gate: 'prone', metric: 'knee', cmp: 'lt', onValue: 105, offValue: 140, minRepMs: 200 },
   }),
   e('jumpingJack', '🙌', 'full', {
-    plan: 'jumpingJack', view: 'front', posture: 'stand', judge: 'spread', target: 50,
+    plan: 'jumpingJack', view: 'front', posture: 'stand', judge: 'spread',
+    // 用户要求：开合跳改成**限时计数** —— 固定 60 秒，看这段时间里能跳多少次。
+    // `seconds: 60` = 这一组的时间上限；`target: 60` 是同一件事（目标按秒算）。
+    // 计次规则完全没动：还是「并拢 → 跳开 → 收回」三个关键帧一格一格走，走完一圈算一次，
+    // 只是「什么时候结束」从「跳到目标次数」变成「时间到」。
+    // 时长可以在 🎯 运动设定里改（30 / 45 / 60 / 90 / 120 秒）。
+    seconds: 60, target: 60,
     // 动作节奏快、每次时间短：**每 5 次报一次数**（用户要求从 10 次改成 5 次），别每次都念
     speakEvery: 5,
     // 开合跳：正对镜头，用**双腿开合幅度**（legSpread = 膝间距与踝间距里更大的那个）量「开合」——
@@ -228,7 +250,7 @@ export const EXERCISES = [
     // 现在和深蹲跳用的是同一条线，跳箱本来跳得就没那么高，再叠加校准地面线的误差，0.05 容易判不到。
     params: bend({ metric: 'kneeBent', gate: 'stand', up: 168, down: 100, flight: true, flightMin: 0.035, minRepMs: 500 }),
   }),
-  // 「弓步跳（跳跃箭步蹲）」已按用户要求删除 —— 动作库现在 21 个动作（全身 4 个）。
+  // 「弓步跳（跳跃箭步蹲）」已按用户要求删除 —— 动作库现在 22 个动作（全身 5 个）。
 
   /* ================= 拉伸（计时，判定的是「姿势到位」） ================= */
   e('standingForwardFold', '🙇', 'stretch', {

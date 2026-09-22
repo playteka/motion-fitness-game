@@ -46,11 +46,29 @@ const DEFAULT_SETTINGS = {
   debug: false,
   exerciseId: 'squat',
   targets: {},
+  // 限时计数（开合跳）的时长单独存：这个动作以前的目标是「次数」，
+  // 同一个字段改成秒以后老值（50 次）会变成「50 秒」这种莫名其妙的时长，
+  // 所以时长另开一份 settings.seconds，老字段原样留着不读。
+  seconds: {},
   camDeviceId: null,
 };
 
 const REP_TARGETS = [8, 12, 15, 20, 30];
 const HOLD_TARGETS = [20, 30, 45, 60, 90];
+// 限时计数（开合跳）的时长预设：单位是秒，不是次数
+const TIME_TARGETS = [30, 45, 60, 90, 120];
+
+/** 这个动作的目标预设：计时类与限时计数类都是秒，其余是次数 */
+function targetPresetsFor(ex) {
+  if (ex.kind === 'hold' || ex.timed) return [...(ex.timed ? TIME_TARGETS : HOLD_TARGETS)];
+  return [...REP_TARGETS];
+}
+
+/** 目标加减按钮的步长（限时/计时类是 15 秒、5 秒，次数类是 1 次） */
+function targetStepFor(ex) {
+  if (ex.timed) return 15;
+  return ex.kind === 'hold' ? 5 : 1;
+}
 
 /* ------------------------------------------------------------------ *
  * 状态
@@ -95,6 +113,9 @@ const state = {
   stepSig: '',
   calibSig: '',
   lastScoreMilestone: 0,
+  // ---- 限时计数（开合跳）----
+  timeUp: false,            // 时间到：这一组停止计次，等庆祝动画走完再结算
+  timeCallsSaid: null,      // 已经报过哪几档剩余时间（45/30/15/5 秒各报一次）
   repsSinceEncourage: 0,      // 距离上一句激励过了几次（每 3 次给一句）
   lastEncourageHint: '',      // 屏幕上刚显示过的激励语（不重复）
   coachAt: -Infinity, // 语音教练上一次说话的时间（全局节流；-Infinity = 还没说过）
@@ -215,8 +236,8 @@ function buildHome() {
         btn.className = 'ex-card';
         btn.dataset.id = ex.id;
         if (ex.id === state.exerciseId) btn.classList.add('active');
-        const kind = t(ex.kind === 'rep' ? 'ui.kindRep' : 'ui.kindHold');
-        const target = `${ex.target} ${ex.unit}`;
+        const kind = t(ex.kind === 'rep' ? (ex.timed ? 'ui.kindTimed' : 'ui.kindRep') : 'ui.kindHold');
+        const target = `${ex.target} ${ex.targetUnit}`;
         btn.innerHTML = `<span class="ex-icon">${ex.icon}</span>`
           + `<span class="ex-name">${ex.name}</span>`
           + `<span class="ex-meta">${kind} · ${target} · ${ex.judgeText}</span>`
@@ -619,13 +640,19 @@ function renderExerciseSpecs() {
 /** 把当前动作的资料刷进弹窗与侧栏摘要（目标、判定依据、机位、技术指标） */
 function renderExerciseSettings() {
   const ex = localizedExercise(state.exerciseId);
-  const unit = ex.unit || '';
+  const unit = ex.targetUnit || '';
   $('exerciseName').textContent = `${ex.icon} ${ex.name}`;
   $('exerciseJudge').textContent = `🎯 ${t('exercise.judgeBy', { what: ex.judgeText })}`
     + (ex.rough ? ` · ${t('exercise.rough')}` : '');
   $('exerciseCamera').textContent = `📹 ${ex.cameraHint}`;
   $('targetUnit').textContent = unit;
   $('targetReadout').textContent = `${t('exercise.target')}: ${state.target} ${unit}`;
+  // 限时计数（开合跳）：把「这一组跑多久、成绩是什么」写在目标下面，避免以为要跳到某个次数
+  const timedEl = $('exerciseTime');
+  if (timedEl) {
+    timedEl.textContent = ex.timed ? t('exercise.timedLead', { sec: ex.target }) : '';
+    timedEl.hidden = !ex.timed;
+  }
   renderExerciseSpecs();
 }
 
@@ -850,6 +877,8 @@ function retrySet() {
   state.afterSet = false;       // 又来一组了：不再是「刚做完一组在休息」的状态
   state.elapsedMs = 0;
   state.goalHit = false;
+  state.timeUp = false;         // 限时计数：又来一组 → 时间重新开始
+  state.timeCallsSaid = new Set();
   state.saidSteps = new Set();
   state.lastScoreMilestone = 0;
   state.stepSig = '';
@@ -1113,7 +1142,10 @@ function selectExercise(id) {
   state.exerciseId = id;
   state.settings.exerciseId = id;
   const ex = localizedExercise(id);
-  state.target = state.settings.targets[id] || ex.defaultTarget;
+  // 目标：限时计数类是**时长（秒）**，从 settings.seconds 取（默认就是动作自己的秒数）
+  state.target = ex.timed
+    ? (state.settings.seconds?.[id] || ex.seconds || ex.defaultTarget)
+    : (state.settings.targets[id] || ex.defaultTarget);
   state.detector = createDetector(id);
   state.calibrator = state.calibrator || new Calibrator(id, { mirror: state.settings.mirror });
   state.calibrator.setExercise(id);
@@ -1176,6 +1208,9 @@ function toCalibration({ silent = false, afterSet = false } = {}) {
   state.calib = null;
   state.elapsedMs = 0;
   state.goalHit = false;
+  // 回到校准：限时计数的「时间到」也一起清掉，下一组重新计时
+  state.timeUp = false;
+  state.timeCallsSaid = null;
   state.stepSig = '';
   state.lastTick = performance.now();
   if (!silent) {
@@ -1189,13 +1224,14 @@ function toCalibration({ silent = false, afterSet = false } = {}) {
 
 function buildTargetChips() {
   const ex = localizedExercise(state.exerciseId);
-  const presets = ex.kind === 'hold' ? HOLD_TARGETS : REP_TARGETS;
+  const presets = targetPresetsFor(ex);
   const chips = $('targetChips');
   chips.innerHTML = '';
   for (const v of presets) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.textContent = `${v} ${ex.unit}`;
+    // 限时计数的预设是**时长**（秒），不是次数 —— 用 targetUnit 才不会写错单位
+    b.textContent = `${v} ${ex.targetUnit}`;
     b.addEventListener('click', () => setTarget(v));
     chips.appendChild(b);
   }
@@ -1205,7 +1241,13 @@ function setTarget(v) {
   const ex = localizedExercise(state.exerciseId);
   const n = clamp(Math.round(Number(v) || ex.defaultTarget), 1, 999);
   state.target = n;
-  state.settings.targets[state.exerciseId] = n;
+  // 限时计数存到 seconds（时长），其他动作存到 targets（次数）
+  if (ex.timed) {
+    state.settings.seconds = state.settings.seconds || {};
+    state.settings.seconds[state.exerciseId] = n;
+  } else {
+    state.settings.targets[state.exerciseId] = n;
+  }
   $('targetInput').value = String(n);
   saveSettings();
   renderExerciseSettings();
@@ -1225,24 +1267,32 @@ function updateHud() {
   const ex = localizedExercise(state.exerciseId);
   const det = state.detector;
   const isHold = ex.kind === 'hold';
+  const timed = !!ex.timed;
 
   const valid = det ? det.validReps : 0;
   const partial = det ? det.partialReps : 0;
   const holdMs = det ? det.holdMs : 0;
   const score = det ? det.score : 0;
+  // 限时计数：剩几秒（时间到后固定显示 0，不会出现负数）
+  const totalMs = state.target * 1000;
+  const leftSec = timed ? Math.max(0, Math.ceil((totalMs - state.elapsedMs) / 1000)) : 0;
 
   if (isHold) {
     $('hudValue').textContent = String(Math.floor(holdMs / 1000));
     $('hudSub').textContent = `${t('ui.targetPrefix')} ${state.target} ${ex.unit}`;
   } else {
+    // 限时计数：大数字仍然是**次数**（这一组跳了多少下），时长在下面那行
     $('hudValue').textContent = String(valid);
-    $('hudSub').textContent = `${t('ui.targetPrefix')} ${state.target} ${ex.unit}`;
+    $('hudSub').textContent = timed
+      ? `⏱ ${t('ui.timeLeft', { left: leftSec, total: state.target })}`
+      : `${t('ui.targetPrefix')} ${state.target} ${ex.targetUnit}`;
   }
   $('hudScore').textContent = scoreText(score);
 
+  // 进度环：计时类与限时计数类走**时间**进度（还剩多少时间一眼看得出），其余走次数进度
   const progress = isHold
-    ? clamp(holdMs / (state.target * 1000), 0, 1)
-    : clamp(valid / state.target, 0, 1);
+    ? clamp(holdMs / totalMs, 0, 1)
+    : (timed ? clamp(state.elapsedMs / totalMs, 0, 1) : clamp(valid / state.target, 0, 1));
   const C = 2 * Math.PI * 52;
   $('ringFg').style.strokeDashoffset = String(C * (1 - progress));
   $('ringFg').style.stroke = progress >= 1 ? 'var(--good)' : 'var(--accent)';
@@ -1463,6 +1513,31 @@ function announceHoldCount(det, ex, now) {
   return true;
 }
 
+/**
+ * 限时计数（开合跳）的剩余时间播报。
+ *
+ * 用户要求「固定 60 秒，看能跳多少次」——那么「还剩多少时间」必须听得见，
+ * 否则跳到一半完全没概念。规则很简单：剩余 **45 / 30 / 15 秒** 各报一次，
+ * 最后 **5 秒**再单独喊一句冲刺（每一档只报一次，重复报会很吵）。
+ * 时间与次数的语音分工：次数照旧每 5 次报一次（speakEvery），这里只管时间。
+ */
+const TIME_CALL_AT = [45, 30, 15, 5];
+
+function announceTimeLeft(ex, now) {
+  if (!ex || !ex.timed || state.timeUp) return false;
+  const left = Math.ceil((state.target * 1000 - state.elapsedMs) / 1000);
+  if (!state.timeCallsSaid) state.timeCallsSaid = new Set();
+  // 从大到小找出「已经到点、但还没报过」的那一档（一帧只报一档，不会连珠炮）
+  const hit = TIME_CALL_AT
+    .filter((t) => t < state.target && left <= t && !state.timeCallsSaid.has(t))
+    .sort((a, b) => b - a)[0];
+  if (hit === undefined) return false;
+  for (const t of TIME_CALL_AT) if (t >= hit) state.timeCallsSaid.add(t);   // 中间跳过的档也一起标掉
+  audio.say(hit === 5 ? t('speech.timeLast5') : t('speech.timeLeft', { n: hit }), { rate: 1.15 });
+  pulseValue();
+  return true;
+}
+
 function updatePipelineStatus() {
   const parts = [];
   if (camera.active) {
@@ -1532,6 +1607,9 @@ function beginCountdown() {
 
   state.session = 'countdown';
   state.countdownStartedAt = performance.now();
+  // 限时计数：倒计时结束才开始计时，所以这里先把「时间到」清掉
+  state.timeUp = false;
+  state.timeCallsSaid = new Set();
   // 一组开始：教练可以立刻念第一条指令
   state.coachAt = -Infinity;
   state.coachSig = '';
@@ -1575,7 +1653,11 @@ function finishCountdown(det = state.detector) {
   det?.resetClock?.();
   audio.go();
   audio.sayStart();
-  setCueLine(t('status.countdownGo'), 'good');
+  // 限时计数（开合跳）：一开始就把规则说清楚 —— 固定多少秒、成绩是这段时间里的次数
+  const startEx = localizedExercise(state.exerciseId);
+  setCueLine(startEx.timed
+    ? t('status.timedGo', { sec: state.target })
+    : t('status.countdownGo'), 'good');
   updateButtons();
 }
 
@@ -1611,6 +1693,7 @@ function stopSession(reason = 'user') {
   if (!det) { updateButtons(); offerSetChoices(); return; }
 
   const isHold = ex.kind === 'hold';
+  const timed = !!ex.timed;
   const value = isHold ? Math.round(det.holdMs / 1000) : det.validReps;
   const score = det.score;
   const steps = det.stepStatus();
@@ -1622,18 +1705,23 @@ function stopSession(reason = 'user') {
   // 分数照旧显示在结算面板与记录里。
   if (hasWork) {
     state.setPraiseSeed = (state.setPraiseSeed || 0) + 1;
-    audio.say(t('speech.setSummary', {
-      value,
-      unit: ex.unit,
-      praise: poolLine('speech.praiseSet', state.setPraiseSeed),
-    }), { rate: 1.15, force: true });
+    const praise = poolLine('speech.praiseSet', state.setPraiseSeed);
+    // 限时计数报「60 秒完成 N 次」：这才是这个动作的成绩（次数 + 时长一起说清楚）
+    audio.say(timed
+      ? t('speech.timedSummary', { value, sec: state.target, praise })
+      : t('speech.setSummary', { value, unit: ex.unit, praise }), { rate: 1.15, force: true });
   }
 
   const items = [
     [t('ui.colAction'), `${ex.icon} ${ex.name}`],
     [t('ui.colScore'), scoreText(score)],
     [isHold ? t('ui.colHold') : t('ui.colValidReps'), `${value} ${ex.unit}`],
-    [t('ui.colCompletion'), `${Math.round(clamp(isHold ? det.holdMs / (state.target * 1000) : value / state.target, 0, 1.5) * 100)}%`],
+    // 完成度：计时类与限时计数类按**时间**算（时间到 = 100%），其余按次数算
+    [t('ui.colCompletion'), `${Math.round(clamp(
+      isHold ? det.holdMs / (state.target * 1000)
+        : (timed ? state.elapsedMs / (state.target * 1000) : value / state.target),
+      0, 1.5,
+    ) * 100)}%`],
     [t('ui.colSteps'), t('ui.stepsDoneRatio', { done: doneCount, total: steps.length })],
     [t('ui.colElapsed'), fmtClock(state.elapsedMs)],
   ];
@@ -1642,7 +1730,9 @@ function stopSession(reason = 'user') {
     .join('');
   const missed = steps.filter((s) => !s.done).map((s) => t(s.labelKey));
   $('summaryNote').textContent = reason === 'goal'
-    ? t('summary.goalReached', { score })
+    ? (timed
+      ? t('summary.timedDone', { sec: state.target, n: value, score })
+      : t('summary.goalReached', { score }))
     : (hasWork
       ? (missed.length
         ? t('summary.savedWithMiss', { score, list: missed.join('、') })
@@ -1652,6 +1742,8 @@ function stopSession(reason = 'user') {
   audio.finish();
   det.reset();
   state.elapsedMs = 0;
+  state.timeUp = false;
+  state.timeCallsSaid = null;
   setCueLine(t('status.setDone'));
   updateHud();
   renderHistory();
@@ -1719,6 +1811,8 @@ function saveSession({ ex, value, partial, reason, score = 0 }) {
     score,
     partial,
     target: state.target,
+    // 限时计数：把时长一起记下来，记录里才能写成「52 次 / 60 秒」
+    seconds: ex.timed ? state.target : 0,
     durationMs: Math.round(state.elapsedMs),
     reached: reason === 'goal',
   });
@@ -1732,6 +1826,8 @@ function saveSession({ ex, value, partial, reason, score = 0 }) {
     records[ex.id] = {
       value: betterValue ? value : cur.value,
       score: betterScore ? score : (cur.score || 0),
+      // 最好成绩那一次是什么时长（限时计数类）
+      seconds: ex.timed ? (betterScore || betterValue ? state.target : (cur.seconds || state.target)) : 0,
       at: Date.now(),
     };
     saveList(STORE.records, records);
@@ -1752,9 +1848,11 @@ function renderRecords() {
     if (!r) continue;
     any = true;
     const ex = localizedExercise(meta.id);
+    // 限时计数（开合跳）：成绩要带上时长，「52 次 / 60 秒」这样才说得清
+    const sec = ex.timed ? (r.seconds || ex.seconds || 0) : 0;
     const li = document.createElement('li');
     li.innerHTML = `<span class="r-name">${ex.icon} ${ex.name}</span>`
-      + `<span class="r-val">${r.value} ${ex.unit}</span>`
+      + `<span class="r-val">${r.value} ${ex.unit}${sec ? ` / ${sec} ${ex.targetUnit}` : ''}</span>`
       + `<span class="r-score">${scoreText(r.score || 0)}</span>`;
     ul.appendChild(li);
   }
@@ -1779,7 +1877,7 @@ function renderHistory() {
     li.dataset.locale = localeTag;
     li.innerHTML = `<span class="h-when">${when}</span>`
       + `<span class="h-what">${ex ? `${ex.icon} ${ex.name}` : h.exerciseId}${h.reached ? ' 🎉' : ''}</span>`
-      + `<span class="h-val">${h.value} ${ex ? ex.unit : ''}</span>`
+      + `<span class="h-val">${h.value} ${ex ? ex.unit : ''}${ex && h.seconds ? ` / ${h.seconds} ${ex.targetUnit}` : ''}</span>`
       + `<span class="h-score">${scoreText(h.score || 0)}</span>`;
     if (h.partial > 0) li.querySelector('.h-what').title = `${t('ui.partial')} ${h.partial}`;
     ul.appendChild(li);
@@ -1941,6 +2039,9 @@ function feedDetector(f, now) {
   // 只有真正开始训练后才计数：校准阶段、倒计时、暂停阶段都不累计。
   // 这道门控放在这里而不是调用处，避免以后新增调用点忘了加判断。
   if (state.session !== 'running') return [];
+  // 限时计数（开合跳）：时间已经到了 → 这一组立刻停止计次。
+  // 「时间到」到真正结算之间还有 2.6 秒庆祝动画，那几秒里多跳的几下不该算进 60 秒的成绩。
+  if (state.timeUp) return [];
   return det.update(f, now);
 }
 
@@ -2084,12 +2185,15 @@ function handleEvents(events, now = performance.now()) {
         if (det.validReps % speakEvery === 0) audio.sayRep(det.validReps);
         state.repsSinceEncourage = (state.repsSinceEncourage || 0) + 1;
         state.maxRepsSinceEncourage = Math.max(state.maxRepsSinceEncourage || 0, state.repsSinceEncourage);
-        const half = Math.ceil(state.target / 2);
-        if (det.validReps === half && half > 0) {
+        // 限时计数（开合跳）：目标是**秒**，不是次数 —— 所以「做满目标次数就达成」和
+        // 「做一半提醒」这两件事都不适用（60 次 ≠ 60 秒），达标只由时间决定。
+        const timedSet = !!localizedExercise(state.exerciseId).timed;
+        const half = timedSet ? 0 : Math.ceil(state.target / 2);
+        if (!timedSet && det.validReps === half && half > 0) {
           audio.milestone();
           setHint(t('status.half'), 'good', 2200);
           audio.sayCue(t('status.halfVoice'));
-        } else if (running && det.validReps >= state.target && !state.goalHit) {
+        } else if (!timedSet && running && det.validReps >= state.target && !state.goalHit) {
           state.goalHit = true;
           onGoalReached();
         } else if (state.repsSinceEncourage >= Math.max(ENCOURAGE_EVERY, speakEvery)
@@ -2153,13 +2257,16 @@ function onGoalReached() {
   const isHold = ex.kind === 'hold';
   const value = isHold
     ? t('summary.celebrateHold', { n: state.target })
-    : t('summary.celebrateReps', { n: state.target });
+    : (ex.timed
+      // 限时计数：时间到就是「达成」，庆祝语直接喊时间到（次数在结算面板里）
+      ? t('summary.celebrateTimed', { n: state.target })
+      : t('summary.celebrateReps', { n: state.target }));
   $('celebrateText').textContent = t('summary.celebrate', { value });
   $('celebrate').hidden = false;
   state.celebrateUntil = performance.now() + 2600;
   audio.finish();
   // 达标了要夸：先念达成，再补一句激励（用户要求语音以激励为主）
-  audio.say(t('status.goalVoice'), { rate: 1.15, force: true });
+  audio.say(t(ex.timed ? 'status.timeUpVoice' : 'status.goalVoice'), { rate: 1.15, force: true });
   setTimeout(() => audio.sayEncourage((state.detector?.validReps || 0) + 1), 1500);
 }
 
@@ -2226,6 +2333,8 @@ function loop() {
       const events = feedDetector(frame, now);
       // 计时类先读秒：这样同一帧里「保持 10 秒」的要领语音会让位给「10 秒」，不会两句叠在一起
       announceHoldCount(state.detector, localizedExercise(state.exerciseId), now);
+      // 限时计数：每隔一段报一次「还剩 N 秒」，最后 5 秒单独喊一句
+      announceTimeLeft(localizedExercise(state.exerciseId), now);
       handleEvents(events, now);
       updateCriteria(frame, events, now);
     } else {
@@ -2244,18 +2353,24 @@ function loop() {
     outline = null;
   }
 
-  // 计时
-  if (counting) {
+  // 目标达成：计时类是「保持够久」，限时计数类是「时间到」
+  const det = state.detector;
+  const ex = localizedExercise(state.exerciseId);
+
+  // 计时（限时计数到点后就停在目标时长上，结算里「本组用时」才是干净的 60 秒）
+  if (counting && !state.timeUp) {
     const dt = clamp(now - state.lastTick, 0, 250);
     state.elapsedMs += dt;
+    if (ex.timed) state.elapsedMs = Math.min(state.elapsedMs, state.target * 1000);
   }
   state.lastTick = now;
 
-  // 目标达成（计时类）
-  const det = state.detector;
-  const ex = localizedExercise(state.exerciseId);
-  if (counting && det && ex.kind === 'hold' && det.holdMs >= state.target * 1000 && !state.goalHit) {
+  const timeIsUp = counting && ex.timed && state.elapsedMs >= state.target * 1000;
+  if (counting && det && !state.goalHit
+    && ((ex.kind === 'hold' && det.holdMs >= state.target * 1000) || timeIsUp)) {
     state.goalHit = true;
+    // 时间到就立刻停止计次：庆祝动画那 2.6 秒里多跳的几下不该算进「60 秒」的成绩里
+    if (ex.timed) state.timeUp = true;
     onGoalReached();
   }
 
@@ -2459,6 +2574,9 @@ function bindUI() {
     state.detector?.reset();
     state.elapsedMs = 0;
     state.goalHit = false;
+    // 限时计数：重置计数也把「时间到」与已报过的剩余时间档清掉，可以接着把这一组跳完
+    state.timeUp = false;
+    state.timeCallsSaid = null;
     state.saidSteps = new Set();
     state.lastScoreMilestone = 0;
     state.stepSig = '';
@@ -2597,12 +2715,10 @@ function bindUI() {
   });
 
   $('tMinus').addEventListener('click', () => {
-    const step = localizedExercise(state.exerciseId).kind === 'hold' ? 5 : 1;
-    setTarget(state.target - step);
+    setTarget(state.target - targetStepFor(localizedExercise(state.exerciseId)));
   });
   $('tPlus').addEventListener('click', () => {
-    const step = localizedExercise(state.exerciseId).kind === 'hold' ? 5 : 1;
-    setTarget(state.target + step);
+    setTarget(state.target + targetStepFor(localizedExercise(state.exerciseId)));
   });
   $('targetInput').addEventListener('change', (e) => setTarget(e.target.value));
 
@@ -2800,5 +2916,6 @@ window.__mfg = {
   showGestureRings, hideGestureRings, updateGesture, triggerGesture, retrySet,
   gestureState, GESTURE_RINGS, GESTURE_HOLD_MS, RING_HIT,
   announceHoldCount, HOLD_COUNT_EVERY,
+  announceTimeLeft, TIME_CALL_AT, targetPresetsFor, targetStepFor,
   buildMusicTracks, selectMusicTrack,
 };

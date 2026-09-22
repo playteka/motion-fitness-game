@@ -22,6 +22,10 @@ export default {
   ui: {
     kindRep: "Count",
     kindHold: "Timer",
+    // Timed counting (Jumping Jack: a fixed 60 seconds, see how many you can do)
+    kindTimed: "Timed reps",
+    // Remaining time on the HUD: “⏱ 42 / 60 sec left”
+    timeLeft: '{left} / {total} sec left',
     shortcutsText: "<kbd>1</kbd>–<kbd>9</kbd> Quick switch · <kbd>H</kbd> Home · <kbd>G</kbd> Settings · <kbd>Space</kbd> Start/Pause · <kbd>R</kbd> Reset · <kbd>Esc</kbd> End set · <kbd>M</kbd> Mirror · <kbd>S</kbd> Skeleton · <kbd>F</kbd> Fullscreen",
     language: 'Language',
     model: 'Model',
@@ -174,6 +178,9 @@ export default {
     halfVoice: 'Halfway there — awesome, keep it up',
     milestone: '{score} points already!',
     goalVoice: 'Goal reached, awesome',
+    // Timed counting: announce the duration up front, then call the time at the end
+    timedGo: '⏱ {sec} seconds on the clock — see how many you can do!',
+    timeUpVoice: 'Time is up, awesome',
     cameraReady: 'Camera {w}×{h}',
     cameraOff: 'Camera off',
     modelLoading: 'Loading model…',
@@ -222,6 +229,9 @@ export default {
     celebrate: '🎉 Goal reached: {value}',
     celebrateReps: '{n} reps',
     celebrateHold: '{n} seconds',
+    // Timed counting: running out of time *is* reaching the goal
+    celebrateTimed: '⏱ {n} seconds up!',
+    timedDone: '⏱ {sec} seconds up: {n} reps done · {score} points this set.',
   },
 
   /* ---------------- Diagnostics panel ---------------- */
@@ -376,7 +386,7 @@ export default {
     jumpingJack: {
       name: 'Jumping Jack',
       cameraHint: 'Face the camera with your whole body in frame (the leg spread is what gets measured)',
-      goal: 'Jump your feet wide and back together while your arms go up and down — 50 reps per set',
+      goal: 'Jump your feet wide and back together while your arms go up and down — 60 seconds timed, see how many you can do',
       howto: ['Face the camera with your feet together and your arms at your sides', 'Jump your feet out to about one and a half shoulder-widths while your arms go overhead', 'Jump back to feet together with your arms at your sides — that is one rep'],
       tips: ['Land softly on the balls of your feet instead of slamming your heels', 'Do not shrug your shoulders when your arms go overhead, keep breathing', 'Knees track over your toes, never caving in'],
     },
@@ -698,6 +708,10 @@ export default {
     lead: 'These settings apply to the current exercise only',
     targetGroup: '🎯 Target',
     target: 'Set target',
+    // Timed counting (Jumping Jack): the target is a duration, the result is the reps done inside it
+    timedLead: '⏱ Timed counting: this set runs for a fixed {sec} seconds and settles automatically when the time is up; '
+      + 'the result is how many reps you fitted into those {sec} seconds (reps are still counted keyframe by keyframe, '
+      + 'and reaching a rep target never cuts the set short).',
     judgeGroup: '⚖️ Counting rule',
     judgeBy: 'Judged by: {what}',
     rough: 'Rough judgement',
@@ -1083,5 +1097,10 @@ export default {
     nextStepNoHint: 'Next: {label}',
     // Spoken set result: **reps / duration plus a cheer, never the score** (the user asked for that)
     setSummary: 'That set: {value} {unit} — {praise}',
+    // Timed counting (Jumping Jack): announce how many reps fitted into the duration
+    timedSummary: '{value} reps in {sec} seconds — {praise}',
+    // Runs of timed counting: remaining-time calls (periodic + the last five seconds)
+    timeLeft: '{n} seconds left',
+    timeLast5: 'Last 5 seconds — push!',
   },
 };

@@ -22,6 +22,10 @@ export default {
   ui: {
     kindRep: "计数",
     kindHold: "计时",
+    // 限时计数（开合跳：固定 60 秒，看能跳多少次）
+    kindTimed: "限时计数",
+    // HUD 上的剩余时间：「⏱ 剩余 42 / 60 秒」
+    timeLeft: '剩余 {left} / {total} 秒',
     shortcutsText: "<kbd>1</kbd>~<kbd>9</kbd> 快速切动作 · <kbd>H</kbd> 主页 · <kbd>G</kbd> 设置 · <kbd>空格</kbd> 开始/暂停 · <kbd>R</kbd> 重置计数 · <kbd>Esc</kbd> 结束本组 · <kbd>M</kbd> 镜像 · <kbd>S</kbd> 火柴人 · <kbd>F</kbd> 全屏",
     language: '语言',
     model: '模型',
@@ -175,6 +179,9 @@ export default {
     halfVoice: '一半了，太棒了，继续保持',
     milestone: '已经拿到 {score} 分！',
     goalVoice: '目标完成，太棒了',
+    // 限时计数：开始时说明时长，结束时喊时间到
+    timedGo: '⏱ {sec} 秒计时开始，看看你能跳多少次！',
+    timeUpVoice: '时间到，太棒了',
     cameraReady: '摄像头 {w}×{h}',
     cameraOff: '摄像头未开启',
     modelLoading: '模型加载中…',
@@ -226,6 +233,9 @@ export default {
     celebrate: '🎉 目标达成：{value}',
     celebrateReps: '{n} 次',
     celebrateHold: '{n} 秒',
+    // 限时计数：时间到就是「达成」
+    celebrateTimed: '⏱ {n} 秒时间到！',
+    timedDone: '⏱ {sec} 秒时间到：完成 {n} 次 · 本组得分 {score} 分。',
   },
 
   /* ---------------- 诊断面板 ---------------- */
@@ -378,7 +388,7 @@ export default {
     jumpingJack: {
       name: '开合跳',
       cameraHint: '正对摄像头，全身入镜（要看双脚开合的宽度）',
-      goal: '双脚反复打开又并拢，手臂同时上举、放下，一组 50 次',
+      goal: '双脚反复打开又并拢，手臂同时上举、放下 —— 限时 60 秒，看你能跳多少次',
       howto: ['正对摄像头站好，双脚并拢、手臂自然垂在身体两侧', '双脚向两侧跳开（约一个半肩宽），同时双手举过头顶', '再跳回并拢、手臂放回身体两侧，这才算一次'],
       tips: ['落地轻一点，用前脚掌缓冲，别砸脚跟', '手臂举过头顶时别耸肩，保持呼吸', '膝盖顺着脚尖方向，不要内扣'],
     },
@@ -698,6 +708,9 @@ export default {
     lead: '这些设定只对当前这个动作生效',
     targetGroup: '🎯 目标设定',
     target: '本组目标',
+    // 限时计数（开合跳）：目标是时长，成绩是这段时间里完成的次数
+    timedLead: '⏱ 限时计数：本组固定 {sec} 秒，时间一到自动结算；成绩就是这 {sec} 秒里完成的次数'
+      + '（次数照旧按关键帧一格一格计，达到目标次数也不会提前结束）。',
     judgeGroup: '⚖️ 判定方式',
     judgeBy: '判定依据：{what}',
     rough: '粗略判定',
@@ -1093,5 +1106,10 @@ export default {
     nextStepNoHint: '下一步，{label}',
     // 一组结束的播报：**只说次数 / 时长 + 一句夸奖，不念分数**（用户要求）
     setSummary: '本组 {value} {unit}，{praise}',
+    // 限时计数（开合跳）：播报「多长时间里完成了几次」
+    timedSummary: '{sec} 秒完成 {value} 次，{praise}',
+    // 限时计数进行中：报剩余时间（每隔一段时间 + 最后 5 秒）
+    timeLeft: '还剩 {n} 秒',
+    timeLast5: '最后 5 秒，冲刺！',
   },
 };

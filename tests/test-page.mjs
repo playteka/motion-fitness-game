@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { EXERCISES, createDetector, localizedExercise } from '../src/exercises.js';
+import { isTimedReps, targetUnitKey } from '../src/catalog.js';
 import { getStepPlan } from '../src/steps.js';
 import { setLang, t, LOCALES, LANG_ORDER } from '../src/i18n.js';
 
@@ -277,7 +278,9 @@ console.log('\n[3] 静态资源与模型文件');
   /* ---- 计时类读秒：每 5 秒播报一次（用户要求：平板支撑读「5 秒」「10 秒」…） ---- */
   ok('读秒间隔写死为 5 秒', /HOLD_COUNT_EVERY\s*=\s*5/.test(appSrc));
   ok('读秒接在识别之后、要领语音之前（同一帧里让读秒先说）',
-    /announceHoldCount\(state\.detector[\s\S]{0,80}handleEvents\(events, now\)/.test(appSrc));
+    /announceHoldCount\(state\.detector[\s\S]{0,500}handleEvents\(events, now\)/.test(appSrc));
+  ok('限时计数的「还剩 N 秒」也排在要领语音之前（同一帧让读秒先说）',
+    /announceTimeLeft\(localizedExercise[\s\S]{0,160}handleEvents\(events, now\)/.test(appSrc));
   ok('读秒走语音包的 sayTime（文案是「N 秒」/ 随语言变化）', /audio\.sayTime\(n \* 1000\)/.test(appSrc));
   ok('和读秒撞车的要领语音会被让位（400ms 窗口）',
     /holdCountAt \|\| -1e9\) > 400/.test(appSrc));
@@ -431,7 +434,26 @@ console.log('\n[4] 动作库与界面一致性');
   ok('勾腿跳侧对镜头（才看得清脚跟有没有勾起来）', buttKick?.view === 'side', String(buttKick?.view));
   const jack = EXERCISES.find((x) => x.id === 'jumpingJack');
   ok('全身分类里有「开合跳」', !!jack && jack.cats.join(',') === 'full', jack?.cats.join(','));
-  ok('开合跳默认目标 50 次', jack?.target === 50 && jack?.kind === 'rep', `${jack?.target}/${jack?.kind}`);
+  // 用户要求：开合跳改成**定时计次** —— 固定 60 秒，看这段时间里能跳多少次
+  ok('开合跳 = 限时计数：固定 60 秒（kind 仍是计数，计次规则不变）',
+    jack?.kind === 'rep' && jack?.seconds === 60 && jack?.target === 60,
+    `${jack?.kind}/${jack?.seconds}/${jack?.target}`);
+  ok('开合跳的计时引擎与判据没变（还是 bend + legSpread，只是结束条件换成时间到）',
+    jack?.engine === 'bend' && jack?.params?.metric === 'legSpread', `${jack?.engine}/${jack?.params?.metric}`);
+  ok('isTimedReps 只认「计数类 + 配了秒数」的动作', isTimedReps(jack) === true
+    && isTimedReps(EXERCISES.find((x) => x.id === 'squat')) === false
+    && isTimedReps(EXERCISES.find((x) => x.id === 'plank')) === false);
+  ok('只有开合跳是限时计数（其他动作的结束条件都还是次数 / 保持时长）',
+    EXERCISES.filter((x) => isTimedReps(x)).map((x) => x.id).join(',') === 'jumpingJack',
+    EXERCISES.filter((x) => isTimedReps(x)).map((x) => x.id).join(','));
+  ok('限时计数：目标单位是秒、成绩单位是次（两个单位不能混）',
+    targetUnitKey(jack) === 'ui.secondsUnit' && jack.unitKey === 'ui.repsUnit'
+    && localizedExercise('jumpingJack').targetUnit === '秒' && localizedExercise('jumpingJack').unit === '次');
+  ok('限时计数在界面上有专属说法（限时计数 / 剩余时间 / 时间到）',
+    !!t('ui.kindTimed') && !!t('ui.timeLeft') && !!t('status.timedGo')
+    && !!t('status.timeUpVoice') && !!t('summary.celebrateTimed') && !!t('summary.timedDone')
+    && !!t('exercise.timedLead') && !!t('speech.timedSummary')
+    && !!t('speech.timeLeft') && !!t('speech.timeLast5'));
   ok('开合跳判定依据是「双腿开合幅度」', jack?.judge === 'spread', String(jack?.judge));
   ok('开合跳要求正对镜头（正面才量得准开合宽度）', jack?.view === 'front', String(jack?.view));
   ok('每个动作都有图标', EXERCISES.every((x) => !!x.icon));

@@ -14,7 +14,7 @@ import { t, tList, hasKey } from './i18n.js';
 import {
   DetectorBase, HoldDetector, setCueKeyResolver,
 } from './detector-base.js';
-import { EXERCISES, EXERCISE_MAP, CATEGORIES } from './catalog.js';
+import { EXERCISES, EXERCISE_MAP, CATEGORIES, isTimedReps, targetUnitKey } from './catalog.js';
 import { createEngineDetector } from './engines.js';
 
 // 提示文案的兜底：动作没写专属提示时用通用提示（见 detector-base.js）
@@ -45,12 +45,17 @@ export function localizedExercise(id) {
   const famKey = `fam.${meta.plan}`;
   const howtoKey = hasKey(`ex.${id}.howto`) ? `ex.${id}.howto` : `${famKey}.howto`;
   const tipsKey = hasKey(`ex.${id}.tips`) ? `ex.${id}.tips` : `${famKey}.tips`;
+  const timed = isTimedReps(meta);
   return {
     ...meta,
+    // 限时计数（固定秒数、时间到就结算）：界面要按这个标记换一套说法
+    timed,
     name: t(`ex.${id}.name`),
     cameraHint: t(`ex.${id}.cameraHint`),
     goal: t(`ex.${id}.goal`),
+    // unit = **成绩**的单位（次数），targetUnit = **目标**的单位（限时/计时类是秒）
     unit: exerciseUnit(id),
+    targetUnit: t(targetUnitKey(meta)),
     defaultTarget: meta.target,     // 兼容旧字段名
     judgeText: t(`judge.${meta.judge}`),
     howto: tList(howtoKey),

@@ -46,7 +46,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 
 - **Exercise home page (five categories)**: you land on a wall of exercises split into **Upper body (3) · Lower body (6) · Core (6) · Full body (5) · Stretching (2)**,
   and each exercise is one card (icon + name + reps/timed + target + judging basis), with a search box as well. Click a card to open its exercise page, and the 🏠 icon in the top-left corner brings you back any time.
-  “Jumping Jack” in Full body opens with a target of 50 reps.
+  “Jumping Jack” in Full body is **timed counting**: a fixed 60 seconds to see how many reps you can do.
 - **Exercise page + settings modal**: the exercise page has ⚙️ Settings in the top-right corner, and the modal collects **language, detection model, sound effects, spoken counting and background music**
   together with mirror, skeleton, angles and metrics toggles — no more hunting for buttons all over the screen.
 - **Pre-workout calibration**: before you start there's a **dashed body silhouette** in the frame (it only traces your outer shape — you don't need to line up your joints), and a text prompt above the video tells you
@@ -59,6 +59,11 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - **The keyframes are the only criteria**: every exercise is split into 4–5 keyframes on the progress bar — **clear one and it lights up and scores**;
   **clearing all of them counts one rep**. There is no strict mode and no separate “counting rule” any more: both the criteria and the
   points hang off the keyframes (`tests/test-specs.mjs` checks, exercise by exercise, that “the chain finished” and “a rep was counted” happen on the same frame).
+- **Timed counting (Jumping Jack)**: **a fixed 60 seconds to see how many reps you can fit in** — the rep rule is untouched, only
+  “when the set is done” moves from “reach the rep target” to “the time is up”. The screen shows `⏱ 42 / 60 s left`, the remaining
+  45/30/15/5 seconds are spoken aloud, and the moment time is up the clock stops and the set is saved
+  (**52 reps / 60 s**). Change the duration (30–120 s) in 🎯 exercise settings.
+  See [Timed counting](#timed-counting-jumping-jack-a-fixed-60-seconds-see-how-many-you-can-do).
 - **Valid rep detection (one relaxed tier only)**: **if you roughly did the movement, it counts** — shallower squats and lunges, push-ups that only go part of the way down and glute bridges that don't rise very high all count, while the voice coach corrects “go lower / down a little more / lift your hips higher / don't let your lower back sag” and the score is discounted for quality. Movements you didn't really do (a mere wobble) aren't counted and won't trigger nagging.
 - **Every exercise states its “judging basis”**: the card and the exercise page spell out what the exercise is judged by (elbow bend / knee bend /
   hip lift height / both feet off the floor / body posture …), and exercises the camera can't judge reliably are additionally marked as **rough scoring**.
@@ -633,7 +638,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2162 assertions in the suite).
+> exactly on the detector's own progress line (2199 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -700,7 +705,7 @@ Calibration only checks that you're in position — it never counts reps or awar
 | 🤸 Full body | Jump Squat 🚀 | Reps | Knee bend + both feet off the floor | 12 reps |
 | 🤸 Full body | Burpee 💥 | Reps | Order of the whole sequence (squat → plank → jump) | 10 reps |
 | 🤸 Full body | Mountain Climber ⛰️ | Reps | Left/right leg alternation | 24 reps |
-| 🤸 Full body | Jumping Jack 🙌 | Reps | How wide your legs open | 50 reps |
+| 🤸 Full body | Jumping Jack 🙌 | **Timed counting** | How wide your legs open | 60 seconds (see how many you can do) |
 | 🤸 Full body | Box Jump 🦘 | Reps | Knee bend + both feet off the floor (rough scoring) | 10 reps |
 | 🧘 Stretching | Standing Forward Fold 🙇 | Timed | Whether your body position is on target | 30 sec |
 | 🧘 Stretching | Seated Forward Fold 🧎‍♂️ | Timed | Whether your body position is on target | 30 sec |
@@ -899,6 +904,37 @@ Timed family plans also give **+1 point for every second you hold**; if your for
 > **The screen also labels “Spread 0.83” directly** (between your legs, in the same pill style as the angle labels) — the user asked
 > “why does the jumping jack show no angle?”, and the answer is that it is not judged by one; this number *is* its criterion, and
 > anything at or above 0.66 counts.
+>
+> **It is “timed counting”** (the user asked for a fixed 60 seconds to see how many reps you can do) — see the next section.
+
+### Timed counting (Jumping Jack: a fixed 60 seconds, see how many you can do)
+
+The user asked for “the jumping jack to become timed counting, say a fixed 60 seconds, to see how many reps I can do”. The
+implementation adds one field to the exercise catalog — **`seconds`** (`catalog.js`): any **rep** exercise that sets it becomes
+**timed counting**.
+
+- **The rep rule does not change at all**: “together → jump open → back together” still walks the three keyframes one at a time and
+  a full circle is one rep. The criteria, the points, the icons and the progress bar are identical (see the previous section). The
+  only thing that changes is **when the set is finished**: from “reach the rep target” to “**the time is up**”
+  (`isTimedReps()`, `catalog.js`).
+- **The target is a duration, the result is a rep count**: so this exercise has **two units** — the target is in seconds
+  (`localizedExercise().targetUnit`) and the result is in reps (`.unit`). The 🎯 exercise settings offer
+  **30 / 45 / 60 / 90 / 120 seconds** and the ＋/− buttons step by **15 seconds**; the duration is stored separately in
+  `settings.seconds` so it can never be confused with the rep target (this exercise used to target 50 reps, and reusing the same
+  field would have produced a nonsensical “50 seconds”).
+- **On screen**: the big number is still the **rep count** (how many you jumped), the line below it reads
+  `⏱ 42 / 60 s left`, and the progress ring tracks **time**.
+- **Voice**: the remaining time is called at **45 / 30 / 15 s** (“N seconds left”) plus a dedicated
+  “Last 5 seconds — push!”; reps are still announced every 5 (`speakEvery: 5`). When the time is up it says “Time is up, awesome”,
+  and the set summary announces “**52 reps in 60 seconds**” plus a compliment (still never the score).
+- **Counting stops the instant the time is up**: the extra reps you do during the 2.6 s celebration **do not** go into the result
+  (the main loop gates `feedDetector()` on `state.timeUp`), and the set time stops at exactly 60.0 s.
+- **Summary and records**: the summary shows “valid reps 52 / completion 100% (measured by time) / set time 01:00” and the note reads
+  “⏱ 60 seconds up: 52 reps done · N points this set”; 🏆 best scores and 📜 history both write it as **“52 reps / 60 s”**, so
+  training at a different duration stays unambiguous.
+- **Reaching the goal is decided by time alone**: the usual “hit the rep target and you're done” and “halfway there” prompts do not
+  apply to timed counting (60 reps ≠ 60 seconds), and a test pins both of those down.
+- To train 30 or 90 seconds instead, change the duration in 🎯 exercise settings (it only affects that exercise).
 
 > **How the butt kick is judged**: standing in place, alternating legs and kicking your heels up towards your glutes. The criterion
 > is the **knee bend** of the kicking leg, and the three keyframes are **① Stand → ② Kick (that leg's knee ≤ 100°) →
@@ -1055,8 +1091,8 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-detectors.mjs` | 306 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
 | `tests/test-engines.mjs` | 181 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation (including the butt kick: one kick on each leg is one rep, fast cadences keep up, and the `switched` flag), whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 845 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria (including the standing butt-kick figures) and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 382 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises (including “jump squat under Full body, butt kick under Lower body”) and the completeness of their scoring plans, plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
-| `tests/test-app.mjs` | 430 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 22 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
+| `tests/test-page.mjs` | 388 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises (including “jump squat under Full body, butt kick under Lower body”) and the completeness of their scoring plans, the timed-counting declaration (`isTimedReps` / target unit in seconds / result unit in reps / the “timed counting” wording in both languages), plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
+| `tests/test-app.mjs` | 461 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 22 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
 
 ---
 
