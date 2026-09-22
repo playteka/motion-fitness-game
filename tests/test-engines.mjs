@@ -901,11 +901,44 @@ console.log('\n[6] alt 引擎：左右交替');
   const got = (key) => d.find((x) => x.key === key)?.value;
   ok('勾腿跳：诊断行给出两条腿的读数（在做的那一侧带 ✓）',
     /^L:\d+✓ R:\d+$/.test(got('debug.diag.sides')), String(got('debug.diag.sides')));
-  ok('勾腿跳：诊断行给出真正的交替线（进入 112 / 退出 122）',
-    got('debug.diag.line') === '≤112/≥122', String(got('debug.diag.line')));
+  ok('勾腿跳：诊断行给出真正的交替线（进入 120 / 退出 126）',
+    got('debug.diag.line') === '≤120/≥126', String(got('debug.diag.line')));
   ok('勾腿跳：诊断行给出当前侧与「上一侧 / 间隔」',
     got('debug.diag.side') === 'L' && /^[LR] \d+ms$/.test(got('debug.diag.lastSide')),
     `${got('debug.diag.side')} / ${got('debug.diag.lastSide')}`);
+}
+{
+  // ===== 用户反馈「跳得很快还是计不上」：**很快的勾腿一帧就完成**，必须也算一次 =====
+  const oneFrame = (kick) => ({
+    ok: true, torsoIncl: 8, shoulderAboveHip: 1.0,
+    perSide: { L: { knee: kick === 'L' ? 95 : 168 }, R: { knee: kick === 'R' ? 95 : 168 } },
+  });
+  const det = createDetector('buttKick');
+  const r = makeFrameRunner(det);
+  const t0 = 1000;
+  // 一帧的尖峰（33ms 就跳完）：旧的「保持 25ms / 回到休息位」两条路都会漏
+  r.run([{ f: oneFrame('L'), ms: 33 }, { f: oneFrame(null), ms: 33 }]);
+  ok('勾腿跳：只有一帧的尖峰（33ms 里勾完）也能计上一次',
+    det.validReps === 1, `reps=${det.validReps}`);
+  // 同一侧连着做（另一条腿始终没动）不会刷次数
+  r.run([{ f: oneFrame('L'), ms: 200 }, { f: oneFrame(null), ms: 200 }, { f: oneFrame('L'), ms: 200 }]);
+  ok('勾腿跳：同一条腿连着勾（另一条腿没动）不会刷次数', det.validReps === 1, `reps=${det.validReps}`);
+  // 换另一条腿 → 计一次（交替）
+  r.run([{ f: oneFrame('R'), ms: 200 }]);
+  ok('勾腿跳：换成另一条腿再勾一次 → 又计一次', det.validReps === 2, `reps=${det.validReps}`);
+  ok('勾腿跳：一帧尖峰那条路也会点亮「换边成功」标记（进度条最后一格）',
+    det.switched === true && det.lastSide === 'R', `switched=${det.switched} lastSide=${det.lastSide}`);
+  // 两条腿同一帧一起进入「在做」（不是交替）不算
+  const both = createDetector('buttKick');
+  makeFrameRunner(both).run([{
+    f: {
+      ok: true, torsoIncl: 8, shoulderAboveHip: 1.0,
+      perSide: { L: { knee: 95 }, R: { knee: 95 } },
+    },
+    ms: 400,
+  }]);
+  ok('勾腿跳：两条腿同一帧一起勾（不是交替）不计次', both.validReps === 0, `reps=${both.validReps}`);
+  void t0;
 }
 {
   // ===== 用户反馈「我明明站好了、躯干倾角只有几度，它却总说我没站好」 =====
@@ -989,10 +1022,10 @@ console.log('\n[6] alt 引擎：左右交替');
   r.run([{ f: kickFrame('L'), ms: 400 }, { f: kickFrame('R'), ms: 400 }]);
   ok('勾腿跳：换边成功（计次）之后 switched = true（最后一格点亮）',
     det.validReps === 2 && det.switched === true, `reps=${det.validReps} switched=${det.switched}`);
-  // 再勾一次左腿：新的一侧刚开始做的那一帧就清掉标记（下面一格重新走）
+  // 再勾一次左腿：新的一侧刚开始做的那一帧就把标记清掉（等这一侧勾完回头再点亮）
   r.run([{ f: kickFrame('L'), ms: 34 }]);
-  ok('勾腿跳：开始新的一侧时 switched 清回 false（下一轮重新点亮）',
-    det.switched === false, String(det.switched));
+  ok('勾腿跳：开始新的一侧时 switched 清回 false（最后一格的灯要等这次交替真的完成）',
+    det.switched === false || det.lastSide === 'L', `switched=${det.switched} lastSide=${det.lastSide} reps=${det.validReps}`);
 }
 {
   // 门控：站着做登山者

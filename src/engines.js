@@ -549,13 +549,12 @@ class AltRepDetector extends DetectorBase {
     this.onValue = p.onValue ?? p.active ?? 110;
     this.offValue = p.offValue ?? p.inactive ?? 140;
     this.minRepMs = p.minRepMs ?? 200;
-    this.holdMs = p.holdMs ?? 60;
     /**
      * 一侧「连续在做」的最长时间（毫秒）。
      *
      * 一次勾腿 / 蹬腿不可能一直保持「在做」：如果这一侧的读数一直没回到 `offValue`
-     *（快节奏时腿本来就不会每次完全伸直），超过这个时间就把它判为「已经做完了」，
-     * 免得两条腿的迟滞状态互相锁死、后面一次都计不上。默认 700ms 比任何一次真实动作都长。
+     *（快节奏时腿本来就不会每次完全伸直），超过这个时间就把它判为「已经做完了」。
+     * 这个状态只用来驱动画面上的深度条与 🐞 诊断行（**计次走上升沿，见 countRises**）。
      */
     this.strokeMs = p.strokeMs ?? 700;
   }
@@ -567,10 +566,14 @@ class AltRepDetector extends DetectorBase {
     this.lastAt = 0;
     this.gateOk = false;
     this._badFrames = 0;
-    /** 每一侧「现在正在做」的迟滞状态（进入用 onValue、退出用 offValue） */
+    /** 每一侧「现在正在做」的迟滞状态（进入用 onValue、退出用 offValue）—— 只用于显示 */
     this.sideOn = { L: false, R: false };
     /** 每一侧这一轮「在做」是从什么时候开始的（用于 strokeMs 超时退出） */
     this.sideStart = { L: 0, R: 0 };
+    /** 每一侧这一轮做到的最深值（诊断用；也说明这一轮真的做了一下） */
+    this.strokeMin = { L: NaN, R: NaN };
+    /** 上一帧每一侧是否「在做」（逐帧比较，不带迟滞）：计次靠它 */
+    this.wasDeep = { L: false, R: false };
     /**
      * 「已经换到另一条腿了」。
      *
@@ -582,7 +585,7 @@ class AltRepDetector extends DetectorBase {
     this.switched = false;
   }
 
-  /** 某一侧「正在做」的判定 */
+  /** 某一侧「正在做」的判定（用配置里的 onValue） */
   isActive(v) {
     if (!Number.isFinite(v)) return false;
     return this.cmp === 'lt' ? v <= this.onValue : v >= this.onValue;
@@ -598,22 +601,81 @@ class AltRepDetector extends DetectorBase {
    *
    * 进入用 `onValue`、退出用 `offValue`，落在中间地带时**保持上一次的状态** ——
    * 这样一侧在做的时候不会因为识别抖动在 on/off 之间来回跳。
-   * 另外一侧连续「在做」超过 `strokeMs` 就强制退出（见构造函数的说明）。
+   * 一侧连续「在做」超过 `strokeMs` 也算做完（见构造函数的说明）。
+   *
+   * 注意：**计次不靠这个状态**（很快的动作里这个标志会「粘住」，见 countRises），
+   * 它只用来驱动画面上的深度条与 🐞 诊断行，所以这里的迟滞不影响「快节奏计不上」那件事。
    */
   updateSides(f, now) {
     const read = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee);
     for (const s of ['L', 'R']) {
       const v = read(f, s);
       if (!Number.isFinite(v)) continue;
+      const was = this.sideOn[s];
+      let on = was;
       if (this.isActive(v)) {
-        if (!this.sideOn[s]) this.sideStart[s] = now;
-        this.sideOn[s] = true;
+        if (!was) { this.sideStart[s] = now; this.strokeMin[s] = v; }
+        on = true;
+        // 记录这一轮做到的最深值（诊断用，也是「真的做了一下」的证据）
+        this.strokeMin[s] = this.cmp === 'lt' ? Math.min(this.strokeMin[s], v) : Math.max(this.strokeMin[s], v);
       } else if (this.isIdle(v)) {
-        this.sideOn[s] = false;
+        on = false;
       }
-      // 中间地带：保持上一次的状态；但「连续在做」太久说明这一轮早就结束了
-      if (this.sideOn[s] && now - this.sideStart[s] >= this.strokeMs) this.sideOn[s] = false;
+      if (on && now - this.sideStart[s] >= this.strokeMs) on = false;   // 超时：这一轮早就结束了
+      this.sideOn[s] = on;
     }
+  }
+
+  /**
+   * **计次：进入「在做」的那一帧（上升沿）**。
+   *
+   * 为什么不用「保持 holdMs 才计次」（最早那版）或「回到休息位再结算」：
+   *   ① 很快的勾腿**一帧就完成**（跳下去又马上回来）→「保持 25ms」整轮抓不到；
+   *   ② 快节奏时勾完那条腿只回到 121°~126°，一直没到退出线 → 迟滞状态「粘住」，
+   *      「回到休息位」也跟着漏，而且一侧粘住后另一侧也进不来。
+   * 上升沿只看「这一帧是不是刚从线外进到线内」，**和退出线无关**，所以两种情况都成立。
+   *
+   * 逐帧比较（不做迟滞）：腿回到 126° 但没到退出线时，也算「离开线内」，
+   * 所以下一次勾腿照样会被认成一次新的动作，不会被吞掉。
+   */
+  countRises(f, now) {
+    const read = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee);
+    const rise = [];
+    for (const s of ['L', 'R']) {
+      const v = read(f, s);
+      const deep = this.isActive(v);          // 这一帧是否「在做」（不看迟滞）
+      if (deep && !this.wasDeep[s]) rise.push(s);
+      this.wasDeep[s] = deep;
+    }
+    // 恰好一侧刚进入「在做」→ 这一侧的这次动作算一次。
+    // 两条腿同一帧一起进入（不是交替）不算：rise.length 会是 2。
+    if (rise.length === 1) {
+      if (rise[0] !== this.lastSide) this.switched = false;   // 新的一侧刚开始：等这次做完再点亮
+      this.countRep(rise[0], now);
+    }
+    return rise;
+  }
+
+  /**
+   * 给某一侧记一次数（交替 + 间隔两道门都在这里）。
+   * @returns {boolean} 真的计上了没有
+   */
+  countRep(side, now) {
+    if (!side) return false;
+    if (side === this.lastSide) return false;                      // 同一条腿连着做，不算交替
+    if (this.lastAt && now - this.lastAt < this.minRepMs) return false;   // 太快了：只当抖了一下
+    this.lastSide = side;
+    this.lastAt = now;
+    this.validReps += 1;
+    this.reps = this.validReps;
+    this.cycleHadValidRep = true;
+    this.phase = 'work';
+    this.switched = true;   // 换另一条腿成功 = 计次那一刻（进度条最后一格就是这一格）
+    this.emit({
+      type: 'rep', valid: true, index: this.validReps, quality: 82, side, duration: 0,
+    });
+    this.nextCycle(now);
+    return true;
   }
 
   /**
@@ -668,46 +730,25 @@ class AltRepDetector extends DetectorBase {
     const advise = ADVISORY[this.gateName];
     if (advise) advise(f, this, now);
 
-    // 每一侧各自维护「正在做」（迟滞），再要求**同一时刻只有一侧在做** = 交替。
+    // 左右交替的判定要点（三轮打磨的结论，别再改回去）：
     //
-    // 用户反馈「勾腿跳慢慢跳能识别，正常速度或快一点就计不上」——
-    // 旧判据要求「一侧在做（≤onValue）**且另一侧几乎伸直（≥offValue）**」，
-    // 而真人原地快跳时支撑腿的膝盖本来就不会绷直（实测 ~120°~140°），
-    // 于是 off 这一半几乎永远不成立 → 一次都计不上；慢速时人会把腿伸直接地，才偶尔能过。
-    // 现在只保留「另一侧**没有同时在勾**」这个真正的交替语义：
-    // 支撑腿弯到 120° 也算「没在做」，照样能计次。
-    this.updateSides(f, now);
+    // ① **不要求另一条腿「几乎伸直」**。用户反馈「慢慢跳能识别，正常速度或快一点就计不上」：
+    //    旧判据是「一侧在做（≤onValue）**且另一侧 ≥offValue**」，而真人原地快跳时支撑腿的膝盖
+    //    根本不会绷直（实测 120°~140°），off 这一半几乎永远不成立 → 一次都计不上。
+    //    现在只要求「另一侧**没有同时在勾**」——这才是「交替」的本意。
+    // ② **门槛要浅一点**（100° → 120°）：快节奏 + 动作模糊 + 采样 + 平滑会让**采样到的**
+    //    最小膝角比真实值浅 10~30°，100° 常常够不到。
+    // ③ **计次走「进入在做」的上升沿**（countRises）：很快的勾腿**一帧就完成**，
+    //    「保持 25ms 才计次」整轮抓不到；而「回到休息位再结算」在快节奏下也漏 ——
+    //    勾完那条腿只回到 121°~126°，迟滞状态会「粘住」。上升沿只看这一帧有没有进到线内。
+    // ④ 退出的线（offValue）只用于**显示**的迟滞状态与 700ms 超时，不参与计次。
+    this.countRises(f, now);
+    this.updateSides(f, now);     // 只驱动深度条与 🐞 诊断行
+
     const on = ['L', 'R'].filter((s) => this.sideOn[s]);
-    // 只有一侧在做 → 就是它。
-    // **两侧同时在做**（快节奏时支撑腿一瞬间也被判成「在做」）→ 继续认原来那一侧，
-    // 别把这一轮交替直接打断（旧写法在这里会判成「没在交替」，一次计次就没了）。
-    // 两侧都不在做 → 这一轮真的停了，清掉当前侧，等下一次升起。
     const target = on.length === 1 ? on[0] : (on.length === 2 ? this.sideNow : null);
-
     this.depthPct = target ? 100 : 0;
-
-    if (target !== this.sideNow) {
-      this.sideNow = target;
-      this.sideSince = target ? now : 0;
-      if (target) this.switched = false;   // 新的一侧刚开始做：还没换过边
-      return;
-    }
-    if (!target) return;
-    if (now - this.sideSince < this.holdMs) return;
-    if (target === this.lastSide) return;
-    if (this.lastAt && now - this.lastAt < this.minRepMs) return;
-
-    this.lastSide = target;
-    this.lastAt = now;
-    this.validReps += 1;
-    this.reps = this.validReps;
-    this.cycleHadValidRep = true;
-    this.phase = 'work';
-    this.switched = true;   // 换另一条腿成功 = 计次那一刻（进度条最后一格就是这一格）
-    this.emit({
-      type: 'rep', valid: true, index: this.validReps, quality: 82, side: target, duration: 0,
-    });
-    this.nextCycle(now);
+    if (target) this.sideNow = target;
   }
 }
 
