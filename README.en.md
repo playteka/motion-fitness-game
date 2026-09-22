@@ -447,6 +447,8 @@ The search box at the top finds exercises by name directly (type “push” or �
   **the browser Back button returns to the home page**, and you can bookmark the link.
 - The 🏠 icon in the top-left corner of the exercise page (its tooltip and screen-reader name is “Back to home”, shortcut `H`) returns you to the wall; the top-right corner has
   🎯 **Exercise settings** (this exercise only) next to ⚙️ **Settings** (global) — all three are icon buttons, so the top bar carries no text buttons and stays narrow on small screens.
+  **Going home also leaves fullscreen** (the user asked for it): the “Exit” ring, the 🏠 icon, the `H` key and the browser Back button
+  all drop fullscreen first, so the home page comes back laid out normally instead of needing another Esc.
 - **🎯 Exercise settings** (shown on the exercise page only, side by side with ⚙️): one modal gathers this exercise's target and
   judging rules — the set target (number box plus preset buttons), this exercise's **judging basis**, its **camera hint**,
   and the **📐 keyframe criteria and scoring** group below (one row per keyframe with its criterion and its points).
@@ -583,7 +585,10 @@ keyboard, so the two most common choices should not force you to tap a screen.
   seated forward fold) you are not standing in the outline at all, and the rings stay put instead of flashing away.
   They only go away when **a new set really starts** (automatic or by tapping start), when you switch exercise, or when you go home.
 - **While the rings are up the top of the screen carries exactly one prompt** (“hold your palm in the middle of a circle for
-  3 seconds”): the calibration banner steps aside so the two messages never fight for the same spot.
+  3 seconds”): the calibration banner steps aside so the two messages never fight for the same spot — its **text is still kept up
+  to date**, so the moment the rings go away you read the current instruction instead of a stale one.
+- **“Exit” really means leaving**: going home also **leaves fullscreen** (the user asked for it), so you are never left staring at a
+  magnified home page.
 - **Only one can fire**: the two rings keep their own timers, and whichever reaches 3 seconds first wins (resting a hand on one ring
   never triggers the other).
 
@@ -638,7 +643,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2209 assertions in the suite).
+> exactly on the detector's own progress line (2215 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -678,6 +683,13 @@ The first line of “Form steps” on the exercise page spells out how to stand 
 **Note the flow: pick an exercise → move into the dashed outline → your whole body is recognised (the dashed outline disappears) → automatic 3-2-1 countdown → counting starts;
 after a set ends you go back to calibration, and you click “Start set” (or press Space) to start the next set.**
 Calibration only checks that you're in position — it never counts reps or awards points.
+
+> **Fullscreen (`F`, or the ⛶ button in the bottom-right corner of the video frame) enlarges the video frame itself**, not the whole
+> HTML page — the side panel, the form list and the score card are not blown up with it.
+> **Finishing an exercise and exiting back home leaves fullscreen automatically** (the user asked for it): the “Exit” ring, the 🏠
+> icon in the top bar, the `H` key and the browser back button all drop fullscreen first, so the home page is laid out normally
+> instead of sitting there magnified with you needing another Esc. **Ending a set alone does not touch fullscreen** — you stay on the
+> exercise page and are about to keep training.
 
 **Shortcuts**: `1`–`9` switch exercise · `H` home · `G` settings · `Space` start/pause · `R` reset reps · `Esc` end set · `M` mirror · `S` skeleton · `F` fullscreen the video frame
 
@@ -1100,7 +1112,7 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-engines.mjs` | 181 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor), feet off the floor when jumping, left/right alternation (including the butt kick: one kick on each leg is one rep, fast cadences keep up, and the `switched` flag), whole sequences, and pausing/resuming the timer |
 | `tests/test-specs.mjs` | 845 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria (including the standing butt-kick figures) and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 390 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises (including “jump squat under Full body, butt kick under Lower body”) and the completeness of their scoring plans, the timed-counting declaration (`isTimedReps` / target unit in seconds / result unit in reps / exactly the jumping jack and the butt kick / the “timed counting” wording in both languages), plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
-| `tests/test-app.mjs` | 469 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (both the jumping jack and the butt kick: seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 22 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
+| `tests/test-app.mjs` | 475 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (both the jumping jack and the butt kick: seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), fullscreen (the video frame is what gets enlarged, going home leaves fullscreen, ending a set alone does not, and no fullscreen API call happens when you were never fullscreen), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 22 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
 
 ---
 

@@ -936,6 +936,44 @@ console.log('\n[6] 火柴人开关');
   stageEl.requestFullscreen = savedRequestFullscreen;
   api.syncFullscreenSupport();
   ok('支持元素全屏时按钮恢复显示', fsBtn.hidden === false);
+
+  // 用户要求：「做完一个运动退出的时候不仅要退回到主页，也要退出全屏模式」。
+  // 全屏是**视频框**的全屏，留在主页上只会把整页放大、还留着全屏状态，所以回主页时必须退出。
+  api.openExercise('squat');
+  documentStub.fullscreenElement = stageEl;
+  documentStub.exitFullscreenCalls = 0;
+  api.triggerGesture('exit');            // 一组做完后的「退出」圆环
+  ok('全屏时点「退出」圆环：既回主页、也退出全屏',
+    api.state.homeMode === true && documentStub.exitFullscreenCalls === 1,
+    `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
+  ok('退出全屏后按钮状态同步成「未全屏」',
+    fsBtn.attributes['aria-pressed'] === 'false', String(fsBtn.attributes['aria-pressed']));
+
+  api.openExercise('squat');
+  documentStub.fullscreenElement = stageEl;
+  documentStub.exitFullscreenCalls = 0;
+  elements.get('btnHome').dispatch('click');   // 顶栏 🏠
+  ok('全屏时点 🏠 回主页：同样退出全屏',
+    api.state.homeMode === true && documentStub.exitFullscreenCalls === 1,
+    `exit=${documentStub.exitFullscreenCalls}`);
+
+  // 反例：只是结束本组（人还留在动作页、视频框还是全屏）不该被退出全屏
+  api.openExercise('squat');
+  documentStub.fullscreenElement = stageEl;
+  documentStub.exitFullscreenCalls = 0;
+  api.state.session = 'running';
+  api.stopSession('user');
+  ok('只结束本组、还留在动作页时不动全屏（全屏要留着继续练）',
+    documentStub.exitFullscreenCalls === 0 && api.state.homeMode === false,
+    `exit=${documentStub.exitFullscreenCalls} home=${api.state.homeMode}`);
+
+  // 本来就不在全屏 → 不该去碰全屏 API（幂等，也不会报错）
+  documentStub.fullscreenElement = null;
+  documentStub.exitFullscreenCalls = 0;
+  api.showHome();
+  ok('本来不在全屏时回主页不会调用全屏 API', documentStub.exitFullscreenCalls === 0,
+    `exit=${documentStub.exitFullscreenCalls}`);
+  api.openExercise('squat');
 }
 
 /* ------------------------------------------------------------------ *
@@ -1665,6 +1703,18 @@ console.log('\n[8c] 一组结束后的手势圆环');
   ok('两个圆环按 GESTURE_RINGS 的比例摆位（和手势判定用同一份坐标）',
     ring('exit').style.left === `${at('exit').x * 100}%` && ring('retry').style.top === `${at('retry').y * 100}%`,
     `${ring('exit').style.left}/${ring('retry').style.left}`);
+
+  // 圆环摆着的时候画面上方那条提示不显示（留给圆环），但**文字必须已经是最新的**：
+  // 否则圆环一收起来，用户看到的是上一帧的旧话（例如识别成功了还写着「保持不动…」）
+  api.state.session = 'ready';
+  api.renderCalibration({
+    checks: [], progress: 1, ready: true, advisory: false,
+    hintKey: 'calib.promptReady', hintParams: null,
+  });
+  ok('圆环摆着时提示条隐藏，但文字已经更新成「开始训练」',
+    elements.get('calibPrompt').hidden === true
+    && elements.get('calibPromptMain').textContent.includes('开始训练'),
+    `hidden=${elements.get('calibPrompt').hidden} text=${elements.get('calibPromptMain').textContent}`);
 
   // 手掌不在圆环里 → 不累积
   api.updateGesture(palmsAt(0.5, 0.56), 1000);

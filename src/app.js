@@ -361,12 +361,39 @@ function applyMusic() {
   audio.setMusic(want);
 }
 
+/**
+ * 退出全屏（如果正在全屏）。
+ *
+ * 用户要求：「做完一个运动退出的时候不仅要退回到主页，也要退出全屏模式」。
+ * 否则从「视频框全屏」里点退出/🏠，主页会顶着全屏显示 —— 整页排版被放大、还会留着
+ * 那条全屏状态，用户得再按一次 Esc 才回到正常页面。
+ *
+ * 幂等：本来不在全屏就什么都不做；浏览器不支持 / 拒绝时静默忽略（退出全屏失败绝不能
+ * 影响「回主页」这件正事）。桩环境与老浏览器可能不派发 `fullscreenchange`，
+ * 所以这里顺手把按钮状态和舞台尺寸自己同步一次。
+ */
+function exitFullscreen() {
+  try {
+    const el = document.fullscreenElement;
+    if (!el) return false;
+    const p = document.exitFullscreen?.();
+    if (p && typeof p.catch === 'function') p.catch(() => { /* 退出全屏被拒：忽略 */ });
+    $('btnFullscreen')?.setAttribute('aria-pressed', 'false');
+    onStageResize();
+    return true;
+  } catch {
+    return false;   // 老浏览器抛异常也不能拦住回主页
+  }
+}
+
 function showHome({ syncRoute = true } = {}) {
   if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
     stopSession('switch');
   }
   // 注意顺序：stopSession 会摆出手势圆环，所以收起来这一步必须在它之后
   hideGestureRings();
+  // 回主页就一定离开「视频框全屏」：主页上全屏只会把整页放大，没有意义
+  exitFullscreen();
   // 主页上不校准也不计数：摄像头可以留着预热，但不能在浏览动作时偷偷开始一组
   state.homeMode = true;
   state.session = 'idle';
@@ -1923,9 +1950,7 @@ function renderCalibration(calib) {
 function renderCalibPrompt(calib) {
   const box = $('calibPrompt');
   if (!box) return;
-  // 一组做完、两个手势圆环摆出来的时候，画面上方只留一条提示（手势怎么用）——
-  // 这时候再喊「站进虚线轮廓」会和圆环抢注意力，也占同一块位置
-  if (!calib || gestureState.visible) {
+  if (!calib) {
     if (!box.hidden) box.hidden = true;
     return;
   }
@@ -1952,7 +1977,11 @@ function renderCalibPrompt(calib) {
   if (subEl.textContent !== sub) subEl.textContent = sub;
   const cls = `calib-prompt ${level}`;
   if (box.className !== cls) box.className = cls;
-  box.hidden = false;
+  // 一组做完、两个手势圆环摆出来的时候，画面上方只留一条提示（手势怎么用）——
+  // 这时候这条提示不显示（会和圆环抢注意力，也占同一块位置）。
+  // 但**文字照样更新**：圆环收起来之后它必须立刻是对的，否则会留着上一帧的旧话
+  //（例如识别已经成功、却还写着「保持不动…」，用户会以为白站了）。
+  box.hidden = !!gestureState.visible;
 }
 
 /**
