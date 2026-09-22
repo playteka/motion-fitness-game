@@ -144,11 +144,9 @@ export const EXERCISES = [
     // 判据是**膝盖弯曲度**：勾起来的那条腿膝角很小（脚跟靠近臀部），放下去伸直就换边。
     // 左右交替交给 alt 引擎（和登山者、死虫式同一套），所以「左勾一次 + 右勾一次 = 1 次」。
     //
-    // 参数按用户反馈「动作比较快、识别不到位、没有及时计次」调过（这动作一秒能勾两下）：
-    //   onValue  勾起来的膝角门槛（≤100°）
-    //   offValue 刚做完那条腿要回到 ≥135°（原来 150°：快节奏时两腿都在 140° 上下，判不到「另一侧在休息」）
-    //   holdMs   一侧要连续保持 25ms 才算「在做」（原来 60ms ≈ 两帧，快动作中间抖一下就丢一次）
-    //   minRepMs 两次之间至少 110ms（原来 180ms，快节奏时会把后面的次数直接吞掉）
+    // 参数按用户反馈调过两轮：
+    //   ① 「动作比较快、识别不到位、没有及时计次」→ holdMs 60→25、minRepMs 180→110
+    //   ② 「慢慢跳能识别，正常速度或快一点就计不上」→ 见下面 params 里的 onValue / offValue 说明
     engine: 'alt', plan: 'standAlt', posture: 'stand', judge: 'leg',
     // 用户要求：勾腿跳也改成**限时计数**（和开合跳同一套）—— 固定 60 秒，看能勾多少次。
     // `seconds` = 这一组的时间上限，`target` 按秒解释；计次规则不变（站好 → 勾一条腿 →
@@ -161,8 +159,18 @@ export const EXERCISES = [
       // 用户反馈「我明明站好了、躯干倾角只有几度，却总说我没站好」——
       // 普通 stand 门控还要求「膝离地 ≥0.28、髋离地 ≥0.55 倍躯干长」，这两个量以校准地面线为基准，
       // 地面线一旦偏了（脚出画 / 校准时没站到位）就会一直判不过。
+      // ⚠️ 阈值按用户反馈「慢慢跳能识别，正常速度或跳快一点就计不上」重调过（迟滞带）：
+      //   onValue  100 → **112**：「勾起来」的门槛。快节奏 + 动作模糊 + 平滑滤波会让**采样到的**
+      //             最小膝角比真实值浅不少（实测能差 10~20°），100° 常常够不到，于是这一侧
+      //             永远进不了「在做」状态、一次都计不上；112° 仍远小于慢跑的 140~160°，
+      //             不会把「原地小跑、脚跟没勾起来」算进来。
+      //   offValue 135 → **122**：「这一侧做完了」的门槛。旧值要求勾完那条腿回到 ≥135°，
+      //             可快节奏时腿根本不会每次都完全伸直（实测停在 120~140°），于是这一侧
+      //             一直被判成「还在做」，两条腿的迟滞状态互相锁死 —— 表现就是「慢跳能识别、快跳计不上」。
+      //             122° 只比「在做」高 10°，靠迟滞带挡住抖动。
+      // 引擎另外还有「连续在做 700ms 就强制退出」的保险，两侧不会真的锁死。
       gate: 'standUpright', metric: 'knee', cmp: 'lt',
-      onValue: 100, offValue: 135, holdMs: 25, minRepMs: 110,
+      onValue: 112, offValue: 122, holdMs: 25, minRepMs: 110,
     },
   }),
 
@@ -176,7 +184,10 @@ export const EXERCISES = [
   }),
   e('deadBug', '🐞', 'core', {
     engine: 'alt', plan: 'repAlt', posture: 'supine', judge: 'leg', target: 16,
-    params: { gate: 'supineLow', metric: 'knee', cmp: 'gt', onValue: 150, offValue: 110, minRepMs: 400 },
+    // 「进入在做」= 腿伸出去（膝角 ≥150°），「退出」 110 → **125**：
+    // 和勾腿跳同一条经验（见那边的注释）—— 腿收回来时不会每次都弯到 110°，
+    // 退出线太紧会让两侧状态锁死、后面的次数都计不上；150° 的进入线没动。
+    params: { gate: 'supineLow', metric: 'knee', cmp: 'gt', onValue: 150, offValue: 125, minRepMs: 400 },
   }),
   e('crunch', '🌀', 'core', {
     plan: 'repSupine', posture: 'supine', judge: 'clear', target: 20,
@@ -213,7 +224,10 @@ export const EXERCISES = [
   }),
   e('mountainClimber', '⛰️', 'full', {
     engine: 'alt', plan: 'repAlt', posture: 'prone', judge: 'leg', target: 24,
-    params: { gate: 'prone', metric: 'knee', cmp: 'lt', onValue: 105, offValue: 140, minRepMs: 200 },
+    // 退出线 140 → 125：和勾腿跳同一个道理（见那边的注释）—— 快节奏时腿收回去不会每次都绷直，
+    // 退出线太高会让两侧的迟滞状态互相锁死、后面都计不上。
+    // 「进入在做」的线（膝角 ≤105°）没动，所以「只是撑住不动」不会被算进来。
+    params: { gate: 'prone', metric: 'knee', cmp: 'lt', onValue: 105, offValue: 125, minRepMs: 200 },
   }),
   e('jumpingJack', '🙌', 'full', {
     plan: 'jumpingJack', view: 'front', posture: 'stand', judge: 'spread',

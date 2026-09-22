@@ -550,6 +550,14 @@ class AltRepDetector extends DetectorBase {
     this.offValue = p.offValue ?? p.inactive ?? 140;
     this.minRepMs = p.minRepMs ?? 200;
     this.holdMs = p.holdMs ?? 60;
+    /**
+     * 一侧「连续在做」的最长时间（毫秒）。
+     *
+     * 一次勾腿 / 蹬腿不可能一直保持「在做」：如果这一侧的读数一直没回到 `offValue`
+     *（快节奏时腿本来就不会每次完全伸直），超过这个时间就把它判为「已经做完了」，
+     * 免得两条腿的迟滞状态互相锁死、后面一次都计不上。默认 700ms 比任何一次真实动作都长。
+     */
+    this.strokeMs = p.strokeMs ?? 700;
   }
 
   onReset() {
@@ -559,6 +567,10 @@ class AltRepDetector extends DetectorBase {
     this.lastAt = 0;
     this.gateOk = false;
     this._badFrames = 0;
+    /** 每一侧「现在正在做」的迟滞状态（进入用 onValue、退出用 offValue） */
+    this.sideOn = { L: false, R: false };
+    /** 每一侧这一轮「在做」是从什么时候开始的（用于 strokeMs 超时退出） */
+    this.sideStart = { L: 0, R: 0 };
     /**
      * 「已经换到另一条腿了」。
      *
@@ -581,8 +593,58 @@ class AltRepDetector extends DetectorBase {
     return this.cmp === 'lt' ? v >= this.offValue : v <= this.offValue;
   }
 
+  /**
+   * 每一侧独立维护「正在做」的迟滞状态。
+   *
+   * 进入用 `onValue`、退出用 `offValue`，落在中间地带时**保持上一次的状态** ——
+   * 这样一侧在做的时候不会因为识别抖动在 on/off 之间来回跳。
+   * 另外一侧连续「在做」超过 `strokeMs` 就强制退出（见构造函数的说明）。
+   */
+  updateSides(f, now) {
+    const read = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee);
+    for (const s of ['L', 'R']) {
+      const v = read(f, s);
+      if (!Number.isFinite(v)) continue;
+      if (this.isActive(v)) {
+        if (!this.sideOn[s]) this.sideStart[s] = now;
+        this.sideOn[s] = true;
+      } else if (this.isIdle(v)) {
+        this.sideOn[s] = false;
+      }
+      // 中间地带：保持上一次的状态；但「连续在做」太久说明这一轮早就结束了
+      if (this.sideOn[s] && now - this.sideStart[s] >= this.strokeMs) this.sideOn[s] = false;
+    }
+  }
+
+  /**
+   * 计数诊断（🐞 面板显示）。
+   *
+   * 左右交替类动作（勾腿跳 / 登山者 / 死虫式）以前**没有诊断行**，面板那里一直是「—」，
+   * 用户反馈「勾腿跳快一点就计不上」时完全看不到卡在哪 —— 所以这里把判定链上的量都摆出来：
+   * 交替线（进入 / 退出）、两条腿当前膝角与「在做 / 休息」状态、当前认的是哪一侧、距上次计次多久。
+   */
+  diag() {
+    const read = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee);
+    const one = (s) => {
+      const v = read(this._lastFrame || {}, s);
+      return `${s}:${Number.isFinite(v) ? Math.round(v) : '—'}${this.sideOn[s] ? '✓' : ''}`;
+    };
+    const line = this.cmp === 'lt'
+      ? `≤${fmt(this.onValue)}/≥${fmt(this.offValue)}`
+      : `≥${fmt(this.onValue)}/≤${fmt(this.offValue)}`;
+    return [
+      { key: 'debug.diag.sides', value: `${one('L')} ${one('R')}` },
+      { key: 'debug.diag.line', value: line },
+      { key: 'debug.diag.side', value: this.sideNow || '—' },
+      { key: 'debug.diag.lastSide', value: `${this.lastSide || '—'} ${this.lastAt ? `${Math.round(this._lastNow - this.lastAt)}ms` : ''}`.trim() },
+      ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
+    ];
+  }
+
   step(f, now) {
     const gate = GATES[this.gateName] || GATES.prone;
+    this._lastFrame = f;    // 只给 diag() 看（面板要显示两条腿的读数）
+    this._lastNow = now;
     const gated = !!gate(f);
     this.gateOk = gated;
     if (!gated) {
@@ -592,6 +654,10 @@ class AltRepDetector extends DetectorBase {
       if (this._badFrames > 25) this.cue('notReady', null, 'info', now, 9000);
       this.sideNow = null;
       this.sideSince = 0;
+      this.sideOn.L = false;
+      this.sideOn.R = false;
+      this.sideStart.L = 0;
+      this.sideStart.R = 0;
       this.depthPct = 0;
       return;
     }
@@ -602,16 +668,21 @@ class AltRepDetector extends DetectorBase {
     const advise = ADVISORY[this.gateName];
     if (advise) advise(f, this, now);
 
-    const read = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee);
-    const cand = ['L', 'R'].map((s) => {
-      const v = read(f, s);
-      return { s, v, on: this.isActive(v), off: this.isIdle(v) };
-    });
-    const on = cand.filter((c) => c.on);
-    const off = cand.filter((c) => c.off);
-    // 必须一侧在做、另一侧在休息，才是「交替」
-    let target = null;
-    if (on.length === 1 && off.length === 1 && on[0].s !== off[0].s) target = on[0].s;
+    // 每一侧各自维护「正在做」（迟滞），再要求**同一时刻只有一侧在做** = 交替。
+    //
+    // 用户反馈「勾腿跳慢慢跳能识别，正常速度或快一点就计不上」——
+    // 旧判据要求「一侧在做（≤onValue）**且另一侧几乎伸直（≥offValue）**」，
+    // 而真人原地快跳时支撑腿的膝盖本来就不会绷直（实测 ~120°~140°），
+    // 于是 off 这一半几乎永远不成立 → 一次都计不上；慢速时人会把腿伸直接地，才偶尔能过。
+    // 现在只保留「另一侧**没有同时在勾**」这个真正的交替语义：
+    // 支撑腿弯到 120° 也算「没在做」，照样能计次。
+    this.updateSides(f, now);
+    const on = ['L', 'R'].filter((s) => this.sideOn[s]);
+    // 只有一侧在做 → 就是它。
+    // **两侧同时在做**（快节奏时支撑腿一瞬间也被判成「在做」）→ 继续认原来那一侧，
+    // 别把这一轮交替直接打断（旧写法在这里会判成「没在交替」，一次计次就没了）。
+    // 两侧都不在做 → 这一轮真的停了，清掉当前侧，等下一次升起。
+    const target = on.length === 1 ? on[0] : (on.length === 2 ? this.sideNow : null);
 
     this.depthPct = target ? 100 : 0;
 

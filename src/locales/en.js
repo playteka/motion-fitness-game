@@ -290,6 +290,11 @@ export default {
       peak: 'This rep peak',
       hold: 'Held',
       pose: 'Posture',
+      // Alternating exercises (butt kick / mountain climber / dead bug): both legs, the alternation lines, last side
+      sides: 'Knees L/R',
+      line: 'Line (enter/exit)',
+      side: 'Current side',
+      lastSide: 'Last side/gap',
       reject: 'Last not counted',
     },
   },

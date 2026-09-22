@@ -1266,6 +1266,117 @@ console.log('\n[7b] 站立门控的符号（真实帧）');
 }
 
 /* ------------------------------------------------------------------ *
+ * 勾腿跳：**快节奏也能计上**
+ *
+ * 用户反馈：「慢慢跳可以识别，正常速度或者跳快一点，就无法识别计次了」。
+ * 原因是判据要求「一侧在做（膝角 ≤100°）**且另一侧几乎伸直（≥135°）**」：
+ *   · 真人快跳时支撑腿膝盖根本不会绷直（120°~140°）→ 「另一侧在休息」永远不成立；
+ *   · 快节奏 + 动作模糊 + 平滑滤波会让**采样到的**最小膝角比真实值浅（实测差 10~20°）→ 100° 够不到。
+ * 现在：进入线 112°、退出线 122°（迟滞带），并且只要求「另一侧没有同时在勾」。
+ * 下面这一段的模型刻意做得比理想情况差一点（支撑腿弯、勾得浅、有噪声、帧率低、速度快），
+ * 保证「正常速度 / 快一点」在真实管线里也能计上 —— 这就是那个 bug 的回归测试。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[7c] 勾腿跳：快节奏也能计上（真实帧）');
+{
+  const fit = (lm, { k = 0.78, centerX = 0.5, groundY = 0.92 } = {}) => {
+    const ankleY = Math.max(lm[LM.L_ANKLE].y, lm[LM.R_ANKLE].y);
+    const cx = (lm[LM.L_HIP].x + lm[LM.R_HIP].x + lm[LM.L_SHOULDER].x + lm[LM.R_SHOULDER].x) / 4;
+    return lm.map((p) => ({ ...p, x: centerX + (p.x - cx) * k, y: groundY + (p.y - ankleY) * k }));
+  };
+  const frameOf = (lm, now) => computeFrame(toMetric(
+    lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT,
+  ), null, now, false, null);
+  /** 把一条腿的小腿绕膝盖折过去（模拟「脚跟往臀部勾」）：折 110° ⇒ 膝角 ≈ 70° */
+  const foldLeg = (lm, side, foldDeg) => {
+    const hip = lm[LM[`${side}_HIP`]];
+    const knee = lm[LM[`${side}_KNEE`]];
+    const ankle = lm[LM[`${side}_ANKLE`]];
+    const thighDir = Math.atan2(knee.y - hip.y, knee.x - hip.x);
+    const shinLen = Math.hypot(ankle.x - knee.x, ankle.y - knee.y) || 0.2;
+    const a = thighDir + (foldDeg * Math.PI) / 180;
+    lm[LM[`${side}_ANKLE`]] = {
+      ...ankle, x: knee.x + Math.cos(a) * shinLen, y: knee.y + Math.sin(a) * shinLen,
+    };
+    return lm;
+  };
+  let seed = 987654;
+  const noise = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5);
+
+  /**
+   * @param cycleMs  一轮（左勾 + 右勾）的时长：600ms ≈ 正常速度，430ms 已经很快
+   * @param idleFold 支撑腿的弯曲量（度）：真人原地快跳时膝盖不会绷直
+   * @param depth    勾腿最深处的小腿折叠量（度）：180 − depth ≈ 最小膝角
+   * @param both     两条腿同相同步弯（深蹲那样，不该计次）
+   * @param jitter   关键点抖动（归一化画面比例）
+   */
+  const runKick = (cycleMs, {
+    fps = 30, idleFold = 35, depth = 110, both = false, jitter = 0.004, seconds = 8,
+  } = {}) => {
+    const det = createDetector('buttKick');
+    const sm = new LandmarkSmoother();
+    const dt = 1000 / fps;
+    let t = 0;
+    let minKnee = Infinity;
+    for (let i = 0; i < Math.round((seconds * 1000) / dt); i++) {
+      t += dt;
+      const ph = (t % cycleMs) / cycleMs;
+      const side = ph < 0.5 ? 'L' : 'R';
+      const u = (ph < 0.5 ? ph : ph - 0.5) / 0.5;
+      const amp = Math.sin(Math.PI * u);
+      const lm = fit(standingPose({ knee: 172, lean: 8, armDown: 0, ankleX: 1.0, view: 'side' }))
+        .map((p) => ({ ...p, x: p.x + noise() * jitter, y: p.y + noise() * jitter }));
+      if (both) { foldLeg(lm, 'L', amp * depth); foldLeg(lm, 'R', amp * depth); } else {
+        foldLeg(lm, side === 'L' ? 'R' : 'L', idleFold);
+        if (amp > 0.01) foldLeg(lm, side, amp * depth);
+      }
+      const f = frameOf(sm.apply(lm, t / 1000), t);
+      det.update(f, t);
+      minKnee = Math.min(minKnee, Math.min(f.perSide.L.knee, f.perSide.R.knee));
+    }
+    return { reps: det.validReps, expect: Math.round((seconds * 1000 / cycleMs) * 2), minKnee };
+  };
+
+  // 1) 用户说的三种节奏都要计得上（慢 / 正常 / 快）
+  for (const [cyc, label] of [[1000, '慢'], [700, '正常'], [600, '正常偏快'], [500, '快'], [430, '很快']]) {
+    const { reps, expect, minKnee } = runKick(cyc);
+    ok(`勾腿跳 ${label}（${cyc}ms 一轮 = 一秒约 ${(2000 / cyc).toFixed(1)} 下）也能计上`,
+      reps >= Math.max(3, Math.round(expect * 0.9)),
+      `计到 ${reps}/${expect} 次（最小膝角 ${minKnee.toFixed(0)}°）`);
+  }
+
+  // 2) 推理慢（15fps）时也要计得上：帧率越低，采样到的峰值越浅
+  {
+    const { reps, expect } = runKick(500, { fps: 15 });
+    ok('勾腿跳在 15fps（机器跟不上）时同样计得上',
+      reps >= Math.round(expect * 0.9), `计到 ${reps}/${expect} 次`);
+  }
+  // 3) 支撑腿没绷直（膝盖 ≈137°）也行 —— 这正是旧判据的死穴
+  {
+    const { reps, expect } = runKick(500, { idleFold: 35 });
+    ok('勾腿跳：支撑腿膝盖只回到 ~137°（没绷直）照样计次（旧判据要求 ≥135° 才算休息）',
+      reps >= Math.round(expect * 0.9), `计到 ${reps}/${expect} 次`);
+  }
+  // 4) 勾得浅一点（最小膝角 ≈90°）也要算
+  {
+    const { reps, expect, minKnee } = runKick(500, { depth: 90 });
+    ok('勾腿跳：勾得浅一点（最小膝角 ≈90°）也算一次',
+      reps >= Math.round(expect * 0.9), `计到 ${reps}/${expect} 次（最小膝角 ${minKnee.toFixed(0)}°）`);
+  }
+  // 5) 反面：原地小跑、脚跟根本没勾起来（膝角只到 ~150°）→ 不能计次
+  {
+    const { reps, minKnee } = runKick(500, { depth: 30 });
+    ok('反例：只是原地小跑（膝角最多到 ~150°，脚跟没往臀部勾）不计次',
+      reps === 0, `计到 ${reps} 次（最小膝角 ${minKnee.toFixed(0)}°）`);
+  }
+  // 6) 反面：两条腿一起弯（深蹲那样）不算「左右交替」
+  {
+    const { reps } = runKick(600, { both: true, depth: 110 });
+    ok('反例：两条腿同相一起弯（不是交替）不计次', reps <= 1, `计到 ${reps} 次`);
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 运动前校准
  * ------------------------------------------------------------------ */
 

@@ -894,6 +894,18 @@ console.log('\n[6] alt 引擎：左右交替');
   const swapped = det.validReps;
   r.run([{ f: kickFrame(null), ms: 1000 }]);
   ok('勾腿跳：两条腿都伸直（没勾）不计数', det.validReps === swapped, `实际 ${det.validReps}`);
+
+  // 🐞 面板的诊断行：左右交替类动作以前这一行是「—」，用户反馈快节奏计不上时完全看不到卡在哪
+  r.run([{ f: kickFrame('L'), ms: 200 }]);
+  const d = det.diag();
+  const got = (key) => d.find((x) => x.key === key)?.value;
+  ok('勾腿跳：诊断行给出两条腿的读数（在做的那一侧带 ✓）',
+    /^L:\d+✓ R:\d+$/.test(got('debug.diag.sides')), String(got('debug.diag.sides')));
+  ok('勾腿跳：诊断行给出真正的交替线（进入 112 / 退出 122）',
+    got('debug.diag.line') === '≤112/≥122', String(got('debug.diag.line')));
+  ok('勾腿跳：诊断行给出当前侧与「上一侧 / 间隔」',
+    got('debug.diag.side') === 'L' && /^[LR] \d+ms$/.test(got('debug.diag.lastSide')),
+    `${got('debug.diag.side')} / ${got('debug.diag.lastSide')}`);
 }
 {
   // ===== 用户反馈「我明明站好了、躯干倾角只有几度，它却总说我没站好」 =====
