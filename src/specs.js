@@ -380,6 +380,8 @@ function bridgeSpecs() {
     count: [
       item({ labelKey: 'spec.bridgeDown', metricKey: 'metric.hipRise', op: 'lte', value: roundFor(B.downRise, TORSO), unit: TORSO, noteKey: 'spec.note.bridgeDown' }),
       item({ labelKey: 'spec.countLine', metricKey: 'metric.hipRise', op: 'gte', value: roundFor(B.upRise, TORSO), unit: TORSO, noteKey: 'spec.note.bridgeCount' }),
+      // 角度法（用户实测顶点 ≈170°）：高度法「或」角度法，任一条到线就算顶到位
+      item({ labelKey: 'spec.bridgeCountAngle', metricKey: 'metric.hip', op: 'gte', value: roundFor(B.topAngle, DEG), unit: DEG, noteKey: 'spec.note.bridgeAngle' }),
       item({ labelKey: 'spec.minRep', op: 'gte', value: roundFor(B.minRepMs / 1000, S), unit: S, noteKey: 'spec.note.bridgeTempo' }),
     ],
     posture: [
@@ -614,6 +616,8 @@ const SHORT_LABEL = {
   'spec.pushupEnter': 'spec.short.start',
   'spec.squatEnter': 'spec.short.start',
   'spec.countLine': 'spec.short.count',
+  // 臀桥「角度法」那一格：短标签沿用「顶起来」（进度条上写「顶起」）
+  'spec.bridgeCountAngle': 'spec.short.count',
   'spec.bottomLine': 'spec.short.full',
   'spec.bothKnees': 'spec.short.both',
   'spec.flight': 'spec.short.jump',
@@ -723,9 +727,18 @@ export function specStages(id) {
 
   if (id === 'bridge') {
     // 臀桥（用户指定的三个关键帧）：**屈腿仰卧 → 曲腿腰臀顶起 → 恢复屈腿仰卧**
-    //   「顶起」用识别器自己的动态顶点线（topLine，会跟着用户自己的最低点走），
-    //   「落回」用识别器自己的 atBottom —— 所以最后一格点亮的那一刻就是计次那一刻。
-    pushItem(pick('spec.countLine'), { kind: 'count', valueFrom: 'topLine' });
+    //   「顶起」有两路证据（**高度法 或 角度法**）：高度用识别器自己的动态顶点线
+    //   （topLine，跟着用户自己的最低点走），角度用「肩-髋-膝 ≥165°」——
+    //   用户实测「髋到 170° 就是最高点，用它当关键帧更合适，目前的标准其实无法计数」，
+    //   所以两条路取「或」，谁先到算谁的（弹窗里就写成「A 或 B」）。
+    //   「落回」用识别器自己的 atBottom —— 最后一格点亮的那一刻就是计次那一刻。
+    const topItem = pick('spec.countLine');
+    const angleItem = pick('spec.bridgeCountAngle');
+    if (topItem && angleItem) {
+      const stage = toStage(topItem, { kind: 'count', valueFrom: 'topLine' });
+      stage.alt = toStage(angleItem);
+      stages.push(stage);
+    } else pushItem(topItem, { kind: 'count', valueFrom: 'topLine' });
     pushItem(pick('spec.bridgeDown'), { kind: 'finish', detFlag: 'atBottom' });
   } else if (id === 'pushup') {
     // 俯卧撑：开始 → 计次（肘角到位**或**肩膀已经沉到接近地面）→ 回到顶位（计次那一刻）

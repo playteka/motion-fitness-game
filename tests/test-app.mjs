@@ -411,6 +411,17 @@ console.log('\n[1b] 运动设定弹窗');
   ok('指标行带上了单位（×躯干长 / °）',
     specHtml().includes('躯干长') && specHtml().includes('°'), specHtml().slice(0, 200));
 
+  // 臀桥：用户实测「髋到 170° 就是最高点、目前的标准无法计数」→ 关键帧写成「高度 或 角度」
+  {
+    api.openExercise('bridge');
+    api.renderExerciseSettings();
+    const bridgeHtml = elements.get('exerciseSpecs').innerHTML;
+    ok('臀桥：关键帧「顶起来」写成「高度线 或 角度线」（弹窗里出现「或」和 165）',
+      bridgeHtml.includes('或') && bridgeHtml.includes('165'), bridgeHtml.slice(0, 260));
+    api.openExercise('pushup');
+    api.renderExerciseSettings();
+  }
+
   // ===== 关键帧 + 判分标准：用户要求「把对应动作的关键帧判别标准以及对应的判分标准列出来」 =====
   {
     const { specStages: stagesOf, stagePoints } = await import('../src/specs.js');

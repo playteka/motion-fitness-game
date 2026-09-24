@@ -267,15 +267,17 @@ export const STEP_PLANS = {
         id: 'lift',
         labelKey: 'steps.bridge.lift.label',
         points: 6,
-        check: (f) => f.hipRise > 0.15,
-        hint: (f) => (f.hipRise <= 0.15 ? H('steps.bridge.lift.hint') : null),
+        // 高度法 或 **角度法**（肩-髋-膝 ≥150°）：用户实测「髋到 170° 就是顶点」，
+        // 只用高度会让「肩也跟着抬」的人永远拿不到这一步的分
+        check: (f) => f.hipRise > 0.15 || f.hipAngle >= 150,
+        hint: (f) => ((f.hipRise <= 0.15 && !(f.hipAngle >= 150)) ? H('steps.bridge.lift.hint') : null),
       },
       {
         id: 'top',
         labelKey: 'steps.bridge.top.label',
         points: 14,
-        check: (f) => f.hipRise > 0.35,
-        hint: (f) => (f.hipRise <= 0.35 ? H('steps.bridge.top.hint') : null),
+        check: (f) => f.hipRise > 0.35 || f.hipAngle >= 165,
+        hint: (f) => ((f.hipRise <= 0.35 && !(f.hipAngle >= 165)) ? H('steps.bridge.top.hint') : null),
       },
       {
         id: 'lower',

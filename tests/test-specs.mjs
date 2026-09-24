@@ -167,6 +167,21 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
 
   ok('臀桥：抬髋线 = BRIDGE.upRise', findItem('bridge', 'spec.countLine').value === BRIDGE.upRise);
   ok('臀桥：落回线 = BRIDGE.downRise', findItem('bridge', 'spec.bridgeDown').value === BRIDGE.downRise);
+  // 用户实测「髋抬到 170° 就是最高点，用这个当关键帧更合适；目前的标准无法计数」→ 加了角度法
+  ok('臀桥：角度法那一格 = 肩-髋-膝 ≥ BRIDGE.topAngle（画面上标的「髋」）',
+    findItem('bridge', 'spec.bridgeCountAngle')
+    && findItem('bridge', 'spec.bridgeCountAngle').metricKey === 'metric.hip'
+    && findItem('bridge', 'spec.bridgeCountAngle').value === BRIDGE.topAngle,
+    JSON.stringify(findItem('bridge', 'spec.bridgeCountAngle')));
+  ok('臀桥：关键帧「顶起来」那一格是「高度线 或 角度线」（两条路任一条到线就算顶到位）',
+    (() => {
+      const st = specStages('bridge');
+      const count = st.find((s) => s.kind === 'count');
+      return !!count && count.metric === 'hipRise' && count.valueFrom === 'topLine'
+        && !!count.alt && count.alt.metric === 'hip'
+        && count.alt.value === BRIDGE.topAngle;
+    })(),
+    JSON.stringify(specStages('bridge').map((s) => `${s.kind}:${s.metric}${s.op}${s.value}${s.alt ? ` 或 ${s.alt.metric}${s.alt.op}${s.alt.value}` : ''}`)));
   const kneeRange = itemsOf('bridge').find((it) => it.metricKey === 'metric.knee' && it.op === 'range');
   ok('臀桥：膝角区间 = BRIDGE.kneeMin~kneeMax',
     kneeRange.value === BRIDGE.kneeMin && kneeRange.value2 === BRIDGE.kneeMax,

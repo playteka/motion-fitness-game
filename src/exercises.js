@@ -804,7 +804,20 @@ export const BRIDGE = {
   shoulderClearMax: 0.7,
   kneeClearMin: 0.12,
   downRise: 0.12,     // 参考的「落回地面」高度（实际判定跟着用户自己的最低点走，见 bottomLine）
-  upRise: 0.22,       // 顶起幅度要求（原来 0.35，要顶很高才算）
+  upRise: 0.22,       // 顶起幅度要求（原来 0.35，要顶很高才算）—— 高度法
+  /**
+   * **角度法**（用户实测后要求补上的判据）：
+   * 「我实测髋部抬高到 170° 左右的时候其实就已经到最高点了，可能用这个作为关键帧更为合适。
+   *  目前的标准其实无法计数。」
+   *
+   * 画面上那个「髋」标的就是这个角（肩-髋-膝）：躺平屈膝时约 135°~145°，
+   * 顶到「肩-髋-膝 接近一条直线」时约 170°~180°。
+   * 只用高度（hipRise）判有两个坑：肩跟着一起抬、或者躯干长的人，明明顶到位了读数也上不去，
+   * 于是**永远过不了顶点线、一次都计不上**。所以现在两条路取「或」：
+   * **顶得够高** 或 **身体线够直**，都算顶到位。
+   */
+  liftAngle: 150,     // 「开始顶起来」这一步（动态进度、第二格）
+  topAngle: 165,      // 「顶到肩-髋-膝接近一条直线」= 计次那一步（用户实测顶点 ≈170°）
   // 一整轮的时长下限（离开地面 → 落回地面）：只用来滤掉「快速上下抖」，
   // 比人体能做出的最快一次臀桥还短（1 秒 2 次以上一定是抖）。第一次不参与这个判断。
   minRepMs: 420,
@@ -849,6 +862,8 @@ class GluteBridgeDetector extends DetectorBase {
     return [
       { key: 'debug.diag.stage', value: this.stage },
       { key: 'debug.diag.ridgeRise', value: `${this.lastRise.toFixed(2)}/${this.topLine.toFixed(2)}/${this.bottomLine.toFixed(2)}` },
+      // 角度法那条线（用户实测顶点 ≈170°）：画面上标的「髋」就是这个数
+      { key: 'debug.diag.bridgeAngle', value: `${Number.isFinite(this.lastAngle) ? Math.round(this.lastAngle) : '—'}/${BRIDGE.topAngle}` },
       { key: 'debug.diag.floorLine', value: this.floorLine === null ? '—' : this.floorLine.toFixed(2) },
       { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
       ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
@@ -899,8 +914,24 @@ class GluteBridgeDetector extends DetectorBase {
   /** 这一帧算不算「回到地面」 */
   atBottomNow(rise) { return rise <= this.bottomLine; }
 
-  /** 这一帧算不算「顶到位」 */
-  atTopNow(rise) { return rise > this.topLine; }
+  /**
+   * 这一帧算不算「顶到位」：**高度法**（比自己的最低点高 0.16 以上）**或**
+   * **角度法**（肩-髋-膝 ≥ `topAngle`，也就是画面上标的那个「髋」）。
+   *
+   * 为什么要有角度法：用户实测「髋抬到 170° 就已经是最高点了，用它当关键帧更合适，
+   * 目前的标准其实无法计数」—— 高度法对「肩也跟着抬」或躯干较长的人读数偏低，
+   * 明明顶到位了也永远过不了线。两条路取「或」，谁先到算谁的（宽松模式）。
+   * 角度法额外要求「已经稍微离开地面」，免得平躺（肩-髋-膝本来就接近 180°）被算成顶起。
+   */
+  atTopNow(rise, f) {
+    if (rise > this.topLine) { this.topBy = 'rise'; return true; }
+    const ang = f?.hipAngle;
+    if (Number.isFinite(ang) && ang >= BRIDGE.topAngle && rise > this.bottomLine + 0.02) {
+      this.topBy = 'angle';
+      return true;
+    }
+    return false;
+  }
 
   step(f, now) {
     if (!this.isSupine(f)) {
@@ -918,10 +949,16 @@ class GluteBridgeDetector extends DetectorBase {
     this.standby = '';
     const rise = f.hipRise;
     this.lastRise = Number.isFinite(rise) ? rise : 0;
-    this.depthPct = clamp((rise / 0.6) * 100, 0, 100);
+    this.lastAngle = Number.isFinite(f.hipAngle) ? f.hipAngle : NaN;
+    // 深度条：高度法与角度法各算一个百分比，取大的（哪条路先到 100% 就显示 100%）
+    const risePct = clamp((rise / 0.6) * 100, 0, 100);
+    const anglePct = Number.isFinite(f.hipAngle)
+      ? clamp(((f.hipAngle - BRIDGE.liftAngle) / (BRIDGE.topAngle - BRIDGE.liftAngle)) * 100, 0, 100)
+      : 0;
+    this.depthPct = Math.max(risePct, anglePct);
     this.rememberRise(rise, now);
 
-    const atTop = this.atTopNow(rise);
+    const atTop = this.atTopNow(rise, f);
     const atBottom = this.atBottomNow(rise);
     this.atTop = atTop;
     this.atBottom = atBottom;

@@ -12,7 +12,7 @@ import { toMetric, LandmarkSmoother, LM } from '../src/geometry.js';
 import {
   computeFrame, PERSON_VIS_MEAN, PERSON_VIS_MIN, PERSON_VIS_SLACK, PERSON_MIN_TORSO,
 } from '../src/metrics.js';
-import { createDetector } from '../src/exercises.js';
+import { createDetector, BRIDGE } from '../src/exercises.js';
 import { GATES, GATE_LIMITS, inLimit } from '../src/engines.js';
 import { specStages, stageHolds } from '../src/specs.js';
 import { EXERCISES } from '../src/catalog.js';
@@ -226,7 +226,21 @@ const bridgeFlatPose = (p) => supinePose({
   thighUp: 50, knee: 100, torsoUp: 270, armDown: -90, elbow: 178,
 });
 const BRIDGE_FLAT = { hipY: 0.89, thighUp: 50, knee: 100, torsoUp: 270 };
-const BRIDGE_TOP = { hipY: 0.68, thighUp: 90, knee: 90, torsoUp: 233.5 };
+/**
+ * 臀桥顶点：**肩-髋-膝 连成一条直线**（真人顶到位就是这样，也正是在画面上读到 170°~180° 的那个「髋」）。
+ *
+ * 几何关系：髋角 = 180 − |(torsoUp + 180) − thighUp|（角度都被折到 ≤180 那一边）。
+ * 要 180°（一条直线）就得 `thighUp = torsoUp + 180 − 360 = torsoUp − 180`，所以
+ * torsoUp 233.5 配 thighUp **53.5** 才是真正的顶点。
+ * 之前写的是 thighUp 90（大腿竖直），那其实是「撅起来」的姿势、髋角只有 143° ——
+ * 用它做模型会让人误以为「顶到直线」比「顶得高」更难，把判据往错的方向带。
+ */
+const BRIDGE_TOP = { hipY: 0.68, thighUp: 53.5, knee: 90, torsoUp: 233.5 };
+/**
+ * **用户实测的那种顶点**（这次改动就是为它）：升幅只有 0.17（过不了高度线 0.22），
+ * 但肩-髋-膝 已经到 **170°** —— 用户说「我实测髋部抬高到 170° 就已经到最高点了」。
+ */
+const BRIDGE_TOP_LOWRISE = { hipY: 0.78, thighUp: 90, knee: 90, torsoUp: 260 };
 
 /**
  * 开合跳：正对镜头，双脚并拢 ↔ 打开。
@@ -243,10 +257,11 @@ const jackPose = (p, closed = JACK_CLOSED, open = JACK_OPEN) => standingPose({
   spread: lerp(closed, open, Math.sin(Math.PI * p)),
 });
 
-const bridgePose = (p, toTop = true) => {
-  const s = toTop ? Math.sin(Math.PI * p) : 1;
-  const a = toTop ? BRIDGE_FLAT : BRIDGE_TOP;
-  const b = toTop ? BRIDGE_TOP : BRIDGE_FLAT;
+/** @param amp 幅度比例（0.5 = 只顶到一半高度） */
+const bridgePose = (p, toTop = true, top = BRIDGE_TOP, amp = 1) => {
+  const s = (toTop ? Math.sin(Math.PI * p) : 1) * amp;
+  const a = toTop ? BRIDGE_FLAT : top;
+  const b = toTop ? top : BRIDGE_FLAT;
   return supinePose({
     hip: { x: lerp(0.75, 0.80, s), y: lerp(a.hipY, b.hipY, s) },
     thighUp: lerp(a.thighUp, b.thighUp, s),
@@ -257,8 +272,7 @@ const bridgePose = (p, toTop = true) => {
 };
 
 // 小臂平板支撑：身体线 78°、肘 90°、手撑地
-const plankPose = (opts = {}) => pronePose({
-  hip: opts.hip ?? { x: 0.95, y: 0.75 },
+const plankPose = (opts = {}) => pronePose({  hip: opts.hip ?? { x: 0.95, y: 0.75 },
   bodyTilt: opts.bodyTilt ?? 78,
   elbow: 90,
   armDown: 0,
@@ -266,6 +280,27 @@ const plankPose = (opts = {}) => pronePose({
 });
 
 const standingIdle = standingPose({ knee: 178, lean: 6, armDown: 0, ankleX: 1.0, view: 'front' });
+
+/**
+ * 单独跑一遍真实管线、只统计峰值（**不喂识别器**）。
+ *
+ * 用途：判断某个姿势到底能读到多少「髋抬起量 / 髋角」。
+ * 千万不要用 `makeRunner(...).peek()` 来取峰值 —— 那个会一次喂 45 帧，
+ * 把识别器的状态机推着走（臀桥这种「顶起→落回」的回合制动作会被彻底打乱）。
+ */
+function angleStats(poseFn, cycleMs, cycles = 1) {
+  const sm = new LandmarkSmoother();
+  const n = Math.round(cycleMs / DT);
+  let rise = -9;
+  let angle = 0;
+  for (let i = 0; i < n * cycles; i++) {
+    const t = (i + 1) * DT;
+    const f = computeFrame(toMetric(sm.apply(poseFn((i % n) / n), t / 1000), ASPECT), null, t, false, null);
+    rise = Math.max(rise, f.hipRise);
+    angle = Math.max(angle, f.hipAngle);
+  }
+  return { rise, angle };
+}
 
 /* ------------------------------------------------------------------ *
  * 指标自检（阈值调好后这些值就是回归基线）
@@ -746,22 +781,47 @@ console.log('\n[4] 臀桥计数');
   ok('提示需要躺下', r.cues.some((c) => c.code === 'notSupine'));
 }
 {
-  // 顶到一半就落下：放宽后照样计次（大体做了就算），但仍然要提示“顶高一点”
+  // 顶到一半就落下：**角度法也不会把它算成顶点**（半程的髋角只到 ~160°，够不到 165°），
+  // 而高度法仍然按「宽松模式」认它 —— 这一条是「高度法 或 角度法」里
+  // 「别把半程当顶点」那半边保险。
+  // 注意：峰值要**单独**用真实管线算（不能借 r.peek —— 那个会把 45 帧喂给识别器、打乱状态机）
+  const half = angleStats((p) => bridgePose(p, true, BRIDGE_TOP, 0.5), 1800);
+  ok('半程臀桥：髋角只到 ~160°，角度法不认它是顶点',
+    half.angle > 140 && half.angle < BRIDGE.topAngle,
+    `最高髋角 ${half.angle.toFixed(0)}°（角度线 ${BRIDGE.topAngle}°）· 最高 rise=${half.rise.toFixed(3)}`);
   const det = fresh('bridge');
   const r = makeRunner(det);
-  const half = (p) => {
-    const s = Math.sin(Math.PI * p) * 0.5; // 只顶到一半高度
-    return supinePose({
-      hip: { x: lerp(0.75, 0.80, s), y: lerp(BRIDGE_FLAT.hipY, BRIDGE_TOP.hipY, s) },
-      thighUp: lerp(BRIDGE_FLAT.thighUp, BRIDGE_TOP.thighUp, s),
-      knee: lerp(BRIDGE_FLAT.knee, BRIDGE_TOP.knee, s),
-      torsoUp: lerp(BRIDGE_FLAT.torsoUp, BRIDGE_TOP.torsoUp, s),
-      armDown: -90, elbow: 178,
-    });
-  };
-  r.run(repeat(half, 1800, 4));
-  atLeast('半程臀桥也计数（放宽后）', det.validReps, 3);
-  ok('提示顶高一点', r.cues.some((c) => c.code === 'riseMore'));
+  r.run(repeat((p) => bridgePose(p, true, BRIDGE_TOP, 0.5), 1800, 4));
+  ok('半程臀桥仍然计次（宽松模式：高度法认它 ≈0.31 > 0.22），并提示顶高一点',
+    det.validReps >= 1 && r.cues.some((c) => c.code === 'riseMore'),
+    `reps=${det.validReps}`);
+}
+{
+  // ===== 用户反馈（这一次改动的由来）=====
+  // 「我实测髋部抬高到 170° 左右的时候其实就已经到最高点了，可能用这个作为关键帧更为合适。
+  //   目前的标准其实无法计数。」
+  // 这条通路：升幅只有 ~0.17（过不了高度线 0.22），但肩-髋-膝 到了 ~170°。
+  const stats = angleStats((p) => bridgePose(p, true, BRIDGE_TOP_LOWRISE), 1800);
+  ok('用户实测的顶点：升幅确实过不了高度线（这就是「无法计数」的原因）',
+    stats.rise > 0.1 && stats.rise < BRIDGE.upRise, `最高 rise=${stats.rise.toFixed(3)}（高度线 ${BRIDGE.upRise}）`);
+  ok('同一个顶点：肩-髋-膝 到了 170° 左右（画面上那个「髋」）',
+    stats.angle >= BRIDGE.topAngle && stats.angle <= 185,
+    `最高髋角 ${stats.angle.toFixed(0)}°（角度线 ${BRIDGE.topAngle}°）`);
+  const det = fresh('bridge');
+  makeRunner(det).run(repeat((p) => bridgePose(p, true, BRIDGE_TOP_LOWRISE), 1800, 6));
+  atLeast('「髋到 170° 就算顶到位」：用户这种情况现在能计上', det.validReps, 4);
+  ok('而且不会多计（6 轮 ≈ 5~6 次）', det.validReps <= 7, `实际 ${det.validReps}`);
+}
+{
+  // 安全绳：把角度法关掉（线设成不可能达到的值），用户那种顶点就又计不上了 ——
+  // 证明「能计上」确实是这条新判据带来的，而不是别的巧合
+  const savedTop = BRIDGE.topAngle;
+  BRIDGE.topAngle = 999;
+  const det = fresh('bridge');
+  makeRunner(det).run(repeat((p) => bridgePose(p, true, BRIDGE_TOP_LOWRISE), 1800, 6));
+  BRIDGE.topAngle = savedTop;
+  ok('（安全绳）关掉角度法后，这种「顶得不高但成一条线」的臀桥一次都计不上',
+    det.validReps === 0, `实际 ${det.validReps}`);
 }
 {
   // 第一次顶起没有“上一次顶点”可比较，不能因为缺计时数据就吃掉用户的第一下
