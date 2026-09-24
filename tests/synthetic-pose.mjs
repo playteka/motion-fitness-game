@@ -267,4 +267,29 @@ export function lostFrame() {
   return blank().map(() => ({ x: 0.5, y: 0.5, z: 0, visibility: 0 }));
 }
 
+/**
+ * 把一条腿的小腿绕膝盖折过去（模拟「脚跟往臀部勾」）。
+ *
+ * `foldDeg` 是**真正的膝角变化量**：折叠后膝角 = 180 − foldDeg。
+ * ⚠️ 必须在**公制空间**（x 乘画幅比例）里折叠：归一化坐标里 x 被压扁了，
+ * 直接按归一化方向旋转会把角度放大近一倍（实测「折 35°」在真实几何里是 **54°/126°**），
+ * 用它做的模型会失真 —— 之前测试里「支撑腿只弯一点」的模型其实是深蹲级别的膝角。
+ */
+export function foldShin(lm, side, foldDeg) {
+  const iHip = LM[`${side}_HIP`];
+  const iKnee = LM[`${side}_KNEE`];
+  const iAnkle = LM[`${side}_ANKLE`];
+  const toM = (p) => ({ x: p.x * ASPECT, y: p.y });
+  const hip = toM(lm[iHip]);
+  const knee = toM(lm[iKnee]);
+  const ankle = toM(lm[iAnkle]);
+  const thighDir = Math.atan2(knee.y - hip.y, knee.x - hip.x);
+  const shinLen = Math.hypot(ankle.x - knee.x, ankle.y - knee.y) || 0.2;
+  const a = thighDir + (foldDeg * Math.PI) / 180;
+  const x = knee.x + Math.cos(a) * shinLen;
+  const y = knee.y + Math.sin(a) * shinLen;
+  lm[iAnkle] = { ...lm[iAnkle], x: x / ASPECT, y };
+  return lm;
+}
+
 export { up, down, add };

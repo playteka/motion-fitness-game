@@ -2504,6 +2504,9 @@ console.log('\n[12] 语音教练');
 
   // 5.2) 每 3 次给一句激励（语音以鼓励为主）
   said.length = 0;
+  // 去重状态清掉：上一条激励/整轮夸奖可能刚念过同一句，去重命中时会「该说也没说」——
+  // 那不是这条用例要测的东西（不清的话这条断言会偶尔偶发失败）
+  api.audio._lastEncourage = null;
   api.state.detector.validReps = 3;
   api.handleEvents([{ type: 'rep', valid: true, index: 3 }]);
   const poolRaw = (await import('../src/i18n.js')).t('speech.encourage');

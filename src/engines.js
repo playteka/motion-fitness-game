@@ -557,6 +557,13 @@ class AltRepDetector extends DetectorBase {
      * 这个状态只用来驱动画面上的深度条与 🐞 诊断行（**计次走上升沿，见 countRises**）。
      */
     this.strokeMs = p.strokeMs ?? 700;
+    /**
+     * 两条腿**同一帧**一起进线时，允许认成一次的最小红腿深差（度）。
+     *
+     * 快跳时支撑腿会跟着下沉，两条腿常常同帧跨线；这时只有「一侧明显更深」才说明
+     * 那条是真勾起来的腿（见 countRises）。两条腿一样深（一起弯，不是交替）不认。
+     */
+    this.leadMin = p.leadMin ?? 18;
   }
 
   onReset() {
@@ -637,23 +644,41 @@ class AltRepDetector extends DetectorBase {
    *
    * 逐帧比较（不做迟滞）：腿回到 126° 但没到退出线时，也算「离开线内」，
    * 所以下一次勾腿照样会被认成一次新的动作，不会被吞掉。
+   *
+   * **两条腿同一帧一起进线怎么办**（用户反馈「还有少数几次没计上」的第二层原因）：
+   * 快跳时人是在原地弹跳，**支撑腿也会跟着下沉**，于是经常出现两条腿同帧跨过判定线。
+   * 旧写法要求「恰好一侧进线」，这一帧就整轮丢掉了 —— 实测这种模型下几乎一次都计不上。
+   * 现在改成：这种情况若**一侧明显更深**（差 ≥ `leadMin` 度，说明那条才是真勾起来的腿），
+   * 就按更深的那一侧计次；两条腿一样深（一起弯，不是交替）仍然不认。
    */
   countRises(f, now) {
     const read = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee);
     const rise = [];
+    const val = {};
     for (const s of ['L', 'R']) {
       const v = read(f, s);
+      val[s] = v;
       const deep = this.isActive(v);          // 这一帧是否「在做」（不看迟滞）
       if (deep && !this.wasDeep[s]) rise.push(s);
       this.wasDeep[s] = deep;
     }
-    // 恰好一侧刚进入「在做」→ 这一侧的这次动作算一次。
-    // 两条腿同一帧一起进入（不是交替）不算：rise.length 会是 2。
     if (rise.length === 1) {
+      // 恰好一侧刚进入「在做」→ 这一侧的这次动作算一次
       if (rise[0] !== this.lastSide) this.switched = false;   // 新的一侧刚开始：等这次做完再点亮
       this.countRep(rise[0], now);
+      return;
     }
-    return rise;
+    if (rise.length === 2) {
+      const [a, b] = rise;
+      const va = val[a];
+      const vb = val[b];
+      const deeper = this.cmp === 'lt' ? (va <= vb ? a : b) : (va >= vb ? a : b);
+      const lead = Math.abs(va - vb);
+      if (Number.isFinite(lead) && lead >= this.leadMin) {
+        if (deeper !== this.lastSide) this.switched = false;
+        this.countRep(deeper, now);
+      }
+    }
   }
 
   /**

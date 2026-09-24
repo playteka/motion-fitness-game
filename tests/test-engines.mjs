@@ -901,8 +901,8 @@ console.log('\n[6] alt 引擎：左右交替');
   const got = (key) => d.find((x) => x.key === key)?.value;
   ok('勾腿跳：诊断行给出两条腿的读数（在做的那一侧带 ✓）',
     /^L:\d+✓ R:\d+$/.test(got('debug.diag.sides')), String(got('debug.diag.sides')));
-  ok('勾腿跳：诊断行给出真正的交替线（进入 120 / 退出 126）',
-    got('debug.diag.line') === '≤120/≥126', String(got('debug.diag.line')));
+  ok('勾腿跳：诊断行给出真正的交替线（进入 126 / 退出 132）',
+    got('debug.diag.line') === '≤126/≥132', String(got('debug.diag.line')));
   ok('勾腿跳：诊断行给出当前侧与「上一侧 / 间隔」',
     got('debug.diag.side') === 'L' && /^[LR] \d+ms$/.test(got('debug.diag.lastSide')),
     `${got('debug.diag.side')} / ${got('debug.diag.lastSide')}`);

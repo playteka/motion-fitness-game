@@ -21,7 +21,7 @@ import {
 } from '../src/calibration.js';
 import { t, setLang } from '../src/i18n.js';
 import {
-  ASPECT, standingPose, pronePose, supinePose, twoLegPose, lostFrame,
+  ASPECT, standingPose, pronePose, supinePose, twoLegPose, lostFrame, foldShin,
 } from './synthetic-pose.mjs';
 
 const DT = 1000 / 30;
@@ -1218,23 +1218,12 @@ console.log('\n[7b] 站立门控的符号（真实帧）');
 
   // 勾腿跳本身：真实帧 + 真实识别器，站着就该进入判定（active）并计次
   const det = createDetector('buttKick');
-  /** 把一条腿的小腿绕膝盖折过去（模拟「脚跟往臀部勾」），折 115° ⇒ 膝角 ≈ 65° */
-  const foldLeg = (lm, side, foldDeg) => {
-    const hip = lm[LM[`${side}_HIP`]];
-    const knee = lm[LM[`${side}_KNEE`]];
-    const ankle = lm[LM[`${side}_ANKLE`]];
-    const thighDir = Math.atan2(knee.y - hip.y, knee.x - hip.x);
-    const shinLen = Math.hypot(ankle.x - knee.x, ankle.y - knee.y) || 0.2;
-    const a = thighDir + (foldDeg * Math.PI) / 180;
-    lm[LM[`${side}_ANKLE`]] = {
-      ...ankle, x: knee.x + Math.cos(a) * shinLen, y: knee.y + Math.sin(a) * shinLen,
-    };
-    return lm;
-  };
+  // 折小腿用 tests/synthetic-pose.mjs 的 foldShin：它在**公制空间**里折叠，
+  // 「折 115°」就是真正的膝角 65°（自己在归一化坐标里折叠会把角度放大近一倍）
   const kickFrame = (which, now) => {
     const lm = fit(standingPose({ knee: 172, lean: 5, armDown: 0, ankleX: 1.0, view: 'side' }))
       .map((p) => ({ ...p }));
-    if (which) foldLeg(lm, which, 115);
+    if (which) foldShin(lm, which, 115);
     return frameOf(lm, now);
   };
 
@@ -1287,19 +1276,8 @@ console.log('\n[7c] 勾腿跳：快节奏也能计上（真实帧）');
   const frameOf = (lm, now) => computeFrame(toMetric(
     lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT,
   ), null, now, false, null);
-  /** 把一条腿的小腿绕膝盖折过去（模拟「脚跟往臀部勾」）：折 110° ⇒ 膝角 ≈ 70° */
-  const foldLeg = (lm, side, foldDeg) => {
-    const hip = lm[LM[`${side}_HIP`]];
-    const knee = lm[LM[`${side}_KNEE`]];
-    const ankle = lm[LM[`${side}_ANKLE`]];
-    const thighDir = Math.atan2(knee.y - hip.y, knee.x - hip.x);
-    const shinLen = Math.hypot(ankle.x - knee.x, ankle.y - knee.y) || 0.2;
-    const a = thighDir + (foldDeg * Math.PI) / 180;
-    lm[LM[`${side}_ANKLE`]] = {
-      ...ankle, x: knee.x + Math.cos(a) * shinLen, y: knee.y + Math.sin(a) * shinLen,
-    };
-    return lm;
-  };
+  /** 折小腿用共享的 foldShin（在公制空间里折叠，折 X° 就是膝角 180−X°，不会被画幅比例放大） */
+  const foldLeg = foldShin;
   let seed = 987654;
   const noise = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5);
 
@@ -1369,11 +1347,17 @@ console.log('\n[7c] 勾腿跳：快节奏也能计上（真实帧）');
     ok('反例：只是原地小跑（膝角最多 ~126°，脚跟没往臀部勾）不计次',
       reps === 0, `计到 ${reps} 次（最小膝角 ${minKnee.toFixed(0)}°）`);
   }
-  // 6) 边界（**宽松模式的取舍**，用户明确要求「宽松」）：明显抬膝（膝角到 ~114°）就算一次
+  // 6) 边界（**宽松模式的取舍**，用户明确要求「宽松」）：明显抬膝（膝角到 ~115°）就算一次
   {
-    const { reps, minKnee } = runKick(500, { depth: 55 });
-    ok('边界：明显抬膝（最小膝角 ≈114°）就算勾腿 —— 判定线 120° 的宽松取舍',
+    const { reps, minKnee } = runKick(500, { depth: 65 });
+    ok('边界：明显抬膝（最小膝角 ≈115°）就算勾腿 —— 判定线 126° 的宽松取舍',
       reps > 0, `计到 ${reps} 次（最小膝角 ${minKnee.toFixed(0)}°）`);
+  }
+  // 6b) 边界另一侧：只把膝盖抬到 ~133°（慢跑抬腿的高度）不算 —— 否则「原地跑步」会被算成勾腿
+  {
+    const { reps, minKnee } = runKick(500, { depth: 47 });
+    ok('边界：膝盖只抬到 ~133°（慢跑抬腿高度）不计次',
+      reps === 0, `计到 ${reps} 次（最小膝角 ${minKnee.toFixed(0)}°）`);
   }
   // 7) 反面：两条腿一起弯（深蹲那样）不算「左右交替」
   {
