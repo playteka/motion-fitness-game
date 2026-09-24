@@ -871,7 +871,6 @@ const STEP_STAGE = {
   // 开合跳只画三格（`skipEnter`，用户要求）：并拢站好（stance）→ 跳开（open 属于这一格）
   // → 收回并拢（close）。中间的「开始」那一格被去掉了，所以「打开」这一步的分归到「跳开」那一格。
   jumpingJack: { stance: 'stand', open: 'count', wide: 'count', close: 'back' },
-  repProne: { setup: 'prone', lower: 'start', bottom: 'count', press: 'back' },
   repSupine: { setup: 'supine', engage: 'start', top: 'count', lower: 'back' },
   // 左右交替类：最后一格是「换另一条腿也做到」（= 计次那一刻）
   repAlt: { setup: '*gate', first: 'work', switch: 'switch', rhythm: 'switch' },

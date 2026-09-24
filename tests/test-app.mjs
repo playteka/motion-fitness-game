@@ -2700,7 +2700,7 @@ console.log('\n[13] 最佳成绩 / 运动记录（两个图标 + 弹窗）');
 }
 
 /* ------------------------------------------------------------------ *
- * [14] 虚线轮廓的显示时机（跑真实主循环，全 22 个动作）
+ * [14] 虚线轮廓的显示时机（跑真实主循环，覆盖整个动作库）
  *
  * 用户要求：**刚开始识别人体的时候画面里有虚线人体轮廓，识别成功进入运动状态后就要隐藏。**
  * 这一段的做法不是「看代码觉得对」，而是真的把 loop() 一帧一帧跑起来，
@@ -2709,7 +2709,7 @@ console.log('\n[13] 最佳成绩 / 运动记录（两个图标 + 弹窗）');
  * 放在最后：它会驱动摄像头/推理桩跑完整流程，别影响前面的用例。
  * ------------------------------------------------------------------ */
 
-console.log('\n[14] 虚线轮廓：识别成功就隐藏（真实主循环，全 22 个动作）');
+console.log(`\n[14] 虚线轮廓：识别成功就隐藏（真实主循环，全 ${EXERCISES.length} 个动作）`);
 {
   const { toMetric: tm, LM: LMK } = await import('../src/geometry.js');
   const { ASPECT: A, standingPose: sp } = await import('./synthetic-pose.mjs');
@@ -2727,7 +2727,7 @@ console.log('\n[14] 虚线轮廓：识别成功就隐藏（真实主循环，全
   api.camera.video.readyState = 4;
   api.state.engineReady = true;
 
-  // 可控时钟：校准要「保持 0.6 秒」才算识别成功，靠真实时间跑 22 个动作太慢，
+  // 可控时钟：校准要「保持 0.6 秒」才算识别成功，靠真实时间跑完整个动作库太慢，
   // 所以这里给主循环一个每帧走 33.4ms 的假时钟（app.js 里所有计时都走 performance.now）。
   let clock = 5_000_000;
   const fakePerf = { now: () => clock, timeOrigin: savedPerf.timeOrigin };
@@ -2837,7 +2837,7 @@ console.log('\n[14] 虚线轮廓：识别成功就隐藏（真实主循环，全
   }
 
   const all = EXERCISES.map((e) => e.id).join(',');
-  ok('这一段覆盖了全部动作（22 个）', EXERCISES.length === 22, all);
+  ok(`这一段覆盖了全部动作（${EXERCISES.length} 个）`, EXERCISES.length === 20, all);
   ok('每个动作都真的进入了计数状态（不是空跑）', reachedRunning === EXERCISES.length,
     `实际 ${reachedRunning}/${EXERCISES.length}`);
   ok('没识别到人体时，画面里画「找人」的虚线轮廓（亮蓝）', bad.search.length === 0,

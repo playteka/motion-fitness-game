@@ -204,20 +204,6 @@ function jumpCycle(air, { view = 'front', kneeMin = 95, dy = AIR_DY } = {}) {
   };
 }
 
-/** 俯卧撑一次循环：肘角 172° → elbowMin（越小越深） */
-function pushupCycle(elbowMin) {
-  return (p) => {
-    const s = Math.sin(Math.PI * p);
-    const elbow = 172 - (172 - elbowMin) * s;
-    return pronePose({
-      hip: { x: 1.0, y: 0.68 + (172 - elbow) * 0.006 },
-      bodyTilt: 63 + (172 - elbow) * 0.17,
-      elbow,
-      armDown: -(172 - elbow) * 0.3,
-    });
-  };
-}
-
 /** 卷腹一次循环：躺平（torsoUp 270）→ 肩抬到 topTorsoUp（数越大抬得越高） */
 function crunchCycle(topTorsoUp) {
   return (p) => {
@@ -316,7 +302,7 @@ console.log('\n[0] 引擎与目录');
 {
   // createDetector(id) 必须按目录条目的 engine 字段选出对应的通用引擎
   const expected = {
-    pushupWide: BendRepDetector, pushupDiamond: BendRepDetector, squatSumo: BendRepDetector,
+    squatSumo: BendRepDetector,
     lungeBack: BendRepDetector, crunch: BendRepDetector,
     reverseCrunch: BendRepDetector, lyingLegRaise: BendRepDetector, squatJump: BendRepDetector,
     boxJump: BendRepDetector,
@@ -412,14 +398,6 @@ console.log('\n[1] bend 引擎：一次循环一次数');
   ok('相扑深蹲：没有半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
   const f = makeRunner(createDetector('squatSumo')).peek(IDLE_FRONT);
   ok('相扑深蹲：正面站姿满足「双腿分开」门控', f.ankleSpread > 0.35, `ankleSpread=${f.ankleSpread.toFixed(2)}`);
-}
-{
-  // 宽距俯卧撑：俯撑姿势（肘 172° → 90°）
-  const det = createDetector('pushupWide');
-  const r = makeRunner(det);
-  r.run(repeat(pushupCycle(90), 1500, 4));
-  ok('宽距俯卧撑：4 个完整循环 = 4 次', det.validReps === 4, `实际 ${det.validReps}`);
-  ok('宽距俯卧撑：没有半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
 }
 {
   // 卷腹：仰卧，肩离地高度就是指标（up 0.20 → down 0.62，数值越大进度越高）
@@ -593,18 +571,19 @@ console.log('\n[2] bend 引擎：只有宽松档');
   void r;
 }
 {
-  // 俯卧撑类同一档：肘只弯到 130° 也算一次，只是质量分低
-  const shallow = repeat(pushupCycle(130), 1500, 4);
-  const det = createDetector('pushupWide');
+  // 卷腹同一档：只卷起一点也算一次，只是质量分低（宽距/窄距俯卧撑删除后，
+  // 这组「浅的也算、深的更高分」的断言改由卷腹承担，测的还是同一个 bend 引擎）
+  const shallow = repeat(crunchCycle(290), 1500, 4);
+  const det = createDetector('crunch');
   const r = makeRunner(det);
   r.run(shallow);
-  ok('半程宽距俯卧撑：算 4 次', det.validReps === 4, `实际 ${det.validReps}`);
-  ok('半程宽距俯卧撑：不算半程', det.partialReps === 0, `实际 ${det.partialReps}`);
-  // 深度进分数：做满的峰值更高 → 质量分更高
-  const deep = createDetector('pushupWide');
+  ok('浅卷腹（肩抬到 290°）：算 4 次', det.validReps === 4, `实际 ${det.validReps}`);
+  ok('浅卷腹：不算半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+  // 深度进分数：卷得更高 → 质量分更高
+  const deep = createDetector('crunch');
   const rDeep = makeRunner(deep);
-  rDeep.run(repeat(pushupCycle(95), 1500, 4));
-  ok('做得深的那一次质量分更高（深度分照旧区分质量）',
+  rDeep.run(repeat(crunchCycle(315), 1500, 4));
+  ok('卷得更高的那一次质量分更高（深度分照旧区分质量）',
     rDeep.reps[0].quality > r.reps[0].quality,
     `${rDeep.reps[0].quality} vs ${r.reps[0].quality}`);
 }
@@ -678,19 +657,20 @@ console.log('\n[3] bend 引擎：晃动与过快的边界');
 
 console.log('\n[4] bend 引擎：姿势门控');
 {
-  // 站着做俯卧撑：门控拦住一切，改成俯撑后立刻放行
-  const det = createDetector('pushupWide');
+  // 站着做卷腹：仰卧门控拦住一切，躺下之后立刻放行
+  // （原来这一格用的是「站着做俯卧撑」（prone 门控），宽距/窄距俯卧撑删除后改由 supine 门控承担）
+  const det = createDetector('crunch');
   const r = makeRunner(det);
   r.run([{ pose: IDLE_SIDE, ms: 1500 }]);
-  ok('站着做俯卧撑：被门控拦住', det.active === false, `active=${det.active}`);
-  ok('站着做俯卧撑：给出准备姿势提示键', typeof det.standby === 'string' && det.standby.length > 0, det.standby);
-  ok('站着做俯卧撑：提示键能取到中文文案', t(det.standby) !== det.standby, `${det.standby} → ${t(det.standby)}`);
-  ok('站着做俯卧撑：一次也不计', det.validReps === 0 && det.partialReps === 0);
-  ok('站着做俯卧撑：进度归零', det.depthPct === 0);
-  r.run([{ pose: pronePose({ hip: { x: 1.0, y: 0.68 }, bodyTilt: 63, elbow: 172, armDown: 0 }), ms: 600 }]);
-  ok('改成俯撑后：门控放行', det.active === true && det.standby === '', `active=${det.active} standby=${det.standby}`);
-  r.run(repeat(pushupCycle(90), 1500, 2));
-  ok('改成俯撑后：正常计数', det.validReps === 2, `实际 ${det.validReps}`);
+  ok('站着做卷腹：被门控拦住', det.active === false, `active=${det.active}`);
+  ok('站着做卷腹：给出准备姿势提示键', typeof det.standby === 'string' && det.standby.length > 0, det.standby);
+  ok('站着做卷腹：提示键能取到中文文案', t(det.standby) !== det.standby, `${det.standby} → ${t(det.standby)}`);
+  ok('站着做卷腹：一次也不计', det.validReps === 0 && det.partialReps === 0);
+  ok('站着做卷腹：进度归零', det.depthPct === 0);
+  r.run([{ pose: crunchCycle(335), ms: 600 }]);
+  ok('躺下之后：门控放行', det.active === true && det.standby === '', `active=${det.active} standby=${det.standby}`);
+  r.run(repeat(crunchCycle(300), 1400, 2));
+  ok('躺下之后：正常计数', det.validReps === 2, `实际 ${det.validReps}`);
 }
 {
   // 侧对镜头做相扑深蹲：站距不够宽，门控不放行（standWide）

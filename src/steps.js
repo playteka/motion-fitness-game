@@ -416,42 +416,6 @@ export const STEP_PLANS = {
     ],
   },
 
-  /* 俯撑屈伸（俯卧撑/臂屈伸/倒立撑的各种变体） */
-  repProne: {
-    perCycle: true,
-    repBonus: 6,
-    steps: [
-      {
-        id: 'setup',
-        labelKey: 'steps.repProne.setup.label',
-        points: 5,
-        check: (f, d) => d.gateOk && f.bodyStraight >= 130,
-        hint: (f) => (f.bodyStraight < 130 ? H('steps.repProne.setup.hint') : H('steps.repProne.setup.pose')),
-      },
-      {
-        id: 'lower',
-        labelKey: 'steps.repProne.lower.label',
-        points: 7,
-        check: (f, d) => d.progress >= 0.35,
-        hint: () => H('steps.repProne.lower.hint'),
-      },
-      {
-        id: 'bottom',
-        labelKey: 'steps.repProne.bottom.label',
-        points: 14,
-        check: (f, d) => d.progress >= 0.80,
-        hint: () => H('steps.repProne.bottom.hint'),
-      },
-      {
-        id: 'press',
-        labelKey: 'steps.repProne.press.label',
-        points: 8,
-        check: (f, d) => d.peak >= 0.5 && d.progress <= 0.30,
-        hint: () => H('steps.repProne.press.hint'),
-      },
-    ],
-  },
-
   /* 仰卧抬起（卷腹/抬腿/臀桥/龙旗） */
   repSupine: {
     perCycle: true,

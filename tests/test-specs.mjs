@@ -70,8 +70,8 @@ console.log('\n[1] 每个动作都有技术指标');
       JSON.stringify([...new Set(items.map((it) => it.op))]));
     ok(`${id}：带指标的条目一定带比较符`, items.every((it) => !it.metricKey || it.op || it.textKey));
   }
-  ok('动作库里 22 个动作都有指标（弓步跳已删除、新增勾腿跳）',
-    ALL.length === 22 && ALL.every((id) => itemsOf(id).length > 0), `实际 ${ALL.length}`);
+  ok('动作库里 20 个动作都有指标（弓步跳、宽距/窄距俯卧撑已删除、新增勾腿跳）',
+    ALL.length === 20 && ALL.every((id) => itemsOf(id).length > 0), `实际 ${ALL.length}`);
 }
 
 /* ------------------------------------------------------------------ *
@@ -342,7 +342,8 @@ console.log('\n[6] 所有指标文案键在中英两种语言里都存在');
 
 console.log('\n[7] 姿态提醒阈值来自 ADVISORY_LIMITS');
 {
-  const prone = itemsOf('pushupWide').filter((it) => it.noteKey === 'spec.note.adviceOnly');
+  // 宽距 / 窄距俯卧撑已按用户要求删除 —— 俯撑类的姿态提醒改由登山者（同一个 prone 门控）覆盖
+  const prone = itemsOf('mountainClimber').filter((it) => it.noteKey === 'spec.note.adviceOnly');
   ok('俯撑类：身体直线角提醒 = ADVISORY_LIMITS.prone.bodyStraight',
     prone.some((it) => it.metricKey === 'metric.body' && it.value === ADVISORY_LIMITS.prone.bodyStraight));
   ok('俯撑类：塌腰偏差提醒 = ADVISORY_LIMITS.prone.hipLineDev',

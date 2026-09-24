@@ -1803,8 +1803,6 @@ function calibOnce(cal, lm, now) {
       buttKick: 'side',
       standingForwardFold: 'side',
       pushup: 'pushup',
-      pushupWide: 'pushup',
-      pushupDiamond: 'pushup',
       mountainClimber: 'pushup',
       plank: 'plank',
       sidePlank: 'plank',

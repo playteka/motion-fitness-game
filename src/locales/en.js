@@ -338,16 +338,6 @@ export default {
       howto: ['Plant your forearms directly under your shoulders (or use straight arms)', 'Brace your core — head, back, hips and ankles in one line', 'Breathe steadily and keep holding', 'If your form breaks, the timer pauses automatically'],
       tips: ['Don’t let your hips rise or drop', 'Push your shoulder blades away from the floor', 'Stop when you can’t hold it — don’t push through back pain'],
     },
-    pushupWide: {
-      name: 'Wide Push-Up',
-      cameraHint: 'Stand side-on to the camera with your hands wider than your shoulders',
-      goal: 'Hands wider than your shoulders, elbows bending to 90° or less',
-    },
-    pushupDiamond: {
-      name: 'Diamond Push-Up',
-      cameraHint: 'Stand side-on to the camera with your hands together in a diamond under your chest',
-      goal: 'Hands in a diamond shape, elbows tucked in as you lower',
-    },
     squatSumo: {
       name: 'Sumo Squat',
       cameraHint: 'Face the camera with your feet about 1.5 shoulder-widths apart and your toes turned out',
@@ -534,25 +524,6 @@ export default {
       close: {
         label: 'Jump back together to the start position',
         hint: 'Feet back together and arms down completes the rep',
-      },
-    },
-    repProne: {
-      setup: {
-        label: 'Set up with your body in one straight line from head to feet',
-        pose: 'Set up in the support position first: hands under your shoulders, body in one line',
-        hint: 'Tighten your body into one straight line — no sagging, no piking',
-      },
-      lower: {
-        label: 'Bend your elbows and lower your body',
-        hint: 'Bend your elbows and lower slowly',
-      },
-      bottom: {
-        label: 'Lower to the target depth (top-scoring step)',
-        hint: 'A little lower — bring your chest toward the floor',
-      },
-      press: {
-        label: 'Press back up to straight arms',
-        hint: 'Press back up and straighten your arms',
       },
     },
     repSupine: {
@@ -997,10 +968,6 @@ export default {
     repStand: {
       howto: ['Stand tall with both feet planted', 'Send your hips back and down, bending your knees over your toes', 'Reach the target depth, then drive back up to standing'],
       tips: ['Don’t let your knees cave inward', 'Keep your back straight — don’t round it', 'Keep your weight over your whole foot'],
-    },
-    repProne: {
-      howto: ['Hands under your shoulders, body in one straight line from head to feet', 'Brace your core and bend your elbows to lower slowly', 'Press back up — straight arms complete the rep'],
-      tips: ['Don’t let your hips sag or pike up', 'Keep your wrists directly under your shoulders', 'Lower slowly and press up hard'],
     },
     repSupine: {
       howto: ['Lie on your back on the mat and set up your starting position', 'Brace your abs and lift your body or legs to the target', 'Lower back to the start position under control'],

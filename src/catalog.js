@@ -88,22 +88,14 @@ export const isTimedReps = (meta) => !!meta && meta.kind !== 'hold' && (meta.sec
 export const targetUnitKey = (meta) => (meta.kind === 'hold' || isTimedReps(meta) ? SEC : REP);
 
 /* ------------------------------------------------------------------ *
- * 动作库：上肢 3 / 下肢 6 / 核心 6 / 全身 5 / 拉伸 2（共 22 个动作）
- * （「弓步跳」已按用户要求删除）
+ * 动作库：上肢 1 / 下肢 6 / 核心 6 / 全身 5 / 拉伸 2（共 20 个动作）
+ * （「弓步跳」「宽距俯卧撑」「窄距俯卧撑」已按用户要求删除）
  * ------------------------------------------------------------------ */
 
 export const EXERCISES = [
   /* ================= 上肢 ================= */
   e('pushup', '💪', 'upper', {
     engine: 'builtin', plan: 'pushup', posture: 'prone', judge: 'elbow', target: 12,
-  }),
-  e('pushupWide', '↔️', 'upper', {
-    plan: 'repProne', posture: 'prone', judge: 'elbow', target: 12,
-    params: bend({ metric: 'elbow', gate: 'prone', up: 152, down: 118, minRepMs: 340 }),
-  }),
-  e('pushupDiamond', '💎', 'upper', {
-    plan: 'repProne', posture: 'prone', judge: 'elbow', target: 10,
-    params: bend({ metric: 'elbow', gate: 'prone', up: 152, down: 110, minRepMs: 340 }),
   }),
 
   /* ================= 下肢 ================= */
