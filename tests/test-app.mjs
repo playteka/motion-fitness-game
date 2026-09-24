@@ -422,6 +422,21 @@ console.log('\n[1b] 运动设定弹窗');
     api.renderExerciseSettings();
   }
 
+  // 死虫式：用户反馈「关键帧判别标准都不对」→ 判据重做成「腿伸出去的程度」+「另一条腿留在桌面位」
+  {
+    api.openExercise('deadBug');
+    api.renderExerciseSettings();
+    const bugHtml = elements.get('exerciseSpecs').innerHTML;
+    ok('死虫式：关键帧短标签是「伸腿 / 换腿」（进度条悬停与弹窗里都是这两个词）',
+      bugHtml.includes('伸腿') && bugHtml.includes('换腿'), bugHtml.slice(0, 300));
+    ok('死虫式：判据是「膝角与髋角取小」的伸腿程度（弹窗里出现 132 与「膝角与髋角」）',
+      bugHtml.includes('132') && bugHtml.includes('膝角与髋角'), bugHtml.slice(0, 400));
+    ok('死虫式：「另一条腿留在桌面位」用「且」写成附加条件（出现「且」和 120）',
+      bugHtml.includes('且') && bugHtml.includes('120'), bugHtml.slice(0, 500));
+    api.openExercise('pushup');
+    api.renderExerciseSettings();
+  }
+
   // ===== 关键帧 + 判分标准：用户要求「把对应动作的关键帧判别标准以及对应的判分标准列出来」 =====
   {
     const { specStages: stagesOf, stagePoints } = await import('../src/specs.js');

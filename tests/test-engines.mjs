@@ -217,7 +217,8 @@ function crunchCycle(topTorsoUp) {
 
 /**
  * 死虫式：仰卧屈膝（两膝朝天），把 extSide 那条腿伸直推出（膝盖放平 → 膝角 180°）。
- * 交替伸直左右腿就是「一次换边」；extSide = null 时两条腿都屈着（俯卧撑式的过渡姿势）。
+ * 交替伸直左右腿就是「一次换边」；extSide = null 时两条腿都屈着（桌面位/过渡姿势），
+ * extSide 传数组（如 `['L','R']`）时两条腿一起伸出去 —— 用来验证「一次只伸一条腿」这条规则。
  */
 function deadBugPose(extSide, o = {}) {
   const hip = o.hip ?? { x: 0.75, y: 0.86 };
@@ -225,15 +226,18 @@ function deadBugPose(extSide, o = {}) {
     hip, thighUp: o.thighUp ?? 55, knee: o.knee ?? 100, torsoUp: 270, armDown: -90, elbow: 178,
   });
   const out = base.map((p) => ({ ...p }));
-  if (!extSide) return out;
+  const sides = extSide == null ? [] : (Array.isArray(extSide) ? extSide : [extSide]);
+  if (!sides.length) return out;
   const dir = o.extUp ?? 90;              // 伸直的腿指向（90 = 水平推出）
-  const kneePos = add(hip, up(dir), SEG.thigh);
-  const anklePos = add(kneePos, up(dir), SEG.shin);
-  const put = (i, q) => { out[i] = { ...out[i], x: q.x / ASPECT, y: q.y }; };
-  put(extSide === 'L' ? LM.L_KNEE : LM.R_KNEE, kneePos);
-  put(extSide === 'L' ? LM.L_ANKLE : LM.R_ANKLE, anklePos);
-  put(extSide === 'L' ? LM.L_HEEL : LM.R_HEEL, add(anklePos, up(dir + 90), 0.07));
-  put(extSide === 'L' ? LM.L_FOOT : LM.R_FOOT, add(anklePos, up(dir + 90), -0.13));
+  for (const s of sides) {
+    const kneePos = add(hip, up(dir), SEG.thigh);
+    const anklePos = add(kneePos, up(dir), SEG.shin);
+    const put = (i, q) => { out[i] = { ...out[i], x: q.x / ASPECT, y: q.y }; };
+    put(s === 'L' ? LM.L_KNEE : LM.R_KNEE, kneePos);
+    put(s === 'L' ? LM.L_ANKLE : LM.R_ANKLE, anklePos);
+    put(s === 'L' ? LM.L_HEEL : LM.R_HEEL, add(anklePos, up(dir + 90), 0.07));
+    put(s === 'L' ? LM.L_FOOT : LM.R_FOOT, add(anklePos, up(dir + 90), -0.13));
+  }
   return out;
 }
 
@@ -828,6 +832,62 @@ console.log('\n[6] alt 引擎：左右交替');
   ok('死虫式：两条腿都屈着（没有交替）不计数', det.validReps === before + 1, `实际 ${det.validReps}`);
 }
 {
+  // ===== 死虫式的判据重做（用户反馈「关键帧判别标准我感觉都不对」）=====
+  // 判的不再是「膝角 ≥150°」，而是「腿**伸出去**」= 膝角与髋角里更小的那个 ≥132°，
+  // 并且**另一条腿必须留在桌面位**（一次只伸一条腿）。
+  {
+    // 错法①：只把小腿踢直、大腿还竖在桌面位（脚朝天）—— 膝角 180° 但髋角只有 90°
+    const det = createDetector('deadBug');
+    makeRunner(det).run([{ pose: deadBugPose('L', { extUp: 0 }), ms: 1200 }]);
+    ok('死虫式：只把小腿踢直（脚朝天、大腿还竖着）不算一次', det.validReps === 0, `实际 ${det.validReps}`);
+  }
+  {
+    // 错法②：腿朝地面放下去、但膝盖还屈着 —— 髋角够了、膝角不够
+    const det = createDetector('deadBug');
+    makeRunner(det).run([{ pose: deadBugPose('L', { extUp: 150 }), ms: 1200 }]);
+    ok('死虫式：腿放下了但膝盖还屈着也不算一次', det.validReps === 0, `实际 ${det.validReps}`);
+  }
+  {
+    // 错法③：两条腿一起伸出去（是另一个动作），不再按「更深的那一侧」白记一次
+    const det = createDetector('deadBug');
+    makeRunner(det).run([
+      { pose: deadBugPose(null), ms: 500 },
+      { pose: deadBugPose(['L', 'R']), ms: 1200 },
+      { pose: deadBugPose(null), ms: 500 },
+    ]);
+    ok('死虫式：两条腿一起伸出去不计数（另一条腿必须留在桌面位）', det.validReps === 0, `实际 ${det.validReps}`);
+  }
+  {
+    // 宽松：腿伸出去但没完全贴地（指向 60°，legOut ≈150°）照样计次
+    const det = createDetector('deadBug');
+    const r = makeRunner(det);
+    r.run([
+      { pose: deadBugPose(null), ms: 400 },
+      { pose: deadBugPose('L', { extUp: 60 }), ms: 900 },
+      { pose: deadBugPose(null), ms: 400 },
+      { pose: deadBugPose('R', { extUp: 60 }), ms: 900 },
+    ]);
+    atLeast('死虫式：腿没完全贴地（legOut ≈150°）也要计次', det.validReps, 2);
+  }
+  {
+    // 边界：换边时「刚伸完的那条腿还在往回走」，这一次伸腿不能被丢掉（挂起后补记）
+    const det = createDetector('deadBug');
+    const r = makeRunner(det);
+    const fast = [];
+    for (let i = 0; i < 6; i += 1) fast.push({ pose: deadBugPose(i % 2 ? 'R' : 'L'), ms: 520 });
+    r.run(fast);
+    atLeast('死虫式：连续快速换边 6 次要计到 5 次以上（换边瞬间不丢次数）', det.validReps, 5);
+    // 🐞 面板：把「另一条腿必须留在桌面位」这条规则也摆出来（另外两条腿的读数就是 legOut）
+    const d = det.diag();
+    const got = (key) => d.find((x) => x.key === key)?.value;
+    ok('死虫式：诊断行给出两条腿「伸出去的程度」读数',
+      /^L:\d+✓? R:\d+✓?$/.test(got('debug.diag.sides')),
+      String(got('debug.diag.sides')));
+    ok('死虫式：诊断行给出「另一条腿必须 ≤120°」这条规则',
+      got('debug.diag.otherHold') === '≤120', String(got('debug.diag.otherHold')));
+  }
+}
+{
   // 登山者（手搓帧）：一侧膝收到 85°、另一侧伸直 178°
   const det = createDetector('mountainClimber');
   const r = makeFrameRunner(det);
@@ -886,6 +946,9 @@ console.log('\n[6] alt 引擎：左右交替');
   ok('勾腿跳：诊断行给出当前侧与「上一侧 / 间隔」',
     got('debug.diag.side') === 'L' && /^[LR] \d+ms$/.test(got('debug.diag.lastSide')),
     `${got('debug.diag.side')} / ${got('debug.diag.lastSide')}`);
+  // 勾腿跳故意**没有**「另一条腿必须休息」这条规则（见 AltRepDetector.otherHold 的说明）
+  ok('勾腿跳：没有「另一条腿必须留在休息位」这条额外规则', got('debug.diag.otherHold') === undefined,
+    String(got('debug.diag.otherHold')));
 }
 {
   // ===== 用户反馈「跳得很快还是计不上」：**很快的勾腿一帧就完成**，必须也算一次 =====

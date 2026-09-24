@@ -109,9 +109,24 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const perSide = {};
   for (const s of ['L', 'R']) {
     const I = SIDE_IDX[s];
+    const knee = angleAt(I.hip, I.knee, I.ankle);
+    const hip = angleAt(I.shoulder, I.hip, I.knee);
     perSide[s] = {
-      knee: angleAt(I.hip, I.knee, I.ankle),
-      hip: angleAt(I.shoulder, I.hip, I.knee),
+      knee,
+      hip,
+      /**
+       * 单侧「腿伸出去的程度」= **膝角与髋角里更小的那个**。
+       *
+       * 死虫式用的就是它。为什么不能只看一个角：
+       *   - 只看膝角：「大腿还竖在桌面位、只把小腿踢直（脚朝天）」也会满足 —— 那不是死虫式；
+       *   - 只看髋角：「腿朝地面放下去、但膝盖还屈着」也会满足 —— 腿并没有伸出去。
+       * 取两者的小值 = **两个都到位**才算真的把腿伸出去，而且它仍然是「度」，
+       * 可以和别的关节角一样比较、显示、画成图标。
+       *
+       * 参考值（侧对镜头的仰卧姿）：桌面位（大腿竖直、膝屈 90°）≈ **90°**；
+       * 腿伸出去贴地 ≈ **170°~180°**。
+       */
+      legOut: Math.min(knee, hip),
       elbow: angleAt(I.shoulder, I.elbow, I.wrist),
       // 踝角（膝-踝-脚背）：平地站立 ≈ 110，踮脚 ≈ 150 —— 提踵类动作靠它判定
       ankle: angleAt(I.knee, I.ankle, I.foot),

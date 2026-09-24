@@ -270,6 +270,8 @@ export const SIDE_METRICS = {
   wristClear: (f, s) => f.perSide?.[s]?.wristClear,
   kneeClear: (f, s) => f.perSide?.[s]?.kneeClear,
   ankleY: (f, s) => f.perSide?.[s]?.ankleY,
+  // 单侧「腿伸出去的程度」（膝角与髋角取小，见 metrics.js）：死虫式用它
+  legOut: (f, s) => f.perSide?.[s]?.legOut,
 };
 
 /**
@@ -564,6 +566,33 @@ class AltRepDetector extends DetectorBase {
      * 那条是真勾起来的腿（见 countRises）。两条腿一样深（一起弯，不是交替）不认。
      */
     this.leadMin = p.leadMin ?? 18;
+    /**
+     * 「另一侧必须还在休息位」的额外条件（可选，**死虫式在用**）。
+     *
+     * 勾腿跳故意**不**要求这个（真人快跳时支撑腿会跟着下沉，见 countRises 的说明）；
+     * 但死虫式的动作要点恰恰相反 —— **一次只伸一条腿，另一条腿留在屈膝 90° 的桌面位上**。
+     * 没有这条约束时，「两条腿一起伸出去」（是另一个动作、也常常是作弊）会按
+     * 「更深的那一侧」计上一次，用户看到的就是「判别标准不对」。
+     *
+     * 形如 `{ metric: 'legOut', cmp: 'lt', value: 120 }` = 「另一侧的 legOut ≤ 120°」。
+     * 读不到数值时**不拦**（宁可放过也不要漏计）。
+     */
+    this.otherHold = p.otherHold || null;
+    /**
+     * 「挂起的上升沿」最多等多久（毫秒，见 flushPending）。
+     * 换边时另一条腿大概 200~400ms 就回到桌面位了，1.2 秒还没回去说明是真的两条腿一起动。
+     */
+    this.pendingMs = p.pendingMs ?? 1200;
+  }
+
+  /** 另一侧现在是不是还在休息位（没配 otherHold 就永远成立） */
+  otherSideRestOk(f, side) {
+    if (!this.otherHold) return true;
+    const read = SIDE_METRICS[this.otherHold.metric] || SIDE_METRICS.knee;
+    const v = read(f, side);
+    if (!Number.isFinite(v)) return true;
+    const cmp = this.otherHold.cmp || 'lt';
+    return cmp === 'lt' ? v <= this.otherHold.value : v >= this.otherHold.value;
   }
 
   onReset() {
@@ -573,6 +602,9 @@ class AltRepDetector extends DetectorBase {
     this.lastAt = 0;
     this.gateOk = false;
     this._badFrames = 0;
+    /** 挂起的『已经伸出来、但另一条腿还没回到休息位』的那一侧（见 flushPending） */
+    this.pendingSide = null;
+    this.pendingAt = 0;
     /** 每一侧「现在正在做」的迟滞状态（进入用 onValue、退出用 offValue）—— 只用于显示 */
     this.sideOn = { L: false, R: false };
     /** 每一侧这一轮「在做」是从什么时候开始的（用于 strokeMs 超时退出） */
@@ -662,8 +694,24 @@ class AltRepDetector extends DetectorBase {
       if (deep && !this.wasDeep[s]) rise.push(s);
       this.wasDeep[s] = deep;
     }
+    // 先处理上一帧被「另一条腿还在动」挡下来的那一侧
+    this.flushPending(f, now);
+    if (!rise.length) return;
+    // 配了 otherHold 的动作（死虫式）：另一条腿必须还在休息位，一次只做一条腿。
+    // 不满足时先把这一侧**挂起来**（见 flushPending），不要因为换边那一瞬间
+    // 「刚伸完的腿还在往回走」就把这一次伸腿丢掉。
+    const allow = (side) => {
+      const other = side === 'L' ? 'R' : 'L';
+      if (this.otherSideRestOk(f, other)) return true;
+      const readOther = SIDE_METRICS[this.otherHold.metric] || SIDE_METRICS.knee;
+      this.reject('otherSide', `${other}:${fmt(readOther(f, other))}`);
+      this.pendingSide = side;
+      this.pendingAt = now;
+      return false;
+    };
     if (rise.length === 1) {
       // 恰好一侧刚进入「在做」→ 这一侧的这次动作算一次
+      if (!allow(rise[0])) return;
       if (rise[0] !== this.lastSide) this.switched = false;   // 新的一侧刚开始：等这次做完再点亮
       this.countRep(rise[0], now);
       return;
@@ -674,11 +722,40 @@ class AltRepDetector extends DetectorBase {
       const vb = val[b];
       const deeper = this.cmp === 'lt' ? (va <= vb ? a : b) : (va >= vb ? a : b);
       const lead = Math.abs(va - vb);
-      if (Number.isFinite(lead) && lead >= this.leadMin) {
+      if (Number.isFinite(lead) && lead >= this.leadMin && allow(deeper)) {
         if (deeper !== this.lastSide) this.switched = false;
         this.countRep(deeper, now);
       }
     }
+  }
+
+  /**
+   * 补记「挂起的那一次伸腿」。
+   *
+   * 为什么需要它：换边那一瞬间，**刚伸完的那条腿还在往回走**（平滑之后约 200~400ms 才回到桌面位），
+   * 而另一条腿已经伸出去了 —— 上升沿正好落在「另一条腿还没到位」的几帧里。
+   * 如果那一帧直接把上升沿丢掉，这一整次伸腿就永远计不上（实测：换边 4 次只计 1 次）。
+   * 所以先挂起，等另一条腿真的回到休息位、并且这一侧**还伸着**的时候再计一次；
+   * 如果这一侧先收回来了（说明这次交替根本没做完），就放弃，不补记。
+   *
+   * 挂起超过 pendingMs 还没等到 → 认为真的是两条腿一起动：出声纠正一次（顺带说明原因）。
+   */
+  flushPending(f, now) {
+    if (!this.pendingSide) return;
+    const side = this.pendingSide;
+    const other = side === 'L' ? 'R' : 'L';
+    const read = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee);
+    if (!this.isActive(read(f, side))) { this.pendingSide = null; return; }
+    if (!this.otherSideRestOk(f, other)) {
+      if (now - this.pendingAt > this.pendingMs) {
+        this.pendingSide = null;
+        this.cue('otherSide', null, 'warn', now, 6000);
+      }
+      return;
+    }
+    this.pendingSide = null;
+    if (side !== this.lastSide) this.switched = false;
+    this.countRep(side, now);
   }
 
   /**
@@ -722,6 +799,13 @@ class AltRepDetector extends DetectorBase {
     return [
       { key: 'debug.diag.sides', value: `${one('L')} ${one('R')}` },
       { key: 'debug.diag.line', value: line },
+      // 死虫式：另一条腿必须留在桌面位（这条不满足时这一帧不会计次，所以单独摆出来）
+      ...(this.otherHold
+        ? [{
+          key: 'debug.diag.otherHold',
+          value: `${this.otherHold.cmp === 'gt' ? '≥' : '≤'}${fmt(this.otherHold.value)}`,
+        }]
+        : []),
       { key: 'debug.diag.side', value: this.sideNow || '—' },
       { key: 'debug.diag.lastSide', value: `${this.lastSide || '—'} ${this.lastAt ? `${Math.round(this._lastNow - this.lastAt)}ms` : ''}`.trim() },
       ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),

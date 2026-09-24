@@ -203,7 +203,7 @@ const spanFor = (l1, l2, deg) => Math.sqrt(Math.max(0.01, l1 * l1 + l2 * l2 - 2 
 function buildLie({
   tilt = 90, hip = 178, knee = 100, elbow = 178, rise = 0,
   support = false, shoulderRise = 0, bodyLift = 0, hipLift = 0, kneeLift = 0,
-  handMark = false, face = 'down',
+  handMark = false, face = 'down', hip2 = NaN, knee2 = NaN,
 } = {}) {
   const lines = [];
   const circles = [];
@@ -220,6 +220,22 @@ function buildLie({
   const kneeP = add(hipP, up(thighDir), SEG.thigh);
   const ankle = add(kneeP, up(thighDir - (180 - num(knee, 100))), SEG.shin);
   lines.push(seg(hipP, kneeP), seg(kneeP, ankle));
+
+  /**
+   * 第二条腿（远侧腿）：死虫式要看出「**一条腿伸出去、另一条腿还屈在桌面位**」，
+   * 光画一条腿看不出「一次只伸一条腿」这件事（用户反馈死虫式的关键帧不对）。
+   *
+   * 远侧腿整体往身体前方（+x，也就是脚的方向）挪一点点、并且稍微抬高一点，
+   * 两条腿就不会完全重叠 —— 和勾腿跳里近侧/远侧腿的处理一个道理。
+   */
+  let hipP2 = null;
+  if (Number.isFinite(hip2)) {
+    hipP2 = add(hipP, { x: 0.085, y: -0.035 });
+    const d2 = tilt - hip2;
+    const kneeP2 = add(hipP2, up(d2), SEG.thigh);
+    const ankle2 = add(kneeP2, up(d2 - (180 - num(knee2, 100))), SEG.shin);
+    lines.push(seg(hipP2, kneeP2), seg(kneeP2, ankle2));
+  }
 
   // 「髋离地 / 膝离地」：把这一段整体抬起来，与地面拉开肉眼可见的空隙
   if (hipLift > 0) { hipP.y -= hipLift; kneeP.y -= hipLift * 0.4; }
@@ -585,6 +601,39 @@ export function poseFor(stage, ctx = {}) {
       return { builder: 'lie', params: { tilt: 90, hip: 150, knee: clamp(value, 60, 180), face: 'down', support: true }, criterion: { knee: value }, drawn: { knee: clamp(value, 60, 180) } };
     case 'otherSide':
       return { builder: 'lie', params: { tilt: 90, hip: 176, knee: clamp(value, 60, 180), face: 'down', support: true }, criterion: { knee: value }, drawn: { knee: clamp(value, 60, 180) } };
+    /**
+     * 死虫式（`metric.oneSideLeg` / `metric.otherSideLeg`）：**仰卧 + 一条腿伸出去 + 另一条腿留在桌面位**。
+     *
+     * 为什么单独一档：落到通用的 `oneSide`/`otherSide` 分支会被画成**脸朝下的俯卧**图
+     * （那是登山者的样子），而这两格的判据根本不是膝角、也不是俯撑。
+     * 这里两格都画仰卧：第二格近侧腿伸出去（远侧腿屈在桌面位），第三格反过来（远侧腿伸出去），
+     * 再给第三格补一个向下箭头 —— 否则两格几乎一样，「换另一条腿」这件事看不出来。
+     */
+    case 'oneSideLeg':
+    case 'otherSideLeg': {
+      // 画的是**姿态**而不是判据那个数字：132° 是「至少伸到这里就算」的下限，
+      // 真按 132° 画出来（大腿离竖直才 40°）和桌面位的 118° 几乎看不出区别。
+      // 这和 gatePose 的取舍一致：门槛值是下限，不是姿态本身。
+      const tee = { hip: 118, knee: 96 };          // 桌面位：大腿竖直、膝屈 ≈90°
+      const out = { hip: 168, knee: 175 };         // 腿伸出去贴地（膝伸直、大腿从桌面位展开）
+      const working = metric === 'oneSideLeg';
+      const far = working ? tee : out;             // 远侧腿：第二格还屈着，第三格才是它伸出去
+      return {
+        builder: 'lie',
+        params: {
+          tilt: 92,
+          face: 'up',
+          elbow: 172,
+          hip: working ? out.hip : tee.hip,
+          knee: working ? out.knee : tee.knee,
+          hip2: far.hip,
+          knee2: far.knee,
+          ...(working ? {} : { mark: 'down' }),
+        },
+        criterion: { legOut: num(value, 132) },
+        drawn: { hip: out.hip },
+      };
+    }
     default:
       return gatePose(posture, value, stages, metric, ctx);
   }
@@ -600,6 +649,14 @@ function gatePose(posture, value, stages, metric, ctx = {}) {
     case 'prone':
       return { builder: 'lie', params: { tilt: 90, hip: 178, knee: 172, elbow: 178, face: 'down', support: true } };
     case 'supine':
+      // 死虫式的第一格是「**桌面位**」：仰卧、双臂朝天、双腿屈膝 90° ——
+      // 两条腿都画出来（只画一条看不出「双腿屈膝」这个起始姿势）。
+      if (ctx.plan === 'repAlt') {
+        return {
+          builder: 'lie',
+          params: { tilt: 92, hip: 118, knee: 96, hip2: 118, knee2: 96, face: 'up', elbow: 172 },
+        };
+      }
       return { builder: 'lie', params: { tilt: 92, hip: 118, knee: 96, face: 'up', elbow: 172 } };
     case 'side':
       return { builder: 'lie', params: { tilt: 90, hip: 175, knee: 150, face: 'side', elbow: 168, support: true } };

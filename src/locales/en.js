@@ -293,8 +293,9 @@ export default {
       hold: 'Held',
       pose: 'Posture',
       // Alternating exercises (butt kick / mountain climber / dead bug): both legs, the alternation lines, last side
-      sides: 'Knees L/R',
+      sides: 'Both sides',
       line: 'Line (enter/exit)',
+      otherHold: 'Other-leg rule',
       side: 'Current side',
       lastSide: 'Last side/gap',
       reject: 'Last not counted',
@@ -392,8 +393,15 @@ export default {
     },
     deadBug: {
       name: 'Dead Bug',
-      cameraHint: 'Turn sideways to the camera, lying on your back with arms and legs up',
-      goal: 'Reach the opposite arm and leg out straight together, alternating sides',
+      cameraHint: 'Turn sideways to the camera, lying on your back with knees bent and arms up',
+      goal: 'Tabletop position: one leg extends at a time with the opposite arm reaching overhead, lower back stays down, alternating sides',
+      howto: [
+        'Lie on your back in the tabletop position: thighs vertical, shins parallel to the floor, arms straight up, lower back pressed down',
+        'Brace your abs and slowly reach one leg out toward the floor — the knee straightens and the thigh opens away from your body',
+        'At the same time lower the opposite arm overhead, while the other leg stays bent in the tabletop position',
+        'Bring it back and extend the other leg — alternating sides (each switch counts one rep)',
+      ],
+      tips: ['Keep your lower back pressed to the floor — no arching', 'One leg at a time: the other leg must not move', 'Slower is harder — stay controlled and even'],
     },
     burpee: {
       name: 'Burpee',
@@ -774,6 +782,9 @@ export default {
     lift: 'Lift off the floor',
     oneSide: 'Knee angle on the working side',
     otherSide: 'Knee angle on the other side',
+    // Dead bug: the criterion is "how far the leg reaches out" = the smaller of knee and hip angle
+    oneSideLeg: 'Reach of the extending leg (smaller of knee/hip)',
+    otherSideLeg: 'Reach of the other leg (smaller of knee/hip)',
   },
 
   spec: {
@@ -788,6 +799,7 @@ export default {
     roundBonus: 'perfect round',
     perSecondSuffix: '/s',
     orAlt: 'or',
+    andAlso: 'and',
     poseExtra: 'Also required: ',
     depthLine: 'Full depth (earns the depth points): ',
     wobbleLine: 'Anything shallower is just a wobble: ',
@@ -855,6 +867,10 @@ export default {
     adviceLegStraight: 'Keep the leg straight (knee angle)',
     altOn: 'One side enters the movement',
     altSwitch: 'The other side does it too',
+    // Dead bug: keyframes say what this exercise actually does — "extend one leg" / "extend the other"
+    altOnDeadBug: 'Extend one leg',
+    altSwitchDeadBug: 'Extend the other leg too',
+    altOtherHold: 'Keep the other leg in the tabletop',
     altHold: 'How long the movement must be held',
     altGap: 'Gap between two counted reps',
     twistAmount: 'Twist range of the upper body',
@@ -879,6 +895,9 @@ export default {
       rest: 'Return',
       // Last segment for alternating exercises: the other leg does it too (that is the counting moment)
       switch: 'Switch',
+      // Dead bug: extend a leg / extend the other leg
+      extend: 'Extend',
+      extendOther: 'Switch',
       prone: 'Plank',
       supine: 'Supine',
       side: 'Side',
@@ -927,10 +946,17 @@ export default {
       bodyStraight: 'A body that is not in one line only triggers a spoken reminder and a discounted quality score — it never costs you a rep.',
       shoulderOnFloor: 'The shoulders must stay on the floor (past this line means you are not lying down).',
       altOn: 'One side has to enter this range to count as “working”.',
-      altSwitch: 'The other side has to reach the same range (≤{v}°); the moment the switch lands, one rep is counted. '
-        + 'The side you just used has to come back to ≥{rest}°, and two reps have to be at least {gap} s apart.',
+      altSwitch: 'The other side has to reach the same range ({dir}{v}°); the moment the switch lands, one rep is counted. '
+        + 'The side you just used has to come back to {rel}{rest}°, and two reps have to be at least {gap} s apart.',
       altHold: 'The working side has to stay there this long to count once (filters out jitter).',
       altGap: 'At least this much time between two counted reps.',
+      altOtherHold: '**The other leg has to stay in the starting position** (for the dead bug: the bent-knee tabletop at 90°) — '
+        + 'when this does not hold, that frame is not counted, because “both legs extending at once” is a different exercise, not the dead bug alternation.',
+      altOnDeadBug: 'The dead bug judges how far the **leg reaches out**, not how much the knee bends: this number is the **smaller of the knee angle and the hip angle** — '
+        + 'the knee has to be close to straight AND the thigh has to genuinely open away from the tabletop (≈90°). Both must arrive, so “thigh still vertical, only the shin kicked straight up” does not count, '
+        + 'and neither does “leg lowered but the knee still bent”.',
+      altSwitchDeadBug: 'The other leg has to reach out the same way ({dir}{v}°); the moment the switch lands, one rep is counted. '
+        + 'The leg you just extended has to return to the tabletop first ({rel}{rest}°), and two reps have to be at least {gap} s apart.',
       twistAmount: 'The upper body must twist past this range to count a twist.',
       sequence: 'Stage {n}/{total}: every stage has to be hit in order.',
       seqWindow: 'The whole sequence must finish within this time, otherwise counting restarts.',
@@ -961,6 +987,7 @@ export default {
     pose: 'Your form has drifted off the target — fix it before you continue',
     bothKnees: 'Bend both legs — the back leg has to bend and sink down too',
     straightLegs: 'Keep the leg straight — don’t bend the knee, lift the whole leg with your core',
+    otherSide: 'One leg at a time — keep the other leg bent at 90° in the tabletop instead of extending it too',
   },
 
   /* ---------------- Movement-family form templates ---------------- */

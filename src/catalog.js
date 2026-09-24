@@ -180,10 +180,35 @@ export const EXERCISES = [
   }),
   e('deadBug', '🐞', 'core', {
     engine: 'alt', plan: 'repAlt', posture: 'supine', judge: 'leg', target: 16,
-    // 「进入在做」= 腿伸出去（膝角 ≥150°），「退出」 110 → **125**：
-    // 和勾腿跳同一条经验（见那边的注释）—— 腿收回来时不会每次都弯到 110°，
-    // 退出线太紧会让两侧状态锁死、后面的次数都计不上；150° 的进入线没动。
-    params: { gate: 'supineLow', metric: 'knee', cmp: 'gt', onValue: 150, offValue: 125, minRepMs: 400 },
+    /**
+     * 死虫式的判据**重做过**（用户反馈「关键帧判别标准我感觉都不对」）。
+     *
+     * 原来只用「一侧膝角 ≥150°」判「这一侧在做」，有两个方向的错：
+     *   ① 看出生动作会漏：把小腿踢直、大腿还竖在桌面位（脚朝天）也算「腿伸出去」，
+     *      那其实只是屈伸膝，不是死虫式；
+     *   ② 真做动作会漏：腿真的伸出去、但膝盖差几度没绷直（腿后侧紧的人很常见）就不计次；
+     *   ③ 两条腿一起伸出去也会计上（引擎按「更深的一侧」认一次），而死虫式的要点
+     *      恰恰是**一次只伸一条腿、另一条腿留在桌面位**。
+     *
+     * 现在：
+     *   - 判的是「腿伸出去的程度」`legOut` = **膝角与髋角里更小的那个**（见 metrics.js）：
+     *     膝盖要接近伸直、大腿也要真的从桌面位展开，两个都到位才算伸出去；
+     *     参考值：桌面位（大腿竖直、膝屈 90°）≈ 90°，伸出去贴地 ≈ 170°~180°。
+     *   - 计次线 132°：比桌面位深一大截，同时给「腿后侧紧、膝盖差一点」的人留足余量；
+     *   - `otherHold`：另一条腿必须还在休息位（legOut ≤ 120°），否则这一帧不计次 ——
+     *     两条腿一起伸出去不再算一次，而且会安静地不出声（只写诊断行）。
+     *   - 计次那一刻仍然是**换另一条腿也伸出去**（左右交替），和别的交替类动作一致。
+     */
+    params: {
+      gate: 'supineLow',
+      metric: 'legOut', cmp: 'gt',
+      onValue: 132, offValue: 112, minRepMs: 500,
+      otherHold: { metric: 'legOut', cmp: 'lt', value: 120 },
+      labelOnKey: 'spec.altOnDeadBug',
+      labelSwitchKey: 'spec.altSwitchDeadBug',
+      noteOnKey: 'spec.note.altOnDeadBug',
+      noteSwitchKey: 'spec.note.altSwitchDeadBug',
+    },
   }),
   e('crunch', '🌀', 'core', {
     plan: 'repSupine', posture: 'supine', judge: 'clear', target: 20,

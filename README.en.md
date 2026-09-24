@@ -1,4 +1,4 @@
-﻿# Motion Fitness Game
+# Motion Fitness Game
 
 [中文](README.md) · [English](README.en.md)
 
@@ -647,7 +647,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2155 assertions in the suite).
+> exactly on the detector's own progress line (2174 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -712,7 +712,7 @@ Calibration only checks that you're in position — it never counts reps or awar
 | 🦵 Lower body | Butt Kick 🏃 | **Timed counting** | Knee bend (kicking your heels up, alternating legs) | 60 seconds (see how many you can do) |
 | 🔥 Core | Plank 🧘 | Timed | Hold time | 45 sec |
 | 🔥 Core | Side Plank 🧎 | Timed | Whether your body position is on target (rough scoring) | 30 sec |
-| 🔥 Core | Dead Bug 🐞 | Reps | Left/right leg alternation | 16 reps |
+| 🔥 Core | Dead Bug 🐞 | Reps | Leg reach (smaller of knee/hip), alternating sides | 16 reps |
 | 🔥 Core | Crunch 🌀 | Reps | Shoulder height off the floor | 20 reps |
 | 🔥 Core | Reverse Crunch 🔃 | Reps | Hip hinge | 15 reps |
 | 🔥 Core | Lying Leg Raise 🦿 | Reps | Torso-to-leg angle (flat 180° → vertical 90°) | 15 reps |
@@ -899,7 +899,7 @@ On top of the 5 hand-written plans above, the remaining exercises share **family
 |---|---|---|
 | Standing bend | Sumo Squat, Reverse Lunge | Set up → bend your knees and sink → hit the target range → drive back to standing |
 | Supine lift | Crunch, Reverse Crunch, Lying Leg Raise | Lie down → start the movement → lift all the way → lower back under control |
-| Alternating | Dead Bug, Mountain Climber | Get into position → first tuck/extend → switch sides → keep the rhythm |
+| Alternating | Dead Bug, Mountain Climber | Get into position → first tuck/extend → switch sides → keep the rhythm (the **dead bug's criteria and keyframes were redesigned**, see below) |
 | Standing alternating | Butt Kick | Stand tall → kick one heel up → switch legs → keep the rhythm |
 | Multi-stage | Burpee | Stand → squat and plant your hands → complete the middle stage → stand up and finish |
 | Jump family | Jump Squat, Box Jump | Stand → bend your knees and load → **both feet off the floor** → land with bent knees |
@@ -908,6 +908,47 @@ On top of the 5 hand-written plans above, the remaining exercises share **family
 | Timed (stretch) | Standing Forward Fold, Seated Forward Fold | Enter the stretch → breathe and relax → hold 10 / 20 seconds |
 
 Timed family plans also give **+1 point for every second you hold**; if your form collapses for more than 1.2 seconds, the timer pauses and the voice reminds you.
+
+### Dead Bug (its criteria were redesigned after user feedback)
+
+> **The user reported: “the dead bug's keyframe criteria all feel wrong”** — and they were: it had been given the generic
+> alternating-family rule (**just one side's knee angle ≥150°**), which is wrong in three directions:
+>
+> | What was wrong | Why |
+> |---|---|
+> | ① A wrong movement also counted | Kicking only the shin straight with the **thigh still vertical in the tabletop (foot to the ceiling)** also satisfies “knee ≥150°”, but that is a knee extension, not a dead bug |
+> | ② A real rep did not count | The leg genuinely reached out but the knee was a few degrees short of straight (very common with tight hamstrings) |
+> | ③ Both legs extending together counted | When both legs cross the line on the same frame the engine credits the deeper side — but “one leg at a time” *is* the exercise |
+>
+> **The criteria now** (three keyframes):
+>
+> | Keyframe | Criterion | Reference values |
+> |---|---|---|
+> | ① Supine (tabletop) | Lying on your back (trunk tilt ≥36° + shoulders ≤0.6× torso off the floor); the icon draws the **tabletop**: both knees bent 90° with arms straight up | thighs vertical, knees at 90° |
+> | ② Extend (counting line) | **Leg reach ≥132°** **and** **the other leg stays in the tabletop ≤120°** | tabletop ≈90°, extended flat ≈170–180° |
+> | ③ Switch (counting moment) | The other leg reaches out too (≥132° while the first returns to ≤112°); the switch landing counts the rep | at least 0.5 s apart |
+>
+> - **“Leg reach” is a new metric `legOut` = the smaller of the knee angle and the hip angle** (`src/metrics.js`).
+>   A dead bug needs the knee nearly straight **and** the thigh genuinely opening away from the tabletop; both must arrive —
+>   the knee angle alone lets “foot to the ceiling” through, the hip angle alone lets “leg lowered but knee still bent” through,
+>   and taking the smaller value blocks both.
+> - **The other leg has to stay in the tabletop** (the engine's `params.otherHold`): it is a condition for counting and is shown
+>   in the same keyframe (“… **and** the other leg ≤120°”). Both legs extending together no longer scores a free rep.
+> - **The switch no longer eats a rep**: the leg you just extended needs roughly 200–400 ms to get back to the tabletop while the
+>   other leg is already reaching out, so the rising edge lands on frames where “the other leg is not home yet”. The detector now
+>   **holds that extension pending** and credits it as soon as the other leg really is back in the tabletop *and* this side is still
+>   extended (only after 1.2 s does it conclude “both legs are moving” and speak a correction).
+>   Before the fix: 4 switches counted 1; after: 6 fast switches count 6 (`tests/test-engines.mjs` guards it).
+> - **Keyframe names and icons changed too**: the short labels are “Extend / Switch” (no longer the generic “Work / Switch”) and the
+>   icons are drawn **supine** — the tabletop with both knees bent, then the near leg extended (far leg bent), then the reverse
+>   (far leg extended, plus a down arrow). These three segments used to fall into the generic branch and were drawn as a
+>   **face-down prone** figure (that is the mountain climber) with a knee-angle number, which looked plainly wrong.
+> - **The direction in the criteria text was fixed**: the alternating note had “≤” hard-coded, so the dead bug's modal claimed the
+>   counting line was “≤150°” — exactly backwards. It is now generated from `cmp` (dead bug “≥132° / return to ≤112°”, butt kick
+>   “≤126° / back to ≥132°”).
+> - The 🐞 panel adds a “Both sides” row (that `legOut` value) and an “Other-leg rule ≤120” row, so you can see which condition
+>   you are stuck on.
+
 
 > **How the lying leg raise is judged**: the criterion is literally the **torso-to-leg angle** (the angle between your legs and
 > your upper body, in degrees) — **flat on the floor with straight legs ≈ 180°** → lift the straight leg so the angle shrinks →
@@ -1038,7 +1079,9 @@ both with an adjustable duration in 🎯.
 > Two safeguards remain: the **hysteresis state** (enter 126° / exit 132°, used only for the on-screen depth bar and the 🐞 diagnosis,
 > never for counting) and the **700 ms timeout** (a side active for more than 0.7 s is considered finished, so no state can lock up).
 >
-> The same fixes apply to the **mountain climber** (enter 112° / exit 124°) and the **dead bug** (exit line 110° → 125°).
+> The same fixes apply to the **mountain climber** (enter 112° / exit 124°).
+> The **dead bug** later had its whole rule set redesigned at the user's request (its problem was never speed — it was judging
+> the wrong thing; see the dedicated section above).
 >
 > **Measured result** (real pipeline, one cycle = one kick on each leg; kicks reach a 70° knee angle): 700–300 ms per leg (1.4–6.7 kicks
 > per second) counts **103%–113%** at 30 fps; a support leg dipping 25° every step, shallower kicks (knee only to 100°) and narrow spikes
@@ -1213,10 +1256,10 @@ npm run test:app               # integration test that loads the real app.js wit
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
 | `tests/test-detectors.mjs` | 340 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the **sign baseline for the standing gate (butt kick) on real frames** (standing gives `Shoulders above hips ≈ +1.0` and `Hip lift ≈ −1.0` and passes the gate; lying down or standing on your head is blocked), **butt-kick counting across speeds** (real frames through the real pipeline: 1000 / 700 / 600 / 500 / 430 ms per cycle must all reach ≥90% of the expected reps, a 15 fps feed must still count, and a support leg that never straightens / shallower kicks / added noise are all accepted; counter-examples: jogging without kicking and both legs bending in phase must count nothing; boundaries: a knee reaching ~115° counts while one only reaching ~133° does not — the relaxed-mode trade-off), **the glute bridge's OR criterion** (the user's low lift height with a 170° hip angle at the top must count ≥4 reps, a half bridge at 160° must not reach the top, and a “safety rope” run with the height path's top line made unreachable must count nothing), **the loosened push-up counting line** (an elbow bottoming out at 145° must count ≥4 reps where it used to count none, a case at 148° with only a 0.079 shoulder drop still counts nothing, and a flattened elbow reading of 152°→140° accompanied by a real body drop still counts), the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
-| `tests/test-engines.mjs` | 188 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor, and the butt kick gate judging “shoulders above hips” rather than “hip lift”), feet off the floor when jumping, left/right alternation (including the butt kick: one kick on each leg is one rep, **a single-frame spike finished inside 33 ms still counts**, the same leg kicking repeatedly never inflates the count, both legs entering on the same frame is not an alternation, the `switched` flag, the “the other side is not kicking too” alternation rule, and the 🐞 diagnosis rows listing both legs plus the alternation lines), whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 766 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines (including the push-up's four shoulder-drop thresholds being ordered `start < close < count < full`, and its four elbow tiers `top > start > count > full depth`); posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 20 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria (including the standing butt-kick figures) and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
+| `tests/test-engines.mjs` | 196 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor, and the butt kick gate judging “shoulders above hips” rather than “hip lift”), feet off the floor when jumping, left/right alternation (including the butt kick: one kick on each leg is one rep, **a single-frame spike finished inside 33 ms still counts**, the same leg kicking repeatedly never inflates the count, both legs entering on the same frame is not an alternation, the `switched` flag, the “the other side is not kicking too” alternation rule, and the 🐞 diagnosis rows listing both legs plus the alternation lines; plus the **redesigned dead-bug criteria**: kicking only the shin straight (foot to the ceiling) does not count, a leg lowered with the knee still bent does not count, both legs extending together does not count, a leg that never quite reaches the floor (`legOut ≈150°`) still counts, six rapid switches lose no reps, and the diagnosis rows expose `legOut` plus the “other leg ≤120” rule), whole sequences, and pausing/resuming the timer |
+| `tests/test-specs.mjs` | 774 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines (including the push-up's four shoulder-drop thresholds being ordered `start < close < count < full`, and its four elbow tiers `top > start > count > full depth`); posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 20 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria (including the standing butt-kick figures) and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 366 | DOM wiring, module imports and exports, static assets, the category lists of all 20 exercises (including “jump squat under Full body, butt kick under Lower body”) and the completeness of their scoring plans, the timed-counting declaration (`isTimedReps` / target unit in seconds / result unit in reps / exactly the jumping jack and the butt kick / the “timed counting” wording in both languages), plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
-| `tests/test-app.mjs` | 477 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included, with the bridge row required to read “height **or** hip angle ≥ 165°” and the push-up row “elbow ≤ 146° or a 0.08 shoulder drop”) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (both the jumping jack and the butt kick: seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), fullscreen (the video frame is what gets enlarged, going home leaves fullscreen, ending a set alone does not, and no fullscreen API call happens when you were never fullscreen), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 20 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
+| `tests/test-app.mjs` | 480 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included, with the bridge row required to read “height **or** hip angle ≥ 165°” and the push-up row “elbow ≤ 146° or a 0.08 shoulder drop”) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (both the jumping jack and the butt kick: seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), fullscreen (the video frame is what gets enlarged, going home leaves fullscreen, ending a set alone does not, and no fullscreen API call happens when you were never fullscreen), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 20 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
 
 ---
 

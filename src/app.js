@@ -577,10 +577,10 @@ function keyframeRowsHtml(id) {
       row.perSecond > 0 ? `+${row.perSecond}${t('spec.perSecondSuffix')}` : '',
     ].filter(Boolean).join(' ');
 
-    // 这一格的判据：主判据（+ 有替代判据时写成「A 或 B」）+ 该判据原本的说明
-    const condText = stage.alt
-      ? `${cond} ${t('spec.orAlt')} ${specCondition(stage.alt.item || stage.alt)}`
-      : cond;
+    // 这一格的判据：主判据（+ 有替代判据时写成「A 或 B」+ 有附加条件时补「且 C」）+ 该判据原本的说明
+    const altText = stage.alt ? ` ${t('spec.orAlt')} ${specCondition(stage.alt.item || stage.alt)}` : '';
+    const alsoText = stage.also ? ` ${t('spec.andAlso')} ${specCondition(stage.also.item || stage.also)}` : '';
+    const condText = `${cond}${altText}${alsoText}`;
     const lines = [];
     if (stage.item?.noteKey) lines.push(t(stage.item.noteKey, stage.item.noteParams || null));
     // 第一格 = 「进入这个动作的姿势」：其余姿势要求也属于这一格（按判据文字去重，避免重复同一句）

@@ -171,32 +171,64 @@ function altSpecs(meta) {
   const metric = p.metric || 'knee';
   const unit = METRIC_UNITS[metric] || DEG;
   const gate = p.gate || 'prone';
+  /**
+   * 分侧指标的显示名：**不同的指标要说不同的名字**。
+   *
+   * `metric.oneSide` 写的是「做动作那一侧的膝角」，死虫式改成判「腿伸出去的程度」之后
+   * 如果还叫「膝角」，弹窗里就会出现「膝角 ≥132°」而实际判的是膝+髋两个角 —— 用户明确要求
+   * 「弹窗里的指标必须是代码里真正的判别标准」，所以按 metric 换名字。
+   */
+  const SIDE_LABEL = {
+    knee: ['metric.oneSide', 'metric.otherSide'],
+    legOut: ['metric.oneSideLeg', 'metric.otherSideLeg'],
+  };
+  const [onMetric, offMetric] = SIDE_LABEL[metric] || SIDE_LABEL.knee;
+  const other = p.otherHold || null;
+  const otherMetric = other ? (SIDE_LABEL[other.metric] || SIDE_LABEL.knee)[1] : offMetric;
+  const otherUnit = other ? (METRIC_UNITS[other.metric] || DEG) : unit;
+  const items = [
+    item({
+      labelKey: p.labelOnKey || 'spec.altOn',
+      metricKey: onMetric,
+      op: cmpLt ? 'lte' : 'gte',
+      value: roundFor(onValue, unit),
+      unit,
+      noteKey: p.noteOnKey || 'spec.note.altOn',
+    }),
+    item({
+      labelKey: p.labelSwitchKey || 'spec.altSwitch',
+      metricKey: offMetric,
+      op: cmpLt ? 'lte' : 'gte',
+      value: roundFor(onValue, unit),
+      unit,
+      noteKey: p.noteSwitchKey || 'spec.note.altSwitch',
+      noteParams: {
+        // 方向要跟着 cmp 走：死虫式是「≥132°」（腿伸出去），勾腿跳是「≤126°」（脚跟勾起来）。
+        // 以前这里写死了「≤」，于是死虫式的弹窗把判据说成了「≤150°」—— 正好说反。
+        v: roundFor(onValue, unit),
+        dir: cmpLt ? '≤' : '≥',
+        rel: cmpLt ? '≥' : '≤',
+        rest: roundFor(offValue, unit),
+        gap: roundFor(minRepMs / 1000, S),
+      },
+    }),
+  ];
+  // 「另一条腿必须还在休息位」（死虫式）：它是**计次的必要条件**，挂在「一侧伸出去」那一格上
+  const otherItem = other
+    ? item({
+      labelKey: 'spec.altOtherHold',
+      metricKey: otherMetric,
+      op: other.cmp === 'gt' ? 'gte' : 'lte',
+      value: roundFor(other.value, otherUnit),
+      unit: otherUnit,
+      noteKey: 'spec.note.altOtherHold',
+    })
+    : null;
+  if (otherItem) items.splice(1, 0, otherItem);
+  items.push(item({ labelKey: 'spec.altHold', op: 'gte', value: roundFor(holdMs / 1000, S), unit: S, noteKey: 'spec.note.altHold' }));
+  items.push(item({ labelKey: 'spec.altGap', op: 'gte', value: roundFor(minRepMs / 1000, S), unit: S, noteKey: 'spec.note.altGap' }));
   return {
-    count: [
-      item({
-        labelKey: 'spec.altOn',
-        metricKey: 'metric.oneSide',
-        op: cmpLt ? 'lte' : 'gte',
-        value: roundFor(onValue, unit),
-        unit,
-        noteKey: 'spec.note.altOn',
-      }),
-      item({
-        labelKey: 'spec.altSwitch',
-        metricKey: 'metric.otherSide',
-        op: cmpLt ? 'lte' : 'gte',
-        value: roundFor(onValue, unit),
-        unit,
-        noteKey: 'spec.note.altSwitch',
-        noteParams: {
-          v: roundFor(onValue, unit),
-          rest: roundFor(offValue, unit),
-          gap: roundFor(minRepMs / 1000, S),
-        },
-      }),
-      item({ labelKey: 'spec.altHold', op: 'gte', value: roundFor(holdMs / 1000, S), unit: S, noteKey: 'spec.note.altHold' }),
-      item({ labelKey: 'spec.altGap', op: 'gte', value: roundFor(minRepMs / 1000, S), unit: S, noteKey: 'spec.note.altGap' }),
-    ],
+    count: items,
     posture: gateItems(gate),
     advice: advisoryItems(gate),
   };
@@ -535,6 +567,9 @@ export const SPEC_METRICS = {
   // 左右交替类：正在做的那一侧 / 另一侧
   oneSide: (f, det) => (det?.cmp === 'gt' ? Math.max(...sideValues(f, det?.metricName)) : Math.min(...sideValues(f, det?.metricName))),
   otherSide: (f, det) => (det?.cmp === 'gt' ? Math.min(...sideValues(f, det?.metricName)) : Math.max(...sideValues(f, det?.metricName))),
+  // 同一个读数，但显示名不同（死虫式判的是「腿伸出去的程度」而不是膝角）
+  oneSideLeg: (f, det) => SPEC_METRICS.oneSide(f, det),
+  otherSideLeg: (f, det) => SPEC_METRICS.otherSide(f, det),
   // 通用引擎的「本轮进度」（0 = 起始位，1 = 到位）：最后的「回到起始位」那一格直接问它
   progress: (f, det) => det?.progress,
 };
@@ -630,6 +665,9 @@ const SHORT_LABEL = {
   'spec.seq4': 'spec.short.jump',
   'spec.altOn': 'spec.short.work',
   'spec.altSwitch': 'spec.short.switch',
+  // 死虫式：关键帧的名字按这个动作说（「伸腿」/「换另一条腿」），不是通用的「收/伸」
+  'spec.altOnDeadBug': 'spec.short.extend',
+  'spec.altSwitchDeadBug': 'spec.short.extendOther',
   'spec.plankHard': 'spec.short.holdPlank',
   'spec.plankSoft': 'spec.short.line',
   'spec.plankKnee': 'spec.short.knee',
@@ -758,6 +796,7 @@ export function specStages(id) {
       valueFrom: 'backLine',
       also: {
         metric: 'shoulderDrop',
+        metricKey: 'metric.shoulderDrop',
         op: 'lte',
         value: roundFor(PUSHUP.dropReturn, TORSO),
         unit: TORSO,
@@ -769,8 +808,29 @@ export function specStages(id) {
     // 用户要求「第二格之后应该是『勾腿』『勾另一条腿』」—— 所以最后一格的判据就是
     // 「另一条腿也做到同样的幅度」，点亮它的那一刻正是识别器计次的那一刻
     // （用识别器自己的 switched 标记，不靠「另一侧回到休息位」这种中间条件）。
-    pushItem(pick('spec.altOn'), { kind: 'count' });
-    pushItem(pick('spec.altSwitch'), { kind: 'finish', detFlag: 'switched' });
+    const onKey = meta.params?.labelOnKey || 'spec.altOn';
+    const switchKey = meta.params?.labelSwitchKey || 'spec.altSwitch';
+    const onItem = count.find((it) => it.labelKey === onKey) || count.find((it) => it.labelKey === 'spec.altOn');
+    const holdItem = count.find((it) => it.labelKey === 'spec.altOtherHold');
+    const onStage = onItem ? toStage(onItem, { kind: 'count' }) : null;
+    // 「另一条腿留在桌面位」（死虫式的 otherHold）是**计次的必要条件**，
+    // 所以挂在同一格上（`also`，渲染成「… 且 …」），不另开一格 ——
+    // 否则「所有关键帧都做完 = 计次」这条约定就破了。
+    if (onStage && holdItem) {
+      const st = toStage(holdItem);
+      onStage.also = {
+        metric: st.metric,
+        metricKey: holdItem.metricKey,
+        op: st.op,
+        value: st.value,
+        unit: st.unit,
+        k: st.k,
+        item: holdItem,
+      };
+    }
+    if (onStage) stages.push(onStage);
+    pushItem(count.find((it) => it.labelKey === switchKey) || pick('spec.altSwitch'),
+      { kind: 'finish', detFlag: 'switched' });
   } else if (meta.engine === 'sequence') {
     // 多段动作：按顺序每一段都要做到，最后一段完成即计次
     const seq = count.filter((it) => /^spec\.seq\d+$/.test(it.labelKey));
@@ -882,6 +942,19 @@ const STEP_STAGE = {
   stretchHold: { pose: '*first', settle: '*last', hold10: '*last', hold20: '*last' },
 };
 
+/**
+ * 短标签的**别名**。
+ *
+ * 计分方案（`STEP_STAGE`）是按「族」写的，而族里个别动作会把某一格的短标签说得更具体：
+ * 死虫式的两格是「伸腿」/「换腿」，比通用的「发力」/「换边」清楚得多。
+ * 这里把族里的 token 映射到该动作真正用的短标签，于是族方案不必为单个动作复制一份 ——
+ * 否则 `first: 'work'` 找不到「伸腿」那一格，那一格的分数会变成 0（真的踩过）。
+ */
+const SHORT_ALIAS = {
+  work: ['work', 'extend'],
+  switch: ['switch', 'extendOther'],
+};
+
 /** 短标签键 → 第几格（找不到就退回 -1） */
 function stageIndexOfToken(stages, token) {
   if (!token) return -1;
@@ -892,7 +965,8 @@ function stageIndexOfToken(stages, token) {
     return i >= 0 ? i : 0;
   }
   const want = `spec.short.${token}`;
-  const i = stages.findIndex((s) => s.shortKey === want);
+  const cands = new Set([want, ...(SHORT_ALIAS[token] || []).map((t) => `spec.short.${t}`)]);
+  const i = stages.findIndex((s) => cands.has(s.shortKey));
   return i;
 }
 

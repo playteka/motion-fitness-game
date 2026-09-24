@@ -712,6 +712,42 @@ console.log('\n[10] 关键帧线条图标');
       && stK[2].item.noteParams?.rest === 132 && stK[2].item.noteParams?.gap === 0.1,
       JSON.stringify(stK[2].item.noteParams));
   }
+  // 死虫式（用户反馈「关键帧判别标准都不对」→ 判据重做）：
+  // 判「腿伸出去的程度」（膝角与髋角取小）而不是膝角，而且另一条腿必须留在桌面位。
+  {
+    const ctxD = iconCtx('deadBug');
+    const stD = specStages('deadBug');
+    const icons = stD.map((s) => stageIcon(s, ctxD));
+    ok('死虫式：三格 = 仰卧桌面位 → 伸出一条腿 → 换另一条腿也伸出去（最后一格 = 计次那一刻）',
+      stD.length === 3 && stD[0].kind === 'gate' && stD[1].kind === 'count' && stD[2].kind === 'finish'
+      && stD[1].metric === 'oneSideLeg' && stD[2].metric === 'otherSideLeg',
+      JSON.stringify(stD.map((s) => `${s.kind}:${s.metric}${s.op}${s.value}`)));
+    ok('死虫式：计次线用的是「腿伸出去的程度」132°，而不是膝角 150°',
+      stD[1].value === 132 && stD[2].value === 132, `${stD[1].value}/${stD[2].value}`);
+    ok('死虫式：关键帧的名字是「伸出一条腿 / 换另一条腿也伸出去」（不是通用的「收/伸」）',
+      stD[1].item.labelKey === 'spec.altOnDeadBug' && stD[2].item.labelKey === 'spec.altSwitchDeadBug'
+      && stD[1].shortKey === 'spec.short.extend' && stD[2].shortKey === 'spec.short.extendOther',
+      `${stD[1].item.labelKey}/${stD[2].item.labelKey} ${stD[1].shortKey}/${stD[2].shortKey}`);
+    ok('死虫式：「另一条腿留在桌面位」挂在「伸出一条腿」那一格上（计次的必要条件，写进判据文字里）',
+      stD[1].also && stD[1].also.metric === 'otherSideLeg' && stD[1].also.op === 'lte'
+      && stD[1].also.value === 120,
+      JSON.stringify(stD[1].also && { m: stD[1].also.metric, op: stD[1].also.op, v: stD[1].also.value }));
+    ok('死虫式：补充说明里的方向是「≥132° / 收回 ≤112°」（以前写死成「≤」，正好说反）',
+      stD[2].item.noteParams?.dir === '≥' && stD[2].item.noteParams?.rel === '≤'
+      && stD[2].item.noteParams?.v === 132 && stD[2].item.noteParams?.rest === 112,
+      JSON.stringify(stD[2].item.noteParams));
+    ok('死虫式：三格图标都是仰卧（第一格双腿屈膝的桌面位，后两格一条腿伸出去）',
+      icons.every((ic) => ic.builder === 'lie' && ic.pose.params.face === 'up'),
+      JSON.stringify(icons.map((ic) => `${ic.builder}/${ic.pose.params.face}`)));
+    ok('死虫式：第二格近侧腿伸出去（画成贴地展开的姿态）、远侧腿屈着；第三格反过来（一眼看出「换另一条腿」）',
+      icons[1].pose.params.hip === 168 && icons[1].pose.params.hip2 === 118
+      && icons[2].pose.params.hip === 118 && icons[2].pose.params.hip2 === 168
+      && icons[1].pose.criterion.legOut === 132,
+      JSON.stringify(icons.map((ic) => [ic.pose.params.hip, ic.pose.params.hip2])));
+    ok('死虫式：三格图标互不相同（不会被「画得一样就合并」吃掉）',
+      new Set(stD.map((s) => JSON.stringify(stageIcon(s, ctxD).pose.params))).size === 3
+      && uniqueStages(stD, ctxD).length === 3);
+  }
 
   ok('深蹲：图标里的膝角随判据单调变深（蹲得越深画得越弯）', (() => {
     const bends = squatStages.map((s) => 180 - drawnAngle(s, squatCtx));
