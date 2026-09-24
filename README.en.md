@@ -500,7 +500,7 @@ Take the lunge (each segment holds the real threshold from the code):
   little, but the **order always matches the criteria** (a harder criterion is drawn more extreme).
 - **When two segments really do look alike, the criterion's angle is printed inside the icon**: if one exercise has two
   segments on the same joint angle and the two angles are within 12° of each other, every such segment on that chain gets
-  its degrees on the icon. The push-up is the classic case: `plank → 146° → 138° → 144°` (146° and 144° draw almost
+  its degrees on the icon. The push-up is the classic case: `plank → 150° → 146° → 148°` (146° and 148° draw almost
   identically). A chain that is already unmistakable (squat: 176°→135°→112°→149°) gets no numbers, so the bar is not
   plastered with digits.
 - **The glute bridge's three keyframes** (the order the user specified): `supine bent knees → hips driven up → back to
@@ -554,7 +554,7 @@ Take the lunge (each segment holds the real threshold from the code):
   the keyframes, no `transform/width/height` in the transitions), so the animations cannot creep back in.
 - **How many segments** (segments drawn identically are merged, so you never see a “fake second step”):
   squat 4 (stand → half squat → squat → back to standing); lunge 5 (stand → step → sink → back knee down → back to standing);
-  push-up 4 (plank → elbow ≤146° → count at ≤138° or a 0.14 shoulder drop → back at the top);
+  push-up 4 (plank → start (elbow ≤150° or 10° below your own top) → count at ≤146° or a 0.08 shoulder drop → back at the top (elbow ≥148°));
   jumping exercises add a final “Jump” segment (drawn airborne; the jump squat and the box jump both use **≥ 0.035× frame
   height** — the box jump used to sit at 0.05, which the user found too high, so it was nudged down to 0.035); burpee 4 (stand → crouch → plank → jump);
   glute bridge 3 (supine bent knees → hips driven up (lift ≥ 0.35× torso length **or** hip angle ≥ 165°) → back on the floor, **counted as you land**);
@@ -647,7 +647,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2258 assertions in the suite).
+> exactly on the detector's own progress line (2265 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -787,8 +787,13 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 | ① Hands on the floor, body in one straight line | Push-up position + body line angle ≥150° + deviation ≤0.18 | +5 |
 | ② Brace your core and bend your elbows to lower down | Elbow angle ≤138° | +7 |
 | ③ **Elbows bent until your chest is near the floor (top-scoring step)** | Elbow angle ≤118° and the body still in one straight line | **+14** |
-| ④ Press back up to nearly straight arms | Elbow angle ≥142° (after first lowering down) | +8 |
+| ④ Press back up to nearly straight arms | Elbow angle ≥ your own top −10° (about 146–148°; it follows your own range) | +8 |
 | 🎁 All form steps complete for the round | All 4 steps above hit within the same round | +6 |
+
+> **Note that ②③④ above are the *scoring* lines, not the *counting* line.** Counting only needs the keyframe chain to
+> complete (elbow ≤146° or a 0.08 shoulder drop), so a rep that only reaches 146° **still counts** — it just misses the
+> ②③ points, has its quality score discounted by depth, and hears “go lower”. That splits “however much you do counts”
+> from “the deeper you go, the higher you score”.
 
 > **The “return to the top” line follows *your* range (important)**: on a real camera the projection makes “arms straight / standing tall” read lower
 > (a side-on push-up often reads only 140–150°). If the detector insists on an absolute 145/168° to close a rep, the rep never closes and
@@ -796,23 +801,40 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 > so coming back near your own top closes the rep; and if a rep gets stuck, it is force-settled after 9–12 s, so reps are never swallowed.
 > Every rep exercise also shows a “Rep diagnosis” line in the 🐞 panel.
 >
-> **The push-up count was loosened (roughly doing one counts as one)**: bending your elbows to **138° or less** and coming back up past **146°**
-> counts as one rep (it used to require reaching 124° and returning all the way to 152°; the full-depth line was loosened from 124° to **128°**,
-> and the form step “bend until your chest is near the floor” from 105° to **118°**). A sagging or piked hip and a body that isn't perfectly
-> straight only trigger a **spoken correction plus a quality discount** — they no longer eat your reps; a shallow rep still counts but you get
-> a “go lower” cue and fewer points. Only “you barely bent your elbows” (never below 146°) counts for nothing and stays silent.
-> **The “count” segment in the progress-bar chain is the counting moment**: the elbows reaching 138° (or the shoulder dropping far enough) lights
-> it, the final “back at the top” segment lights last, and the whole chain completing *is* the rep being counted —
-> `tests/test-detectors.mjs` verifies that per exercise. There is no strict mode: that segment is the one and only counting rule.
+> **The push-up count was loosened a second time (the user measured: “elbow ≤138° or a 0.14× torso shoulder drop is
+> too strict, nothing counts”)**: a side camera plus smoothing **flattens the elbow reading as a whole** — many people top
+> out around 145° even at full depth — and the shoulder drop is really the same movement seen from another angle (if your
+> elbow only bends to 146°, your shoulders can only sink a little). Both sides were stuck, so nothing counted.
+> Both were loosened together and the start / count / close relationship was made explicit:
+>
+> | Stage | Criterion | Before |
+> |---|---|---|
+> | Starting the rep | 10° below your own top, or elbow ≤150°, or a 0.05 shoulder drop | 22° / ≤146° / 0.08 |
+> | **Counting** | Elbow ≤**146°** or shoulder drop ≥**0.08×** torso length | 138° / 0.14 |
+> | Full depth | Elbow ≤128° or shoulder drop ≥**0.26** | 128° / 0.30 |
+> | Closing (back at the top) | Elbow back within 8° of your own top **and** shoulders back within 0.06 | shoulders 0.08 |
+> | Wobble filter | Less than 8° below your top and no 0.08 shoulder drop → no count, no nagging | 12° |
+>
+> Measured (synthetic skeleton through the real pipeline): an elbow bottoming out at **145°** now counts every time
+> (it counted zero times before), while 148° with only a 0.079 shoulder drop still does not — the counting line and the
+> measured boundary agree. The four shoulder thresholds are deliberately ordered
+> `start 0.05 < close 0.06 < count 0.08 < full 0.26`: **closing has to be shallower than the counting line**, otherwise the
+> single frame where you begin to sink but your elbows have not bent yet is read as “shoulders back up *and* deep enough”,
+> inventing a rep (that is exactly why this release splits it out of the reused 0.08).
+> **The “count” segment of the progress-bar chain is the counting moment** (elbow ≤146° or a 0.08 shoulder drop lights it),
+> the final “back at the top” segment lights last, and the whole chain completing *is* the rep —
+> `tests/test-detectors.mjs` verifies that per exercise. There is no strict mode: that segment is the only counting rule.
+> Scoring still rewards depth: the form step “elbows bent until your chest is near the floor” (+14) still requires 118°,
+> so reps counted at 146° still count but score less and get a “go lower” cue.
 
 > **It counts even when the camera can't see the floor (camera-angle compensation)**: with a laptop sitting on a desk and looking down,
 > you simply can't see the chest touching the floor in the frame, and the 2D projection makes the elbow angle **read straighter than it really is**
 > (even a full rep may only read 140°). So push-ups now have a second depth signal that doesn't depend on the elbow:
 > **how far the shoulders dropped** (about 1.2× torso length at the top, down to roughly 0.5 at the bottom). A shoulder drop of
-> **0.14× torso length** already counts as “the body really did get close to the floor”, **0.30×** earns full depth credit
-> (both used to be 0.20 / 0.40 and were loosened together), and even “this rep has started” can be triggered by a
-> **0.08×** shoulder drop. Either signal is enough, so any camera height works.
-> The 🐞 panel shows the live “Shoulder drop” value.
+> **0.08× torso length** already counts as “the body really did get close to the floor”, **0.26×** earns full depth credit
+> (these were loosened in steps: 0.20/0.40 → 0.14/0.30 → 0.08/0.26), and even “this rep has started” can be triggered by a
+> **0.05×** shoulder drop. Either signal is enough, so any camera height works.
+> The 🐞 panel shows the live “Shoulder drop” and “Counting line” values.
 
 ### Glute Bridge (39 points per round)
 
@@ -1193,11 +1215,11 @@ npm run test:app               # integration test that loads the real app.js wit
 | Test file | Cases | Coverage |
 |---|---|---|
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
-| `tests/test-detectors.mjs` | 336 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the **sign baseline for the standing gate (butt kick) on real frames** (standing gives `Shoulders above hips ≈ +1.0` and `Hip lift ≈ −1.0` and passes the gate; lying down or standing on your head is blocked), **butt-kick counting across speeds** (real frames through the real pipeline: 1000 / 700 / 600 / 500 / 430 ms per cycle must all reach ≥90% of the expected reps, a 15 fps feed must still count, and a support leg that never straightens / shallower kicks / added noise are all accepted; counter-examples: jogging without kicking and both legs bending in phase must count nothing; boundaries: a knee reaching ~115° counts while one only reaching ~133° does not — the relaxed-mode trade-off), **the glute bridge's OR criterion** (the user's low lift height with a 170° hip angle at the top must count ≥4 reps, a half bridge at 160° must not reach the top, and a “safety rope” run with the height path's top line made unreachable must count nothing), the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
+| `tests/test-detectors.mjs` | 340 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the **sign baseline for the standing gate (butt kick) on real frames** (standing gives `Shoulders above hips ≈ +1.0` and `Hip lift ≈ −1.0` and passes the gate; lying down or standing on your head is blocked), **butt-kick counting across speeds** (real frames through the real pipeline: 1000 / 700 / 600 / 500 / 430 ms per cycle must all reach ≥90% of the expected reps, a 15 fps feed must still count, and a support leg that never straightens / shallower kicks / added noise are all accepted; counter-examples: jogging without kicking and both legs bending in phase must count nothing; boundaries: a knee reaching ~115° counts while one only reaching ~133° does not — the relaxed-mode trade-off), **the glute bridge's OR criterion** (the user's low lift height with a 170° hip angle at the top must count ≥4 reps, a half bridge at 160° must not reach the top, and a “safety rope” run with the height path's top line made unreachable must count nothing), **the loosened push-up counting line** (an elbow bottoming out at 145° must count ≥4 reps where it used to count none, a case at 148° with only a 0.079 shoulder drop still counts nothing, and a flattened elbow reading of 152°→140° accompanied by a real body drop still counts), the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
 | `tests/test-engines.mjs` | 190 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the loosened lying-leg-raise gate that only looks at shoulder height off the floor, and the butt kick gate judging “shoulders above hips” rather than “hip lift”), feet off the floor when jumping, left/right alternation (including the butt kick: one kick on each leg is one rep, **a single-frame spike finished inside 33 ms still counts**, the same leg kicking repeatedly never inflates the count, both legs entering on the same frame is not an alternation, the `switched` flag, the “the other side is not kicking too” alternation rule, and the 🐞 diagnosis rows listing both legs plus the alternation lines), whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 847 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines; posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria (including the standing butt-kick figures) and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
+| `tests/test-specs.mjs` | 850 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines (including the push-up's four shoulder-drop thresholds being ordered `start < close < count < full`, and its four elbow tiers `top > start > count > full depth`); posture-gate numbers come from the same table used for judging (the lying leg raise has just one line left — shoulder height off the floor ≤ 0.6× torso — while the dead bug still checks two); all 22 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria (including the standing butt-kick figures) and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
 | `tests/test-page.mjs` | 390 | DOM wiring, module imports and exports, static assets, the category lists of all 22 exercises (including “jump squat under Full body, butt kick under Lower body”) and the completeness of their scoring plans, the timed-counting declaration (`isTimedReps` / target unit in seconds / result unit in reps / exactly the jumping jack and the butt kick / the “timed counting” wording in both languages), plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
-| `tests/test-app.mjs` | 477 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included, with the bridge row required to read “height **or** hip angle ≥ 165°”) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (both the jumping jack and the butt kick: seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), fullscreen (the video frame is what gets enlarged, going home leaves fullscreen, ending a set alone does not, and no fullscreen API call happens when you were never fullscreen), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 22 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
+| `tests/test-app.mjs` | 477 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included, with the bridge row required to read “height **or** hip angle ≥ 165°” and the push-up row “elbow ≤ 146° or a 0.08 shoulder drop”) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (both the jumping jack and the butt kick: seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), fullscreen (the video frame is what gets enlarged, going home leaves fullscreen, ending a set alone does not, and no fullscreen API call happens when you were never fullscreen), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt), and the dashed outline's timing **through the real main loop** for all 22 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
 
 ---
 
@@ -1250,7 +1272,10 @@ motion-fitness-game/
     `SQUAT_FRONT` (in `src/steps.js`): `standRatio` 0.86 / `enterRatio` 0.78 / `bottomRatio` 0.40 /
     `looseRatio` 0.62, measured as “how much higher your hips are than your knees ÷ shin length”, standing tall ≈ 1.0;
     `LUNGE`: `enterKnee` 146 / `looseKnee` 142 / `downKnee` 128, the three knee-angle levels, with `backKneeDrop` 0.66;
-    `enterHoldMs` / `exitHoldMs` are the jitter tolerances; `PUSHUP.elbowFull` 106 / `PUSHUP.looseElbow` 124;
+    `enterHoldMs` / `exitHoldMs` are the jitter tolerances;
+    `PUSHUP`: `looseElbow` 146 (counting line) / `elbowEnter` 150 (start line) / `elbowUp` 156 (reference top) /
+    `elbowFull` 128 (full-depth line) / `minBend` 8 (wobble filter) / `enterDrop` 10 (how far below your top starts a rep) /
+    `dropStart` 0.05 < `dropReturn` 0.06 < `dropMin` 0.08 < `dropFull` 0.26 (the four shoulder-drop thresholds);
     `BRIDGE.upRise` 0.22, `liftAngle` 150, `topAngle` 165 (the hip-angle side criteria for lift / top) and `minRepMs` 420;
     `PLANK.bodyStraight` 142;
   - `HoldDetector.graceMs`: the grace period for timed exercises (default 1200ms).

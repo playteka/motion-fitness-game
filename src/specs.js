@@ -355,7 +355,7 @@ function pushupSpecs() {
         value: roundFor(P.dropMin, TORSO),
         unit: TORSO,
         noteKey: 'spec.note.shoulderDrop',
-        noteParams: { full: P.dropFull.toFixed(2), start: P.dropStart.toFixed(2) },
+        noteParams: { full: P.dropFull.toFixed(2), start: P.dropStart.toFixed(2), ret: P.dropReturn.toFixed(2) },
       }),
       item({ labelKey: 'spec.backLine', metricKey: 'metric.elbow', op: 'gte', value: roundFor(P.elbowUp - P.returnTol, DEG), unit: DEG, noteKey: 'spec.note.adaptive' }),
       item({ labelKey: 'spec.wobble', textKey: 'spec.text.pushupWobble', noteParams: { deg: P.minBend } }),
@@ -759,7 +759,7 @@ export function specStages(id) {
       also: {
         metric: 'shoulderDrop',
         op: 'lte',
-        value: roundFor(PUSHUP.dropStart, TORSO),
+        value: roundFor(PUSHUP.dropReturn, TORSO),
         unit: TORSO,
         k: STAGE_TOLERANCE.torso,
       },

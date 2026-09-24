@@ -405,8 +405,8 @@ console.log('\n[1b] 运动设定弹窗');
     !specHtml().includes('计次判据'), specHtml().slice(0, 200));
   ok('不再有单独的「姿势要求」分组（并进第一格的关键帧里）',
     !specHtml().includes('姿势要求（不满足就不进入判定）'), specHtml().slice(0, 200));
-  ok('俯卧撑：肘角计次线（≤138°）挂在关键帧上', specHtml().includes('138'), specHtml().slice(0, 240));
-  ok('俯卧撑：列出肩膀下沉量这条第二路证据（0.14）', specHtml().includes('0.14'), specHtml().slice(0, 200));
+  ok('俯卧撑：肘角计次线（≤146°）挂在关键帧上', specHtml().includes('146'), specHtml().slice(0, 240));
+  ok('俯卧撑：列出肩膀下沉量这条第二路证据（0.08）', specHtml().includes('0.08'), specHtml().slice(0, 200));
   ok('俯卧撑：列出俯撑姿势门控（躯干倾角 ≥ 32°）', specHtml().includes('≥ 32'), specHtml().slice(0, 300));
   ok('指标行带上了单位（×躯干长 / °）',
     specHtml().includes('躯干长') && specHtml().includes('°'), specHtml().slice(0, 200));

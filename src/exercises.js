@@ -556,26 +556,34 @@ class LungeDetector extends DetectorBase {
  *   又经过平滑，手臂明明伸直了读数也可能只有 140° 左右 —— 于是这一轮**永远不结算**，
  *   后面每一次下放都被并进同一轮里，十次变成一次。
  *   所以现在「顶位」是**跟着用户自己的幅度走**的（topBase 慢慢跟踪他实际能举到的最高角度，
- *   上限仍然是 145°），只要回到自己顶位附近就算这一轮完成。
+ *   上限是 PUSHUP.elbowUp），只要回到自己顶位附近就算这一轮完成。
  * 另外：一轮最多 9 秒，超时也会**强制结算**（够深就计数），绝不把次数悄悄吞掉。
  *
- * 三档肘角的意义（**顺序不能反**：顶位 > 计数线 > 满分深度）：
- *   elbowUp      参考顶位（152°，只在用户能举得更高时才用它）→ 回位线 = topLine − returnTol
- *   looseElbow   宽松模式的计数线（138°）
- *   elbowFull    拿满分深度的线（128°）
+ * 四档肘角的意义（**顺序不能反**：顶位 > 开始线 > 计数线 > 满分深度）：
+ *   elbowUp      参考顶位（156°，只在用户能举得更高时才用它）→ 回位线 = topLine − returnTol
+ *   elbowEnter   「开始这一轮」的参考角度（150°）
+ *   looseElbow   宽松模式的计数线（146°）
+ *   elbowFull    拿满分深度的线（128°，只影响分数与语音，不影响计次）
+ *
+ * 第二轮实测放宽（用户：「肘角 ≤ 138° 或肩膀下沉 0.14 太严了，根本计不上」）：
+ *   侧拍 + 平滑会把肘角读数**整体压平**，很多人压到极限也只有 145° 左右，
+ *   而身体下沉量又和肘角是同一件事的两个面（肘只弯到 146°，肩膀本来就只能沉一点点）。
+ *   于是两边一起放宽：肘角计数线 138 → **146**、肩膀下沉计数线 0.14 → **0.08**（躯干长）、
+ *   「开始做」从「比顶位弯 22°」放到 **10°**，晃动过滤 12° → **8°**。
+ *   实测（合成骨架 + 真实管线）：肘最低 145°（肩膀沉 0.096）现在每次都计上，放宽前一次都不计；
+ *   肘最低 148°（肩膀只沉 0.079）仍然不算 —— 计次线和实测边界正好对得上。
  */
 export const PUSHUP = {
   activeTorso: 32,
   activeShoulderClear: 0.12,
   activeHandOnFloor: 0.62,
-  elbowUp: 152,       // 参考顶位（原来 145；回位线要留在计数线之上，否则往下蹲一格就成了「回到顶位」）
-  elbowEnter: 146,    // 起步角度参考值（实际用「顶位基准 − enterDrop」判断，见 step）
-  elbowDown: 132,     // 下放到这里算「到过底部」（用户反馈「最后一个关键帧太难」，整体放宽）
-  elbowFull: 128,     // 满分深度（原来 118：要求肘部几乎折成 90°，多数人做不到位）
-  looseElbow: 138,    // 宽松模式计数线（原来 135）
-  ignoreElbow: 146,   // 没弯过这里 = 只是晃了一下（相对判定用，见 minBend）
-  minBend: 12,        // 一轮至少要比「自己的顶位」弯这么多度才算一次尝试（滤掉噪声）
-  enterDrop: 22,      // 相对顶位弯下去这么多才算「开始做」
+  elbowUp: 156,       // 参考顶位（原来 152；回位线要留在计数线之上，否则往下蹲一格就成了「回到顶位」）
+  elbowEnter: 150,    // 「开始这一轮」的参考角度（原来 146；实际用「顶位基准 − enterDrop」判断，见 step）
+  elbowDown: 132,     // 下放到这里算「到过底部」（中间状态，不参与计次）
+  elbowFull: 128,     // 满分深度（不变：只影响深度分与「再低一点」的提醒）
+  looseElbow: 146,    // 宽松模式计数线（原来 138：用户实测「压不到 138° 就一次都不计」）
+  minBend: 8,         // 一轮至少要比「自己的顶位」弯这么多度才算一次尝试（原来 12）
+  enterDrop: 10,      // 相对顶位弯下去这么多才算「开始做」（原来 22）
   returnTol: 8,       // 回到顶位 8° 以内算「推起来了」
   minRepMs: 260,      // 用时下限（只滤手抖）
   maxRepMs: 9000,     // 一轮最长时限：超时强制结算，不吞次数
@@ -589,11 +597,17 @@ export const PUSHUP = {
    * 压到底时只剩 0.3~0.5 —— 只要肩膀整体沉下去这么多，就认为身体确实接近地面了。
    *
    * 这一路同时也是**进度条最后一格之前的台阶**：肘角读数被机位压平的人先过这一格，
-   * 不至于卡在「肘 ≤ 127°」那一格上永远点不亮后面。
+   * 不至于卡在「肘 ≤ 146°」那一格上永远点不亮后面。
+   *
+   * 四个数的关系（**顺序不能反**）：`dropStart < dropReturn < dropMin < dropFull`。
+   * `dropReturn` 是收尾用的「肩膀抬回顶位」的宽容度，必须**小于** `dropMin`：
+   * 否则「刚开始下沉、肘还没弯」的那一帧会被同时判成「肩膀抬回来了、深度也够了」，
+   * 凭空多记一次（这一版把它从「复用 dropStart 0.08」拆出来并收到 0.06 就是为了这个）。
    */
-  dropMin: 0.14,      // 沉这么多 = 算「身体接近地面」，宽松模式可以计次（原来 0.20）
-  dropFull: 0.30,     // 沉这么多 = 深度给满分（唯一的满深度线，原来 0.40）
-  dropStart: 0.08,    // 沉这么多 = 认为「这一轮开始了」（肘角读数被压平时靠这一路起头）
+  dropMin: 0.08,      // 沉这么多 = 算「身体接近地面」，宽松模式可以计次（原来 0.14）
+  dropFull: 0.26,     // 沉这么多 = 深度给满分（原来 0.30）
+  dropStart: 0.05,    // 沉这么多 = 认为「这一轮开始了」（肘角读数被压平时靠这一路起头；原来 0.08）
+  dropReturn: 0.06,   // 收尾时肩膀要抬回顶位基准这么近（原来复用 dropStart 0.08，偏紧、容易不结算）
   dropDecay: 0.01,    // 顶位基准的缓慢回落（跟着用户姿势漂移，不会一直卡在最高点）
 };
 
@@ -642,13 +656,11 @@ class PushupDetector extends DetectorBase {
   /** 肩膀已经明显沉下去了：肘角读数被机位压平时，靠这一路认出「开始做了」 */
   get sankEnough() { return this.drop >= PUSHUP.dropStart; }
 
-  /** 深度够不够（两路证据取其一：肘角压下去了，或者肩膀确实沉到接近地面） */
-  get deepByDrop() { return this.drop >= PUSHUP.dropMin; }
-
-  /** 计数诊断（🐞 面板显示）：结算线 / 本轮最小肘角 / 跟踪到的顶位 / 上次为什么没计上 */
+  /** 计数诊断（🐞 面板显示）：计次线 / 结算线 / 本轮最小肘角 / 跟踪到的顶位 / 上次为什么没计上 */
   diag() {
     return [
       { key: 'debug.diag.stage', value: this.stage },
+      { key: 'debug.diag.countLine', value: PUSHUP.looseElbow },
       { key: 'debug.diag.backLine', value: Math.round(this.backLine) },
       { key: 'debug.diag.repMin', value: Math.round(this.minElbow) },
       { key: 'debug.diag.topBase', value: Math.round(this.topLine) },
@@ -701,10 +713,10 @@ class PushupDetector extends DetectorBase {
           // 否则上一轮的 minClear 会残留下来，一站回顶位就被当成已经沉下去了。
           this.minClear = f.shoulderClear;
         }
-        // 起步：相对自己的顶位弯下去 enterDrop 度，或者已经到达计数线（135°），
+        // 起步：相对自己的顶位弯下去 enterDrop 度，或者已经到达「开始线」（elbowEnter），
         // 这样「手肘伸不直」的人也能被认出来；再或者**肩膀已经明显沉下去了**
         // —— 摄像头斜着往下拍时肘角读数会被压平，只能靠肩膀的高度起头。
-        if (elbow <= Math.max(this.topLine - PUSHUP.enterDrop, PUSHUP.looseElbow) || this.sankEnough) {
+        if (elbow <= Math.max(this.topLine - PUSHUP.enterDrop, PUSHUP.elbowEnter) || this.sankEnough) {
           this.stage = 'descending';
           this.repStartAt = now;
           this.minElbow = elbow;
@@ -726,9 +738,10 @@ class PushupDetector extends DetectorBase {
         // 回到「自己的顶位」附近、并且肩膀确实抬回起点高度，就算推起来了。
         // 只看肘角不够：肩膀沉了但肘角读数几乎没变时（斜机位），
         // 会在进入的下一帧就被判成「太快」，真正做的一轮反而被吞掉。
-        // 注意这里的「抬回起点」看的是**当前**肩高（不是本轮最低点）。
+        // 注意这里的「抬回起点」看的是**当前**肩高（不是本轮最低点），
+        // 宽容度用 dropReturn（比「开始做」的 dropStart 宽松一点，免得一轮做完了却不结算）。
         const backUp = !Number.isFinite(f.shoulderClear)
-          || (this.clearBase - f.shoulderClear) <= PUSHUP.dropStart;
+          || (this.clearBase - f.shoulderClear) <= PUSHUP.dropReturn;
         const pushedUp = elbow >= this.backLine && backUp;
         if (pushedUp) this.finish(f, now, false);
         else if (now - this.repStartAt > PUSHUP.maxRepMs) this.finish(f, now, false);
@@ -742,13 +755,14 @@ class PushupDetector extends DetectorBase {
     const dur = now - this.repStartAt;
     this.stage = 'up';
     this.repStartAt = 0;
-    // 只是晃了一下（比自己的顶位弯得还不够 12°，肩膀也没沉下去）：
-    // 连半程都不记，也不出声
-    if (this.topLine - this.minElbow < PUSHUP.minBend && !this.sankEnough) {
+    // 只是晃了一下：肘角比自己的顶位弯得还不够 minBend°，肩膀也没沉到计数线（dropMin）——
+    // 连半程都不记，也不出声。
+    // 注意这里比的是 **dropMin**（计次线）而不是 dropStart（起头线）：膝盖/肩膀刚一动就
+    // 沉到 0.05、肘却没弯的那一帧不能被当成「深度够」，否则会凭空多记一次。
+    if (this.topLine - this.minElbow < PUSHUP.minBend && this.drop < PUSHUP.dropMin) {
       this.reject('moreRange', `${Math.round(this.topLine - this.minElbow)}°/${this.drop.toFixed(2)}`);
       return;
     }
-    const full = this.minElbow <= PUSHUP.elbowFull;
     const bodyOk = this.minBody >= PUSHUP.bodyStraightMin;
     // 深度两路证据：肘角压到位，**或者**肩膀确实沉下去接近地面了。
     // 后者专治「摄像头看不到胸口贴地」——斜视角下肘角读数被压直，只看肘角会漏判。

@@ -666,7 +666,7 @@ console.log('\n[3] 俯卧撑计数');
   const a = fresh('pushup');
   const b = fresh('pushup', { strict: true });
   const rA = makeRunner(a);
-  // 肘弯到 128°：宽松档就计次（计数线 138°，深度分按实际深度给）
+  // 肘弯到 128°：宽松档就计次（计数线 146°，深度分按实际深度给）
   const shallow = repeat(pushupMix(() => 0, { botElbow: 128 }), 1400, 3);
   rA.run(shallow);
   makeRunner(b).run(shallow);
@@ -696,6 +696,31 @@ console.log('\n[3] 俯卧撑计数');
   r.run(repeat(cameraAngle, 1500, 5));
   atLeast('斜机位把肘角读数压平时，靠肩膀下沉量也能计次', det.validReps, 4);
   ok('斜机位下不会把真做的次数记成半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+}
+
+{
+  // ===== 用户第二轮实测：「肘角 ≤138° 或肩膀下沉 0.14 太严了，无法计数，建议再放宽一些」 =====
+  // 侧拍 + 平滑会把肘角读数整体压平：压到极限也只有 145~147° 的人，两边都过不了线，
+  // 于是「做了半天一次都不计」。现在两边一起放宽：
+  //   肘角计数线 138° → **146°**，肩膀下沉计数线 0.14 → **0.08**（躯干长），
+  //   「开始做」从「比顶位弯 22°」放到 **10°**，晃动过滤 12° → **8°**。
+  const det = fresh('pushup');
+  const r = makeRunner(det);
+  r.run(repeat(pushupMix(() => 0, { botElbow: 145 }), 1400, 5));
+  atLeast('肘只压到 145° 的浅俯卧撑也要计次（放宽前一次都不计）', det.validReps, 4);
+  ok('浅俯卧撑不会误记成半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+
+  // 反例（放宽的下限）：肘只到 148°、肩膀只沉 0.079 —— 连新的计数线都没到，还是不算
+  const det2 = fresh('pushup');
+  makeRunner(det2).run(repeat(pushupMix(() => 0, { botElbow: 148 }), 1400, 4));
+  ok('肘只到 148°、肩膀也没沉够 0.08：一次都不计', det2.validReps === 0, `实际 ${det2.validReps}`);
+
+  // 用户实测的另一种情形：肘角读数被压平（只在 152°~140° 之间变），但身体确实沉下去了
+  // → 靠肩膀下沉量这一路也要计上，而且不算半程（原来 0.14 太严时这里会漏）
+  const det3 = fresh('pushup');
+  const r3 = makeRunner(det3);
+  r3.run(repeat(pushupMix(() => 0, { topElbow: 152, botElbow: 140 }), 1500, 4));
+  atLeast('肘读数被压平（152°→140°）：靠肩膀下沉也要计到 4 次', det3.validReps, 3);
 }
 
 /* ------------------------------------------------------------------ *

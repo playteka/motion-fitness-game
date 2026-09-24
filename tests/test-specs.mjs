@@ -158,9 +158,17 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
     `${findItem('pushup', 'spec.backLine').value} vs ${pushup.backLine}`);
   const drop = findItem('pushup', 'spec.shoulderDrop');
   ok('俯卧撑：肩膀下沉线 = PUSHUP.dropMin', drop.value === PUSHUP.dropMin, `${drop.value} vs ${PUSHUP.dropMin}`);
-  ok('俯卧撑：补充说明里带上了 dropFull / dropStart',
-    Number(drop.noteParams.full) === PUSHUP.dropFull && Number(drop.noteParams.start) === PUSHUP.dropStart,
+  ok('俯卧撑：补充说明里带上了 dropFull / dropStart / dropReturn',
+    Number(drop.noteParams.full) === PUSHUP.dropFull && Number(drop.noteParams.start) === PUSHUP.dropStart
+    && Number(drop.noteParams.ret) === PUSHUP.dropReturn,
     JSON.stringify(drop.noteParams));
+  ok('俯卧撑：四个肩膀下沉线满足 start < return < min < full（否则刚开始下沉就会被判成做完）',
+    PUSHUP.dropStart < PUSHUP.dropReturn && PUSHUP.dropReturn < PUSHUP.dropMin && PUSHUP.dropMin < PUSHUP.dropFull,
+    JSON.stringify([PUSHUP.dropStart, PUSHUP.dropReturn, PUSHUP.dropMin, PUSHUP.dropFull]));
+  ok('俯卧撑：肘角四档满足 顶位 > 开始 > 计次 > 满分深度',
+    PUSHUP.elbowUp > PUSHUP.elbowEnter && PUSHUP.elbowEnter > PUSHUP.looseElbow
+    && PUSHUP.looseElbow > PUSHUP.elbowFull,
+    JSON.stringify([PUSHUP.elbowUp, PUSHUP.elbowEnter, PUSHUP.looseElbow, PUSHUP.elbowFull]));
   ok('俯卧撑：晃动不计的幅度用的是 PUSHUP.minBend',
     findItem('pushup', 'spec.wobble').noteParams.deg === PUSHUP.minBend,
     JSON.stringify(findItem('pushup', 'spec.wobble').noteParams));
@@ -553,6 +561,12 @@ console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格'
     pushCount && pushCount.alt && pushCount.alt.metric === 'shoulderDrop'
     && pushCount.alt.value === PUSHUP.dropMin,
     JSON.stringify(pushCount?.alt && { m: pushCount.alt.metric, v: pushCount.alt.value }));
+  // 收尾那一格（回到顶位）要同时要求「肩膀抬回顶位」——宽容度就是识别器用的 dropReturn
+  const pushFinish = pushStages[pushStages.length - 1];
+  ok('俯卧撑：收尾那一格要求肩膀抬回顶位 dropReturn 以内（与识别器同一个常量）',
+    pushFinish && pushFinish.also && pushFinish.also.metric === 'shoulderDrop'
+    && pushFinish.also.value === Number(PUSHUP.dropReturn.toFixed(2)),
+    JSON.stringify(pushFinish?.also && { m: pushFinish.also.metric, v: pushFinish.also.value }));
 }
 
 /* ------------------------------------------------------------------ *
