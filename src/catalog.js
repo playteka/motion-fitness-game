@@ -167,6 +167,10 @@ export const EXERCISES = [
       //    （快跳时支撑腿会跟着下沉，见 engines.js 的 countRises）。
       gate: 'standUpright', metric: 'knee', cmp: 'lt',
       onValue: 126, offValue: 132, minRepMs: 95, leadMin: 18,
+      // 关键帧的名字按这个动作说（用户要求「第二格之后应该是『勾腿』『勾另一条腿』」）——
+      // 默认那套是左右交替类的通用说法「发力 / 换边」，勾腿跳听着别扭。
+      labelOnKey: 'spec.altOnButtKick',
+      labelSwitchKey: 'spec.altSwitchButtKick',
     },
   }),
 

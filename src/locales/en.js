@@ -872,6 +872,9 @@ export default {
     // Dead bug: keyframes say what this exercise actually does — "extend one leg" / "extend the other"
     altOnDeadBug: 'Extend one leg',
     altSwitchDeadBug: 'Extend the other leg too',
+    // Butt kick: the user asked for "kick" / "kick the other leg"
+    altOnButtKick: 'Kick (heel up toward your glutes)',
+    altSwitchButtKick: 'Kick the other leg (counts at the switch)',
     altOtherHold: 'Keep the other leg in the tabletop',
     altHold: 'How long the movement must be held',
     altGap: 'Gap between two counted reps',
@@ -900,6 +903,9 @@ export default {
       // Dead bug: extend a leg / extend the other leg
       extend: 'Extend',
       extendOther: 'Switch',
+      // Butt kick: kick / kick the other leg
+      tuck: 'Kick',
+      tuckOther: 'Other leg',
       prone: 'Plank',
       supine: 'Supine',
       side: 'Side',

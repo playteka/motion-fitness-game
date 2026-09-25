@@ -679,6 +679,9 @@ const SHORT_LABEL = {
   // 死虫式：关键帧的名字按这个动作说（「伸腿」/「换另一条腿」），不是通用的「收/伸」
   'spec.altOnDeadBug': 'spec.short.extend',
   'spec.altSwitchDeadBug': 'spec.short.extendOther',
+  // 勾腿跳（用户要求）：「勾腿」/「勾另一条腿」，同样不用通用的「发力 / 换边」
+  'spec.altOnButtKick': 'spec.short.tuck',
+  'spec.altSwitchButtKick': 'spec.short.tuckOther',
   'spec.plankHard': 'spec.short.holdPlank',
   'spec.plankSoft': 'spec.short.line',
   'spec.plankKnee': 'spec.short.knee',
@@ -968,8 +971,8 @@ const STEP_STAGE = {
  * 否则 `first: 'work'` 找不到「伸腿」那一格，那一格的分数会变成 0（真的踩过）。
  */
 const SHORT_ALIAS = {
-  work: ['work', 'extend'],
-  switch: ['switch', 'extendOther'],
+  work: ['work', 'extend', 'tuck'],
+  switch: ['switch', 'extendOther', 'tuckOther'],
 };
 
 /** 短标签键 → 第几格（找不到就退回 -1） */

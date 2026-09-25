@@ -718,6 +718,15 @@ console.log('\n[10] 关键帧线条图标');
       && uniqueStages(stK, ctxK).length === 3);
     ok('勾腿跳：最后一格判据用识别器自己的「换边成功」标记（点亮即计次）',
       stK[2].detFlag === 'switched', String(stK[2].detFlag));
+    // 用户要求「第二格之后应该是『勾腿』『勾另一条腿』」→ 关键帧名称按这个动作说
+    ok('勾腿跳：关键帧短标签是「勾腿 / 勾另一条腿」（不是通用的「发力 / 换边」）',
+      stK[1].shortKey === 'spec.short.tuck' && stK[2].shortKey === 'spec.short.tuckOther'
+      && stK[1].item.labelKey === 'spec.altOnButtKick' && stK[2].item.labelKey === 'spec.altSwitchButtKick',
+      `${stK[1].shortKey}/${stK[2].shortKey} ${stK[1].item.labelKey}/${stK[2].item.labelKey}`);
+    ok('勾腿跳：换了短标签之后，得分仍旧落在正确的格子上（5 / 10 / 22 + 满轮 6）',
+      JSON.stringify(stagePoints('buttKick').map((r) => r.points)) === '[5,10,22]'
+      && stagePoints('buttKick')[2].bonus === 6,
+      JSON.stringify(stagePoints('buttKick')));
     ok('勾腿跳：最后一格的补充说明带上了「回到 ≥132°/最短间隔 0.1 秒」的参数',
       stK[2].item.noteKey === 'spec.note.altSwitch'
       && stK[2].item.noteParams?.rest === 132 && stK[2].item.noteParams?.gap === 0.1,

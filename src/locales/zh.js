@@ -871,6 +871,9 @@ export default {
     // 死虫式：关键帧按这个动作说 —— 「伸出一条腿」/「换另一条腿也伸出去」
     altOnDeadBug: '伸出一条腿',
     altSwitchDeadBug: '换另一条腿也伸出去',
+    // 勾腿跳：按用户要求写成「勾腿」/「勾另一条腿」
+    altOnButtKick: '勾腿（脚跟往臀部勾起来）',
+    altSwitchButtKick: '勾另一条腿（换边那一刻计次）',
     altOtherHold: '另一条腿留在桌面位',
     altHold: '动作保持时间',
     altGap: '两次计数的间隔',
@@ -899,6 +902,9 @@ export default {
       // 死虫式：伸腿 / 换另一条腿伸出去
       extend: '伸腿',
       extendOther: '换腿',
+      // 勾腿跳：勾腿 / 勾另一条腿
+      tuck: '勾腿',
+      tuckOther: '勾另一条腿',
       prone: '俯撑',
       supine: '仰卧',
       side: '侧卧',
