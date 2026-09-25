@@ -698,20 +698,32 @@ console.log('\n[4] bend 引擎：姿势门控');
   ok('躺下之后：门控放行', det.active === true && det.standby === '', `active=${det.active}`);
 }
 {
-  // 仰卧抬腿的姿势要求放宽了（用户要求）：门控改成 supineFlat —— **只看「肩离地高度 ≤ 0.6×躯干长」**，
-  // 删掉了「躯干倾角 ≥ 36°」。所以「半躺」（躯干离竖直只斜 30°）现在也能进入判定，
-  // 而站着（肩离地高度 1.2×躯干长）仍旧被这一条拦住。
+  // 仰卧抬腿的「躺下」判据（两轮用户反馈）：现在是**两条证据取「或」** ——
+  //   ① 躯干在画面里接近水平（≥55°，**完全不看地面线**）；
+  //   ② 肩膀离校准地面线不超过 0.6 倍躯干长。
+  // 为什么要「或」：床上/沙发上做、或者机位在脚这一头时，地面线会比身体低，
+  // 只看第 ② 条就会把「躺得标准」误判成「没躺下」——用户反馈「总是进入不了起始姿势」。
   const reclined = createDetector('lyingLegRaise');
   const r1 = makeFrameRunner(reclined);
   r1.run([{ f: supineFrame({ torsoIncl: 30, shoulderClear: 0.5, hipAngle: 178, kneeAngle: 176 }), ms: 900 }]);
-  ok('仰卧抬腿：躯干只斜 30°（不到旧的 36°）也放行（姿势要求已放宽）',
+  ok('仰卧抬腿：半躺（躯干只斜 30°）靠「肩膀贴近地面线」也放行',
     reclined.active === true && reclined.standby === '', `active=${reclined.active} standby=${reclined.standby}`);
+
+  // 用户反馈的那种情形：躺得很标准（躯干 90°、髋 178°），但地面线比身体低（肩离地 0.69 > 0.6）
+  const offGround = createDetector('lyingLegRaise');
+  const rBed = makeFrameRunner(offGround);
+  rBed.run([{ f: supineFrame({ torsoIncl: 88, shoulderClear: 0.69, hipAngle: 178, kneeAngle: 176 }), ms: 900 }]);
+  ok('仰卧抬腿：躺平但地面线偏低（肩离地 0.69，床/沙发那种）也能进入起始姿势',
+    offGround.active === true && offGround.standby === '', `active=${offGround.active} standby=${offGround.standby}`);
 
   const standing = createDetector('lyingLegRaise');
   const r2 = makeFrameRunner(standing);
   r2.run([{ f: supineFrame({ torsoIncl: 10, shoulderClear: 1.2, hipAngle: 178, kneeAngle: 176 }), ms: 900 }]);
-  ok('仰卧抬腿：站着（肩离地高度 1.2×躯干长）仍旧被门控拦住',
+  ok('仰卧抬腿：站着（躯干 10°、肩离地 1.2）两条证据都不成立，仍旧被拦住',
     standing.active === false && standing.standby !== '', `active=${standing.active} standby=${standing.standby}`);
+  ok('仰卧抬腿：站着的提示文案说的是这个动作的要领（「躺平、双腿伸直」，不是「仰卧屈膝」）',
+    standing.standby === 'status.need.supineStraight' && t(standing.standby) !== standing.standby,
+    `${standing.standby} → ${t(standing.standby)}`);
 }
 
 /* ------------------------------------------------------------------ *

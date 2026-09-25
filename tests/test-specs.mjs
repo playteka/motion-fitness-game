@@ -231,18 +231,29 @@ console.log('\n[5] 姿势要求用的就是 GATES 的那张表');
   }
   ok('确实检查了门控数值（不是空跑）', checked >= 20, `实际 ${checked} 条`);
 
-  // 用户要求：仰卧抬腿的姿势要求只保留「肩离地高度 ≤ 0.6×躯干长」，删掉「躯干倾角 ≥ 36°」
+  // 仰卧抬腿的「躺下」判据（两轮用户反馈的结果）：
+  //   ① 第一轮：「只保留『肩离地高度 ≤ 0.6×躯干长』，删掉『躯干倾角 ≥ 36°』」；
+  //   ② 第二轮：「总是进入不了起始姿势」→ 那唯一一条**依赖地面线**，躺平也会被误判，
+  //      所以现在写成**两条证据取「或」**：躯干接近水平（≥55°，不看地面线）或 肩膀贴近地面线。
   const legRaisePose = itemsOf('lyingLegRaise').filter((it) => it.labelKey.startsWith('spec.pose.'));
-  ok('仰卧抬腿：姿势要求只剩一条（肩离地高度）',
-    legRaisePose.length === 1, `实际 ${legRaisePose.length} 条：${legRaisePose.map((it) => it.metricKey).join(',')}`);
-  ok('仰卧抬腿：剩下那条就是「肩离地高度 ≤ 0.6×躯干长」',
-    legRaisePose[0]?.metricKey === 'metric.shoulderClear' && legRaisePose[0]?.value === 0.6,
-    `${legRaisePose[0]?.metricKey} ${legRaisePose[0]?.value}`);
-  ok('仰卧抬腿：不再有「躯干倾角 ≥ 36°」这条姿势要求',
-    !legRaisePose.some((it) => it.metricKey === 'metric.torsoIncl'),
-    legRaisePose.map((it) => it.metricKey).join(','));
-  ok('死虫式：共用旧的 supineLow，仍旧是「躯干倾角 + 肩离地高度」两条（放宽只针对仰卧抬腿）',
-    itemsOf('deadBug').filter((it) => it.labelKey === 'spec.pose.supineLow').length === 2,
+  const legRaiseStages = specStages('lyingLegRaise');
+  ok('仰卧抬腿：姿势要求是「躯干接近水平 或 肩离地高度 ≤ 0.6×躯干长」两条',
+    legRaisePose.length === 2
+    && legRaisePose.some((it) => it.metricKey === 'metric.torsoIncl' && it.value === 55)
+    && legRaisePose.some((it) => it.metricKey === 'metric.shoulderClear' && it.value === 0.6),
+    legRaisePose.map((it) => `${it.metricKey}${it.value}`).join(','));
+  ok('仰卧抬腿：不再有旧的「躯干倾角 ≥ 36°」这条（新的 55° 是「或」里的一条，不是硬要求）',
+    !legRaisePose.some((it) => it.metricKey === 'metric.torsoIncl' && it.value === 36),
+    legRaisePose.map((it) => `${it.metricKey}${it.value}`).join(','));
+  ok('仰卧抬腿：两条证据都带上了「两条证据任一条成立就算躺下」的说明',
+    legRaisePose.every((it) => it.noteKey === 'spec.note.supineLying'),
+    JSON.stringify(legRaisePose.map((it) => it.noteKey)));
+  ok('仰卧抬腿：进度条第一格写成「A 或 B」（第二条是替代判据 alt，不是「还要满足」）',
+    legRaiseStages[0].alt?.metric === 'shoulderClear' && legRaiseStages[0].metric === 'torsoIncl',
+    JSON.stringify([legRaiseStages[0].metric, legRaiseStages[0].alt?.metric]));
+  ok('死虫式：同样共用「躺下」的「或」判据（躯干 + 肩离地，两条）',
+    itemsOf('deadBug').filter((it) => it.labelKey === 'spec.pose.supineLow').length === 2
+    && specStages('deadBug')[0].alt?.metric === 'shoulderClear',
     String(itemsOf('deadBug').filter((it) => it.labelKey === 'spec.pose.supineLow').length));
 
   // 手写识别器用自己的姿势判据（不套通用 prone 门控），也必须逐条对上

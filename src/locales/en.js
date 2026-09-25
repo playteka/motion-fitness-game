@@ -199,6 +199,8 @@ export default {
       stand: 'Step into the frame and set up your stance',
       prone: 'Get down and set up: hands under your shoulders, body in one line',
       supine: 'Lie down on the mat: on your back with knees bent, set up for the move',
+      // Lying leg raise: the start is simply lying flat with straight legs (the "knees bent" line is the bridge/crunch pose)
+      supineStraight: 'Lie flat on the mat: body flat, legs straight and relaxed (hip and knee both flat, about 180°)',
       quadruped: 'Get on all fours: hands and knees on the floor',
       kneel: 'Kneel down: knees on the floor, torso tall',
       seated: 'Sit down on the mat and set up for the move',
@@ -952,6 +954,10 @@ export default {
       altGap: 'At least this much time between two counted reps.',
       altOtherHold: '**The other leg has to stay in the starting position** (for the dead bug: the bent-knee tabletop at 90°) — '
         + 'when this does not hold, that frame is not counted, because “both legs extending at once” is a different exercise, not the dead bug alternation.',
+      supineLying: 'There are **two ways to prove you are lying down, and either one is enough**: the torso is close to horizontal in '
+        + 'the frame (no ground line involved) **or** the shoulders are within this distance of the ground line. Why both: on a bed or sofa, '
+        + 'or with the camera at your feet, the ground line sits below your body and the shoulder height alone would call a perfectly flat '
+        + 'position “not lying down”.',
       altOnDeadBug: 'The dead bug judges how far the **leg reaches out**, not how much the knee bends: this number is the **smaller of the knee angle and the hip angle** — '
         + 'the knee has to be close to straight AND the thigh has to genuinely open away from the tabletop (≈90°). Both must arrive, so “thigh still vertical, only the shin kicked straight up” does not count, '
         + 'and neither does “leg lowered but the knee still bent”.',

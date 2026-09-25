@@ -82,24 +82,35 @@ const item = (o) => o;
  * 姿势门控 → 指标行（数值来自 GATE_LIMITS，与判定同一张表）
  * ------------------------------------------------------------------ */
 
-function rangeItem(labelKey, metricKey, range, unit) {
+function rangeItem(labelKey, metricKey, range, unit, noteKey) {
   const [min, max] = range;
   const r = (v) => roundFor(v, unit);
   if (min !== null && max !== null) {
-    return item({ labelKey, metricKey, op: 'range', value: r(min), value2: r(max), unit });
+    return item({ labelKey, metricKey, op: 'range', value: r(min), value2: r(max), unit, noteKey });
   }
-  if (max !== null) return item({ labelKey, metricKey, op: 'lte', value: r(max), unit });
-  return item({ labelKey, metricKey, op: 'gte', value: r(min), unit });
+  if (max !== null) return item({ labelKey, metricKey, op: 'lte', value: r(max), unit, noteKey });
+  return item({ labelKey, metricKey, op: 'gte', value: r(min), unit, noteKey });
 }
+
+/**
+ * 「任一条成立即可」的门控（OR）。
+ *
+ * 仰卧类的 supineFlat / supineLow 就是这种：**躯干接近水平** 或 **肩膀贴近地面线**，
+ * 任一条成立就算「躺下了」（见 engines.js 的 supineLying 与 GATE_LIMITS.supineFlat）。
+ * 它必须在界面上写成「A 或 B」——按「还要满足」（AND）写会把判据说得比实际更严，
+ * 而这正是用户反馈「仰卧抬腿总是进入不了起始姿势」时看到的那句话。
+ */
+const OR_GATES = new Set(['supineFlat', 'supineLow']);
 
 /** 某个门控的全部指标行 */
 function gateItems(gateName) {
   const limits = GATE_LIMITS[gateName];
   if (!limits) return [];
+  const noteKey = OR_GATES.has(gateName) ? 'spec.note.supineLying' : undefined;
   const out = [];
   for (const [metric, range] of Object.entries(limits)) {
     const unit = METRIC_UNITS[metric] || TORSO;
-    out.push(rangeItem(poseKey(gateName), `metric.${metric}`, range, unit));
+    out.push(rangeItem(poseKey(gateName), `metric.${metric}`, range, unit, noteKey));
   }
   return out;
 }
@@ -746,7 +757,13 @@ export function specStages(id) {
   const gateItem = posture.find(isLiveItem);
   if (gateItem) {
     const flag = isHold ? 'gateOk' : (GATED_BUILTINS.has(id) ? 'active' : (BUILDERS[id] ? null : 'gateOk'));
-    stages.push(toStage(gateItem, { kind: 'gate', detFlag: flag, pose: true }));
+    const gateStage = toStage(gateItem, { kind: 'gate', detFlag: flag, pose: true });
+    // 「或」门控（仰卧类）：第二条证据是**替代**判据，不是「还要满足」——写成 alt 让界面显示成「A 或 B」
+    if (OR_GATES.has(meta.params?.gate)) {
+      const extra = posture.find((it) => it !== gateItem && isLiveItem(it));
+      if (extra) gateStage.alt = toStage(extra);
+    }
+    stages.push(gateStage);
   }
 
   if (isHold) {

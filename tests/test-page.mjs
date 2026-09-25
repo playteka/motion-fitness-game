@@ -364,10 +364,12 @@ console.log('\n[3] 静态资源与模型文件');
     const clean = EXERCISES.filter((m) => !showsTrunkAngle(m.id)).map((m) => m.id);
     ok(`标关节角的 ${judged.length} 个动作都会在画面上标出躯干倾角`,
       judged.every((id) => new RegExp(`\\b${id}:`).test(focusBlock)), judged.join(', '));
-    ok('不标角度的动作（开合跳 / 波比跳 / 体前屈）不会多出一个躯干数字',
+    ok('不标角度的动作（开合跳 / 波比跳 / 站立体前屈）不会多出一个躯干数字',
       clean.length > 0 && clean.every((id) => !new RegExp(`\\b${id}:`).test(focusBlock)), clean.join(', '));
-    // 宽距 / 窄距俯卧撑已按用户要求删除 → 从 18 个减到 16 个
-    ok('躯干倾角覆盖了全部「角度判定」的动作（16 个）', judged.length === 16, String(judged.length));
+    // 宽距 / 窄距俯卧撑已删除（18 → 16）；坐姿体前屈按用户反馈「没有显示角度」补上（16 → 17）
+    ok('躯干倾角覆盖了全部「角度判定」的动作（17 个）', judged.length === 17, String(judged.length));
+    ok('坐姿体前屈：标「髋」+「躯干」（它判的就是前折幅度，用户反馈过没有数字）',
+      /seatedForwardFold:\s*\['hip'\]/.test(focusBlock), focusBlock.slice(-120));
   }
 
   // 全屏按钮：贴在视频框右下角，点它放大的是「视频框」#stage，不是整个 HTML 页面

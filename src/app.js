@@ -583,10 +583,16 @@ function keyframeRowsHtml(id) {
     const condText = `${cond}${altText}${alsoText}`;
     const lines = [];
     if (stage.item?.noteKey) lines.push(t(stage.item.noteKey, stage.item.noteParams || null));
-    // 第一格 = 「进入这个动作的姿势」：其余姿势要求也属于这一格（按判据文字去重，避免重复同一句）
+    // 第一格 = 「进入这个动作的姿势」：其余姿势要求也属于这一格（按判据文字去重，避免重复同一句）。
+    // 注意：带替代判据（「A 或 B」，例如仰卧类的「躯干接近水平 或 肩膀贴近地面线」）时，
+    // B 已经写在上面那行里了，不能再当成「还要满足」重复一遍 —— 那会把 OR 说成 AND。
     if (i === 0) {
       const mine = stage.item ? specCondition(stage.item) : '';
-      const extra = postureItems.filter((it) => specCondition(it) !== mine);
+      const altCond = stage.alt ? specCondition(stage.alt.item || stage.alt) : '';
+      const extra = postureItems.filter((it) => {
+        const c = specCondition(it);
+        return c !== mine && c !== altCond;
+      });
       if (extra.length) lines.push(`${t('spec.poseExtra')}${extra.map((it) => specCondition(it)).join('、')}`);
     }
     // 「计次」那一格：把深度线 / 更浅只算晃了一下的线也挂在它下面

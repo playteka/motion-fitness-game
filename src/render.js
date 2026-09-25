@@ -37,6 +37,7 @@ export const FOCUS = {
   squatJump: ['knee', 'hip'],
   lunge: ['knee', 'hip'],
   lungeBack: ['knee', 'hip'],
+  // 俯卧撑：判据是肘角（+ 髋角用来看身体有没有成一条线）
   pushup: ['elbow', 'hip'],
   bridge: ['hip', 'knee'],
   plank: ['hip', 'shoulder'],
@@ -50,6 +51,14 @@ export const FOCUS = {
   // 勾腿跳：判据是「勾起来那条腿的膝角」（脚跟往臀部勾，膝角变小）
   buttKick: ['knee'],
   boxJump: ['knee', 'hip'],
+  /**
+   * 坐姿体前屈：用户反馈「**没有显示角度**」—— 之前它是 FOCUS 里没有条目的动作，
+   * 一个数字都不标（规则是「判据不是关节角就不标」）。可它判的恰恰就是**前折幅度**：
+   * 门控 seatedFold 要的是「躯干倾角 ≥ 40°」（+ 髋离地 ≤ 0.9），
+   * 所以标出「躯干 xx°」用户才能看着判决线折；再带上「髋 xx°」（躯干与腿的夹角，
+   * 坐直 ≈90°、折到底 ≈40°），这就是坐姿体前屈真正在练的那两个角度。
+   */
+  seatedForwardFold: ['hip'],
 };
 
 /**

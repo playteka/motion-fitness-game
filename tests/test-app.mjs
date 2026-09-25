@@ -437,6 +437,19 @@ console.log('\n[1b] 运动设定弹窗');
     api.renderExerciseSettings();
   }
 
+  // 仰卧抬腿：用户反馈「总是进入不了起始姿势」→「躺下」判据写成两条证据「或」
+  {
+    api.openExercise('lyingLegRaise');
+    api.renderExerciseSettings();
+    const raiseHtml = elements.get('exerciseSpecs').innerHTML;
+    ok('仰卧抬腿：关键帧第一格把「躺下」写成「躯干接近水平 或 肩膀贴近地面线」',
+      raiseHtml.includes('且') === false && raiseHtml.includes('或')
+      && raiseHtml.includes('55') && raiseHtml.includes('0.6'),
+      raiseHtml.slice(0, 400));
+    api.openExercise('pushup');
+    api.renderExerciseSettings();
+  }
+
   // ===== 关键帧 + 判分标准：用户要求「把对应动作的关键帧判别标准以及对应的判分标准列出来」 =====
   {
     const { specStages: stagesOf, stagePoints } = await import('../src/specs.js');
@@ -856,6 +869,21 @@ console.log('\n[6] 火柴人开关');
     ok('躯干倾角是合理读数（0~90°，0=直立 / 90=水平）',
       texts.some((x) => /^躯干\s+(\d+)°$/.test(x) && Number(/^躯干\s+(\d+)°$/.exec(x)[1]) <= 90),
       texts.join(' | '));
+    // 坐姿体前屈：用户反馈「没有显示角度」—— 它判的就是前折幅度（躯干倾角 ≥40°），
+    // 所以现在标出「髋」和「躯干」两个数（同一套胶囊，位置跟着关节走）
+    {
+      const { supinePose: seatPose } = await import('./synthetic-pose.mjs');
+      const smSeat = new LS();
+      const seat = seatPose({ hip: { x: 0.75, y: 0.8 }, thighUp: 60, knee: 172, torsoUp: 235, armDown: 40, elbow: 170 });
+      let seatFrame = { ok: false };
+      for (let i = 0; i < 20; i++) seatFrame = cf(tm(smSeat.apply(seat.map((q) => ({ ...q, v: q.visibility })), i / 30), A), null, i * 33, false, null);
+      texts.length = 0;
+      api.renderer.draw({ landmarks: seat, frame: seatFrame, exerciseId: 'seatedForwardFold', status: 'ok' });
+      ok('坐姿体前屈：画面上标出「髋」（躯干与腿的夹角，折得越深越小）',
+        texts.some((x) => x.startsWith('髋')), texts.join(' | '));
+      ok('坐姿体前屈：标出「躯干 xx°」（门控要的就是躯干倾角 ≥40°，折多深一眼能看到）',
+        texts.some((x) => /^躯干\s+\d+°$/.test(x)), texts.join(' | '));
+    }
     // 别的动作一样叫「髋」——全应用只有一种叫法，不做特例
     texts.length = 0;
     api.renderer.draw({ landmarks, frame, exerciseId: 'squat', status: 'ok' });

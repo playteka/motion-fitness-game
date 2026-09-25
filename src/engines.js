@@ -83,13 +83,28 @@ export const GATE_LIMITS = {
     shoulderClear: [null, 0.6],
   },
   /**
-   * 仰卧抬腿专用的**最宽松**仰卧门控：**只看肩离地高度**。
+   * 仰卧（腿可以伸直：仰卧抬腿）：**只看「躺没躺下」**，而且是**两条证据取「或」**。
    *
-   * 用户明确要求「姿势要求只保留『肩离地高度 ≤ 0.6×躯干长』，删除『躯干倾角 ≥ 36°』，
-   * 进一步放宽姿势要求」—— 所以这个门控里没有 torsoIncl 这一条。
-   * 剩下的肩离地高度本身就已经把「站着 / 坐直」挡在外面（站立时肩离地高度约 1.0×躯干长以上）。
+   * 用户两轮反馈把这里定成了现在这样：
+   *   ① 第一轮「姿势要求只保留『肩离地高度 ≤ 0.6×躯干长』，删除『躯干倾角 ≥ 36°』」——
+   *      所以这里不再有「必须同时满足」的硬条件；
+   *   ② 第二轮「仰卧抬腿总是进入不了起始姿势」——查下来就是这唯一的一条**依赖地面线**：
+   *      校准记下的地面线一旦比身体低（在床上/沙发上做、或者机位在脚这一头），
+   *      躺得再标准也会读到「肩离地 0.6 倍躯干长以上」而被判成「没躺下」。
+   *      实测：躺平（躯干 90°、髋 180°、膝 178°）在地面线偏低时会被拦住。
+   *
+   * 现在两条证据任一条成立就算躺平：
+   *   - `torsoIncl ≥ 55°`：躯干在画面里接近水平（**完全不看地面线**，机位/床垫都不影响）；
+   *   - `shoulderClear ≤ 0.6`：肩膀离地面线不超过 0.6 倍躯干长（原来的那条）。
+   * 站起来（躯干 ≈10°、肩离地 ≈1.2）两条都不成立，仍旧被拦住。
    */
   supineFlat: {
+    torsoIncl: [55, null],
+    shoulderClear: [null, 0.6],
+  },
+  /** 仰卧（腿可以弯：死虫式）—— 判据与 supineFlat 相同，只是名字不同（见 specs.js 的 OR_GATES） */
+  supineLow: {
+    torsoIncl: [55, null],
     shoulderClear: [null, 0.6],
   },
   /** 侧卧（侧平板）：横着躺 + 肩/髋离地 + 手撑地 */
@@ -118,6 +133,17 @@ export function inLimit(v, [min, max]) {
   if (max !== null && v > max) return false;
   return true;
 }
+
+/**
+ * 「躺下了没有」= **两条证据取「或」**（仰卧类的门控 supineFlat / supineLow 都用它）：
+ *   ① 躯干在画面里接近水平（`torsoIncl ≥ 55°`）—— **不看地面线**；
+ *   ② 肩膀离地面线不超过 0.6 倍躯干长（`shoulderClear ≤ 0.6`）。
+ * 为什么必须是「或」而不是「且」：见 GATE_LIMITS.supineFlat 的说明 ——
+ * 躺得再标准，只要校准地面线比身体低（床上/沙发上、或机位在脚这一头），
+ * 第 ② 条就会误判成「没躺下」，用户会被卡在「进入不了起始姿势」。
+ */
+export const supineLying = (f) => inLimit(f.torsoIncl, GATE_LIMITS.supineFlat.torsoIncl)
+  || inLimit(f.shoulderClear, GATE_LIMITS.supineFlat.shoulderClear);
 
 export const GATES = {
   /** 站立（膝盖离地、髋在膝上方） */
@@ -157,10 +183,9 @@ export const GATES = {
   supine: (f) => inLimit(f.torsoIncl, GATE_LIMITS.supine.torsoIncl)
     && inLimit(f.shoulderClear, GATE_LIMITS.supine.shoulderClear)
     && inLimit(f.kneeClear, GATE_LIMITS.supine.kneeClear),
-  /** 仰卧（腿可以伸直：仰卧抬腿 / 死虫式 / 空心支撑 / 龙旗） */
-  supineLow: (f) => inLimit(f.torsoIncl, GATE_LIMITS.supineLow.torsoIncl)
-    && inLimit(f.shoulderClear, GATE_LIMITS.supineLow.shoulderClear),
-  supineFlat: (f) => inLimit(f.shoulderClear, GATE_LIMITS.supineFlat.shoulderClear),
+  /** 仰卧（腿可以伸直：仰卧抬腿 / 死虫式 / 空心支撑 / 龙旗）—— 两条证据取「或」，见 GATE_LIMITS 的说明 */
+  supineLow: (f) => supineLying(f),
+  supineFlat: (f) => supineLying(f),
   /** 站立（不依赖地面线）：躯干竖直 + 肩高于髋 —— 见 GATE_LIMITS.standUpright 的说明（注意符号） */
   standUpright: (f) => inLimit(f.torsoIncl, GATE_LIMITS.standUpright.torsoIncl)
     && inLimit(f.shoulderAboveHip, GATE_LIMITS.standUpright.shoulderAboveHip),
@@ -419,7 +444,10 @@ class BendRepDetector extends DetectorBase {
     const gate = GATES[this.gateName] || GATES.stand;
     const gated = !!gate(f);
     this.gateOk = gated;
-    const hintKey = `status.need.${GATE_HINT[this.gateName] || 'stand'}`;
+    // 提示文案默认按门控名给（「躺到垫子上：仰卧屈膝…」那是臀桥/卷腹的说法），
+    // 动作可以用 `params.standbyKey` 换成自己的说法 —— 仰卧抬腿要求腿伸直，
+    // 沿用「仰卧屈膝」会让人以为起始姿势是屈膝（用户反馈过）。
+    const hintKey = this.p.standbyKey || `status.need.${GATE_HINT[this.gateName] || 'stand'}`;
 
     if (!gated) {
       this.active = false;
