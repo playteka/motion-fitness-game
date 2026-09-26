@@ -383,6 +383,10 @@ console.log('\n[1b] 运动设定弹窗');
       lunge.target === 20 && lungeBack.target === 20
       && api.targetPresetsFor({ kind: 'rep' }).includes(lunge.target),
       `${lunge.target}/${lungeBack.target}`);
+    // 用户要求：卷腹与反向卷腹的默认次数都改成 20（反向卷腹原来是 15）
+    ok('卷腹 / 反向卷腹的默认目标都 = 20 次',
+      EXERCISE_MAP.crunch.target === 20 && EXERCISE_MAP.reverseCrunch.target === 20,
+      `${EXERCISE_MAP.crunch.target}/${EXERCISE_MAP.reverseCrunch.target}`);
   }
 
   // 目标改动要实时同步到侧栏摘要

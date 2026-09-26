@@ -485,6 +485,11 @@ console.log('\n[4] 动作库与界面一致性');
     const lungeBack = EXERCISES.find((x) => x.id === 'lungeBack');
     ok('向前 / 向后箭步蹲默认目标都是 20 次（用户要求）',
       lunge?.target === 20 && lungeBack?.target === 20, `${lunge?.target}/${lungeBack?.target}`);
+    // 后来用户又要求：卷腹与反向卷腹的默认次数也都 = 20（反向卷腹原来是 15）
+    const crunch = EXERCISES.find((x) => x.id === 'crunch');
+    const reverse = EXERCISES.find((x) => x.id === 'reverseCrunch');
+    ok('卷腹 / 反向卷腹默认目标都是 20 次（用户要求）',
+      crunch?.target === 20 && reverse?.target === 20, `${crunch?.target}/${reverse?.target}`);
   }
   // 用户指定的调整：深蹲跳移到「全身」；下肢新增「勾腿跳」；全身有「开合跳」，默认目标 50 次
   const squatJump = EXERCISES.find((x) => x.id === 'squatJump');

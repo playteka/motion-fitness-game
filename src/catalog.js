@@ -215,6 +215,7 @@ export const EXERCISES = [
     },
   }),
   e('crunch', '🌀', 'core', {
+    // 用户要求：卷腹与反向卷腹的**默认次数都是 20 次**（卷腹本来就是 20）
     engine: 'builtin', plan: 'repSupine', posture: 'supine', judge: 'clear', target: 20,
     // 卷腹的判据**按用户给的模型重做过**（手写识别器 CrunchDetector，见 exercises.js）：
     //   ① 起始关键帧 = 屈膝躺下（躯干倾角 ≈90°、膝角 ≈90°）
@@ -223,7 +224,8 @@ export const EXERCISES = [
     // `torsoLen`，越卷读数越虚高 —— 换成「肩-髋距离相对躺平长度的比例」之后就与机位无关了。
   }),
   e('reverseCrunch', '🔃', 'core', {
-    plan: 'repSupine', posture: 'supine', judge: 'hip', target: 15,
+    // 用户要求：卷腹与反向卷腹的**默认次数都改成 20 次**（反向卷腹原来是 15）
+    plan: 'repSupine', posture: 'supine', judge: 'hip', target: 20,
     // 反向卷腹是「骨盆卷起、大腿转向胸口」：同样用髋角（躯干-大腿夹角）量，
     // 但起始是屈膝桌面位（≈90°），卷到最上面 ≈60°；坐着/躺着不动时夹角更大，不会乱计数。
     params: bend({ metric: 'hip', gate: 'supine', up: 92, down: 62, minRepMs: 340 }),
