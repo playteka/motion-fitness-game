@@ -107,10 +107,12 @@ export const EXERCISES = [
     params: bend({ metric: 'kneeBent', gate: 'standWide', up: 168, down: 95, minRepMs: 480 }),
   }),
   e('lunge', '🚶', 'lower', {
-    engine: 'builtin', plan: 'lunge', posture: 'stand', judge: 'knee', target: 16,
+    // 默认目标 16 → **20 次**（用户要求：先后箭步蹲的默认次数都改成 20）
+    engine: 'builtin', plan: 'lunge', posture: 'stand', judge: 'knee', target: 20,
   }),
   e('lungeBack', '↩️', 'lower', {
-    plan: 'repStand', posture: 'stand', judge: 'knee', target: 16,
+    // 默认目标 16 → **20 次**（同上）
+    plan: 'repStand', posture: 'stand', judge: 'knee', target: 20,
     // 向后箭步蹲（通用屈伸引擎）：up = 站直读数、down = 沉到底读数。
     // 用户反馈「前后箭步蹲都太灵敏了，后面几个关键帧对膝盖弯曲的要求可以更大一些」——
     // 所以把**跟膝盖弯曲有关的那两格**收紧（进度 = (up − v)/(up − down)，越大越深）：

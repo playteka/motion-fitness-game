@@ -371,6 +371,19 @@ console.log('\n[1b] 运动设定弹窗');
   ok('弹窗里列出目标预设',
     elements.get('targetChips').children.length > 0,
     `实际 ${elements.get('targetChips').children.length} 个`);
+  // 用户要求：向前 / 向后箭步蹲的默认次数改成 20 —— 预设里必须能直接选到 20
+  ok('次数预设里有 20（箭步蹲的新默认值）',
+    api.targetPresetsFor({ kind: 'rep', timed: false }).includes(20),
+    JSON.stringify(api.targetPresetsFor({ kind: 'rep', timed: false })));
+  {
+    const { EXERCISE_MAP } = await import('../src/catalog.js');
+    const lunge = EXERCISE_MAP.lunge;
+    const lungeBack = EXERCISE_MAP.lungeBack;
+    ok('前后箭步蹲的默认目标 = 20 次，且预设里能直接选到',
+      lunge.target === 20 && lungeBack.target === 20
+      && api.targetPresetsFor({ kind: 'rep' }).includes(lunge.target),
+      `${lunge.target}/${lungeBack.target}`);
+  }
 
   // 目标改动要实时同步到侧栏摘要
   const before = api.state.target;

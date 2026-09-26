@@ -424,6 +424,13 @@ console.log('\n[4] 动作库与界面一致性');
   ok('每个分类都有动作', CATEGORIES.every((c) => EXERCISES.some((x) => x.cats.includes(c.id))),
     CATEGORIES.map((c) => `${c.id}:${EXERCISES.filter((x) => x.cats.includes(c.id)).length}`).join(' '));
   ok('动作 id 唯一', new Set(EXERCISES.map((x) => x.id)).size === EXERCISES.length);
+  // 用户要求：向前 / 向后箭步蹲的**默认次数都改成 20 次**（原来是 16）
+  {
+    const lunge = EXERCISES.find((x) => x.id === 'lunge');
+    const lungeBack = EXERCISES.find((x) => x.id === 'lungeBack');
+    ok('向前 / 向后箭步蹲默认目标都是 20 次（用户要求）',
+      lunge?.target === 20 && lungeBack?.target === 20, `${lunge?.target}/${lungeBack?.target}`);
+  }
   // 用户指定的调整：深蹲跳移到「全身」；下肢新增「勾腿跳」；全身有「开合跳」，默认目标 50 次
   const squatJump = EXERCISES.find((x) => x.id === 'squatJump');
   ok('深蹲跳在「全身」分类里（用户要求从下肢移过去）',
