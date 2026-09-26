@@ -288,6 +288,17 @@ export default {
     inRing: 'inside',
     nearRing: 'nearly there',
     outRing: 'outside',
+    // Which part entered the ring ("any part counts": fingertip / heel / toe tip / ankle / wrist)
+    inPoints: 'points inside',
+    part: {
+      wrist: 'wrist',
+      index: 'finger',
+      pinky: 'pinky',
+      thumb: 'thumb',
+      ankle: 'ankle',
+      heel: 'heel',
+      toe: 'toe',
+    },
     yes: '✓',
     no: '✗',
     count: 'Rep diagnosis',

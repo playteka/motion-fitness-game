@@ -2020,15 +2020,29 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     return lm;
   };
   /**
+   * 骨架：只有**食指**伸到指定点，手腕/小指/拇指留在原地 ——
+   * 「一部分（指尖）进圆环」的用例：掌心中心还在环外。
+   */
+  const fingertipAt = (x, y, visibility = 1) => {
+    const lm = sp2({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility }));
+    for (const i of [LM.L_INDEX, LM.R_INDEX]) lm[i] = { x, y, z: 0, visibility };
+    return lm;
+  };
+  /**
    * 骨架：把两只脚（踝 + 脚跟 + 脚尖）放到指定点。
-   * 用户最新口径是「**脚**进入圆环内部三秒」，所以判定点取整只脚的中心（三点均值），
-   * 桩里就得三点一起挪，否则中心会偏。
+   * 判定是**逐点**做的（用户要求「一部分进入即可触发」），桩里三点一起挪是最整的那一种。
    */
   const feetAt = (x, y, visibility = 1) => {
     const lm = sp2({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility }));
     for (const a of [LM.L_ANKLE, LM.R_ANKLE, LM.L_HEEL, LM.R_HEEL, LM.L_FOOT, LM.R_FOOT]) {
       lm[a] = { x, y, z: 0, visibility };
     }
+    return lm;
+  };
+  /** 骨架：只有**脚趾尖**伸进圆环，脚踝/脚跟留在原地（脚的中心还在环外） */
+  const toeOnlyAt = (x, y, visibility = 1) => {
+    const lm = sp2({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility }));
+    for (const f of [LM.L_FOOT, LM.R_FOOT]) lm[f] = { x, y, z: 0, visibility };
     return lm;
   };
   /** 骨架：**只有踝**探进圆环，脚跟/脚尖还留在远处（脚掌没进去） */
@@ -2173,20 +2187,38 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     /^[\d.]+s$/.test(elements.get('ringQuickExitTimer').textContent),
     elements.get('ringQuickExitTimer').textContent);
 
-  /* ---- 用户反馈「左下角的退出圆环十分不灵敏，手/脚伸进去后并没有能退出」----
-     查下来有四条原因，逐条钉住： */
+  /* ---- 用户两轮反馈：先是「十分不灵敏」，然后是「一部分进入即可触发」----
+     判定改成**逐点**：手/脚上的任意一个点（指尖 / 脚跟 / 脚趾尖 / 脚踝 / 手腕）进圆环就开始计时。 */
   {
     const c = center();
     const hit = api.ringHitRadius('corner', { w: SW, h: SH });
-    ok('判定半径按**圆环画出来的大小**算（0.45×直径 = 半径的 90%），不再要求对准圆心',
-      api.RING_HIT_RATIO >= 0.45 && Math.abs(hit - px() * api.RING_HIT_RATIO) < 0.01,
+    ok('判定半径就是**圆环画出来的半径**（0.5×直径 = 圈里就算）',
+      api.RING_HIT_RATIO === 0.5 && Math.abs(hit - px() * api.RING_HIT_RATIO) < 0.01,
       `判定 ${Math.round(hit)}px / 圆环直径 ${px()}px`);
-    ok('偏出中心但仍在圆环里的手也算（旧的 0.30 口径下这里是不算的）',
+    ok('判定区不再要求对准圆心（旧的 0.30 口径只有中间 42px 有效）',
       hit > px() * 0.30 + 5, `${Math.round(hit)}px vs 旧口径 ${Math.round(px() * 0.30)}px`);
+
+    // ★ 用户最新口径：**一部分进入即可触发**
+    // 只把**食指指尖**伸进圆环（掌心中心还在环外）→ 也要开始沙漏计时
+    resetCorner();
+    const tipX = c.x / SW + (hit * 0.9) / SW;
+    holdFrames(fingertipAt(tipX, c.y / SH), 30000, 1000);
+    ok('**只有指尖**伸进圆环（掌心中心还在环外）就开始计时（一部分进入即可）',
+      api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
+    ok('🐞 面板说明白是哪个部位进环了（这里是食指）',
+      api.state.touchInfo?.part === 'index' && api.state.touchInfo?.kind === 'hand',
+      JSON.stringify(api.state.touchInfo));
+
+    // 只把**脚趾尖**伸进圆环（脚的中心还在环外）→ 同样开始计时
+    resetCorner();
+    holdFrames(toeOnlyAt(c.x / SW + (hit * 0.9) / SW, c.y / SH), 32000, 1000);
+    ok('**只有脚趾尖**伸进圆环（脚的中心还在环外）就开始计时',
+      api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
+
     // 手掌中心落在「环半径的 80%」处 —— 在圆环里面，但离圆心有一段距离
     const off = (hit * 0.8) / SW;
     resetCorner();
-    holdFrames(handAt(c.x / SW + off, c.y / SH), 30000, 1000);
+    holdFrames(handAt(c.x / SW + off, c.y / SH), 34000, 1000);
     ok('手掌伸到圆环里但偏一侧（半径的 80% 处）照样开始蓄力',
       api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
 
@@ -2210,6 +2242,12 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     holdFrames(onlyWrist, 60000, 1000);
     ok('只剩手腕一个点可用时也能判定（不再要求「至少 2 个可见点」）',
       api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
+
+    // 脚踝也是「脚的一部分」：只把踝探进圆环也算（点了名的「一部分进入即可触发」）
+    resetCorner();
+    holdFrames(ankleOnlyAt(c.x / SW, c.y / SH), 62000, 1000);
+    ok('只有踝探进圆环也算（踝是脚的一部分）', api.gestureState.corner.p > 0.25,
+      String(api.gestureState.corner.p));
 
     // 短暂滑出去（宽限期内）不扣进度；滑久了只慢慢退，不会一秒清零
     resetCorner();
@@ -2266,7 +2304,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
   ok('退出后左下角圆环收起（主页上不摆）', cornerShown() === false);
 
-  // 脚也一样（用户要求「手或者脚」）：回到动作页 → 用整只脚的中心去够圆环
+  // 脚也一样（用户要求「手或者脚」）
   api.openExercise('squat');
   api.camera.stream = fakeStream;
   api.syncCornerExit();
@@ -2277,7 +2315,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
   holdFrames(feetAt(p1.x, p1.y), 20000, 1000);
   ok('**脚**伸进圆环：进度同样随时间前进（1 秒 → 约 1/3）',
     Math.abs(api.gestureState.corner.p - 1 / 3) < 0.04, String(api.gestureState.corner.p));
-  // 脚比较大：脚尖/脚跟偏一点也算（以前只认「脚的中心正好对着圆心」）
+  // 脚比较大：整只脚偏一点也算
   resetCorner();
   holdFrames(feetAt(p1.x + (hitR * 0.7) / SW, p1.y), 21000, 1000);
   ok('整只脚偏一侧（半径的 70% 处）也算踩进圆环',
@@ -2288,21 +2326,14 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
   ok('脚被挡住（可见度低）时不算伸进圆环', api.gestureState.corner.p === 0,
     String(api.gestureState.corner.p));
 
-  // 用户口径是「**脚**进入圆环内部」—— 判定点取整只脚的中心（踝 + 脚跟 + 脚尖的均值），
-  // 所以「只有踝探进去、脚掌还在环外」不该算数（踝是脚脖子，脚尖才是真的踩进去了）。
+  // 「整只脚的中心」仍然是**报告用**的代表点（touchPoints 给「一组结束」那两个圆环与 🐞 面板用），
+  // 但退出圆环的判定是**逐点**的：只要手/脚上的任意一个点进环就算（见上面的用例）。
   {
     const tp = api.touchPoints(ankleOnlyAt(p1.x, p1.y), SW, SH, false);
-    ok('「脚」的判定点是整只脚的中心（踝 + 脚跟 + 脚尖的均值），不是只有踝一个点',
+    ok('「脚」的代表点仍是整只脚的中心（踝 + 脚跟 + 脚尖的均值）',
       tp.length === 4 && Math.abs(tp[2].x / SW - (p1.x + 1 / 6)) < 0.002
       && Math.abs(tp[3].x / SW - (p1.x + 1 / 6)) < 0.002,
       JSON.stringify(tp.map((p) => [Number((p.x / SW).toFixed(3)), Number((p.y / SH).toFixed(3))])));
-    api.gestureState.corner.p = 0;
-    api.gestureState.corner.since = 0;
-    api.gestureState.corner.lastInside = 0;
-    api.updateCornerExit(ankleOnlyAt(p1.x, p1.y), 24000);
-    api.updateCornerExit(ankleOnlyAt(p1.x, p1.y), 25500);
-    ok('只有踝探进圆环、脚掌还在环外时不计时（脚的中心还在环外）',
-      api.gestureState.corner.p === 0, String(api.gestureState.corner.p));
   }
 
   // 「一组结束」的两个大圆环出来时，左下角这个先收起来（那儿已经有「退出」了）

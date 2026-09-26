@@ -325,7 +325,8 @@ console.log('\n[3] 静态资源与模型文件');
   ok('两个圆环的左右位置在 app.js 里一处定义（左退出 / 右再做一次）',
     /exit:\s*\{\s*x:\s*0\.\d+/.test(appSrc) && /retry:\s*\{\s*x:\s*0\.\d+/.test(appSrc)
     && /ui\.gestureExit/.test(appSrc) && /ui\.gestureRetry/.test(appSrc));
-  ok('手势判定要考虑镜像预览（否则左右手会反）', /mirror\s*\?\s*1\s*-\s*cx/.test(appSrc));
+  // 逐点判定（touchSamples）里也是同一处镜像翻转：`(mirror ? 1 - p.x : p.x) * stageW`
+  ok('手势判定要考虑镜像预览（否则左右手会反）', /mirror\s*\?\s*1\s*-\s*(cx|p\.x)/.test(appSrc));
 
   /* ---- 计时类读秒：每 5 秒播报一次（用户要求：平板支撑读「5 秒」「10 秒」…） ---- */
   ok('读秒间隔写死为 5 秒', /HOLD_COUNT_EVERY\s*=\s*5/.test(appSrc));

@@ -290,6 +290,17 @@ export default {
     inRing: '环内',
     nearRing: '快到了',
     outRing: '环外',
+    // 进环的是哪个部位（「一部分进入即可触发」：指尖 / 脚跟 / 脚趾尖 / 脚踝 / 手腕都算）
+    inPoints: '环内点',
+    part: {
+      wrist: '手腕',
+      index: '食指',
+      pinky: '小指',
+      thumb: '拇指',
+      ankle: '脚踝',
+      heel: '脚跟',
+      toe: '脚趾尖',
+    },
     yes: '✓',
     no: '✗',
     count: '计数诊断',

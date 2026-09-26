@@ -774,15 +774,19 @@ const CORNER_RING_BOTTOM_PX = 16;
  */
 const RING_PX_FALLBACK = { min: 104, vw: 0.105, max: 140 };
 /**
- * 手 / 脚要落在圆心这个比例（占**直径**）以内才算「进到圆环里」。
+ * 手 / 脚要「进到圆环里」的判定半径（占**直径**）。
  *
- * 用户反馈「左下角的退出圆环十分不灵敏，手掌或者脚伸进去后并没有能退出」：
- * 原来是 **0.30**（= 环半径的 60%），也就是必须把手掌中心*对准圆心*才认 ——
- * 而屏幕上的圆环半径是 70px，判定半径只有 42px，用户按「伸进圆环里」去放，十有八九落在
- * 那个小圈外。现在改成 **0.45（= 环半径的 90%）**：**只要进到圆环里面就算**，
- * 和圆环画出来的大小一致（边缘留 10% 免得擦边也算）。
+ * 用户最新口径：「**手掌或者脚的一部分进入**就要开始沙漏计时，保持 3 秒后退出，**一部分进入即可触发**。」
+ * 所以判定**逐点**做（见 touchSamples）：只要手/脚上的任意一个点（指尖 / 脚跟 / 脚趾尖 / 脚踝 / 手腕）
+ * 落进圆环里就算进去了 —— 半径就取**圆环画出来的那个半径**（0.5 × 直径），也就是「点在圆圈里面」。
+ *
+ * 历史（都保留在注释里，免得以后又走回头路）：
+ *   - 最初 0.30（= 环半径的 60%）：必须把「手掌中心 / 整只脚的中心」对准圆心才算，
+ *     屏幕上半径 70px 的圆环只有中间 42px 有效 —— 用户反馈「十分不灵敏」；
+ *   - 中间改成 0.45（= 环半径的 90%）：好一些，但仍然要求**中心**进环，
+ *     用手指尖 / 脚趾尖去够的时候中心还在环外，计时就是不开始 —— 用户再次反馈。
  */
-const RING_HIT_RATIO = 0.45;
+const RING_HIT_RATIO = 0.5;
 /**
  * 手势落点的最低可见度：低于这个值的点整帧不参与（被身体挡住的看不见的手/脚不会误触）。
  * 原来写死 0.4 —— 但手/脚伸到**画面边角**（左下角圆环正好在角上）时，MediaPipe 给的可见度
@@ -851,38 +855,83 @@ function ringHitRadius(key, size) {
 }
 
 /**
- * 画面里的「手 / 脚」落点（舞台像素坐标，已经考虑镜像）。
+ * 画面里的「手 / 脚」落点（舞台像素坐标，已经考虑镜像）——**每个关键点各算一个采样点**。
  *
- * 手：手腕 + 食指 + 小指 + 拇指的平均点当手掌中心（只用手腕会偏 —— 手掌伸进圆环时手腕可能还在环外）；
- * 脚：踝 + 脚跟 + 脚趾尖的平均点当**脚的中心**（用户要求「脚进入圆环内部三秒」——
- *     只取踝点的话脚尖已经踩进圆环里了踝还在环外；取整只脚的中心最接近「脚进去了」）。
- * 左下角那个退出圆环**手或脚都算**（用户要求）。
+ * 手 = 手腕 + 食指 + 小指 + 拇指（每只手 4 个点）；脚 = 踝 + 脚跟 + 脚趾尖（每只脚 3 个点）。
  *
- * 用户反馈「退出圆环十分不灵敏」后放宽了两处：**可见度门槛 0.4 → 0.3**，
- * 并且**只要有一个点可用就算数**（原来要求至少 2 个点 —— 手/脚伸到画面边角时，
- * 指节/脚跟/脚尖这些点的可见度常常掉到 0.4 以下，结果整只手/整只脚被丢掉、圆环一动不动）。
- * 平均点仍然优先：有点可用时用它们的中心，只有一个可用时就用那一个（手腕本身也很稳）。
+ * 用户最新口径：「**手掌或脚的一部分进入**我认为就要开始沙漏计时，保持 3 秒后退出。
+ *   **一部分进入即可触发**。」 —— 所以左下角那个退出圆环**逐点**判定：
+ * 只要手/脚上的**任意一个点**落进圆环里就开始计时（指尖、脚跟、脚趾尖、脚踝都算）。
+ * 以前只取「手掌中心 / 整只脚的中心」一个点，等于要求把中心对准圆环 —— 用户伸进去的是手指尖，
+ * 中心还在环外，计时就永远不开始（这正是「还是不灵敏」的原因）。
+ *
+ * 用户反馈「十分不灵敏」后放宽过的两处仍然保留：**可见度门槛 0.3**、**只要有点可用就算数**
+ * （手/脚伸到画面边角时，指节/脚跟这些点的可见度常掉到 0.4 以下，旧写法会把整只手丢掉）。
+ */
+function touchSamples(landmarks, stageW, stageH, mirror) {
+  if (!landmarks || !landmarks.length) return [];
+  const out = [];
+  const add = (p, kind, side, part) => {
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+    if (p.visibility !== undefined && p.visibility < TOUCH_VIS_MIN) return;
+    out.push({
+      x: (mirror ? 1 - p.x : p.x) * stageW,
+      y: p.y * stageH,
+      kind, side, part,
+    });
+  };
+  for (const side of ['L', 'R']) {
+    const isL = side === 'L';
+    add(landmarks[isL ? LM.L_WRIST : LM.R_WRIST], 'hand', side, 'wrist');
+    add(landmarks[isL ? LM.L_INDEX : LM.R_INDEX], 'hand', side, 'index');
+    add(landmarks[isL ? LM.L_PINKY : LM.R_PINKY], 'hand', side, 'pinky');
+    add(landmarks[isL ? LM.L_THUMB : LM.R_THUMB], 'hand', side, 'thumb');
+    add(landmarks[isL ? LM.L_ANKLE : LM.R_ANKLE], 'foot', side, 'ankle');
+    add(landmarks[isL ? LM.L_HEEL : LM.R_HEEL], 'foot', side, 'heel');
+    add(landmarks[isL ? LM.L_FOOT : LM.R_FOOT], 'foot', side, 'toe');
+  }
+  return out;
+}
+
+/**
+ * 手 / 脚有**任意一个采样点**落进圆环里就算「进去了」（用户要求「一部分进入即可触发」）。
+ * 返回 `{ inside, best, minDist }`：`best` 是离圆心最近的那个采样点（诊断面板要显示它）。
+ */
+function anyTouchInRing(samples, key, size) {
+  if (!samples || !samples.length) return { inside: false, best: null, minDist: Infinity };
+  const c = ringCenter(key, size.w, size.h);
+  const hit = ringHitRadius(key, size);
+  let best = null;
+  for (const p of samples) {
+    const d = Math.hypot(p.x - c.x, p.y - c.y);
+    if (!best || d < best.d) best = { d, p };
+  }
+  return { inside: !!best && best.d <= hit, best, minDist: best ? best.d : Infinity };
+}
+
+/**
+ * 手 / 脚各自的**中心**（手掌中心 / 整只脚的中心）—— 只用于「一组结束」那两个圆环
+ * （它们的设计是「把手掌放进圆环中央」）和 🐞 面板的读数；左下角退出圆环改用 touchSamples 逐点判。
  */
 function touchPoints(landmarks, stageW, stageH, mirror) {
-  if (!landmarks || !landmarks.length) return [];
-  /** 一组关键点的中心（至少要有一个可见点，否则这一段就当没看见） */
-  const centre = (...raw) => {
-    const pts = raw.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)
-      && (p.visibility === undefined || p.visibility >= TOUCH_VIS_MIN));
+  const samples = touchSamples(landmarks, stageW, stageH, mirror);
+  const centreOf = (kind, side) => {
+    const pts = samples.filter((p) => p.kind === kind && p.side === side);
     if (!pts.length) return null;
-    const cx = pts.reduce((n, p) => n + p.x, 0) / pts.length;
-    const cy = pts.reduce((n, p) => n + p.y, 0) / pts.length;
-    return { x: (mirror ? 1 - cx : cx) * stageW, y: cy * stageH };
+    return {
+      x: pts.reduce((n, p) => n + p.x, 0) / pts.length,
+      y: pts.reduce((n, p) => n + p.y, 0) / pts.length,
+      kind,
+      side,
+    };
   };
   return [
-    centre(landmarks[LM.L_WRIST], landmarks[LM.L_INDEX], landmarks[LM.L_PINKY], landmarks[LM.L_THUMB]),
-    centre(landmarks[LM.R_WRIST], landmarks[LM.R_INDEX], landmarks[LM.R_PINKY], landmarks[LM.R_THUMB]),
-    centre(landmarks[LM.L_ANKLE], landmarks[LM.L_HEEL], landmarks[LM.L_FOOT]),
-    centre(landmarks[LM.R_ANKLE], landmarks[LM.R_HEEL], landmarks[LM.R_FOOT]),
+    centreOf('hand', 'L'), centreOf('hand', 'R'),
+    centreOf('foot', 'L'), centreOf('foot', 'R'),
   ].filter(Boolean);
 }
 
-/** 只有手掌（「一组结束」那两个圆环用；左下角的退出圆环改用 touchPoints，手或脚都算） */
+/** 只有手掌（「一组结束」那两个圆环用；左下角的退出圆环改用 touchSamples 逐点判，手或脚都算） */
 function palmPoints(landmarks, stageW, stageH, mirror) {
   return touchPoints(landmarks, stageW, stageH, mirror).slice(0, 2);
 }
@@ -1088,38 +1137,40 @@ function syncCornerExit() {
 }
 
 /**
- * 每帧更新左下角退出圆环：**手或脚**在圆环里停满 GESTURE_HOLD_MS 就退出。
+ * 每帧更新左下角退出圆环：**手或脚的任意一部分**进到圆环里、保持满 GESTURE_HOLD_MS 就退出。
  * 进度与动画完全复用中间那两个圆环的那一套（paintRing / 同一组常量）。
  *
- * 用户反馈「十分不灵敏、手掌或脚伸进去并没有退出」后，这里做了三处放宽（见各自的常量说明）：
- *   ① 判定半径按**圆环画出来的大小**算（0.45 直径 = 半径的 90%，进到环里就算）；
- *   ② 手/脚的可见度门槛 0.4 → 0.3，而且只要有一个关键点可用就认；
- *   ③ 进度改成**按时间累积、按时间慢慢退回**（离开超过 0.3 秒不再把两秒多的成绩直接清零）。
- * 另外把「手/脚现在在哪」记进 `state.touchInfo`，🐞 面板会显示出来（排查「到底有没有识别到手/脚」）。
+ * 判定口径（用户最新要求）：「手掌或脚的一部分进入就要开始沙漏计时，保持 3 秒后退出，
+ * **一部分进入即可触发**」→ 逐点判定（touchSamples × anyTouchInRing）：
+ * 指尖 / 脚跟 / 脚趾尖 / 脚踝 / 手腕，**任意一个点落进圆圈里**就开始计时。
+ *
+ * 之前两次放宽的历史见 RING_HIT_RATIO / TOUCH_VIS_MIN / GESTURE_DRAIN_MS 的注释。
+ * 「手/脚现在在哪、离圆心多远」记进 `state.touchInfo`，🐞 面板会显示（排查「到底有没有识别到手/脚」）。
  */
 function updateCornerExit(landmarks, now) {
   const size = stageSize();
-  const pts = touchPoints(landmarks, size.w, size.h, state.settings.mirror);
+  const samples = touchSamples(landmarks, size.w, size.h, state.settings.mirror);
   if (!gestureState.cornerVisible) { state.touchInfo = null; return false; }
   const st = gestureState.corner;
   if (st.done) { state.touchInfo = null; return false; }
-  // 离圆心最近的那个手/脚落点（同时给「在环里 / 靠近环」和 🐞 面板用）
-  const c = ringCenter('corner', size.w, size.h);
+  // 逐点判定：任意一个采样点进了圆圈就算「手/脚进去了」；同时记下最近的那个点（诊断 & 靠近提示）
   const hit = ringHitRadius('corner', size);
-  let best = null;
-  pts.forEach((p, i) => {
-    const d = Math.hypot(p.x - c.x, p.y - c.y);
-    if (!best || d < best.d) best = { d, p, i };
-  });
-  const inside = !!best && best.d <= hit;
-  const near = !!best && best.d <= hit * RING_NEAR_FACTOR;
+  const { inside, best, minDist } = anyTouchInRing(samples, 'corner', size);
+  const near = Number.isFinite(minDist) && minDist <= hit * RING_NEAR_FACTOR;
+  const inCount = samples.filter((p) => {
+    const c = ringCenter('corner', size.w, size.h);
+    return Math.hypot(p.x - c.x, p.y - c.y) <= hit;
+  }).length;
   state.touchInfo = best
     ? {
       has: true,
-      kind: best.i < 2 ? 'hand' : 'foot',
+      kind: best.p.kind,
+      part: best.p.part,
+      side: best.p.side,
       x: best.p.x / size.w,
       y: best.p.y / size.h,
-      rel: best.d / (hit || 1),      // 离圆心几个「判定半径」（<1 = 在环里）
+      rel: minDist / (hit || 1),     // 离圆心几个「判定半径」（<1 = 在环里）
+      inCount,                       // 有几个采样点进环了（>1 = 结论更稳）
       inside,
       near,
     }
@@ -1645,9 +1696,14 @@ function touchDiagLine(n) {
   const info = state.touchInfo;
   if (!info || !info.has) return `${t('debug.touch')} ${t('debug.noTouch')}`;
   const kind = info.kind === 'foot' ? t('debug.foot') : t('debug.hand');
-  return `${t('debug.touch')} ${kind}(${n(info.x, 2)},${n(info.y, 2)})`
+  // 进环的是哪个部位（指尖 / 脚跟 / 脚趾尖 …）—— 「一部分进入即可触发」，看一眼就知道是哪个点进去了
+  const partKey = `debug.part.${info.part}`;
+  const part = info.part ? t(partKey) : '';
+  const where = part && part !== partKey ? `${kind}·${part}` : kind;
+  return `${t('debug.touch')} ${where}(${n(info.x, 2)},${n(info.y, 2)})`
     + ` ${t('debug.ringDist')} ${n(info.rel, 2)}`
-    + ` ${info.inside ? t('debug.inRing') : (info.near ? t('debug.nearRing') : t('debug.outRing'))}`;
+    + ` ${info.inside ? t('debug.inRing') : (info.near ? t('debug.nearRing') : t('debug.outRing'))}`
+    + (info.inCount > 0 ? ` ${t('debug.inPoints')} ${info.inCount}` : '');
 }
 
 /** 实时指标面板：把识别器“看到的”数字直接摆出来，方便自己判断机位问题 */
@@ -3246,7 +3302,7 @@ window.__mfg = {
   gestureState, GESTURE_RINGS, GESTURE_HOLD_MS, RING_HIT,
   // 左下角常驻的「退出」圆环（手或脚进去停 3 秒 → 退出这一组 + 退出全屏）
   showCornerExit, hideCornerExit, updateCornerExit, triggerCornerExit, syncCornerExit,
-  layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, stageSize,
+  layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, touchSamples, anyTouchInRing, stageSize,
   CORNER_RING_INSET_PX, CORNER_RING_BOTTOM_PX, RING_PX_FALLBACK, RING_HIT_RATIO,
   TOUCH_VIS_MIN, GESTURE_DRAIN_MS, RING_NEAR_FACTOR, touchDiagLine,
   announceHoldCount, HOLD_COUNT_EVERY,
