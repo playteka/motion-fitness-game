@@ -843,7 +843,6 @@ export default {
     wristClear: 'Hand height off the floor',
     wristClearMin: 'Hand height off the floor',
     backKneeDrop: 'Back knee height off the floor',
-    shoulderDrop: 'Shoulder drop',
     hipLineDevAbs: 'Deviation',
     valgus: 'Knee valgus',
     lift: 'Lift off the floor',
@@ -899,9 +898,6 @@ export default {
     giveUp: 'Longest rep time',
     lungeEnter: 'Starts the rep',
     bothKnees: 'Both knees must bend (the straighter leg)',
-    pushupEnter: 'Starts the rep',
-    shoulderDrop: 'Shoulder drop',
-    pushupPose: 'Push-up plank position',
     squatEnter: 'Starts the rep',
     bridgeDown: 'Back down on the floor (start position)',
     // The glute bridge's angle path (an “or” with the height line); the bar still labels it “Lift”
@@ -1020,14 +1016,6 @@ export default {
       wobble: 'Below even this range: not counted and nothing is spoken.',
       flight: 'Jumping exercises also require the lift to pass this line.',
       giveUp: 'A rep stuck longer than this is force-settled (and counts if deep enough) — reps are never swallowed.',
-      pushupEnter: 'Bending {v}° below your own top counts as “starting to lower” (the bar\u2019s third segment) — people who cannot straighten their arms are still recognised (a side camera flattens the elbow reading).',
-      pushupBottom: '**Reaching this line counts the rep** (the user\u2019s latest rule: “the count does not have to be at the lowest point”): '
-        + 'the very frame your elbow reaches the counting line (146° by default, and it follows your own top — someone whose top is only 150° gets 142°) '
-        + 'the rep is counted: the call-out, the sound and the counter all fire right then, with no need to wait for the press and no need to pause at the bottom. '
-        + 'The only follow-up requirement is that you **push back to your top** before the next rep can start '
-        + '(so resting on the counting line cannot farm reps). Going deeper than the line still earns more depth credit (down to {full}° for full marks).',
-      shoulderDrop: 'Looking down at a laptop screen flattens the elbow angle, so this signal is used alongside it: the shoulders dropping {start} already starts the rep, dropping to the line above counts a rep, and {full} earns full depth credit. Closing a rep needs the shoulders back within {ret} of your top (between “start” and “count”, so a rep cannot be called done the moment you begin to sink).',
-      pushupTempo: 'The debounce only filters reading spikes: the depth line must **hold for {dwell} ms** (about two frames) before the rep counts, and two reps are at least this far apart. A real push-up is far slower than both — slower and shallower reps still count.',
       squatBottom: 'Squat until the thighs are close to horizontal (hip level with knee = 0).',
       squatLean: 'With a front-facing camera, leaning past this angle does not count as the standing stance.',
       startStand: 'Each rep starts from standing: come back up before the next one.',
@@ -1081,7 +1069,6 @@ export default {
         + 'and **trunk angle + hip angle ≈ {sumMin}°–{sumMax}°** — the kinematics the user described: sitting with the legs flat, the hip angle is 90° minus the trunk tilt, '
         + 'so the two always add up to about 90°; standing folds read about 180° and lying poses 180°–270°, so this line rules those out.',
       holdPosture: 'A clearly broken body line triggers a spoken reminder but does not stop the timer straight away.',
-      pushupPose: 'The rep is only judged while you are in the push-up plank position (down on the floor, hands planted).',
       bodyStraight: 'A body that is not in one line only triggers a spoken reminder and a discounted quality score — it never costs you a rep.',
       shoulderOnFloor: 'The shoulders must stay on the floor (past this line means you are not lying down).',
       altOn: 'One side has to enter this range to count as “working”.',
@@ -1114,7 +1101,6 @@ export default {
       viewSide: 'Stand sideways to the camera (these rules are measured from the side)',
       lungeBack: 'Rise {pct}% of the way back from this rep’s deepest point, or {deg}° above it',
       lungeWobble: 'Less than {deg}° below how straight you stand: not counted and nothing is spoken',
-      pushupWobble: 'Less than {deg}° below your own top and no shoulder drop: not counted and nothing is spoken',
       crunchTilt: 'More than {drop}° less than your own lying pose (flat is about 90°, curled into place about 70°)',
       crunchHands: 'Cross your arms on your chest or rest your fingertips by your ears — do not pull yourself up with your neck',
       outOfPose: 'Return to the starting position of this exercise',

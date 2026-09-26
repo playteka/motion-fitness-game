@@ -331,12 +331,17 @@ console.log('\n[0] 引擎与目录');
   ok('五个引擎类都能当识别器用（有 update / snapshot）',
     [BendRepDetector, AltRepDetector, TwistRepDetector, SequenceRepDetector, PoseHoldDetector]
       .every((C) => typeof C.prototype.update === 'function' && typeof C.prototype.snapshot === 'function'));
-  ok('七个手写识别器（含跳箱）没有被通用引擎顶掉',
-    ['squat', 'lunge', 'pushup', 'bridge', 'plank', 'crunch', 'boxJump']
+  // 俯卧撑按用户要求「大幅度简化计次标准」改回通用屈伸引擎（只判肘角），不再手写识别器
+  ok('六个手写识别器（含跳箱）没有被通用引擎顶掉',
+    ['squat', 'lunge', 'bridge', 'plank', 'crunch', 'boxJump']
       .every((id) => !(createDetector(id) instanceof BendRepDetector)
         && !(createDetector(id) instanceof AltRepDetector)
         && !(createDetector(id) instanceof PoseHoldDetector))
     && createDetector('boxJump').constructor.name === 'BoxJumpDetector');
+  ok('俯卧撑现在是通用屈伸引擎（手写识别器已删除）',
+    createDetector('pushup') instanceof BendRepDetector
+    && EXERCISE_MAP.pushup.engine === 'bend'
+    && EXERCISE_MAP.pushup.params.metric === 'elbow');
 
   // 直接 new 引擎与工厂给的结果必须一致（同一份配置、同一个状态机）
   const pairs = [

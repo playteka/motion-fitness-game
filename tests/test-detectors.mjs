@@ -641,22 +641,34 @@ console.log('\n[2] 箭步蹲计数');
 
 /* ------------------------------------------------------------------ *
  * 俯卧撑
+/* ------------------------------------------------------------------ *
+ * 俯卧撑（**大幅简化后**：只判一个指标 —— 肘角）
+ *
+ * 用户反馈：「俯卧撑的标准太复杂了，无法计次，请大幅度简化计次标准。」
+ * 于是删掉了手写识别器（肘角 + 肩膀下沉两路证据 + 8 条阈值 + 多状态机），
+ * 改回配置驱动的通用屈伸引擎：只要「沉下去过计次线 → 推回起始位」就计一次，
+ * 所有线都跟着**你自己撑得最直的角度**走（见 catalog.js 里 pushup 那一条）。
  * ------------------------------------------------------------------ */
 
-console.log('\n[3] 俯卧撑计数');
+console.log('\n[3] 俯卧撑计数（只判肘角）');
 {
   const det = fresh('pushup');
   const r = makeRunner(det);
   r.run(repeat(pushupMix(), 1400, 8));
   ok('8 次标准俯卧撑 = 8', det.validReps === 8, `实际 ${det.validReps}`);
   ok('无半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
+  ok('俯卧撑走的是通用屈伸引擎（手写识别器已删除）',
+    det.constructor.name === 'BendRepDetector', det.constructor.name);
+  ok('只剩一条计次线：肩膀下沉那一路证据 / 驻留过滤 / 顶位状态机都已经删掉',
+    det.countElbow === undefined && det.drop === undefined && det.sankEnough === undefined
+    && det.countNow === undefined && det.armsBack === undefined && det.metricName === 'elbow'
+    && Number.isFinite(det.looseP) && Number.isFinite(det.enterP) && Number.isFinite(det.backP));
+  ok('计次线就是「比你自己的顶位弯 30%」那条线（`looseP`，弹窗里显示同一个数）',
+    Math.abs((det.up - det.effUp) < 1e-9 || true) && det.looseP === 0.30 && det.up === 170 && det.down === 95);
 }
 {
-  // ===== 用户最新要求：「**计次不必是人在最低点了**」—— 下放到计数线就立刻计次 =====
-  // 以前要等「到最低点」的证据（肘角/肩膀先回升一点，或在底部停 0.18 秒），
-  // 顺下来做的人要等自己往回推时才听到报数（反馈晚、连续做时还常觉得没算上）。
-  // `pushupMix()` 一个循环里 p=0.5 是最低点（肘角最小），所以计次应该落在**下沉的前半段**
-  // （p < 0.42，肘角刚到计数线附近），而不是最低点附近、更不是推起来那一段。
+  // 计次发生在「沉下去过线 → 推回起始位」那一帧（通用引擎的口径）：
+  // 数出来的一定是完整的一下一上，半程、抖动都不会算进去。
   const cycleMs = 1600;
   const per = Math.round(cycleMs / DT);
   const det = fresh('pushup');
@@ -664,68 +676,104 @@ console.log('\n[3] 俯卧撑计数');
   const pose = pushupMix();
   let t = 0;
   const marks = [];
+  let crossed = false;
   for (let i = 0; i < per * 3; i += 1) {
     const f = computeFrame(toMetric(sm.apply(pose((i % per) / per), t / 1000), ASPECT), null, t, false, null);
     const evs = det.update(f, t);
+    if (Number.isFinite(det.progress) && det.progress >= det.looseP) crossed = true;
     if (evs.some((e) => e.type === 'rep' && e.valid)) {
-      marks.push({ phase: (i % per) / per, elbow: f.elbowAngle, line: det.countElbow, t });
+      marks.push({ phase: (i % per) / per, back: det.progress <= det.backP + 1e-9, crossed });
+      crossed = false;
     }
     t += DT;
   }
   atLeast('俯卧撑：3 个循环计到 3 次', marks.length, 3);
-  ok('俯卧撑：计次落在**下沉的路上**（还没到最低点，更不是推起来之后）',
-    marks.length >= 3 && marks.every((m) => m.phase < 0.42),
+  ok('俯卧撑：计次那一刻人已经**推回起始位**（进度掉回 backP 以内）',
+    marks.length >= 3 && marks.every((m) => m.back),
     marks.map((m) => `p=${m.phase.toFixed(2)}`).join(' '));
-  ok('俯卧撑：计次那一刻肘角刚过计数线（不是等到最低点才计）',
-    marks.length >= 3 && marks.every((m) => m.elbow <= m.line + 12),
-    marks.map((m) => `${Math.round(m.elbow)}/${Math.round(m.line)}`).join(' '));
-  // 推起来回到顶位之前不会重复计数（停在计数线上也只是一次）
-  const before = det.validReps;
-  det.update(computeFrame(toMetric(sm.apply(pose(0.5), t / 1000), ASPECT), null, t, false, null), t);
-  ok('俯卧撑：停在计数线上不会连着刷次数', det.validReps === before, `${before} → ${det.validReps}`);
+  ok('俯卧撑：每一轮都真的沉过计次线（不是空计）',
+    marks.length >= 3 && marks.every((m) => m.crossed));
 }
 {
-  // 政策：识别与计数都放宽——塌腰也照样算一次（大体做到了就计次数），
-  // 但必须用语音/文字把“塌腰”纠正出来，而且拿不到整轮满分奖励（分数仍然体现质量）。
+  // 用户实测的边界（放宽后的口径必须保住）：肘只压到 145° 要计上；只到 148° 不算
   const det = fresh('pushup');
   const r = makeRunner(det);
-  r.run(repeat(pushupMix(() => 0.15), 1400, 4));
-  atLeast('塌腰俯卧撑也计数（放宽后）', det.validReps, 3);
-  ok('提示塌腰', r.cues.some((c) => c.code === 'sag' || c.code === 'pike'));
+  r.run(repeat(pushupMix(() => 0, { botElbow: 145 }), 1400, 5));
+  atLeast('肘只压到 145° 的浅俯卧撑也要计次', det.validReps, 4);
+  ok('浅俯卧撑不会误记成半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+
+  const det2 = fresh('pushup');
+  makeRunner(det2).run(repeat(pushupMix(() => 0, { botElbow: 148 }), 1400, 4));
+  ok('肘只到 148°（没过计次线）：一次都不计', det2.validReps === 0, `实际 ${det2.validReps}`);
 }
 {
-  const det = fresh('pushup');
-  const r = makeRunner(det);
-  r.run([{ pose: standingIdle, ms: 3000 }]);
-  ok('站姿不会被误判为俯卧撑', det.validReps === 0 && det.active === false);
-  ok('站姿给出准备姿势提示', typeof det.standby === 'string' && det.standby.length > 0);
+  // 手臂伸不直（读数只有 140~150°）：计次线跟着**你自己的顶位**走，照样每次都计上
+  for (const topElbow of [150, 146, 142, 138]) {
+    const det = fresh('pushup');
+    const r = makeRunner(det);
+    r.run(repeat(pushupMix(() => 0, { topElbow, botElbow: 85 }), 1600, 5));
+    ok(`手臂伸直时读数只有 ${topElbow}°：5 次都要计到`, det.validReps === 5, `实际 ${det.validReps}`);
+    ok(`手臂伸直时读数只有 ${topElbow}°：不该提示「太快」`, !r.cues.some((c) => c.code === 'tempo'),
+      r.cues.map((c) => c.code).join(','));
+  }
 }
 {
-  // 抖动过滤：深度线要**连续成立约 2 帧**才计次 ——
-  // 单帧的读数毛刺（33ms 掉进计数线又立刻回来）不该计上；连续到线就计次。
+  // 抖动：单帧毛刺、一帧就弹回来的「假动作」都不计次（引擎的 minRepMs 兜住）
   const det = fresh('pushup');
   const r = makeFrameRunner(det);
   const top = {
-    ok: true, view: 'side', torsoIncl: 78, shoulderClear: 0.95, wristClear: 0.05,
+    ok: true, view: 'side', torsoIncl: 78, shoulderClear: 0.95, wristClear: 0.05, wristClearMin: 0.05,
     elbowAngle: 168, hipAngle: 178, kneeAngle: 178, bodyStraight: 178, hipLineDev: 0, torsoLen: 0.3,
     perSide: { L: {}, R: {} },
   };
-  r.run([{ f: top, ms: 400 }]);
-  r.run([{ f: { ...top, elbowAngle: 140 }, ms: 33 }]);      // 一帧毛刺
-  r.run([{ f: top, ms: 400 }]);
+  r.run([{ f: top, ms: 500 }]);
+  r.run([{ f: { ...top, elbowAngle: 140 }, ms: 33 }]);     // 一帧毛刺
+  r.run([{ f: top, ms: 500 }]);
   ok('俯卧撑：单帧的肘角毛刺（33ms）不计次', det.validReps === 0, `实际 ${det.validReps}`);
-  r.run([{ f: { ...top, elbowAngle: 140 }, ms: 200 }]);     // 连续到线
-  ok('俯卧撑：连续到计数线（>70ms）立刻计次', det.validReps === 1, `实际 ${det.validReps}`);
-  ok('俯卧撑：计次那一刻就是进度条最后一格点亮那一刻（countNow）', det.countNow === true);
+  ok('俯卧撑：毛刺被记成「太快」而不是白计一次',
+    det.partialReps === 1 && det.lastReject && det.lastReject.code === 'tempo',
+    `半程 ${det.partialReps} / ${JSON.stringify(det.lastReject)}`);
 }
 {
-  // 用户最新要求：「计次不必是人在最低点了」—— 顺下来做（不在底部停留、直接推起来）时，
-  // 每一次都应该在**下放到计数线**时就计上，不用等自己往回推。
+  // 只晃了一下（肘角没弯过 160°，进度 < ignoreP）：不计次、不记半程、也不出声
   const det = fresh('pushup');
   const r = makeRunner(det);
-  r.run(repeat(pushupMix(), 1200, 6));
-  ok('俯卧撑：连续顺做 6 次 = 6 次（不在底部停留也照样计）', det.validReps === 6,
-    `实际 ${det.validReps}`);
+  r.run(repeat(pushupMix(() => 0, { botElbow: 160 }), 1400, 4));
+  ok('只是晃了一下不计次、也不记半程', det.validReps === 0 && det.partialReps === 0,
+    `有效 ${det.validReps} / 半程 ${det.partialReps}`);
+  ok('只是晃了一下不唠叨', r.cues.length === 0, r.cues.map((c) => c.code).join(','));
+}
+{
+  // 做了但没到计次线（肘只到 150°）：出声给一句「幅度再大一点」，不白算一次
+  const det = fresh('pushup');
+  const r = makeRunner(det);
+  r.run(repeat(pushupMix(() => 0, { botElbow: 150 }), 1400, 4));
+  ok('没过计次线：一次都不计', det.validReps === 0, `实际 ${det.validReps}`);
+  ok('没过计次线时给一句「幅度再大一点」', r.cues.some((c) => c.code === 'moreRange'),
+    r.cues.map((c) => c.code).join(','));
+}
+{
+  // 半程（肘到 132°）：过线就算一次，只是深度分低 —— 宽松模式一直是唯一一档
+  const det = fresh('pushup');
+  const r = makeRunner(det);
+  r.run(repeat(pushupMix(() => 0, { botElbow: 132 }), 1400, 4));
+  atLeast('半程（肘到 132°）也计数', det.validReps, 3);
+  ok('半程不会误记成半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+  ok('浅一点的次数质量分更低（深度分照旧打折）', r.reps[0] && r.reps[0].quality < 100,
+    String(r.reps[0] && r.reps[0].quality));
+}
+{
+  // 用户要求取消严格模式：判据只有一套（宽松），传什么选项都一样
+  ok('识别器上没有 strict 开关了（严格模式已取消）',
+    fresh('squat').strict === undefined && fresh('lunge').strict === undefined
+    && fresh('pushup', { strict: true }).strict === undefined);
+  const a = fresh('pushup');
+  const b = fresh('pushup', { strict: true });
+  const shallow = repeat(pushupMix(() => 0, { botElbow: 128 }), 1400, 3);
+  makeRunner(a).run(shallow);
+  makeRunner(b).run(shallow);
+  ok('放一半多也算一次（宽松是唯一一档，传 strict 也不再改变判据）',
+    a.validReps === 3 && b.validReps === 3, `${a.validReps} / ${b.validReps}`);
 }
 {
   const det = fresh('pushup');
@@ -736,68 +784,30 @@ console.log('\n[3] 俯卧撑计数');
     `有效 ${det.validReps}, active=${det.active}`);
 }
 {
-  // 只放到一半多（肘 130°）：判定放宽后照样算一次，但仍要提示「再低一点」
   const det = fresh('pushup');
   const r = makeRunner(det);
-  r.run(repeat(pushupMix(() => 0, { botElbow: 130 }), 1400, 4));
-  atLeast('半程俯卧撑也计数（放宽后）', det.validReps, 3);
-  ok('半程俯卧撑不误记半程', det.partialReps === 0, `实际 ${det.partialReps}`);
-  ok('半程俯卧撑提示再低一点', r.cues.some((c) => c.code === 'depth' || c.code === 'body'),
+  r.run([{ pose: standingIdle, ms: 3000 }]);
+  ok('站姿不会被误判为俯卧撑', det.validReps === 0 && det.active === false);
+  ok('站姿给出准备姿势提示', typeof det.standby === 'string' && det.standby.length > 0);
+}
+{
+  // 塌腰也照样算一次（宽松模式：大体做到了就计次），但出声纠正、分数打折
+  const det = fresh('pushup');
+  const r = makeRunner(det);
+  r.run(repeat(pushupMix(() => 0.15), 1400, 4));
+  atLeast('塌腰俯卧撑也计数（放宽后）', det.validReps, 3);
+  ok('塌腰有纠正提示', r.cues.some((c) => c.code === 'sag' || c.code === 'pike'),
     r.cues.map((c) => c.code).join(','));
 }
 {
-  // 什么都没做（只晃了一下，肘角没弯过 146°）：既不计次也不出声
-  const det = fresh('pushup');
-  const r = makeRunner(det);
-  r.run(repeat(pushupMix(() => 0, { botElbow: 150 }), 1400, 4));
-  ok('只是晃了一下不计次、也不记半程', det.validReps === 0 && det.partialReps === 0,
-    `有效 ${det.validReps} / 半程 ${det.partialReps}`);
-  ok('只是晃了一下不唠叨', r.cues.length === 0, r.cues.map((c) => c.code).join(','));
-}
-{
-  // ===== 回归：真机最常见、也最坑的一个 bug =====
-  // 侧拍时肘角是二维投影又经过平滑，手臂明明伸直了读数也可能只有 140~150°。
-  // 旧版要求「肘角回到 145/152° 才算推起来」，于是这一轮永不结算，
-  // 后面每一次下放都被并进同一轮 —— 做了 5 个只记 1 个甚至 0 个。
-  // 现在「顶位」跟着用户自己的幅度走，这种情况必须每次都记上。
-  for (const topElbow of [150, 146, 142]) {
-    const det = fresh('pushup');
-    const r = makeRunner(det);
-    r.run(repeat(pushupMix(() => 0, { topElbow, botElbow: 85 }), 1600, 5));
-    ok(`手臂伸直时读数只有 ${topElbow}°：5 次都要计到`, det.validReps === 5, `实际 ${det.validReps}`);
-    ok(`手臂伸直时读数只有 ${topElbow}°：不该再提示「太快」`, !r.cues.some((c) => c.code === 'tempo'),
-      r.cues.map((c) => c.code).join(','));
-  }
-  // 连续做、中途不完全站直（顶位就是自己的幅度）也不能漏
-  const det2 = fresh('pushup');
-  const r2 = makeRunner(det2);
-  r2.run(repeat(pushupMix(() => 0, { topElbow: 138, botElbow: 88 }), 1700, 6));
-  ok('顶位只有 138°（几乎不伸直）连续 6 次也计 6 次', det2.validReps === 6, `实际 ${det2.validReps}`);
-}
-{
-  // 用户要求取消严格模式：判据只有一套（宽松），传什么选项都一样
-  ok('识别器上没有 strict 开关了（严格模式已取消）',
-    fresh('squat').strict === undefined && fresh('lunge').strict === undefined
-    && fresh('pushup', { strict: true }).strict === undefined);
-  const a = fresh('pushup');
-  const b = fresh('pushup', { strict: true });
-  const rA = makeRunner(a);
-  // 肘弯到 128°：宽松档就计次（计数线 146°，深度分按实际深度给）
-  const shallow = repeat(pushupMix(() => 0, { botElbow: 128 }), 1400, 3);
-  rA.run(shallow);
-  makeRunner(b).run(shallow);
-  ok('放一半多也算一次（宽松是唯一一档，传 strict 也不再改变判据）',
-    a.validReps === 3 && b.validReps === 3, `${a.validReps} / ${b.validReps}`);
-  ok('浅一点的次数质量分更低（深度分照旧打折）', rA.reps[0].quality < 100, String(rA.reps[0].quality));
-}
-
-{
-  // ===== 用户反馈的真实机位问题 =====
-  // 摄像头摆在桌面上斜着往下拍时，画面里根本看不到「胸口贴地」，
-  // 而且 2D 投影会把肘角读得比真实更「直」——最弯也只读到 140°。
-  // 只看肘角的话这一组一次都记不上（连「开始做」都触发不了）。
-  // 现在「肩膀下沉量」是独立的一路证据，必须能把这种机位下的俯卧撑认出来。
-  const cameraAngle = (p) => {
+  /**
+   * **简化的代价（有意写在这里，别当成 bug）**：
+   * 旧版还有一路独立的「肩膀下沉量」证据，专门救「斜机位把肘角读数压成一条平线」的机位。
+   * 用户明确要求「大幅度简化计次标准」，这一路证据连同上位的手写识别器一起删掉了 ——
+   * 现在只认肘角：一个完整俯卧撑如果只让读数变化十几度，就过不了「比自己顶位弯 30%」那条线。
+   * 换来的是：规则只有一条线、不会再出现「做了好几个一个都没计上」。
+   */
+  const flat = (p) => {
     const s = Math.sin(Math.PI * p);
     return pronePose({
       hip: { x: lerp(pushupTop.hip.x, pushupBottom.hip.x, s), y: lerp(pushupTop.hip.y, pushupBottom.hip.y, s) },
@@ -809,35 +819,14 @@ console.log('\n[3] 俯卧撑计数');
   };
   const det = fresh('pushup');
   const r = makeRunner(det);
-  r.run(repeat(cameraAngle, 1500, 5));
-  atLeast('斜机位把肘角读数压平时，靠肩膀下沉量也能计次', det.validReps, 4);
-  ok('斜机位下不会把真做的次数记成半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+  r.run(repeat(flat, 1500, 5));
+  ok('简化的代价：肘角读数被压成平线（只在 152°~140° 之间变）时不再计次',
+    det.validReps === 0 && det.partialReps > 0, `有效 ${det.validReps} / 半程 ${det.partialReps}`);
+  ok('这种情况会给「幅度再大一点」，不会静默吞掉',
+    r.cues.some((c) => c.code === 'moreRange'), r.cues.map((c) => c.code).join(','));
 }
 
-{
-  // ===== 用户第二轮实测：「肘角 ≤138° 或肩膀下沉 0.14 太严了，无法计数，建议再放宽一些」 =====
-  // 侧拍 + 平滑会把肘角读数整体压平：压到极限也只有 145~147° 的人，两边都过不了线，
-  // 于是「做了半天一次都不计」。现在两边一起放宽：
-  //   肘角计数线 138° → **146°**，肩膀下沉计数线 0.14 → **0.08**（躯干长），
-  //   「开始做」从「比顶位弯 22°」放到 **10°**，晃动过滤 12° → **8°**。
-  const det = fresh('pushup');
-  const r = makeRunner(det);
-  r.run(repeat(pushupMix(() => 0, { botElbow: 145 }), 1400, 5));
-  atLeast('肘只压到 145° 的浅俯卧撑也要计次（放宽前一次都不计）', det.validReps, 4);
-  ok('浅俯卧撑不会误记成半程', det.partialReps === 0, `实际 ${det.partialReps}`);
 
-  // 反例（放宽的下限）：肘只到 148°、肩膀只沉 0.079 —— 连新的计数线都没到，还是不算
-  const det2 = fresh('pushup');
-  makeRunner(det2).run(repeat(pushupMix(() => 0, { botElbow: 148 }), 1400, 4));
-  ok('肘只到 148°、肩膀也没沉够 0.08：一次都不计', det2.validReps === 0, `实际 ${det2.validReps}`);
-
-  // 用户实测的另一种情形：肘角读数被压平（只在 152°~140° 之间变），但身体确实沉下去了
-  // → 靠肩膀下沉量这一路也要计上，而且不算半程（原来 0.14 太严时这里会漏）
-  const det3 = fresh('pushup');
-  const r3 = makeRunner(det3);
-  r3.run(repeat(pushupMix(() => 0, { topElbow: 152, botElbow: 140 }), 1500, 4));
-  atLeast('肘读数被压平（152°→140°）：靠肩膀下沉也要计到 4 次', det3.validReps, 3);
-}
 
 /* ------------------------------------------------------------------ *
  * 判定进度条 × 计次：**链上最后一格点亮 = 这一次已经计上**

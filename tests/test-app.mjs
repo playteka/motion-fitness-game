@@ -424,9 +424,14 @@ console.log('\n[1b] 运动设定弹窗');
     !specHtml().includes('计次判据'), specHtml().slice(0, 200));
   ok('不再有单独的「姿势要求」分组（并进第一格的关键帧里）',
     !specHtml().includes('姿势要求（不满足就不进入判定）'), specHtml().slice(0, 200));
-  ok('俯卧撑：肘角计次线（≤146°）挂在关键帧上', specHtml().includes('146'), specHtml().slice(0, 240));
-  ok('俯卧撑：列出肩膀下沉量这条第二路证据（0.08）', specHtml().includes('0.08'), specHtml().slice(0, 200));
+  // ===== 用户要求「大幅度简化计次标准」之后：弹窗里只剩肘角这一条线的四个数 =====
+  ok('俯卧撑：计次线（≤148°）挂在关键帧上', specHtml().includes('148'), specHtml().slice(0, 240));
+  ok('俯卧撑：不再有「肩膀下沉量」这条第二路证据（简化掉的就是它）',
+    !specHtml().includes('肩膀下沉') && !specHtml().includes('0.08'), specHtml().slice(0, 300));
   ok('俯卧撑：列出俯撑姿势门控（躯干倾角 ≥ 32°）', specHtml().includes('≥ 32'), specHtml().slice(0, 300));
+  ok('俯卧撑：四格都是肘角/俯撑，不再有别的指标',
+    (specHtml().match(/肘关节角度|躯干倾角|进度/g) || []).length >= 4 && !specHtml().includes('肩膀离地'),
+    specHtml().slice(0, 400));
   ok('指标行带上了单位（×躯干长 / °）',
     specHtml().includes('躯干长') && specHtml().includes('°'), specHtml().slice(0, 200));
 
@@ -566,18 +571,18 @@ console.log('\n[1b] 运动设定弹窗');
     ok('每一格都画了那个关键帧的线条图标',
       (raw.match(/spec-kf-icon"><svg class="criteria-icon"/g) || []).length === shown.length,
       String((raw.match(/spec-kf-icon"><svg class="criteria-icon"/g) || []).length));
-    ok('俯卧撑：四格的分数 5 / 8 / 7 / 14 都列出来了（回到顶位 8、到计数线计次 14）',
-      ['+5', '+8', '+7', '+14'].every((x) => raw.includes(x)), raw.slice(0, 400));
+    ok('俯卧撑：四格的分数 5 / 7 / 14 / 8 都列出来了（开始下沉 7、到计次线 14、回位 8）',
+      ['+5', '+7', '+14', '+8'].every((x) => raw.includes(x)), raw.slice(0, 400));
     ok('俯卧撑：整轮满分 6 分标在最后一格上', raw.includes('+6 整轮满分'), raw.slice(-400));
     ok('最后一格标出「计次那一刻」', raw.includes('计次那一刻'), raw.slice(0, 300));
-    ok('说明里写了每轮总分（5+8+7+14+6 = 40）', raw.includes('每轮 40 分'),
+    ok('说明里写了每轮总分（5+7+14+8+6 = 40）', raw.includes('每轮 40 分'),
       (raw.match(/共 \d+ 格[\s\S]{0,150}/) || [''])[0]);
-    ok('弹窗里的关键帧判据就是进度条格子上的判据（肘角 162°/150°/146° 都在）',
-      raw.includes('162') && raw.includes('150') && raw.includes('146'), raw.slice(0, 500));
-    ok('俯卧撑：最后一格写明「到计数线就计次、不必到最低点」（用户最新要求）',
-      raw.includes('到这条线就计次') && raw.includes('不必是人在最低点'), raw.slice(-900));
-    ok('分数与 stagePoints 一致（弹窗不会自己编一套：5 / 8 / 7 / 14 + 满轮 6 = 40）',
-      stagePoints('pushup').map((r) => r.points).join(',') === '5,8,7,14'
+    ok('弹窗里的关键帧判据就是进度条格子上的判据（肘角 159°/148°/161° 都在）',
+      raw.includes('159') && raw.includes('148') && raw.includes('161'), raw.slice(0, 600));
+    ok('俯卧撑：最后一格写明「回到起始位就计次」（= 识别器结算这一轮的那一刻）',
+      raw.includes('回到自己起始位附近') || raw.includes('回到起始位'), raw.slice(-900));
+    ok('分数与 stagePoints 一致（弹窗不会自己编一套：5 / 7 / 14 / 8 + 满轮 6 = 40）',
+      stagePoints('pushup').map((r) => r.points).join(',') === '5,7,14,8'
       && stagePoints('pushup')[3].bonus === 6
       && stagePoints('pushup').reduce((n, r) => n + r.points + r.bonus, 0) === 40,
       stagePoints('pushup').map((r) => `${r.points}+${r.bonus}`).join(' '));

@@ -5,7 +5,7 @@
  *
  * 关键约定（很重要）：
  *   这里的**每一个数字都直接取自识别器真正使用的常量**，不是另写一份文案：
- *     - 手写识别器：exercises.js 的 SQUAT / LUNGE / PUSHUP / BRIDGE / PLANK
+ *     - 手写识别器：exercises.js 的 SQUAT / LUNGE / BRIDGE / PLANK（俯卧撑已改回通用引擎）
  *     - 通用引擎：catalog.js 里该动作的 params（up/down 与 enter/bottom/loose/ignore 进度）
  *     - 姿势门控：engines.js 的 GATE_LIMITS / SEQ_STAGE_LIMITS（同一张表也用于 GATES 判定）
  *     - 实时提醒：engines.js 的 ADVISORY（同一份数值）
@@ -30,7 +30,7 @@ import { HOLD_PRIME_MS, HOLD_GRACE_MS } from './detector-base.js';
 import { getStepPlan, planKeyOf } from './steps.js';
 import { t } from './i18n.js';
 import {
-  SQUAT, LUNGE, PUSHUP, BRIDGE, PLANK, CRUNCH, BOXJUMP,
+  SQUAT, LUNGE, BRIDGE, PLANK, CRUNCH, BOXJUMP,
 } from './exercises.js';
 
 /* ------------------------------------------------------------------ *
@@ -479,39 +479,6 @@ function lungeSpecs() {
   };
 }
 
-function pushupSpecs() {
-  const P = PUSHUP;
-  return {
-    count: [
-      item({ labelKey: 'spec.pushupEnter', metricKey: 'metric.elbow', op: 'lte', value: roundFor(P.elbowEnter, DEG), unit: DEG, noteKey: 'spec.note.pushupEnter', noteParams: { v: P.enterDrop } }),
-      item({ labelKey: 'spec.countLine', metricKey: 'metric.elbow', op: 'lte', value: roundFor(P.looseElbow, DEG), unit: DEG, noteKey: 'spec.note.pushupBottom' }),
-      item({ labelKey: 'spec.bottomLine', metricKey: 'metric.elbow', op: 'lte', value: roundFor(P.elbowFull, DEG), unit: DEG, noteKey: 'spec.note.bottomLine' }),
-      item({
-        labelKey: 'spec.shoulderDrop',
-        metricKey: 'metric.shoulderDrop',
-        op: 'gte',
-        value: roundFor(P.dropMin, TORSO),
-        unit: TORSO,
-        noteKey: 'spec.note.shoulderDrop',
-        noteParams: { full: P.dropFull.toFixed(2), start: P.dropStart.toFixed(2), ret: P.dropReturn.toFixed(2) },
-      }),
-      item({ labelKey: 'spec.backLine', metricKey: 'metric.elbow', op: 'gte', value: roundFor(P.elbowUp - P.returnTol, DEG), unit: DEG, noteKey: 'spec.note.adaptive' }),
-      item({ labelKey: 'spec.wobble', textKey: 'spec.text.pushupWobble', noteParams: { deg: P.minBend } }),
-      item({ labelKey: 'spec.minRep', op: 'gte', value: roundFor(P.minCycleMs / 1000, S), unit: S, noteKey: 'spec.note.pushupTempo', noteParams: { dwell: Math.round(P.countDwellMs) } }),
-      item({ labelKey: 'spec.giveUp', op: 'lte', value: roundFor(P.maxRepMs / 1000, S), unit: S, noteKey: 'spec.note.giveUp' }),
-    ],
-    posture: [
-      // 俯卧撑用的是识别器自己的俯撑判据（isProne），数值取自 PUSHUP 常量，不是通用 prone 门控
-      item({ labelKey: 'spec.pushupPose', metricKey: 'metric.torsoIncl', op: 'gte', value: roundFor(P.activeTorso, DEG), unit: DEG, noteKey: 'spec.note.pushupPose' }),
-      item({ labelKey: 'spec.pushupPose', metricKey: 'metric.shoulderClear', op: 'gte', value: roundFor(P.activeShoulderClear, TORSO), unit: TORSO }),
-      item({ labelKey: 'spec.pushupPose', metricKey: 'metric.wristClear', op: 'lte', value: roundFor(P.activeHandOnFloor, TORSO), unit: TORSO, noteKey: 'spec.note.handOnFloor' }),
-      item({ labelKey: 'spec.postureKeep', metricKey: 'metric.body', op: 'gte', value: roundFor(P.bodyStraightMin, DEG), unit: DEG, noteKey: 'spec.note.bodyStraight' }),
-      item({ labelKey: 'spec.viewSide', textKey: 'spec.text.viewSide' }),
-    ],
-    advice: advisoryItems('prone'),
-  };
-}
-
 function bridgeSpecs() {
   const B = BRIDGE;
   return {
@@ -705,7 +672,6 @@ function advisoryItems(gateName) {
 const BUILDERS = {
   squat: squatSpecs,
   lunge: lungeSpecs,
-  pushup: pushupSpecs,
   bridge: bridgeSpecs,
   plank: plankSpecs,
   crunch: crunchSpecs,
@@ -883,7 +849,6 @@ const SHORT_LABEL = {
   'spec.pose.seatedFold|torsoIncl': 'spec.short.fold',
   'spec.enterLine': 'spec.short.start',
   'spec.lungeEnter': 'spec.short.start',
-  'spec.pushupEnter': 'spec.short.start',
   'spec.squatEnter': 'spec.short.start',
   'spec.countLine': 'spec.short.count',
   // 臀桥「角度法」那一格：短标签沿用「顶起来」（进度条上写「顶起」）
@@ -932,7 +897,6 @@ const SHORT_LABEL = {
   'spec.crunchHead|headClear': 'spec.short.crunchTop',
   'spec.bridgeSupine': 'spec.short.supine',
   'spec.postureKeep': 'spec.short.pose',
-  'spec.pushupPose': 'spec.short.prone',
   // 跳箱（用户要求「画面里画出一个箱子让用户跳跃」）：三格的短标签
   //   ① 站好 = 站姿门控那一格（spec.pose.standUpright → spec.short.stand，上面已经有了）
   //   ② 屈膝蓄力 / ③ 跳过箱顶（画面上就画着那个箱子）
@@ -992,7 +956,7 @@ export function specStages(id) {
   //    有真实门控的识别器直接用它的判定结果（俯卧撑 isProne → active、臀桥 isSupine → active、
   //    通用引擎 / 计时类 → gateOk）；深蹲 / 箭步蹲没有门控，退回数值判据
   //    （深蹲「髋比膝高 ≥ 0.86」、箭步蹲「双腿伸直角 ≥ 145°」）。
-  const GATED_BUILTINS = new Set(['pushup', 'bridge']);
+  const GATED_BUILTINS = new Set(['bridge']);
   const gateItem = posture.find(isLiveItem);
   // 坐姿体前屈有两格关键帧（坐好 → 前折到位），门控格在下面按它自己的两格单独摆，
   // 不走这里通用的「第一格 = 门控」那条路（否则第一格会挂上识别器的 gateOk 而不是锁存的 startSeen）。
@@ -1052,43 +1016,6 @@ export function specStages(id) {
       stages.push(stage);
     } else pushItem(topItem, { kind: 'count', valueFrom: 'topLine' });
     pushItem(pick('spec.bridgeDown'), { kind: 'finish', detFlag: 'atBottom' });
-  } else if (id === 'pushup') {
-    /**
-     * 俯卧撑（用户最新要求：**计次不必是人在最低点了，关键帧也要更灵敏**）：
-     *   ① 俯撑（门控）→ ② 回到顶位（下一轮的前提）→ ③ 开始下沉 → ④ **到计数线 = 计次那一刻**。
-     *
-     * ②③④ 三条线**都跟着用户自己的顶位走**（识别器里的 `backLine` / `enterLine` / `countElbow`）：
-     *   ③ 比顶位弯下去 6°、④ 比顶位弯下去 8°（上限 146°）。
-     * 所以手臂伸不直的人（顶位只有 150°）也有自己的三条线，不会出现「线比他的顶位还低、永远计不上」。
-     *
-     * ④ 点亮的那一刻就是计次那一刻（`countNow`，和识别器同一帧）：**下放到深度线就报数**，
-     * 不用等推起来、也不用先在最低点停一下（那是上一版的口径，用户反馈「还是不太灵敏」）。
-     * ②仍然计次的必要条件：识别器计完一次停在 'recover'，必须推回顶位才允许下一次
-     * （所以在计数线上停住不会连着刷次数）。
-     */
-    pushItem(pick('spec.backLine'), {
-      kind: 'enter',
-      valueFrom: 'backLine',
-      also: {
-        metric: 'shoulderDrop',
-        metricKey: 'metric.shoulderDrop',
-        op: 'lte',
-        value: roundFor(PUSHUP.dropReturn, TORSO),
-        unit: TORSO,
-        k: STAGE_TOLERANCE.torso,
-      },
-    });
-    // ③ 开始下沉：动态线（自己的顶位 − 6°）
-    pushItem(pick('spec.pushupEnter'), { kind: 'count', valueFrom: 'enterLine' });
-    const countItem = pick('spec.countLine');
-    const dropItem = pick('spec.shoulderDrop');
-    if (countItem && dropItem) {
-      // 最后一格 = **到计数线**（或肩膀沉够）：和识别器的 countNow 同一帧，
-      // 所以「这一格点亮」＝「计上一次」＝「计数跳动/音效」同一刻。
-      const stage = toStage(countItem, { kind: 'finish', valueFrom: 'countElbow', detFlag: 'countNow' });
-      stage.alt = toStage(dropItem);
-      stages.push(stage);
-    } else pushItem(countItem, { kind: 'finish', valueFrom: 'countElbow', detFlag: 'countNow' });
   } else if (id === 'crunch') {
     /**
      * 卷腹（**用户给的两格关键帧**）：① 屈膝躺下 → ② **卷起来 = 计次那一刻**。

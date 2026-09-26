@@ -203,12 +203,18 @@ export const STEP_PLANS = {
   pushup: {
     perCycle: true,
     repBonus: 6,
+    /**
+     * 俯卧撑（用户要求「大幅度简化计次标准」之后）：**要领分也跟着简化** ——
+     * 四步全部问识别器自己的进度（`d.progress`：0 = 撑直，1 = 压到最深），
+     * 不再写死 138° / 118° 这些绝对角度。这样「手臂伸不直的人」的每一步也都跟着他自己的幅度走，
+     * 和计次线是同一套尺度（计次线 = `d.looseP`，即进度 30%）。
+     */
     steps: [
       {
         id: 'setup',
         labelKey: 'steps.pushup.setup.label',
         points: 5,
-        // 与识别器同一套放宽口径：撑住了、大致成一条线就给分
+        // 撑住了、大致成一条线就给分
         check: (f) => prone(f) && straight(f, 150) && aligned(f, 0.18),
         hint: (f) => {
           if (f.torsoIncl <= 32) return H('steps.pushup.setup.pose');
@@ -221,31 +227,29 @@ export const STEP_PLANS = {
         id: 'lower',
         labelKey: 'steps.pushup.lower.label',
         points: 7,
-        check: (f) => f.elbowAngle <= 138 && straight(f, 138),
-        hint: (f) => (f.elbowAngle > 138 ? H('steps.pushup.lower.hint') : null),
+        // 开始下沉：进度 35%（= 比自己的顶位弯下去约 26°）
+        check: (f, d) => Number.isFinite(d.progress) && d.progress >= 0.35,
+        hint: (f, d) => (d.progress < 0.35 ? H('steps.pushup.lower.hint') : null),
       },
       {
         id: 'depth',
         labelKey: 'steps.pushup.depth.label',
         points: 14,
-        // 放宽到 118°（原来 105°）：用户反馈「俯卧撑最后一个关键帧太难、做不到位」；
-        // 识别器的满分深度线也一起放宽到了 128°
-        check: (f) => f.elbowAngle <= 118 && straight(f, 138),
-        hint: (f) => (f.elbowAngle > 118 ? H('steps.pushup.depth.hint', { deg: Math.round(f.elbowAngle) }) : null),
+        // 压到位：进度 75%（= 引擎的满分深度线 bottomP，约 114°）
+        check: (f, d) => Number.isFinite(d.progress) && d.progress >= 0.75,
+        hint: (f, d) => (d.progress < 0.75 ? H('steps.pushup.depth.hint', { deg: Math.round(f.elbowAngle) }) : null),
       },
       {
         id: 'press',
         labelKey: 'steps.pushup.press.label',
         points: 8,
-        // 「推起还原」这一步在**识别器判定这一轮完成的那一刻**就该给分，
-        // 所以直接调识别器自己的 `armsBack()`（它已经跟着用户自己的幅度自适应了）。
-        // ⚠️ 必须和识别器**同一个条件**：以前这里写的是 `肘角 ≥ backLine − 2`，
-        // 而识别器还能靠「肩膀抬回顶位」那一路提前退出，于是这些轮的这一步与整轮满分
-        // 都拿不到（实测 8 次只有 1 次拿到满轮奖励）。
-        check: (f, d) => d.cycleLowered
-          && (typeof d.armsBack === 'function' ? d.armsBack(f)
-            : f.elbowAngle >= (Number.isFinite(d.backLine) ? d.backLine - 2 : 142)),
-        hint: (f) => (f.elbowAngle < 138 ? H('steps.pushup.press.hint') : null),
+        /**
+         * 「推起还原」这一步的问法和识别器**完全相同**：识别器在「回到起始位」（`progress <= backP`）
+         * 那一帧结算这一轮，所以这一步就是「进度掉回起始位以内」——
+         * 两边同一帧、同一个条件，不会出现「识别器算完成、这一步却拿不到分」。
+         */
+        check: (f, d) => Number.isFinite(d.progress) && Number.isFinite(d.backP) && d.progress <= d.backP,
+        hint: (f, d) => (d.progress > d.backP ? H('steps.pushup.press.hint') : null),
       },
     ],
   },

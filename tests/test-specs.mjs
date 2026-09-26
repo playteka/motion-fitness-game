@@ -19,7 +19,7 @@ import {
   stagePoints, stageIndexForStep,
 } from '../src/specs.js';
 import {
-  stageIcon, iconSVG, iconAngle, drawnAngle, ICON_BOX, uniqueStages, angleLabel,
+  stageIcon, iconSVG, iconAngle, drawnAngle, ICON_BOX, uniqueStages, angleLabel, stageAngle,
 } from '../src/icons.js';
 import { toMetric, LandmarkSmoother } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
@@ -27,7 +27,7 @@ import { standingPose, ASPECT } from './synthetic-pose.mjs';
 import { GATE_LIMITS, ADVISORY_LIMITS, LEG_STRAIGHT_MIN } from '../src/engines.js';
 import { getStepPlan } from '../src/steps.js';
 import { HOLD_PRIME_MS, HOLD_GRACE_MS } from '../src/detector-base.js';
-import { SQUAT, LUNGE, PUSHUP, BRIDGE, PLANK } from '../src/exercises.js';
+import { SQUAT, LUNGE, BRIDGE, PLANK } from '../src/exercises.js';
 import { localeKeys, setLang } from '../src/i18n.js';
 import { LOCALES, LANG_ORDER } from '../src/i18n.js';
 
@@ -154,29 +154,32 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
   ok('箭步蹲：回程用文字说明（没有固定角度）',
     !!findItem('lunge', 'spec.backLine').textKey, findItem('lunge', 'spec.backLine').textKey);
 
+  // ===== 俯卧撑（用户要求「大幅度简化计次标准」之后）=====
+  // 手写识别器删了，改回通用屈伸引擎：弹窗里**只剩肘角这一条线的四个进度**，
+  // 不再有「肩膀下沉量」那一路证据，也没有驻留过滤 / 顶位状态机那一堆参数。
   const pushup = createDetector('pushup');
-  ok('俯卧撑：计次线 = PUSHUP.looseElbow', findItem('pushup', 'spec.countLine').value === PUSHUP.looseElbow);
-  ok('俯卧撑：深度线 = PUSHUP.elbowFull', findItem('pushup', 'spec.bottomLine').value === PUSHUP.elbowFull);
-  ok('俯卧撑：回到顶位 = 识别器的 backLine（参考顶位，实际跟着自己的顶位走）',
-    findItem('pushup', 'spec.backLine').value === pushup.backLine
-    && PUSHUP.looseElbow + PUSHUP.returnGap <= pushup.backLine,
-    `${findItem('pushup', 'spec.backLine').value} vs ${pushup.backLine}`);
-  const drop = findItem('pushup', 'spec.shoulderDrop');
-  ok('俯卧撑：肩膀下沉线 = PUSHUP.dropMin', drop.value === PUSHUP.dropMin, `${drop.value} vs ${PUSHUP.dropMin}`);
-  ok('俯卧撑：补充说明里带上了 dropFull / dropStart / dropReturn',
-    Number(drop.noteParams.full) === PUSHUP.dropFull && Number(drop.noteParams.start) === PUSHUP.dropStart
-    && Number(drop.noteParams.ret) === PUSHUP.dropReturn,
-    JSON.stringify(drop.noteParams));
-  ok('俯卧撑：四个肩膀下沉线满足 start < return < min < full（否则刚开始下沉就会被判成做完）',
-    PUSHUP.dropStart < PUSHUP.dropReturn && PUSHUP.dropReturn < PUSHUP.dropMin && PUSHUP.dropMin < PUSHUP.dropFull,
-    JSON.stringify([PUSHUP.dropStart, PUSHUP.dropReturn, PUSHUP.dropMin, PUSHUP.dropFull]));
-  ok('俯卧撑：肘角四档满足 顶位 > 开始 > 计次 > 满分深度',
-    PUSHUP.elbowUp > PUSHUP.elbowEnter && PUSHUP.elbowEnter > PUSHUP.looseElbow
-    && PUSHUP.looseElbow > PUSHUP.elbowFull,
-    JSON.stringify([PUSHUP.elbowUp, PUSHUP.elbowEnter, PUSHUP.looseElbow, PUSHUP.elbowFull]));
-  ok('俯卧撑：晃动不计的幅度用的是 PUSHUP.minBend',
-    findItem('pushup', 'spec.wobble').noteParams.deg === PUSHUP.minBend,
-    JSON.stringify(findItem('pushup', 'spec.wobble').noteParams));
+  ok('俯卧撑：走通用屈伸引擎（手写识别器已删除）', pushup.constructor.name === 'BendRepDetector');
+  ok('俯卧撑：计次线 = 引擎的 looseP（相对自己顶位弯 30%）',
+    findItem('pushup', 'spec.countLine').value === roundFor(pushup.up - pushup.looseP * (pushup.up - pushup.down), 'deg'),
+    `${findItem('pushup', 'spec.countLine').value} vs ${roundFor(pushup.up - pushup.looseP * (pushup.up - pushup.down), 'deg')}`);
+  ok('俯卧撑：满分深度 = 引擎的 bottomP', findItem('pushup', 'spec.bottomLine').value
+    === roundFor(pushup.up - pushup.bottomP * (pushup.up - pushup.down), 'deg'));
+  ok('俯卧撑：回到起始位 = 引擎的 backP（同一条线，弹窗里显示 160°）',
+    findItem('pushup', 'spec.backLine').value
+      === roundFor(pushup.up - pushup.backP * (pushup.up - pushup.down), 'deg'),
+    String(findItem('pushup', 'spec.backLine').value));
+  ok('俯卧撑：四条的先后关系不能反（顶位 > 开始 > 计次 > 满分深度）',
+    pushup.enterP < pushup.looseP && pushup.looseP < pushup.bottomP
+    && pushup.enterP > pushup.backP && pushup.ignoreP > pushup.enterP
+    && pushup.ignoreP < pushup.looseP,
+    JSON.stringify([pushup.enterP, pushup.ignoreP, pushup.looseP, pushup.bottomP, pushup.backP]));
+  ok('俯卧撑：弹窗里**没有**肩膀下沉量那一路证据了（简化掉的就是它）',
+    !findItem('pushup', 'spec.shoulderDrop')
+    && !itemsOf('pushup').some((it) => it.metricKey === 'metric.shoulderDrop')
+    && !itemsOf('pushup').some((it) => it.metricKey === 'metric.elbow' && it.unit === 'torso'),
+    JSON.stringify(itemsOf('pushup').map((it) => it.metricKey)));
+  ok('俯卧撑：弹窗里的画幅/晃动/最短一轮这些辅助项也只剩必要的几条',
+    itemsOf('pushup').length <= 12, String(itemsOf('pushup').length));
 
   ok('臀桥：抬髋线 = BRIDGE.upRise', findItem('bridge', 'spec.countLine').value === BRIDGE.upRise);
   ok('臀桥：落回线 = BRIDGE.downRise', findItem('bridge', 'spec.bridgeDown').value === BRIDGE.downRise);
@@ -272,18 +275,13 @@ console.log('\n[5] 姿势要求用的就是 GATES 的那张表');
     && specStages('deadBug')[0].alt?.metric === 'shoulderClear',
     String(itemsOf('deadBug').filter((it) => it.labelKey === 'spec.pose.supineLow').length));
 
-  // 手写识别器用自己的姿势判据（不套通用 prone 门控），也必须逐条对上
-  const pose = itemsOf('pushup').filter((it) => it.labelKey === 'spec.pushupPose');
-  ok('俯卧撑：俯撑判据 = PUSHUP.activeTorso',
-    pose.some((it) => it.metricKey === 'metric.torsoIncl' && it.value === PUSHUP.activeTorso));
-  ok('俯卧撑：俯撑判据 = PUSHUP.activeShoulderClear',
-    pose.some((it) => it.metricKey === 'metric.shoulderClear' && it.value === PUSHUP.activeShoulderClear));
-  ok('俯卧撑：俯撑判据 = PUSHUP.activeHandOnFloor',
-    pose.some((it) => it.metricKey === 'metric.wristClear' && it.value === PUSHUP.activeHandOnFloor));
-  ok('俯卧撑：身体直线要求 = PUSHUP.bodyStraightMin',
-    itemsOf('pushup').some((it) => it.metricKey === 'metric.body' && it.value === PUSHUP.bodyStraightMin));
-  ok('俯卧撑：没有混进通用 prone 门控的 0.95（那是别的动作的判据）',
-    !pose.some((it) => it.metricKey === 'metric.wristClearMin'));
+  // 俯卧撑改回通用引擎之后，它的俯撑门控就是**通用 prone 门控**（同一张 GATE_LIMITS 表）
+  const pronePoseItems = itemsOf('pushup').filter((it) => it.labelKey === 'spec.pose.prone');
+  ok('俯卧撑：俯撑门控用的是通用 prone 表（躯干 ≥32° / 肩离地 ≥0.10 / 手在地面 ≤0.95）',
+    pronePoseItems.some((it) => it.metricKey === 'metric.torsoIncl' && it.value === GATE_LIMITS.prone.torsoIncl[0])
+    && pronePoseItems.some((it) => it.metricKey === 'metric.shoulderClear' && it.value === GATE_LIMITS.prone.shoulderClear[0])
+    && pronePoseItems.some((it) => it.metricKey === 'metric.wristClearMin' && it.value === GATE_LIMITS.prone.wristClearMin[1]),
+    JSON.stringify(pronePoseItems.map((it) => `${it.metricKey}${it.op}${it.value}`)));
   ok('臀桥：躺姿判据 = BRIDGE 的常量',
     itemsOf('bridge').some((it) => it.metricKey === 'metric.trunk' && it.value === BRIDGE.supineTorso)
     && itemsOf('bridge').some((it) => it.metricKey === 'metric.shoulderClear' && it.value === BRIDGE.shoulderClearMax)
@@ -603,8 +601,9 @@ console.log('\n[8] 判定进度条（画面上一格一格点亮的那条判据�
   ok('跳跃类动作的进度条包含「起跳」这一格',
     specStages('squatJump').some((s) => s.metric === 'lift' && s.value === 0.035),
     JSON.stringify(specStages('squatJump').map((s) => s.metric)));
-  ok('俯卧撑：计次那一格带「肩膀下沉量」替代判据（镜头看不到贴地时靠它）',
-    specStages('pushup').some((s) => s.alt && s.alt.metric === 'shoulderDrop' && s.alt.value === PUSHUP.dropMin),
+  ok('俯卧撑：简化后只用肘角一条线（没有替代判据、也没有动态线）',
+    specStages('pushup').every((s) => !s.alt && !s.valueFrom
+      && ['elbow', 'progress', 'torsoIncl'].includes(s.metric)),
     JSON.stringify(specStages('pushup').map((s) => `${s.metric}${s.alt ? '+' + s.alt.metric : ''}`)));
 
   // 仰卧抬腿（用户描述）：躺平 180° → 腿绷直抬起 → 与上身 90°（腿垂直地面）→ 放回 180°，如此循环
@@ -741,27 +740,28 @@ console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格'
   ok('箭步蹲：还蹲着（前膝 90°）时「回位」那一格过不了',
     !stageHolds(lungeStages[lungeFinish], fake(90, 95, 95), createDetector('lunge')));
 
-  // 俯卧撑：**计次不必到最低点**了（用户最新要求）—— 最后一格是「肘角到计数线」，
-  // 深度仍是两路证据（肘角 或 肩膀下沉），推起还原那一格仍是本轮的一部分（下一轮的前提）。
+  // 俯卧撑（简化后）：四格 = 俯撑 → 开始下沉 → 到计次线 → 回到起始位（= 计次那一刻）。
+  // 计次发生在**推回起始位那一帧**（通用引擎的口径），所以最后一格就是「计次那一刻」。
   const pushStages = specStages('pushup');
-  const pushCount = pushStages[pushStages.length - 1];
-  ok('俯卧撑：计次那一格（到计数线）带「肩膀下沉」替代判据',
-    pushCount && pushCount.kind === 'finish' && pushCount.alt
-    && pushCount.alt.metric === 'shoulderDrop'
-    && pushCount.alt.value === PUSHUP.dropMin,
-    JSON.stringify(pushCount?.alt && { m: pushCount.alt.metric, v: pushCount.alt.value }));
-  ok('俯卧撑：计次那一格用识别器自己的「到计数线了」标记（进度条点亮 = 计次 = 报数同一刻）',
-    pushCount && pushCount.detFlag === 'countNow', String(pushCount?.detFlag));
-  ok('俯卧撑：计次那一格与「开始下沉」那一格都用识别器自己的动态线（跟着人自己的顶位走）',
-    pushCount && pushCount.valueFrom === 'countElbow'
-    && pushStages.some((s) => s.valueFrom === 'enterLine'),
-    JSON.stringify(pushStages.map((s) => s.valueFrom || '—')));
-  // 「回到顶位」那一格（这一轮的第 2 格）要同时要求「肩膀抬回顶位」——宽容度就是识别器用的 dropReturn
-  const pushTop = pushStages.find((s) => s.item?.labelKey === 'spec.backLine');
-  ok('俯卧撑：「回到顶位」那一格要求肩膀抬回顶位 dropReturn 以内（与识别器同一个常量）',
-    pushTop && pushTop.also && pushTop.also.metric === 'shoulderDrop'
-    && pushTop.also.value === Number(PUSHUP.dropReturn.toFixed(2)),
-    JSON.stringify(pushTop?.also && { m: pushTop.also.metric, v: pushTop.also.value }));
+  const pushCount = pushStages[2];
+  ok('俯卧撑：四格 = 俯撑 → 开始下沉 → 到计次线 → 回到起始位（最后一格 = 计次那一刻）',
+    pushStages.length === 4 && pushStages[0].kind === 'gate' && pushStages[1].metric === 'elbow'
+    && pushStages[2].metric === 'elbow' && pushStages[3].kind === 'finish'
+    && pushStages[3].metric === 'progress',
+    JSON.stringify(pushStages.map((s) => `${s.metric}:${s.kind}`)));
+  ok('俯卧撑：计次那一格就是「肘角到计次线」（静态值 = 引擎按 looseP 算出的 148°）',
+    pushCount && pushCount.metric === 'elbow' && pushCount.op === 'lte' && pushCount.value === 148
+    && !pushCount.alt && !pushCount.valueFrom,
+    JSON.stringify([pushCount?.metric, pushCount?.op, pushCount?.value, pushCount?.alt, pushCount?.valueFrom]));
+  ok('俯卧撑：四格的线全部落在肘角/进度/俯撑上（简化后不再有第二路证据）',
+    pushStages.every((s) => ['torsoIncl', 'elbow', 'progress'].includes(s.metric)),
+    JSON.stringify(pushStages.map((s) => s.metric)));
+  ok('俯卧撑：站着（没进俯撑）时连第一格都不亮',
+    stageHolds(pushStages[0], { ok: true, torsoIncl: 5, shoulderClear: 1.2, wristClearMin: 0.1 },
+      createDetector('pushup')) === false);
+  ok('俯卧撑：俯撑姿势下第一格亮起（门控就是通用 prone 表）',
+    stageHolds(pushStages[0], { ok: true, torsoIncl: 80, shoulderClear: 0.9, wristClearMin: 0.1 },
+      { gateOk: true }) === true);
 
   // 坐姿体前屈：**用真实帧走一遍进度条**（用户反馈「实际没有计时」就是这一条没走通）——
   //   ① 坐好（躯干 0°、髋 90°、腿伸直）→ 第一格「坐好」点亮；
@@ -842,10 +842,11 @@ console.log('\n[11] 得分分配到关键帧');
     JSON.stringify(stagePoints('bridge').map((r) => r.points)) === '[5,20,8]'
     && stagePoints('bridge')[2].bonus === 6,
     JSON.stringify(stagePoints('bridge')));
-  // 俯卧撑的分数跟着新的关键帧顺序走：俯撑 5 → 回到顶位 8（推起还原）→ 开始下沉 7 → 最低点计次 14 + 满轮 6
-  ok('俯卧撑：俯撑 5 / 回到顶位 8 / 开始下沉 7 / 最低点计次 14 + 满轮 6 = 40 分',
-    JSON.stringify(stagePoints('pushup').map((r) => r.points)) === '[5,8,7,14]'
-    && stagePoints('pushup')[3].bonus === 6,
+  // 俯卧撑的分数跟着四格关键帧走：俯撑 5 → 开始下沉 7 → 压到位 14 → 回到起始位 8（+ 满轮 6）
+  ok('俯卧撑：俯撑 5 / 开始下沉 7 / 压到位 14 / 回位 8 + 满轮 6 = 40 分',
+    JSON.stringify(stagePoints('pushup').map((r) => r.points)) === '[5,7,14,8]'
+    && stagePoints('pushup')[3].bonus === 6
+    && stagePoints('pushup').reduce((n, r) => n + r.points + r.bonus, 0) === 40,
     JSON.stringify(stagePoints('pushup')));
 }
 
@@ -1040,28 +1041,25 @@ console.log('\n[10] 关键帧线条图标');
     .filter((s) => s.metric === 'elbow')
     .every((s) => iconAngle(s, pushCtx) === s.value),
   JSON.stringify(pushStages.filter((s) => s.metric === 'elbow').map((s) => iconAngle(s, pushCtx))));
-  // 俯卧撑的链（用户最新要求「**计次不必是人在最低点了**」）：
-  // ① 俯撑 → ② 回到顶位（下一轮的前提）→ ③ 开始下沉 → ④ **到计数线 = 计次那一刻**。
-  ok('俯卧撑：四格 = 俯撑 → 回到顶位 → 开始下沉 → 到计数线（计次那一刻）',
+  // 俯卧撑的链（**大幅简化后**）：① 俯撑 → ② 开始下沉 → ③ 到计次线 → ④ 回到起始位（= 计次那一刻）。
+  ok('俯卧撑：四格 = 俯撑 → 开始下沉 → 到计次线 → 回到起始位（计次那一刻）',
     pushStages.length === 4 && pushStages[0].kind === 'gate'
-    && pushStages[1].item.labelKey === 'spec.backLine'
-    && pushStages[2].item.labelKey === 'spec.pushupEnter'
-    && pushStages[3].kind === 'finish' && pushStages[3].item.labelKey === 'spec.countLine'
-    && pushStages[3].detFlag === 'countNow',
+    && pushStages[1].item.labelKey === 'spec.enterLine'
+    && pushStages[2].item.labelKey === 'spec.countLine'
+    && pushStages[3].kind === 'finish' && pushStages[3].item.labelKey === 'spec.backLine'
+    && pushStages[3].metric === 'progress',
     JSON.stringify(pushStages.map((s) => `${s.item.labelKey}:${s.kind}`)));
-  ok('俯卧撑：「计次」那一格画得比「回到顶位」低（一眼看出这一格是沉下去）', (() => {
+  ok('俯卧撑：「计次线」那一格画得比「开始下沉」那一格低（一眼看出这一格是沉下去）', (() => {
     const h = (s) => {
       const ic = stageIcon(s, pushCtx);
       const shoulderY = ic.lines[0].a.y;
       const handY = Math.max(...ic.lines.flatMap((l) => [l.a.y, l.b.y]));
       return handY - shoulderY;
     };
-    const top = pushStages.find((s) => s.item.labelKey === 'spec.backLine');
-    const bottom = pushStages[pushStages.length - 1];
-    return top && bottom && h(top) > h(bottom);
+    return h(pushStages[2]) < h(pushStages[1]);
   })(), JSON.stringify(pushStages.map((s) => `${s.item.labelKey}:${s.value}`)));
-  ok('俯卧撑：三格肘角图标都能区分（判据数值不同，图标按判据画）',
-    new Set(pushStages.filter((s) => s.metric === 'elbow').map((s) => stageIcon(s, pushCtx).pose.params.elbow)).size === 3,
+  ok('俯卧撑：两格肘角图标（159° 开始 / 148° 计次）画得不一样',
+    new Set(pushStages.filter((s) => s.metric === 'elbow').map((s) => stageIcon(s, pushCtx).pose.params.elbow)).size === 2,
     JSON.stringify(pushStages.filter((s) => s.metric === 'elbow').map((s) => stageIcon(s, pushCtx).pose.params.elbow)));
   ok('俯卧撑：撑地类姿势用「手在地面」的画法（support）',
     pushStages.filter((s) => s.metric === 'elbow').every((s) => stageIcon(s, pushCtx).pose.params.support === true));
@@ -1096,9 +1094,15 @@ console.log('\n[10] 关键帧线条图标');
   ok('俯卧撑：肘角几格画得太像 → 图标里标出肘关节度数（用户明确要求）',
     pushLabels.filter(Boolean).length >= 3 && pushLabels.every((l) => !l || /^\d+°$/.test(l)),
     JSON.stringify(pushLabels));
+  // 「回位」那一格的判据挂在 item 上（progress ≤ 0.12，判据文字是「肘角 ≥ 161°」），
+  // 所以要比的是**该格真正展示的角度**（stageAngle），不是格子自己的比例值。
   ok('俯卧撑：标出来的度数就是该格判据里的角度',
-    pushStagesForLabel.every((s, i) => !pushLabels[i] || pushLabels[i] === `${Math.round(s.value)}°`),
-    JSON.stringify(pushStagesForLabel.map((s, i) => `${s.value}→${pushLabels[i]}`)));
+    pushStagesForLabel.every((s, i) => {
+      if (!pushLabels[i]) return true;
+      const deg = stageAngle(s);
+      return Number.isFinite(deg) && pushLabels[i] === `${Math.round(deg)}°`;
+    }),
+    JSON.stringify(pushStagesForLabel.map((s, i) => `${stageAngle(s)}→${pushLabels[i]}`)));
   const squatLabels = specStages('squat').map((s) => angleLabel(s, iconCtx('squat')));
   ok('深蹲：图标本来就能一眼区分（176/135/112/149）→ 不标数字，画面不乱',
     squatLabels.every((l) => l === null), JSON.stringify(squatLabels));
