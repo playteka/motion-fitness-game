@@ -206,7 +206,7 @@ console.log('\n[3] 静态资源与模型文件');
   ok('进度条出现时底部提示条会让位（不会两块叠在一起）',
     /\.stage\.has-criteria \.pose-hint\s*\{[^}]*bottom:/.test(css));
 
-  // 做到与没做到要一眼分得清（颜色 + 填充 + 线粗 + 对勾，四重区别）
+  // 做到与没做到要一眼分得清（颜色 + 填充 + 线粗，三重区别；**不再有对勾**）
   const segBase = /(?:^|\n)\.criteria-seg\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
   const segDone = /(?:^|\n)\.criteria-seg\.done\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
   const doneIcon = /\.criteria-seg\.done \.criteria-icon\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
@@ -221,13 +221,20 @@ console.log('\n[3] 静态资源与模型文件');
     && Number(/background:\s*rgba\([^)]*,\s*([\d.]+)\)/.exec(segDone)?.[1]) >= 0.18
     && /box-shadow/.test(segDone));
   ok('做到的图标线条明显更粗（≥2）', Number(/stroke-width:\s*([\d.]+)/.exec(doneIcon)?.[1]) >= 2);
-  ok('做到的格子右上角带对勾（图形符号）', /\.criteria-seg\.done::after\s*\{[^}]*content:\s*'✓'/.test(css));
-  // 用户反馈「打的这个钩太小了，根本看不清楚，要加倍放大」
-  const tickBlocks = [...css.matchAll(/\.criteria-seg\.done::after\s*\{([\s\S]*?)\}/g)].map((m) => m[1]);
-  const tickSize = Math.max(...tickBlocks.map((b) => Number(/width:\s*(\d+)px/.exec(b)?.[1]) || 0));
-  const tickFont = Math.max(...tickBlocks.map((b) => Number(/font-size:\s*(\d+)px/.exec(b)?.[1]) || 0));
-  ok('对勾做成大号徽标（≥44px 圆盘 + ≥28px 勾，窄屏另有小一号的规则）',
-    tickSize >= 44 && tickFont >= 28, `${tickSize}px / ${tickFont}px`);
+  // 用户要求：「检测到关键帧之后不要再打钩了，有颜色的变化就可以了，简化一下」
+  // → 进度条上不再有任何对勾 / 徽标，做到与否只靠颜色（绿底 + 绿框 + 绿线条 + 外发光）区分。
+  ok('做到的格子不再画对勾（进度条上没有任何 ✓ 徽标）',
+    !/\.criteria-seg\.done::after/.test(css) && !/content:\s*'✓'/.test(css)
+    && !/content:\s*"✓"/.test(css), '还有 done::after 的勾');
+  ok('做到与否只靠颜色区分（绿底 + 绿框 + 外发光 + 线条加粗，四样都在）',
+    /border:\s*1px solid rgba\(74, 222, 128/.test(segDone)
+    && /background:\s*rgba\(74, 222, 128/.test(segDone)
+    && /box-shadow/.test(segDone)
+    && Number(/stroke-width:\s*([\d.]+)/.exec(doneIcon)?.[1]) >= 2);
+  // 去掉对勾之后，绿色底色要更实一点，否则「做到了」会变得不明显
+  ok('去掉对勾后绿色底色更实（≥0.24，比带勾那版更清晰）',
+    Number(/background:\s*rgba\([^)]*,\s*([\d.]+)\)/.exec(segDone)?.[1]) >= 0.24,
+    String(/background:\s*rgba\([^)]*,\s*([\d.]+)\)/.exec(segDone)?.[1]));
   // 用户反馈「得分显示在关键帧里，字体要大一点，让人看清楚」
   const ptsEarned = /\.criteria-seg-pts\.earned\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
   const ptsFont = /font-size:\s*clamp\(\s*([\d.]+)px/.exec(ptsEarned)?.[1]
@@ -243,7 +250,7 @@ console.log('\n[3] 静态资源与模型文件');
     && /animation:/.test(segCurrent));
 
   /* ---- 用户反馈「运动时进度条抖动得很厉害」：状态变化**一律不许改几何** ----
-     打钩、加分、点亮下一格都只能改颜色 / 光晕 / 透明度，不能改边框宽度、尺寸或位置，
+     点亮下一格、加分都只能改颜色 / 光晕 / 透明度，不能改边框宽度、尺寸或位置，
      否则每点亮一格整条就会跟着动一下。 */
   {
     const borderWidth = (block) => {
