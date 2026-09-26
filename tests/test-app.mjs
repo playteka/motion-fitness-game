@@ -2110,33 +2110,127 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
   ok('手不在左下角圆环里时进度为 0', api.gestureState.corner.p === 0,
     String(api.gestureState.corner.p));
 
+  /**
+   * 像真实主循环那样按 ~33ms 连续喂帧。
+   * （进度现在是**按时间累积**的，单帧最多记 250ms —— 一步跳 1 秒会被 clamp，
+   *   所以测试也必须一帧一帧喂，跟真机一致。）
+   */
+  const holdFrames = (pose, from, ms, step = 33) => {
+    let fired = false;
+    for (let t = from; t <= from + ms + 1e-6; t += step) {
+      fired = api.updateCornerExit(pose, Math.round(t)) || fired;
+    }
+    return fired;
+  };
+  const resetCorner = () => {
+    api.state.homeMode = false;
+    api.gestureState.corner.p = 0;
+    api.gestureState.corner.done = false;
+    api.gestureState.corner.at = 0;
+    api.gestureState.corner.since = 0;
+    api.gestureState.corner.lastInside = 0;
+  };
+
   // 手伸进圆环 → 进度按时间走（和另外两个圆环同一套：3 秒走满一圈）
   const p0 = at();
-  api.updateCornerExit(handAt(p0.x, p0.y), 1000);
-  api.updateCornerExit(handAt(p0.x, p0.y), 2000);
+  api.camera.stream = fakeStream;
+  api.syncCornerExit();
+  resetCorner();
+  holdFrames(handAt(p0.x, p0.y), 1000, 1000);
   ok('**手**伸进圆环：进度随时间前进（1 秒 → 约 1/3）',
-    Math.abs(api.gestureState.corner.p - 1 / 3) < 0.02, String(api.gestureState.corner.p));
+    Math.abs(api.gestureState.corner.p - 1 / 3) < 0.04, String(api.gestureState.corner.p));
   ok('手在圆环里时圆环进入「正在蓄力」状态（变色 + 转绿）',
     ringBtn().classList.contains('dwelling'));
   ok('圆环里显示还剩几秒',
     /^[\d.]+s$/.test(elements.get('ringQuickExitTimer').textContent),
     elements.get('ringQuickExitTimer').textContent);
-  // 手拿开 → 进度退回去，不会触发
-  api.updateCornerExit(handAt(0.5, 0.5), 2600);
-  let guard = 0;
-  while (api.gestureState.corner.p > 0 && guard < 200) {
-    api.updateCornerExit(handAt(0.5, 0.5), 2700 + guard * 40);
-    guard += 1;
+
+  /* ---- 用户反馈「左下角的退出圆环十分不灵敏，手/脚伸进去后并没有能退出」----
+     查下来有四条原因，逐条钉住： */
+  {
+    const c = center();
+    const hit = api.ringHitRadius('corner', { w: SW, h: SH });
+    ok('判定半径按**圆环画出来的大小**算（0.45×直径 = 半径的 90%），不再要求对准圆心',
+      api.RING_HIT_RATIO >= 0.45 && Math.abs(hit - px() * api.RING_HIT_RATIO) < 0.01,
+      `判定 ${Math.round(hit)}px / 圆环直径 ${px()}px`);
+    ok('偏出中心但仍在圆环里的手也算（旧的 0.30 口径下这里是不算的）',
+      hit > px() * 0.30 + 5, `${Math.round(hit)}px vs 旧口径 ${Math.round(px() * 0.30)}px`);
+    // 手掌中心落在「环半径的 80%」处 —— 在圆环里面，但离圆心有一段距离
+    const off = (hit * 0.8) / SW;
+    resetCorner();
+    holdFrames(handAt(c.x / SW + off, c.y / SH), 30000, 1000);
+    ok('手掌伸到圆环里但偏一侧（半径的 80% 处）照样开始蓄力',
+      api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
+
+    // 手/脚伸到画面边角时可见度会掉到 0.4 以下 —— 门槛放宽到 0.3
+    resetCorner();
+    holdFrames(handAt(p0.x, p0.y, 0.35), 40000, 1000);
+    ok('可见度 0.35 的手/脚照样算（旧门槛 0.4 会把它整个丢掉）',
+      api.TOUCH_VIS_MIN <= 0.3 && api.gestureState.corner.p > 0.25,
+      `visMin=${api.TOUCH_VIS_MIN} p=${api.gestureState.corner.p}`);
+    resetCorner();
+    holdFrames(handAt(p0.x, p0.y, 0.15), 50000, 1000);
+    ok('可见度过低（0.15，被身体挡住）仍然不算，不会误触',
+      api.gestureState.corner.p === 0, String(api.gestureState.corner.p));
+
+    // 只有一个关键点可用（手指/脚跟那些点在画面边角经常掉到门槛以下）也要认
+    const onlyWrist = handAt(p0.x, p0.y);
+    for (const w of [LM.L_WRIST, LM.R_WRIST]) {
+      for (const off2 of [2, 4, 6]) onlyWrist[w + off2] = { x: p0.x, y: p0.y, z: 0, visibility: 0.05 };
+    }
+    resetCorner();
+    holdFrames(onlyWrist, 60000, 1000);
+    ok('只剩手腕一个点可用时也能判定（不再要求「至少 2 个可见点」）',
+      api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
+
+    // 短暂滑出去（宽限期内）不扣进度；滑久了只慢慢退，不会一秒清零
+    resetCorner();
+    holdFrames(handAt(p0.x, p0.y), 70000, 2400);          // 先蓄到 0.8
+    const kept = api.gestureState.corner.p;
+    holdFrames(handAt(0.5, 0.5), 72400, 200);              // 滑出去 0.2 秒（宽限期内）
+    ok('滑出去 0.2 秒（宽限期内）进度一点都不掉',
+      Math.abs(api.gestureState.corner.p - kept) < 1e-6, `${kept} → ${api.gestureState.corner.p}`);
+    holdFrames(handAt(0.5, 0.5), 72600, 1000);             // 再离开 1 秒 → 只退一点
+    const after = api.gestureState.corner.p;
+    ok('离开 1 秒只是慢慢退（不会像以前那样把两秒多的成绩直接清零）',
+      after > 0 && after < kept - 0.4, `${kept} → ${after}`);
+    // 手拿开 → 进度最终退回 0，不会误触发
+    let guard = 0;
+    while (api.gestureState.corner.p > 0 && guard < 200) {
+      api.updateCornerExit(handAt(0.5, 0.5), 74000 + guard * 40);
+      guard += 1;
+    }
+    ok('手拿开后进度退回 0，不会误退出', api.gestureState.corner.p === 0
+      && api.state.homeMode === false, `${api.gestureState.corner.p}/${api.state.homeMode}`);
+    // 镜像开着时，手要放在**屏幕上看到的**那一边（镜像开关默认是开的，这里必须对得上，
+    // 否则就是「手明明伸进圆环了却没反应」）
+    resetCorner();
+    api.state.settings.mirror = true;
+    holdFrames(handAt(1 - p0.x, p0.y), 85000, 1000);
+    ok('镜像开着时，手放在屏幕上看得到的那一边照样蓄力（判定跟着镜像走）',
+      api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
+    resetCorner();
+    holdFrames(handAt(p0.x, p0.y), 86000, 1000);
+    ok('镜像开着时把手放到相反的一边不算（判定没有反过来）',
+      api.gestureState.corner.p === 0, String(api.gestureState.corner.p));
+    api.state.settings.mirror = false;
+    // 🐞 面板那一行：能看到手在哪、离圆心几倍判定半径（排查「到底有没有识别到手/脚」）
+    holdFrames(handAt(p0.x, p0.y), 87000, 100);
+    const info = api.state.touchInfo;
+    ok('🐞 面板记下了「手/脚在哪、离环心几个判定半径」',
+      info && info.has === true && info.kind === 'hand' && info.inside === true && info.rel <= 1,
+      JSON.stringify(info));
+    api.updateCornerExit([], 80100);
+    ok('没识别到手/脚时这一行写成「没看到手或脚」',
+      api.touchDiagLine((v) => String(v)).includes('没看到'),
+      api.touchDiagLine((v) => String(v)));
   }
-  ok('手拿开后进度退回 0，不会误退出', api.gestureState.corner.p === 0
-    && api.state.homeMode === false, `${api.gestureState.corner.p}/${api.state.homeMode}`);
 
   // 手停满 3 秒 → 退出这一组 + 退出全屏（和「一组结束后」的退出圆环同一个动作）
   documentStub.fullscreenElement = elements.get('stage');
   documentStub.exitFullscreenCalls = 0;
-  api.updateCornerExit(handAt(p0.x, p0.y), 10000);
-  api.updateCornerExit(handAt(p0.x, p0.y), 12000);
-  const fired = api.updateCornerExit(handAt(p0.x, p0.y), 13001);
+  resetCorner();
+  const fired = holdFrames(handAt(p0.x, p0.y), 90000, 3100);
   ok('手停满 3 秒 → 触发退出', fired === true, String(fired));
   api.triggerCornerExit();
   ok('**手**停满 3 秒退出后：回主页 + 退出全屏',
@@ -2144,26 +2238,25 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
   ok('退出后左下角圆环收起（主页上不摆）', cornerShown() === false);
 
-  // 脚也一样（用户要求「手或者脚」）：回到动作页 → 用踝关节去够圆环
+  // 脚也一样（用户要求「手或者脚」）：回到动作页 → 用整只脚的中心去够圆环
   api.openExercise('squat');
   api.camera.stream = fakeStream;
   api.syncCornerExit();
   api.state.settings.mirror = false;
-  api.gestureState.corner.done = false;
-  api.gestureState.corner.p = 0;
-  api.gestureState.corner.since = 0;
-  api.gestureState.corner.lastInside = 0;
+  resetCorner();
+  const hitR = api.ringHitRadius('corner', { w: SW, h: SH });
   const p1 = at();
-  api.updateCornerExit(feetAt(p1.x, p1.y), 20000);
-  api.updateCornerExit(feetAt(p1.x, p1.y), 21500);
-  ok('**脚**伸进圆环：进度同样随时间前进（1.5 秒 → 约 0.5）',
-    Math.abs(api.gestureState.corner.p - 0.5) < 0.03, String(api.gestureState.corner.p));
+  holdFrames(feetAt(p1.x, p1.y), 20000, 1000);
+  ok('**脚**伸进圆环：进度同样随时间前进（1 秒 → 约 1/3）',
+    Math.abs(api.gestureState.corner.p - 1 / 3) < 0.04, String(api.gestureState.corner.p));
+  // 脚比较大：脚尖/脚跟偏一点也算（以前只认「脚的中心正好对着圆心」）
+  resetCorner();
+  holdFrames(feetAt(p1.x + (hitR * 0.7) / SW, p1.y), 21000, 1000);
+  ok('整只脚偏一侧（半径的 70% 处）也算踩进圆环',
+    api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
   // 可见度太低（脚被挡住）不算
-  api.gestureState.corner.p = 0;
-  api.gestureState.corner.since = 0;
-  api.gestureState.corner.lastInside = 0;
-  api.updateCornerExit(feetAt(p1.x, p1.y, 0.1), 22000);
-  api.updateCornerExit(feetAt(p1.x, p1.y, 0.1), 23500);
+  resetCorner();
+  holdFrames(feetAt(p1.x, p1.y, 0.1), 22000, 1500);
   ok('脚被挡住（可见度低）时不算伸进圆环', api.gestureState.corner.p === 0,
     String(api.gestureState.corner.p));
 

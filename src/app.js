@@ -108,6 +108,8 @@ const state = {
   detectCount: 0,
   poseHits: 0,
   camError: null,
+  /** 最近一帧「手/脚」离左下角圆环多远（🐞 面板用：排查到底有没有识别到手/脚） */
+  touchInfo: null,
   consoleErrors: [],
   saidSteps: new Set(),
   stepSig: '',
@@ -771,8 +773,34 @@ const CORNER_RING_BOTTOM_PX = 16;
  * 用户要求「退出圆环放大一点」：96/132 → 104/140（右上角那个共用同一个变量，一起变大、仍然等大）。
  */
 const RING_PX_FALLBACK = { min: 104, vw: 0.105, max: 140 };
-/** 手指/脚趾要落在圆心这个比例（占直径）以内才算「进到圆环里」—— 约环半径的 60% */
-const RING_HIT_RATIO = 0.30;
+/**
+ * 手 / 脚要落在圆心这个比例（占**直径**）以内才算「进到圆环里」。
+ *
+ * 用户反馈「左下角的退出圆环十分不灵敏，手掌或者脚伸进去后并没有能退出」：
+ * 原来是 **0.30**（= 环半径的 60%），也就是必须把手掌中心*对准圆心*才认 ——
+ * 而屏幕上的圆环半径是 70px，判定半径只有 42px，用户按「伸进圆环里」去放，十有八九落在
+ * 那个小圈外。现在改成 **0.45（= 环半径的 90%）**：**只要进到圆环里面就算**，
+ * 和圆环画出来的大小一致（边缘留 10% 免得擦边也算）。
+ */
+const RING_HIT_RATIO = 0.45;
+/**
+ * 手势落点的最低可见度：低于这个值的点整帧不参与（被身体挡住的看不见的手/脚不会误触）。
+ * 原来写死 0.4 —— 但手/脚伸到**画面边角**（左下角圆环正好在角上）时，MediaPipe 给的可见度
+ * 本来就偏低，0.4 会把「明明看得见的手」整个丢掉，这也是「不灵敏」的原因之一，现在放宽到 0.3。
+ */
+const TOUCH_VIS_MIN = 0.3;
+/**
+ * 手/脚离开圆环之后进度退回去的速度：满圈约 1.5 秒退完。
+ *
+ * 以前是「离开超过 0.3 秒直接把 `since` 清零」→ 辛辛苦苦停了两秒多，手抖出去 0.4 秒就全没了。
+ * 现在改成**按时间慢慢退**：短暂滑出去只损失一点点，真的把手拿开才会眼看着退完。
+ */
+const GESTURE_DRAIN_MS = 1500;
+/**
+ * 「手/脚已经靠近圆环」的提示倍数：落在判定半径的这个倍数以内就把圆环点亮一下 ——
+ * 用户能立刻看出「摄像头看得见我的手，再往环里挪一点就对了」，不用猜是不是没识别到。
+ */
+const RING_NEAR_FACTOR = 2.2;
 
 /** 手势圆环的运行时状态（进度 0~1、进入时刻、最后在里面的一刻） */
 const gestureState = {
@@ -829,14 +857,19 @@ function ringHitRadius(key, size) {
  * 脚：踝 + 脚跟 + 脚趾尖的平均点当**脚的中心**（用户要求「脚进入圆环内部三秒」——
  *     只取踝点的话脚尖已经踩进圆环里了踝还在环外；取整只脚的中心最接近「脚进去了」）。
  * 左下角那个退出圆环**手或脚都算**（用户要求）。
+ *
+ * 用户反馈「退出圆环十分不灵敏」后放宽了两处：**可见度门槛 0.4 → 0.3**，
+ * 并且**只要有一个点可用就算数**（原来要求至少 2 个点 —— 手/脚伸到画面边角时，
+ * 指节/脚跟/脚尖这些点的可见度常常掉到 0.4 以下，结果整只手/整只脚被丢掉、圆环一动不动）。
+ * 平均点仍然优先：有点可用时用它们的中心，只有一个可用时就用那一个（手腕本身也很稳）。
  */
 function touchPoints(landmarks, stageW, stageH, mirror) {
   if (!landmarks || !landmarks.length) return [];
-  /** 一组关键点的中心（至少要有 2 个可见点，否则这一段就当没看见） */
+  /** 一组关键点的中心（至少要有一个可见点，否则这一段就当没看见） */
   const centre = (...raw) => {
     const pts = raw.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)
-      && (p.visibility === undefined || p.visibility >= 0.4));
-    if (pts.length < 2) return null;
+      && (p.visibility === undefined || p.visibility >= TOUCH_VIS_MIN));
+    if (!pts.length) return null;
     const cx = pts.reduce((n, p) => n + p.x, 0) / pts.length;
     const cy = pts.reduce((n, p) => n + p.y, 0) / pts.length;
     return { x: (mirror ? 1 - cx : cx) * stageW, y: cy * stageH };
@@ -1019,8 +1052,8 @@ function showCornerExit() {
   const box = $('cornerExit');
   if (!box || gestureState.cornerVisible) return;
   const st = gestureState.corner;
-  st.p = 0; st.since = 0; st.lastInside = 0; st.done = false;
-  ringEl('corner')?.classList.remove('dwelling', 'done');
+  st.p = 0; st.since = 0; st.at = 0; st.lastInside = 0; st.done = false;
+  ringEl('corner')?.classList.remove('dwelling', 'done', 'near');
   const label = cornerLabelEl();
   if (label) label.textContent = t('ui.gestureExit');
   const timer = $('ringQuickExitTimer');
@@ -1039,8 +1072,9 @@ function hideCornerExit() {
   if (box) box.hidden = true;
   gestureState.cornerVisible = false;
   const st = gestureState.corner;
-  st.p = 0; st.since = 0; st.lastInside = 0; st.done = false;
-  ringEl('corner')?.classList.remove('dwelling', 'done');
+  st.p = 0; st.since = 0; st.at = 0; st.lastInside = 0; st.done = false;
+  ringEl('corner')?.classList.remove('dwelling', 'done', 'near');
+  state.touchInfo = null;
 }
 
 /**
@@ -1054,28 +1088,58 @@ function syncCornerExit() {
 }
 
 /**
- * 每帧更新左下角退出圆环：**手或脚**在圆心附近停满 GESTURE_HOLD_MS 就退出。
+ * 每帧更新左下角退出圆环：**手或脚**在圆环里停满 GESTURE_HOLD_MS 就退出。
  * 进度与动画完全复用中间那两个圆环的那一套（paintRing / 同一组常量）。
+ *
+ * 用户反馈「十分不灵敏、手掌或脚伸进去并没有退出」后，这里做了三处放宽（见各自的常量说明）：
+ *   ① 判定半径按**圆环画出来的大小**算（0.45 直径 = 半径的 90%，进到环里就算）；
+ *   ② 手/脚的可见度门槛 0.4 → 0.3，而且只要有一个关键点可用就认；
+ *   ③ 进度改成**按时间累积、按时间慢慢退回**（离开超过 0.3 秒不再把两秒多的成绩直接清零）。
+ * 另外把「手/脚现在在哪」记进 `state.touchInfo`，🐞 面板会显示出来（排查「到底有没有识别到手/脚」）。
  */
 function updateCornerExit(landmarks, now) {
-  if (!gestureState.cornerVisible) return false;
-  const st = gestureState.corner;
-  if (st.done) return false;
   const size = stageSize();
   const pts = touchPoints(landmarks, size.w, size.h, state.settings.mirror);
-  const inside = handInRing(pts, 'corner', size);
+  if (!gestureState.cornerVisible) { state.touchInfo = null; return false; }
+  const st = gestureState.corner;
+  if (st.done) { state.touchInfo = null; return false; }
+  // 离圆心最近的那个手/脚落点（同时给「在环里 / 靠近环」和 🐞 面板用）
+  const c = ringCenter('corner', size.w, size.h);
+  const hit = ringHitRadius('corner', size);
+  let best = null;
+  pts.forEach((p, i) => {
+    const d = Math.hypot(p.x - c.x, p.y - c.y);
+    if (!best || d < best.d) best = { d, p, i };
+  });
+  const inside = !!best && best.d <= hit;
+  const near = !!best && best.d <= hit * RING_NEAR_FACTOR;
+  state.touchInfo = best
+    ? {
+      has: true,
+      kind: best.i < 2 ? 'hand' : 'foot',
+      x: best.p.x / size.w,
+      y: best.p.y / size.h,
+      rel: best.d / (hit || 1),      // 离圆心几个「判定半径」（<1 = 在环里）
+      inside,
+      near,
+    }
+    : { has: false, inside: false, near: false };
+
+  const dt = clamp(now - (st.at || now), 0, 250);
+  st.at = now;
   if (inside) {
     st.lastInside = now;
-    if (!st.since) st.since = now;
-    st.p = clamp((now - st.since) / GESTURE_HOLD_MS, 0, 1);
+    st.p = clamp(st.p + dt / GESTURE_HOLD_MS, 0, 1);
   } else if (now - st.lastInside > GESTURE_GRACE_MS) {
-    st.since = 0;
-    st.p = Math.max(0, st.p - 0.06);
+    // 离开超过宽限期：**慢慢退回去**（1.5 秒退完一圈），不再一秒清零
+    st.p = Math.max(0, st.p - dt / GESTURE_DRAIN_MS);
   }
+  const el = ringEl('corner');
+  if (el) el.classList.toggle('near', near && !inside);
   paintRing('corner', st.p);
   const timer = $('ringQuickExitTimer');
   if (timer) {
-    const left = Math.max(0, GESTURE_HOLD_MS - (now - st.since)) / 1000;
+    const left = Math.max(0, GESTURE_HOLD_MS * (1 - st.p)) / 1000;
     timer.textContent = st.p > 0.02 && st.p < 1 ? `${left.toFixed(1)}s` : '';
   }
   if (st.p >= 1) {
@@ -1576,6 +1640,16 @@ function diagText() {
   }).join(' · ');
 }
 
+/** 左下角「退出」圆环那一行：手/脚现在在哪、离圆心几个判定半径（排查「到底有没有识别到手/脚」） */
+function touchDiagLine(n) {
+  const info = state.touchInfo;
+  if (!info || !info.has) return `${t('debug.touch')} ${t('debug.noTouch')}`;
+  const kind = info.kind === 'foot' ? t('debug.foot') : t('debug.hand');
+  return `${t('debug.touch')} ${kind}(${n(info.x, 2)},${n(info.y, 2)})`
+    + ` ${t('debug.ringDist')} ${n(info.rel, 2)}`
+    + ` ${info.inside ? t('debug.inRing') : (info.near ? t('debug.nearRing') : t('debug.outRing'))}`;
+}
+
 /** 实时指标面板：把识别器“看到的”数字直接摆出来，方便自己判断机位问题 */
 function renderDebug(f, outline = null) {
   const el = $('debugLine');
@@ -1588,8 +1662,7 @@ function renderDebug(f, outline = null) {
     return;
   }
   const n = (v, d = 0) => (Number.isFinite(v) ? v.toFixed(d) : '—');
-  const mark = (v) => (v ? t('debug.yes') : t('debug.no'));
-  const snd = audio.state();
+  const mark = (v) => (v ? t('debug.yes') : t('debug.no'));  const snd = audio.state();
   // 机位是否“正确”取决于当前动作：深蹲要正面，其余要侧面
   const wantView = requiredView(state.exerciseId);
   const viewName = f.view === 'front' ? t('debug.viewFront') : t('debug.viewSide');
@@ -1617,6 +1690,7 @@ function renderDebug(f, outline = null) {
     `${t('debug.hipClear')} ${n(f.hipClear, 2)}`,
     `${t('debug.thighFromHoriz')} ${n(f.thighFromHoriz)}°`,
     `${t('debug.visibility')} ${n(f.coreVis, 2)}`,
+    touchDiagLine(n),
     `🔊 ${t('debug.sound')} ${snd.ctx}/${snd.voices}`,
     outlineTxt,
     `${t('debug.state')} ${state.session}`,
@@ -3174,6 +3248,7 @@ window.__mfg = {
   showCornerExit, hideCornerExit, updateCornerExit, triggerCornerExit, syncCornerExit,
   layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, stageSize,
   CORNER_RING_INSET_PX, CORNER_RING_BOTTOM_PX, RING_PX_FALLBACK, RING_HIT_RATIO,
+  TOUCH_VIS_MIN, GESTURE_DRAIN_MS, RING_NEAR_FACTOR, touchDiagLine,
   announceHoldCount, HOLD_COUNT_EVERY,
   announceTimeLeft, TIME_CALL_AT, targetPresetsFor, targetStepFor,
   buildMusicTracks, selectMusicTrack,

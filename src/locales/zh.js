@@ -277,6 +277,15 @@ export default {
     state: '状态',
     // 虚线人体轮廓这一帧画了没（识别成功就该是 ✗）
     outline: '虚线轮廓',
+    // 左下角「退出」圆环那一行：手/脚现在在哪、离圆心几个判定半径
+    touch: '手/脚',
+    noTouch: '没看到手或脚',
+    hand: '手',
+    foot: '脚',
+    ringDist: '离环心',
+    inRing: '环内',
+    nearRing: '快到了',
+    outRing: '环外',
     yes: '✓',
     no: '✗',
     count: '计数诊断',

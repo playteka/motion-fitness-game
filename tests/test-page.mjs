@@ -177,6 +177,13 @@ console.log('\n[3] 静态资源与模型文件');
     // 用户要求「退出圆环放大一点」：下限抬高到 ≥104px
     const ringMin = Number((ringPx || '').split(',')[0].replace(/[^\d.]/g, ''));
     ok('圆环直径比上一版更大（clamp 下限 ≥104px）', ringMin >= 104, `下限=${ringMin}px`);
+    // 用户反馈「左下角退出圆环十分不灵敏」：手/脚靠近时圆环要**亮一下**，
+    // 让人分得清「没识别到」和「位置差一点」；而且只改颜色 / 光晕，不动尺寸。
+    const nearBlock = /\.corner-ring \.ring-btn\.near\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    ok('手/脚靠近圆环时圆环会亮一下（.near 状态）',
+      !!nearBlock && /box-shadow/.test(nearBlock) && /background:/.test(nearBlock), nearBlock.trim());
+    ok('「靠近」状态只改颜色 / 光晕，不动宽高与位置（不会抖）',
+      !!nearBlock && !/(width|height|left|top|transform)\s*:/.test(nearBlock), nearBlock.trim());
     // 小屏也必须还是「两个一起收」：.hud-ring 不许再写死尺寸（以前写过 84px，会和左下角那个不一样大）
     ok('小屏时右上角 HUD 圆环不再写死尺寸（改用同一个 --ring-px，两个圆环仍然等大）',
       !/@media[^{]*720px[^{]*\{[^@]*\.hud-ring\s*\{[^}]*width:\s*\d+px/.test(css), 'hud-ring 有写死的宽高');

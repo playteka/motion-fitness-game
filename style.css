@@ -925,6 +925,15 @@ kbd {
   background: rgba(6, 12, 20, 0.34);
 }
 .corner-ring .ring-btn:hover { opacity: 1; }
+/* 手/脚已经靠近圆环（但还没进去）：把圆环**亮一下**，让用户立刻知道
+   「摄像头看得见我的手，再往环里挪一点就对了」——不然根本分不清是没识别到还是位置偏了。
+   只改颜色 / 光晕，不动任何尺寸（和整个进度条的不抖原则一致）。 */
+.corner-ring .ring-btn.near {
+  opacity: 1;
+  background: rgba(56, 189, 248, 0.22);
+  box-shadow: 0 0 22px rgba(56, 189, 248, 0.55), inset 0 0 18px rgba(56, 189, 248, 0.25);
+}
+.corner-ring .ring-btn.near .ring-track { stroke: rgba(125, 211, 252, 0.85); }
 .corner-ring .ring-label { font-size: clamp(13px, 1.35vw, 19px); }
 .corner-ring .ring-timer { font-size: clamp(12px, 1.1vw, 15px); }
 

@@ -275,6 +275,15 @@ export default {
     state: 'State',
     // Whether the dashed body outline was drawn this frame (✗ once you are recognised)
     outline: 'Outline',
+    // The bottom-left “Exit” ring line: where the hand/foot is and how far it is from the ring centre
+    touch: 'Hand/foot',
+    noTouch: 'no hand or foot seen',
+    hand: 'hand',
+    foot: 'foot',
+    ringDist: 'from ring centre',
+    inRing: 'inside',
+    nearRing: 'nearly there',
+    outRing: 'outside',
     yes: '✓',
     no: '✗',
     count: 'Rep diagnosis',
