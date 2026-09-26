@@ -41,7 +41,6 @@ export const FOCUS = {
   pushup: ['elbow', 'hip'],
   bridge: ['hip', 'knee'],
   plank: ['hip', 'elbow', 'shoulderJoint'],
-  sidePlank: ['hip', 'shoulder'],
   deadBug: ['knee', 'hip'],
   crunch: ['hip', 'shoulder'],
   reverseCrunch: ['hip', 'knee'],

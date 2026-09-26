@@ -107,13 +107,6 @@ export const GATE_LIMITS = {
     torsoIncl: [55, null],
     shoulderClear: [null, 0.6],
   },
-  /** 侧卧（侧平板）：横着躺 + 肩/髋离地 + 手撑地 */
-  sideLying: {
-    torsoIncl: [55, null],
-    shoulderClear: [0.12, null],
-    hipClear: [0.08, null],
-    wristClearMin: [null, 0.6],
-  },
   /** 站立体前屈：站着但躯干往前折（髋离地 ≥0.65 倍躯干长 = 不是坐/躺） */
   standFold: {
     torsoIncl: [55, null],
@@ -262,11 +255,6 @@ export const GATES = {
   butterfly: (f) => f.hipClear < 0.95 && f.kneeSpread > 0.55 && f.torsoIncl < 55,
   /** 青蛙趴：俯卧/跪趴 + 双膝打开 */
   frogPose: (f) => f.torsoIncl > 35 && f.kneeSpread > 0.5 && f.kneeClear < 0.5,
-  /** 侧卧（侧平板） */
-  sideLying: (f) => inLimit(f.torsoIncl, GATE_LIMITS.sideLying.torsoIncl)
-    && inLimit(f.shoulderClear, GATE_LIMITS.sideLying.shoulderClear)
-    && inLimit(f.hipClear, GATE_LIMITS.sideLying.hipClear)
-    && inLimit(f.wristClearMin, GATE_LIMITS.sideLying.wristClearMin),
   /** 倒立（倒立撑）：髋高于肩、身体竖直 */
   inverted: (f) => f.inverted && f.torsoIncl < 50 && f.shoulderClear > 0.3,
   /** 双杠臂屈伸：身体竖直、手在髋两侧（手离地高度接近髋） */
@@ -285,8 +273,7 @@ const GATE_HINT = {
   kneel: 'kneel', kneelFold: 'kneel', childPose: 'kneel', wristStretch: 'kneel',
   seated: 'seated', seatedLow: 'seated', seatedFold: 'seated', seatedFoldStart: 'seated', butterfly: 'seated',
   vSit: 'seated', frogPose: 'prone',
-  sideLying: 'side', inverted: 'inverted', hang: 'hang', dips: 'stand',
-};
+  inverted: 'inverted', hang: 'hang', dips: 'stand',};
 
 /* ------------------------------------------------------------------ *
  * 指标取值：一次动作里“来回变化的那个量”

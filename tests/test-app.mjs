@@ -2327,13 +2327,13 @@ console.log('\n[8f] 计时类每 5 秒读秒');
   api.state.session = 'running';
   ok('计数类动作不读秒', step(5000, 70000) === false);
 
-  // 侧平板这种计时动作同样按 5 秒读（换动作 → 新识别器计时为 0 → 读秒重新装填）
-  api.openExercise('sidePlank');
+  // 其他计时动作同样按 5 秒读（换动作 → 新识别器计时为 0 → 读秒重新装填）
+  api.openExercise('standingForwardFold');
   api.state.session = 'running';
   said.length = 0;
   step(0, 79000);
   api.state.detector.holdMs = 15000;
-  ok('侧平板支撑也按 5 秒读（计时类通用）', step(15000, 80000) === true && said[0] === '15 秒', said.join(' | '));
+  ok('其它计时动作也按 5 秒读（计时类通用）', step(15000, 80000) === true && said[0] === '15 秒', said.join(' | '));
 
   // 切到英文时读英文单位
   api.changeLang('en');
@@ -3145,7 +3145,7 @@ console.log(`\n[14] 虚线轮廓：识别成功就隐藏（真实主循环，全
   }
 
   const all = EXERCISES.map((e) => e.id).join(',');
-  ok(`这一段覆盖了全部动作（${EXERCISES.length} 个）`, EXERCISES.length === 20, all);
+  ok(`这一段覆盖了全部动作（${EXERCISES.length} 个）`, EXERCISES.length === 19, all);
   ok('每个动作都真的进入了计数状态（不是空跑）', reachedRunning === EXERCISES.length,
     `实际 ${reachedRunning}/${EXERCISES.length}`);
   ok('没识别到人体时，画面里画「找人」的虚线轮廓（亮蓝）', bad.search.length === 0,

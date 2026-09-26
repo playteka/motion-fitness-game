@@ -606,7 +606,7 @@ export const STEP_PLANS = {
     ],
   },
 
-  /* 计时：姿势类（平板/侧平板/空心/超人/熊爬/螃蟹走） */
+  /* 计时：姿势类（平板/空心/超人/熊爬/螃蟹走） */
   holdPose: {
     perCycle: false,
     repBonus: 0,

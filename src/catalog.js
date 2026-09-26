@@ -180,10 +180,6 @@ export const EXERCISES = [
   e('plank', '🧘', 'core', {
     engine: 'builtin', kind: 'hold', plan: 'plank', posture: 'prone', judge: 'time', target: 45,
   }),
-  e('sidePlank', '🧎', 'core', {
-    kind: 'hold', plan: 'holdPose', posture: 'side', judge: 'pose', target: 30, rough: true,
-    params: { gate: 'sideLying' },
-  }),
   e('deadBug', '🐞', 'core', {
     engine: 'alt', plan: 'repAlt', posture: 'supine', judge: 'leg', target: 16,
     /**

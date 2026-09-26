@@ -13,7 +13,7 @@ import {
   computeFrame, PERSON_VIS_MEAN, PERSON_VIS_MIN, PERSON_VIS_SLACK, PERSON_MIN_TORSO,
 } from '../src/metrics.js';
 import { createDetector, BRIDGE } from '../src/exercises.js';
-import { GATES, GATE_LIMITS, inLimit } from '../src/engines.js';
+import { GATES, GATE_LIMITS, inLimit, PoseHoldDetector } from '../src/engines.js';
 import { specStages, stageHolds } from '../src/specs.js';
 import { EXERCISES } from '../src/catalog.js';
 import {
@@ -106,6 +106,17 @@ function makeRunner(det, { smooth = true } = {}) {
 }
 
 function fresh(id, opts) { return createDetector(id, opts); }
+
+/**
+ * 手工构造的「通用计时类（holdPose）」动作 meta。
+ *
+ * 目录里现在没有动作走这条通用路径（侧平板支撑已按用户要求删除），但 `catalog.js` 里
+ * `kind: 'hold'` 的**默认** plan 就是它 —— 所以用它单测这条通用路径，别让它烂掉。
+ */
+const HOLD_POSE_META = {
+  id: 'holdPoseDemo', plan: 'holdPose', kind: 'hold', posture: 'supine',
+  params: { gate: 'supineFlat' }, target: 30,
+};
 
 /**
  * 手搓帧的 runner（指标直接给，不走合成骨架）。
@@ -1176,7 +1187,7 @@ console.log('\n[5] 平板支撑计时');
 }
 
 /* ------------------------------------------------------------------ *
- * 计时类（通用 hold 引擎）：站立体前屈 / 侧平板
+ * 计时类（通用 hold 引擎）：站立体前屈 / 坐姿体前屈
  * ------------------------------------------------------------------ */
 
 /** 站立体前屈的合成姿势：躯干往前折（lean 越大越折） */
@@ -1312,25 +1323,27 @@ console.log('\n[7] 按动作要领计分');
   ok('平板支撑：总分含每秒得分', det.score >= 8 + 12 + 10 + 4, `得分 ${det.score}`);
 }
 {
-  // 通用计时方案（holdPose）：侧平板这类动作「姿势到位 + 保持」就持续加分
-  const det = fresh('sidePlank');
+  // 通用计时方案（holdPose）：`kind: 'hold'` 的**默认**方案 —— 姿势到位就持续加分、按秒累积。
+  // 目录里已经没有动作走这条通用路径了（侧平板支撑按用户要求删除），但它仍是「加一个新计时动作」
+  // 的默认写法，所以这里手工构造一个 meta 把这条路径走通，不让它没人测。
+  const det = new PoseHoldDetector(HOLD_POSE_META);
   const r = makeRunner(det);
-  const sidePlankPose = supinePose({
-    hip: { x: 0.85, y: 0.80 }, thighUp: 95, knee: 178, torsoUp: 275, armDown: -90, elbow: 90,
+  const lyingHoldPose = supinePose({
+    hip: { x: 0.8, y: 0.85 }, thighUp: 95, knee: 178, torsoUp: 270, armDown: -90, elbow: 90,
   });
-  r.run([{ pose: sidePlankPose, ms: 6000 }]);
-  near('侧平板：保持 6 秒 ≈ 计时 6 秒', det.holdMs / 1000, 6, 0.5);
-  ok('侧平板：姿势到位得分', r.steps.some((s) => s.id === 'pose'), r.stepIds().join(','));
-  ok('侧平板：保持 3 秒拿到里程碑', r.steps.some((s) => s.id === 'hold3'));
-  ok('侧平板：满分里程碑还拿不到', !r.steps.some((s) => s.id === 'hold30'));
-  ok('侧平板：总分含每秒得分', det.score >= 8 + 10 + 4, `得分 ${det.score}`);
+  r.run([{ pose: lyingHoldPose, ms: 6000 }]);
+  near('通用计时（holdPose）：保持 6 秒 ≈ 计时 6 秒', det.holdMs / 1000, 6, 0.5);
+  ok('通用计时（holdPose）：姿势到位得分', r.steps.some((s) => s.id === 'pose'), r.stepIds().join(','));
+  ok('通用计时（holdPose）：保持 3 秒拿到里程碑', r.steps.some((s) => s.id === 'hold3'));
+  ok('通用计时（holdPose）：满分里程碑还拿不到', !r.steps.some((s) => s.id === 'hold30'));
+  ok('通用计时（holdPose）：总分含每秒得分', det.score >= 8 + 10 + 4, `得分 ${det.score}`);
 }
 {
-  // 站着不躺下 → 侧平板不计时
-  const det = fresh('sidePlank');
+  // 站着不躺下 → 通用计时方案不计时
+  const det = new PoseHoldDetector(HOLD_POSE_META);
   const r = makeRunner(det);
   r.run([{ pose: standingIdle, ms: 3000 }]);
-  ok('侧平板：站姿不计时', det.holdMs === 0 && det.active === false);
+  ok('通用计时（holdPose）：站姿不计时', det.holdMs === 0 && det.active === false);
 }
 {
   // 站着不动只能拿到“站姿”这一步的分，不能反复刷分
@@ -1891,7 +1904,7 @@ function calibOnce(cal, lm, now) {
     ok('臀桥的头部贴近地面（不是抬着头的姿势）',
       headEndYs.every((y) => y > 0.72) && headEndYs.length > 0,
       `头端 y=${headEndYs.map((y) => y.toFixed(2)).join(',')}`);
-    // 躺姿动作共用同一个「横躺」剪影（臀桥 / 侧平板这类）
+    // 躺姿动作共用同一个「横躺」剪影（臀桥 / 仰卧类这类）
     ok('臀桥剪影是横躺形状（与站姿不同）',
       outlineKind('bridge') === 'bridge' && outlineKind('bridge') !== outlineKind('squat')
       && JSON.stringify(outlinePath(outlineKind('bridge')))
@@ -1916,7 +1929,6 @@ function calibOnce(cal, lm, now) {
       pushup: 'pushup',
       mountainClimber: 'pushup',
       plank: 'plank',
-      sidePlank: 'plank',
       bridge: 'bridge',
       deadBug: 'bridge',
       crunch: 'bridge',

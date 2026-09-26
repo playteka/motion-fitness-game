@@ -7,7 +7,7 @@
  *   alt      左右交替（死虫式 / 登山者）
  *   twist    左右转体（俄罗斯转体 —— 目录里暂时没有动作用它，用手工 meta 直接构造）
  *   sequence 多段动作序列（波比跳：站 → 蹲 → 撑 → 跳）
- *   hold     姿势计时（侧平板 / 站姿体前屈 / 坐姿体前屈）
+ *   hold     姿势计时（站姿体前屈 / 坐姿体前屈）
  * 这里用和 test-detectors.mjs 完全一样的做法：合成骨架「演」出标准动作与各种常见错误动作，
  * 跑完整识别管线（LandmarkSmoother → toMetric → computeFrame → Detector），
  * 检查计数 / 半程 / 提示 / 计时 / 门控是否符合预期；纯阈值与纯门控的用例用手搓帧直接喂。
@@ -241,14 +241,23 @@ function deadBugPose(extSide, o = {}) {
   return out;
 }
 
-/** 侧平板：身体横着、支撑手撑在地面（肩与髋都离地） */
-const sidePlankPose = () => pronePose({
-  hip: { x: 0.8, y: 0.75 }, bodyTilt: 78, elbow: 180, armDown: 0,
+/**
+ * 通用的「姿势计时」动作（**手工 meta**）。
+ *
+ * 侧平板支撑已按用户要求从动作库删除，目录里因此没有动作再走 `holdPose` 这条
+ * 「`kind: 'hold'` 的默认方案」了 —— 这套计时语义（宽限期 / 暂停 / 恢复）还得有人守着，
+ * 所以这里手工构造一个走通用路径的动作来测它。
+ */
+const HOLD_DEMO = {
+  id: 'holdPoseDemo', plan: 'holdPose', kind: 'hold', posture: 'supine',
+  params: { gate: 'supineFlat' }, target: 30,
+};
+/** 通用计时动作的「撑住了」姿势：横躺、肩贴地（过 supineFlat 门控） */
+const holdDemoPose = () => supinePose({
+  hip: { x: 0.8, y: 0.85 }, thighUp: 95, knee: 178, torsoUp: 270, armDown: -90, elbow: 90,
 });
-/** 侧平板垮掉：坐起来（躯干不再水平、门控不通过） */
-const sidePlankBroken = () => pronePose({
-  hip: { x: 0.8, y: 0.75 }, bodyTilt: 30, elbow: 90, armDown: 0,
-});
+/** 通用计时动作「垮掉」的姿势：站起来（门控不通过） */
+const holdDemoBroken = () => IDLE_SIDE;
 
 /** 站姿体前屈：站着往前折（躯干 78°） */
 const foldPose = () => standPose({ knee: 170, lean: 78, armDown: 20, view: 'side' });
@@ -312,7 +321,7 @@ console.log('\n[0] 引擎与目录');
     boxJump: BendRepDetector,
     deadBug: AltRepDetector, mountainClimber: AltRepDetector,
     burpee: SequenceRepDetector,
-    sidePlank: PoseHoldDetector, standingForwardFold: PoseHoldDetector, seatedForwardFold: PoseHoldDetector,
+    standingForwardFold: PoseHoldDetector, seatedForwardFold: PoseHoldDetector,
   };
   const wrong = Object.entries(expected)
     .filter(([id, Cls]) => !(createDetector(id) instanceof Cls))
@@ -332,20 +341,20 @@ console.log('\n[0] 引擎与目录');
     ['lungeBack', new BendRepDetector(EXERCISE_MAP.lungeBack)],
     ['deadBug', new AltRepDetector(EXERCISE_MAP.deadBug)],
     ['burpee', new SequenceRepDetector(EXERCISE_MAP.burpee)],
-    ['sidePlank', new PoseHoldDetector(EXERCISE_MAP.sidePlank)],
+    ['sidePlankDemo', new PoseHoldDetector(HOLD_DEMO)],
   ];
   for (const [id, direct] of pairs) {
     ok(`直接构造 ${direct.constructor.name}（${id}）可用`, typeof direct.snapshot === 'function');
-    const viaFactory = createDetector(id);
+    const viaFactory = id === 'sidePlankDemo' ? new PoseHoldDetector(HOLD_DEMO) : createDetector(id);
     for (const r of [makeRunner(direct), makeRunner(viaFactory)]) {
       if (id === 'burpee') {
         r.run([{ pose: LOST, ms: 200 }, { pose: BURPEE_STAND, ms: 700 }, { pose: BURPEE_CROUCH, ms: 500 },
           { pose: BURPEE_PLANK, ms: 700 }, { pose: BURPEE_JUMP, ms: 400 }, { pose: BURPEE_STAND, ms: 400 }]);
-      } else if (id === 'sidePlank') r.run([{ pose: sidePlankPose(), ms: 3000 }]);
+      } else if (id === 'sidePlankDemo') r.run([{ pose: holdDemoPose(), ms: 3000 }]);
       else if (id === 'deadBug') r.run([{ pose: deadBugPose('L'), ms: 600 }, { pose: deadBugPose('R'), ms: 600 }]);
       else r.run(repeat(kneeCycle(95), 1800, 2));
     }
-    ok(`直接构造与 createDetector（${id}）结果一致`, direct.validReps === viaFactory.validReps,
+    ok(`直接构造与工厂构造（${id}）结果一致`, direct.validReps === viaFactory.validReps,
       `直接 ${direct.validReps} / 工厂 ${viaFactory.validReps}`);
   }
 
@@ -354,7 +363,7 @@ console.log('\n[0] 引擎与目录');
     createDetector('lungeBack').strict === undefined
     && createDetector('lungeBack', { strict: true }).strict === undefined
     && new BendRepDetector(EXERCISE_MAP.lungeBack, { strict: true }).strict === undefined
-    && new PoseHoldDetector(EXERCISE_MAP.sidePlank, { strict: true }).strict === undefined);
+    && new PoseHoldDetector(HOLD_DEMO, { strict: true }).strict === undefined);
 
   // 每个动作都能建出识别器（目录与引擎表不能脱节）
   const broken = [];
@@ -1189,47 +1198,47 @@ console.log('\n[8] sequence 引擎：波比跳');
 
 console.log('\n[9] hold 引擎：姿势计时');
 {
-  // 侧平板：撑住 5 秒 → 计时累积 + 抛出「开始计时」
-  const det = createDetector('sidePlank');
+  // 通用计时动作：撑住 5 秒 → 计时累积 + 抛出「开始计时」
+  const det = new PoseHoldDetector(HOLD_DEMO);
   const r = makeRunner(det);
-  r.run([{ pose: sidePlankPose(), ms: 5000 }]);
-  near('侧平板：撑住 5 秒 ≈ 计时 5 秒', det.holdMs / 1000, 5, 0.3);
-  ok('侧平板：抛出「开始计时」事件', r.holds.some((h) => h.action === 'start'), JSON.stringify(r.holds));
-  r.run([{ pose: sidePlankPose(), ms: 2000 }]);
-  near('侧平板：继续撑 2 秒 ≈ 累计 7 秒', det.holdMs / 1000, 7, 0.35);
-  ok('侧平板：连续保持期间不会重复抛「开始」', r.holds.filter((h) => h.action === 'start').length === 1,
+  r.run([{ pose: holdDemoPose(), ms: 5000 }]);
+  near('通用计时（holdPose）：撑住 5 秒 ≈ 计时 5 秒', det.holdMs / 1000, 5, 0.3);
+  ok('通用计时（holdPose）：抛出「开始计时」事件', r.holds.some((h) => h.action === 'start'), JSON.stringify(r.holds));
+  r.run([{ pose: holdDemoPose(), ms: 2000 }]);
+  near('通用计时（holdPose）：继续撑 2 秒 ≈ 累计 7 秒', det.holdMs / 1000, 7, 0.35);
+  ok('通用计时（holdPose）：连续保持期间不会重复抛「开始」', r.holds.filter((h) => h.action === 'start').length === 1,
     JSON.stringify(r.holds.map((h) => h.action)));
 }
 {
   // 宽限期 1200ms：短暂垮掉不中断本组计时
-  const det = createDetector('sidePlank');
+  const det = new PoseHoldDetector(HOLD_DEMO);
   const r = makeRunner(det);
-  r.run([{ pose: sidePlankPose(), ms: 3000 }]);
+  r.run([{ pose: holdDemoPose(), ms: 3000 }]);
   const kept = det.holdMs;
-  r.run([{ pose: sidePlankBroken(), ms: 400 }]);
-  ok('侧平板：垮掉 0.4 秒（宽限期内）不暂停', !r.holds.some((h) => h.action === 'pause'),
+  r.run([{ pose: holdDemoBroken(), ms: 400 }]);
+  ok('通用计时（holdPose）：垮掉 0.4 秒（宽限期内）不暂停', !r.holds.some((h) => h.action === 'pause'),
     JSON.stringify(r.holds.map((h) => h.action)));
-  ok('侧平板：宽限期内计时不前进', det.holdMs === kept, `${kept} → ${det.holdMs}`);
-  r.run([{ pose: sidePlankPose(), ms: 2000 }]);
-  ok('侧平板：姿势回来后继续累积', det.holdMs > kept, `${kept} → ${det.holdMs}`);
+  ok('通用计时（holdPose）：宽限期内计时不前进', det.holdMs === kept, `${kept} → ${det.holdMs}`);
+  r.run([{ pose: holdDemoPose(), ms: 2000 }]);
+  ok('通用计时（holdPose）：姿势回来后继续累积', det.holdMs > kept, `${kept} → ${det.holdMs}`);
 }
 {
   // 垮掉超过宽限期：抛出「暂停计时」，计时冻结；姿势恢复后重新开始
-  const det = createDetector('sidePlank');
+  const det = new PoseHoldDetector(HOLD_DEMO);
   const r = makeRunner(det);
-  r.run([{ pose: sidePlankPose(), ms: 4000 }]);
+  r.run([{ pose: holdDemoPose(), ms: 4000 }]);
   const kept = det.holdMs;
-  r.run([{ pose: sidePlankBroken(), ms: 3000 }]);
-  ok('侧平板：垮掉超过宽限期 → 抛出「暂停计时」', r.holds.some((h) => h.action === 'pause'),
+  r.run([{ pose: holdDemoBroken(), ms: 3000 }]);
+  ok('通用计时（holdPose）：垮掉超过宽限期 → 抛出「暂停计时」', r.holds.some((h) => h.action === 'pause'),
     JSON.stringify(r.holds.map((h) => h.action)));
-  ok('侧平板：暂停时不再计数', det.active === false && det.holdMs === kept, `active=${det.active}`);
-  ok('侧平板：暂停时给出原因提示键', typeof det.standby === 'string' && det.standby.length > 0, det.standby);
-  r.run([{ pose: sidePlankBroken(), ms: 2000 }]);
-  ok('侧平板：垮着不动计时保持冻结', det.holdMs === kept, `${kept} → ${det.holdMs}`);
-  r.run([{ pose: sidePlankPose(), ms: 2000 }]);
-  ok('侧平板：撑回来后重新开始计时', r.holds.filter((h) => h.action === 'start').length >= 2,
+  ok('通用计时（holdPose）：暂停时不再计数', det.active === false && det.holdMs === kept, `active=${det.active}`);
+  ok('通用计时（holdPose）：暂停时给出原因提示键', typeof det.standby === 'string' && det.standby.length > 0, det.standby);
+  r.run([{ pose: holdDemoBroken(), ms: 2000 }]);
+  ok('通用计时（holdPose）：垮着不动计时保持冻结', det.holdMs === kept, `${kept} → ${det.holdMs}`);
+  r.run([{ pose: holdDemoPose(), ms: 2000 }]);
+  ok('通用计时（holdPose）：撑回来后重新开始计时', r.holds.filter((h) => h.action === 'start').length >= 2,
     JSON.stringify(r.holds.map((h) => h.action)));
-  atLeast('侧平板：恢复后的计时在继续累积', det.holdMs - kept, 1600);
+  atLeast('通用计时（holdPose）：恢复后的计时在继续累积', det.holdMs - kept, 1600);
 }
 {
   // 站姿体前屈：站直时不计时（门控 standFold），折下去才开始
@@ -1313,12 +1322,12 @@ console.log('\n[9] hold 引擎：姿势计时');
   void r; void r2;
 }
 {
-  // 门控 hold 版本的垃圾姿势：站着喂侧平板
-  const det = createDetector('sidePlank');
+  // 门控 hold 版本的垃圾姿势：站着喂通用计时动作（门控是「横躺」）
+  const det = new PoseHoldDetector(HOLD_DEMO);
   const r = makeRunner(det);
   r.run([{ pose: IDLE_SIDE, ms: 3000 }]);
-  ok('站姿喂侧平板：不计时', det.holdMs === 0 && det.active === false, `holdMs=${det.holdMs}`);
-  ok('站姿喂侧平板：给出「换姿势」提示', t(det.standby) !== det.standby, `${det.standby} → ${t(det.standby)}`);
+  ok('站姿喂通用计时动作：不计时', det.holdMs === 0 && det.active === false, `holdMs=${det.holdMs}`);
+  ok('站姿喂通用计时动作：给出「换姿势」提示', t(det.standby) !== det.standby, `${det.standby} → ${t(det.standby)}`);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1348,7 +1357,7 @@ console.log('\n[10] 垃圾帧 / 丢帧');
     ['alt', new AltRepDetector(EXERCISE_MAP.deadBug)],
     ['twist', new TwistRepDetector(TWIST_META)],
     ['sequence', new SequenceRepDetector(EXERCISE_MAP.burpee)],
-    ['hold', new PoseHoldDetector(EXERCISE_MAP.sidePlank)],
+    ['hold', new PoseHoldDetector(HOLD_DEMO)],
   ];
   const junk = [];
   const frames = [

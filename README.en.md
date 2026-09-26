@@ -2,7 +2,7 @@
 
 [中文](README.md) · [English](README.en.md)
 
-A small fitness game that uses an ordinary webcam for motion tracking: **20 exercises** split into five categories — **Upper body / Lower body / Core / Full body / Stretching**,
+A small fitness game that uses an ordinary webcam for motion tracking: **19 exercises** split into five categories — **Upper body / Lower body / Core / Full body / Stretching**,
 with a home page where you pick an exercise by category and start training right away; **rep exercises count reps automatically and timed exercises time themselves**,
 and **scoring runs form step by form step** — every form step you hit instantly earns points, rings a chime, and is spoken aloud.
 
@@ -30,7 +30,7 @@ It's pure front end: the MediaPipe pose model and wasm all live in the local `ve
 - [Settings modal (language / model / sound)](#settings-modal-language--model--sound)
 - [Pre-workout calibration](#pre-workout-calibration)
 - [How to use it (camera angle matters)](#how-to-use-it-camera-angle-matters)
-- [Exercise library overview (20 exercises)](#exercise-library-overview-20-exercises)
+- [Exercise library overview (19 exercises)](#exercise-library-overview-19-exercises)
 - [Scoring rules](#scoring-rules)
 - [Languages](#languages)
 - [Can't fit into the outline or getting no response? Four checks](#cant-fit-into-the-outline-or-getting-no-response-four-checks)
@@ -418,7 +418,7 @@ the other five are marked with “·” and are only **recommendations** — fol
 
 **Every exercise has its own silhouette** (chosen automatically from the exercise's camera angle and posture), so just set yourself up to match the outline:
 front-facing exercises (Bodyweight Squat / Sumo Squat / Jump Squat / Jumping Jack / Box Jump / Burpee) use a front-on standing silhouette, and the other standing exercises use a side-on standing pose,
-push-up exercises (Mountain Climber included) use a **side-on top-of-the-push-up position** (arms straight, hands on the floor), Plank and Side Plank use a **side-on forearm-supported prone position**,
+push-up exercises (Mountain Climber included) use a **side-on top-of-the-push-up position** (arms straight, hands on the floor), Plank uses a **side-on forearm-supported prone position**,
 and lying-down exercises like Glute Bridge / Crunch / Lying Leg Raise / Dead Bug use a **side-on lying pose with bent knees** (on your back, knees bent, feet flat on the floor).
 When you film from the side, the outline flips left to right automatically to match which way you're facing.
 
@@ -439,7 +439,7 @@ so you can rest and look at the summary first instead of being pulled straight i
 
 > During a workout the dashed outline can never appear: the main loop has a hard guard that forces
 > `outline = null` whenever the session is countdown / running / paused, and a test walks every single
-> frame of all 20 exercises to pin that invariant down. To check it yourself, the 🐞 metrics panel now has an
+> frame of all 19 exercises to pin that invariant down. To check it yourself, the 🐞 metrics panel now has an
 > “**Outline ✓/✗**” item showing whether that frame drew it — after you're recognised it must be ✗.
 
 > If you're not in position, the text prompt above the video and the calibration panel both spell out exactly what to do (for example “move a little toward the camera”, “shift a little to the right”, “face the camera”),
@@ -467,7 +467,7 @@ The search box at the top finds exercises by name directly (type “push” or �
   and the **📐 keyframe criteria and scoring** group below (one row per keyframe with its criterion and its points).
   The “② Set target” card in the side panel keeps just a one-line target readout, and its button opens the same modal.
 - An exercise can belong to several categories at once (list more than one in `cats` and it shows up in each block, with every card
-  opening the same exercise); today each of the 20 exercises belongs to exactly one category.
+  opening the same exercise); today each of the 19 exercises belongs to exactly one category.
 
 **The two big numbers in the top-left corner**: the **rep count** (or the **seconds** for timed exercises) sits at the top, and the
 **score sits directly underneath it** — the user asked for “the score to be near the count, for example below it, and in a different
@@ -568,7 +568,7 @@ Take the lunge (each segment holds the real threshold from the code):
   jumping exercises add a final “Jump” segment (drawn airborne; the jump squat and the box jump both use **≥ 0.035× frame
   height** — the box jump used to sit at 0.05, which the user found too high, so it was nudged down to 0.035); burpee 4 (stand → crouch → plank → jump);
   glute bridge 3 (supine bent knees → hips driven up (lift ≥ 0.35× torso length **or** hip angle ≥ 165°) → back on the floor, **counted as you land**);
-  plank/side plank walk through “held up → off the floor → hands planted” (holds have no rep count, so the chain ends on the pose);
+  plank walks through “held up → off the floor → hands planted” (holds have no rep count, so the chain ends on the pose);
   the lying exercises (crunch / leg raise) follow the curl of the torso or the lift of the legs and end back at the start position.
 - **One source of truth**: the thresholds behind the icons and the bar are the very same constants used by the detector and
   by the 📐 counting-thresholds modal (see `specStages` in `src/specs.js` and `src/icons.js`), so the bar can never claim
@@ -583,7 +583,7 @@ The moment a set finishes (the goal was reached, or you tapped “end this set�
 are all reset and the same set starts again immediately). Right after training your hands are sweaty and far from the
 keyboard, so the two most common choices should not force you to tap a screen.
 
-- **Every exercise behaves the same**: rep exercises (squat, push-up, glute bridge …) and timed ones (plank, side plank, both
+- **Every exercise behaves the same**: rep exercises (squat, push-up, glute bridge …) and timed ones (plank, both
   forward folds) all bring up the two rings when a set ends, whether it ended by reaching the goal or because you tapped
   “end this set” — no exercise leaves you without a choice.
 - **How to use it**: put **either palm** (left or right hand) in the **middle** of a ring and hold for **3 seconds** — the ring
@@ -693,7 +693,7 @@ Take the lunge (the groups left are the keyframes plus the form reminders):
 > in `engines.js` (the very same table used for judging), and the timed exercises read `HOLD_PRIME_MS / HOLD_GRACE_MS`.
 > Change a threshold and the modal follows automatically, so the screen can never claim something the detector does not do.
 > `tests/test-specs.mjs` feeds these numbers **back into the detectors** on every test run: a displayed counting line has to land
-> exactly on the detector's own progress line (2267 assertions in the suite).
+> exactly on the detector's own progress line (2226 assertions in the suite).
 
 ## Settings modal (language / model / sound)
 
@@ -725,7 +725,7 @@ The first line of “Form steps” on the exercise page spells out how to stand 
 - Stand **2–3 m (6–10 ft)** away from the camera with your **whole body in frame** (head to feet);
 - **Lunge / Reverse Lunge**: stand sideways to the camera so your ankles, knees, hips and shoulders are all visible at once;
 - **Push-up / Plank / Mountain Climber**: your body runs perpendicular to the lens, with both hands and both feet inside the frame;
-- **Glute Bridge / Crunch / Lying Leg Raise / Dead Bug / Side Plank**: lying down, sideways to the camera, with your shoulders, hips, knees and ankles all visible at once;
+- **Glute Bridge / Crunch / Lying Leg Raise / Dead Bug**: lying down, sideways to the camera, with your shoulders, hips, knees and ankles all visible at once;
 - **Stretching**: for Standing Forward Fold, stand up straight sideways to the camera; for Seated Forward Fold, sit on the floor sideways to the camera;
 - Even lighting, a clean background, and closer-fitting clothes all make tracking more stable.
 - **No sound?** ① check the browser tab is not muted (speaker icon on the tab) ② open settings and flip “🔊 Voice count” once — it speaks a short test line right away ③ open “🐞 Metrics”: the last line shows “Sound” as `running` with a voice count above 0.
@@ -745,7 +745,7 @@ Calibration only checks that you're in position — it never counts reps or awar
 
 ---
 
-## Exercise library overview (20 exercises)
+## Exercise library overview (19 exercises)
 
 | Category | Exercise (icon) | Type | Judging basis | Default target |
 |---|---|---|---|---|
@@ -757,7 +757,6 @@ Calibration only checks that you're in position — it never counts reps or awar
 | 🦵 Lower body | Glute Bridge 🌉 | Reps | Hip lift height | 15 reps |
 | 🦵 Lower body | Butt Kick 🏃 | **Timed counting** | Knee bend (kicking your heels up, alternating legs) | 60 seconds (see how many you can do) |
 | 🔥 Core | Plank 🧘 | Timed | Hold time | 45 sec |
-| 🔥 Core | Side Plank 🧎 | Timed | Whether your body position is on target (rough scoring) | 30 sec |
 | 🔥 Core | Dead Bug 🐞 | Reps | Leg reach (smaller of knee/hip), alternating sides | 16 reps |
 | 🔥 Core | Crunch 🌀 | Reps | Shoulder height off the floor | 20 reps |
 | 🔥 Core | Reverse Crunch 🔃 | Reps | Hip hinge | 15 reps |
@@ -773,8 +772,11 @@ Calibration only checks that you're in position — it never counts reps or awar
 > “Jump Squat” has been moved back into **Full body** at the user's request (Full body now holds five: Jump Squat / Burpee /
 > Mountain Climber / Jumping Jack / Box Jump), and Lower body gained **“Butt Kick”** (standing in place, kicking your heels up
 > towards your glutes one leg at a time; it later became **timed counting** — a fixed 60 seconds to see how many you can do) — every exercise belongs to exactly one category.
-> The same exercise can still appear in more than one category — whatever you list in its `cats` array is where it shows up (right now each of the 20 exercises belongs to one category).
-> The judging basis is **what the camera actually measures**; exercises marked as **rough scoring** (Side Plank, Box Jump and so on) can only tell that
+> **“Side Plank” was removed at the user's request** (Core now holds five: Plank / Dead Bug / Crunch / Reverse Crunch /
+> Lying Leg Raise — it was the only side-lying exercise, and the camera can only judge “lying on your side on one forearm”
+> roughly, which put it in the “can't be judged reliably” group).
+> The same exercise can still appear in more than one category — whatever you list in its `cats` array is where it shows up (right now each of the 19 exercises belongs to one category).
+> The judging basis is **what the camera actually measures**; exercises marked as **rough scoring** (Box Jump and so on) can only tell that
 > “your body position is roughly on target” — scoring and timing still work as usual, but don't treat them as a strict posture referee.
 
 ---
@@ -983,7 +985,7 @@ Squats use a **front-on** camera angle, and depth is judged by “how much highe
 
 ### About the exercises that are not in this list
 
-> This version of the exercise library was trimmed to the 20 exercises on the given list, and Static Glute Bridge isn't one of them — if you want it back,
+> This version of the exercise library was trimmed to the 19 exercises on the given list, and Static Glute Bridge isn't one of them — if you want it back,
 > copy the `bridge` entry in `src/catalog.js`, change `kind` to `'hold'`, and run `npm test` once more
 > (the detection engine and the scoring plan are both already there — see [Tuning scores and thresholds yourself](#tuning-scores-and-thresholds-yourself)).
 
@@ -1000,7 +1002,6 @@ On top of the 5 hand-written plans above, the remaining exercises share **family
 | Multi-stage | Burpee | Stand → squat and plant your hands → complete the middle stage → stand up and finish |
 | Jump family | Jump Squat, Box Jump | Stand → bend your knees and load → **both feet off the floor** → land with bent knees |
 | Jumping Jack | Jumping Jack | Feet together → jump them open with both arms overhead → reach the widest spread → jump back together |
-| Timed (posture) | Side Plank | Get into position → body in one straight line → hold 3 / 10 / 30 seconds |
 | Timed (stretch) | Standing Forward Fold, Seated Forward Fold | Enter the stretch → breathe and relax → hold 10 / 20 seconds |
 
 Timed family plans also give **+1 point for every second you hold**; if your form collapses for more than 1.2 seconds, the timer pauses and the voice reminds you.
@@ -1281,7 +1282,7 @@ both with an adjustable duration in 🎯.
 | Every keyframe in a round cleared | The perfect-round chord + floating text, then a cheer about 0.9 s later (perfect! / full marks, beautiful …) |
 | A rep doesn't count | A low “pff” sound + a subtitle pointing out the problem |
 | Holding in a timed exercise | A soft tick every second + the score climbing steadily on screen |
-| **Every 5 seconds while holding** | **The elapsed seconds are spoken — “5 seconds”, “10 seconds”, …** (plank, side plank and the folds alike), and the on-screen seconds pulse in step |
+| **Every 5 seconds while holding** | **The elapsed seconds are spoken — “5 seconds”, “10 seconds”, …** (plank and the folds alike), and the on-screen seconds pulse in step |
 | Goal reached / set ended | A celebration chord + goal floating text + a summary panel (score plus any form steps you missed); the voice says only “that set: N reps” plus a cheer |
 
 Both sound effects and voice can be turned off with one click in the ⚙️ Settings dialog.
@@ -1383,7 +1384,7 @@ Workout history and best scores live in the browser's localStorage, so they're l
 ## Tests
 
 ```bash
-npm test                       # run all six suites (1614 cases)
+npm test                       # all six suites (2226 assertions)
 npm run test:i18n              # i18n: missing keys / untranslated strings / placeholders / array lengths / leftover Chinese in source / matching structure of the Chinese and English READMEs
 npm run test:detectors         # detection and scoring logic of the five hand-written detectors (driven by synthetic skeletons)
 npm run test:engines           # the generic detection engines (bend / alternation / twist / multi-stage / timed + posture gating)
@@ -1398,9 +1399,9 @@ npm run test:app               # integration test that loads the real app.js wit
 | `tests/test-i18n.mjs` | 18 | Identical key structure across Chinese and English, no untranslated strings, matching placeholders and array lengths, no hard-coded Chinese left in the source, and a consistent structure across both READMEs |
 | `tests/test-detectors.mjs` | 349 | Rep counting, hold timing, form-step scoring and scoring order for correct reps and every kind of incorrect rep, depth judging under an angled camera, the pre-workout calibration checks, the **sign baseline for the standing gate (butt kick) on real frames** (standing gives `Shoulders above hips ≈ +1.0` and `Hip lift ≈ −1.0` and passes the gate; lying down or standing on your head is blocked), **butt-kick counting across speeds** (real frames through the real pipeline: 1000 / 700 / 600 / 500 / 430 ms per cycle must all reach ≥90% of the expected reps, a 15 fps feed must still count, and a support leg that never straightens / shallower kicks / added noise are all accepted; counter-examples: jogging without kicking and both legs bending in phase must count nothing; boundaries: a knee reaching ~115° counts while one only reaching ~133° does not — the relaxed-mode trade-off), **the glute bridge's OR criterion** (the user's low lift height with a 170° hip angle at the top must count ≥4 reps, a half bridge at 160° must not reach the top, and a “safety rope” run with the height path's top line made unreachable must count nothing), **the loosened push-up counting line** (an elbow bottoming out at 145° must count ≥4 reps where it used to count none, a case at 148° with only a 0.079 shoulder drop still counts nothing, and a flattened elbow reading of 152°→140° accompanied by a real body drop still counts), plus **the push-up counting at the bottom** (the count lands in the 0.42-0.68 phase of the cycle with the elbow still deep, and holding at the bottom does not farm reps), **the plank's "propped up" rule** (a low ground line measuring the hands at 0.68 still times, lying flat resting at a 10° shoulder angle does not, and the old ground-line rule still works as the fallback), the agreement between “the progress-bar chain finished” and “a rep was counted” (at most 250 ms apart), and the “is this frame a person?” visibility thresholds (after loosening: hands out of frame or a hidden face/fingers still count as a person, a dim room is fine down to 0.10, and collapsed degenerate frames are rejected) |
 | `tests/test-engines.mjs` | 207 | The generic engines: one rep per cycle, the single relaxed tier (there is no strict mode), the boundaries for wobbles and speeding, posture gating (including the lying leg raise taking either of two "lying down" signals, and the butt kick gate judging “shoulders above hips” rather than “hip lift”), feet off the floor when jumping, left/right alternation (including the butt kick: one kick on each leg is one rep, **a single-frame spike finished inside 33 ms still counts**, the same leg kicking repeatedly never inflates the count, both legs entering on the same frame is not an alternation, the `switched` flag, the “the other side is not kicking too” alternation rule, and the 🐞 diagnosis rows listing both legs plus the alternation lines; plus the **redesigned dead-bug criteria**: kicking only the shin straight (foot to the ceiling) does not count, a leg lowered with the knee still bent does not count, both legs extending together does not count, a leg that never quite reaches the floor (`legOut ≈150°`) still counts, six rapid switches lose no reps, and the diagnosis rows expose `legOut` plus the “other leg ≤120” rule), **the seated forward fold's two keyframes** (the user's own criteria: sitting tall means trunk ≈0° / hips ≈90°, and folding into place means trunk tilt ≈30° **plus** “trunk angle + hip angle ≈90°”; a real side-on sit-and-fold times 5.9 s, a low ground line times the same, and **folding without sitting up first times nothing** and prints “sit up straight first”), whole sequences, and pausing/resuming the timer |
-| `tests/test-specs.mjs` | 798 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines (including the push-up's four shoulder-drop thresholds being ordered `start < close < count < full`, and its four elbow tiers `top > start > count > full depth`); posture-gate numbers come from the same table used for judging (the lying leg raise proves “lying down” with “trunk close to horizontal or shoulders ≤ 0.6× torso off the floor”, either one, and the dead bug does the same; **the seated forward fold gets its own segment-by-segment check of both keyframes**: the “sit tall” segment lists all four `seatedFoldStart` limits, the “folded into place” segment lists all four `seatedFold` limits, 28° sits inside the user's “around 30”, the 60°~125° range contains the 90° identity, every number in the explanatory text comes from that table, and the two segments are the latched `startSeen` and the timing `gateOk` respectively — plus **the bar is walked with real frames**: sit tall → fold lights both segments in order, the clock really is running at that moment, and folding without sitting up first lights neither); all 20 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria (including the standing butt-kick figures) and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
-| `tests/test-page.mjs` | 372 | DOM wiring, module imports and exports, static assets, the category lists of all 20 exercises (including “jump squat under Full body, butt kick under Lower body”) and the completeness of their scoring plans, the timed-counting declaration (`isTimedReps` / target unit in seconds / result unit in reps / exactly the jumping jack and the butt kick / the “timed counting” wording in both languages), plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
-| `tests/test-app.mjs` | 523 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included, with the bridge row required to read “height **or** hip angle ≥ 165°”, the push-up row “plank → back at the top → start lowering → the bottom counted (146°/0.08)”, and **the seated forward fold required to read as two keyframes “sit tall → folded into place”**: the first lists 25° / 70°~115° / 130°, the second lists 28° and “trunk angle + hip angle 60°~125°”, and the note spells out the “hip angle = 90° − trunk tilt” identity) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (both the jumping jack and the butt kick: seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), fullscreen (the video frame is what gets enlarged, going home leaves fullscreen, ending a set alone does not, and no fullscreen API call happens when you were never fullscreen), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt, including the ones the seated forward fold now prints), **the always-on bottom-left exit ring** (bottom-left placement whose lower edge clears the judgement bar, hands and feet both able to fire it, a foot judged by the **centre of the whole foot** — ankle + heel + toe tip — so an ankle poking in alone does not count, a 3 s hold going home and leaving fullscreen, clicking working too, and the same animation and 3 s hold as the post-set rings, which hide it while they are up), and the dashed outline's timing **through the real main loop** for all 20 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
+| `tests/test-specs.mjs` | 770 | Feeds the numbers shown in the modal back into the detectors: they must land exactly on the detector's own counting lines (including the push-up's four shoulder-drop thresholds being ordered `start < close < count < full`, and its four elbow tiers `top > start > count > full depth`); posture-gate numbers come from the same table used for judging (the lying leg raise proves “lying down” with “trunk close to horizontal or shoulders ≤ 0.6× torso off the floor”, either one, and the dead bug does the same; **the seated forward fold gets its own segment-by-segment check of both keyframes**: the “sit tall” segment lists all four `seatedFoldStart` limits, the “folded into place” segment lists all four `seatedFold` limits, 28° sits inside the user's “around 30”, the 60°~125° range contains the 90° identity, every number in the explanatory text comes from that table, and the two segments are the latched `startSeen` and the timing `gateOk` respectively — plus **the bar is walked with real frames**: sit tall → fold lights both segments in order, the clock really is running at that moment, and folding without sitting up first lights neither); all 19 exercises have thresholds; every segment of the counting chain is a condition for counting (the last segment *is* the counting moment, and depth/timing criteria stay off the bar); for the engine-driven exercises that last segment is the engine's own return line (never a trivially-true stub); the keyframe line icons match the criteria (including the standing butt-kick figures) and the counting segment is never merged away; the bar is walked through with synthetic poses (a shallow movement never reaches the last segment); both languages are complete |
+| `tests/test-page.mjs` | 359 | DOM wiring, module imports and exports, static assets, the category lists of all 19 exercises (including “jump squat under Full body, butt kick under Lower body, side plank removed”) and the completeness of their scoring plans, the timed-counting declaration (`isTimedReps` / target unit in seconds / result unit in reps / exactly the jumping jack and the butt kick / the “timed counting” wording in both languages), plus the style assertions behind “the score sits under the count in its own gold colour”, “the trunk tilt is labelled like Hip / Knee”, “the two knees are labelled separately” and “a state change never moves any geometry, so the bar cannot jitter” |
+| `tests/test-app.mjs` | 523 | Startup with the real `app.js`, home-page rendering, both the exercise-settings (keyframe criteria and scoring included, with the bridge row required to read “height **or** hip angle ≥ 165°”, the push-up row “plank → back at the top → start lowering → the bottom counted (146°/0.08)”, and **the seated forward fold required to read as two keyframes “sit tall → folded into place”**: the first lists 25° / 70°~115° / 130°, the second lists 28° and “trunk angle + hip angle 60°~125°”, and the note spells out the “hip angle = 90° − trunk tilt” identity) and settings modals, the judgement progress bar (grey/coloured states, segment-by-segment lighting, hover showing the criterion, the reset after a completed round, and the butt kick's three segments with the last one lighting at the moment of the switch), the calibration flow, exercise switching, scoring, sound, the set summary, Chinese/English switching, timed counting (both the jumping jack and the butt kick: seconds target and its own storage, the remaining-time calls at 45/30/15/5, time-up stopping the count and the clock, a 100% time-based summary, records written as “N reps / N s”, and normal rep exercises never ending on a clock), fullscreen (the video frame is what gets enlarged, going home leaves fullscreen, ending a set alone does not, and no fullscreen API call happens when you were never fullscreen), the layout assertion that the score sits directly under the count, the on-screen angle labels (Hip / Knee / left and right knee / trunk tilt, including the ones the seated forward fold now prints), **the always-on bottom-left exit ring** (bottom-left placement whose lower edge clears the judgement bar, hands and feet both able to fire it, a foot judged by the **centre of the whole foot** — ankle + heel + toe tip — so an ankle poking in alone does not count, a 3 s hold going home and leaving fullscreen, clicking working too, and the same animation and 3 s hold as the post-set rings, which hide it while they are up), and the dashed outline's timing **through the real main loop** for all 19 exercises (drawn when nobody is found, drawn until you're in position, not a single frame during recognition success / countdown / counting / paused, and back again once you drift out of position) |
 
 ---
 
@@ -1414,7 +1415,7 @@ motion-fitness-game/
 ├─ src/
 │  ├─ i18n.js            ★ i18n core (t / setLang / applyI18n)
 │  ├─ locales/           ★ the two locale files: zh.js / en.js
-│  ├─ catalog.js         ★ the exercise library: five categories + 20 exercises (icon, type, engine, thresholds, judging basis)
+│  ├─ catalog.js         ★ the exercise library: five categories + 19 exercises (icon, type, engine, thresholds, judging basis)
 │  ├─ geometry.js        geometry and signal processing (angles, One Euro smoothing)
 │  ├─ metrics.js         per-frame exercise metrics (joint angles, hip lift, floor clearance, body straightness…)
 │  ├─ steps.js           ★ the scored form steps per exercise (condition + points + hint key)

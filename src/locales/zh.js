@@ -366,11 +366,6 @@ export default {
       cameraHint: '侧对摄像头，留出前后空间',
       goal: '原地轻跳，左右交替把脚跟往臀部勾起来 —— 限时 60 秒，看你能勾多少次',
     },
-    sidePlank: {
-      name: '侧平板支撑',
-      cameraHint: '侧对摄像头，身体侧躺、单侧小臂撑地',
-      goal: '髋部抬离地面，身体从头到脚成一条线',
-    },
     crunch: {
       name: '卷腹',
       cameraHint: '侧对摄像头，仰卧屈膝、双脚踩地',
@@ -861,7 +856,6 @@ export default {
       supine: '仰卧屈膝',
       supineLow: '仰卧',
       supineFlat: '仰卧',
-      sideLying: '侧卧',
       standFold: '站立前折',
       seatedFold: '坐姿前折',
     },

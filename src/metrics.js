@@ -304,8 +304,8 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const armRaised = (shoulderMid.y - Math.min(P(LM.L_WRIST).y, P(LM.R_WRIST).y)) / torsoLen;
   // 倒立：髋高于肩（头朝下）
   const inverted = hipMid.y < shoulderMid.y - 0.05 * torsoLen;
-  // 横着躺（俯卧 / 仰卧 / 侧卧都算）：躯干接近水平。用 >= 与 GATE_LIMITS.sideLying 的
-  // 区间判定保持一致（界面显示的数值和这里判的是同一条规则）。
+  // 横着躺（俯卧 / 仰卧都算）：躯干接近水平。阈值与仰卧类门控（GATE_LIMITS.supineFlat 等）
+  // 的区间保持一致（界面显示的数值和这里判的是同一条规则）。
   const horizontal = torsoIncl >= HORIZONTAL_TILT;
   // 四点支撑（熊爬 / 鸟狗 / 猫牛）：躯干水平 + 手撑地 + 膝也在低位
   const quadruped = horizontal && (groundRef - Math.min(P(LM.L_WRIST).y, P(LM.R_WRIST).y)) / torsoLen < 0.75

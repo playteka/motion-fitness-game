@@ -364,11 +364,6 @@ export default {
       cameraHint: 'Stand side-on to the camera and leave room front and back',
       goal: 'Bounce lightly in place, kicking your heels up towards your glutes one leg at a time — 60 seconds timed, see how many you can do',
     },
-    sidePlank: {
-      name: 'Side Plank',
-      cameraHint: 'Turn sideways to the camera, lying on your side on one forearm',
-      goal: 'Lift your hips off the floor until your body is one straight line head to feet',
-    },
     crunch: {
       name: 'Crunch',
       cameraHint: 'Turn sideways to the camera, lying on your back with knees bent and feet planted',
@@ -862,7 +857,6 @@ export default {
       supine: 'Lying on your back, knees bent',
       supineLow: 'Lying on your back',
       supineFlat: 'Lying on your back',
-      sideLying: 'Lying on your side',
       standFold: 'Standing forward fold',
       seatedFold: 'Seated forward fold',
     },

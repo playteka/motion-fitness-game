@@ -465,7 +465,7 @@ export function poseFor(stage, ctx = {}) {
     return { builder: 'lie', params: { tilt: clamp(value + 25, 50, 90), hip: 178, knee: 172, elbow: 176, face: 'down', support: true } };
   }
   if (metric === 'hipClear') {
-    // 髋离地：侧平板/前折这类就是「髋抬起来」
+    // 髋离地：前折这类就是「髋抬起来」
     if (ctx.plan === 'stretchHold') return gatePose(posture, value, stages, metric, ctx);
     return { builder: 'lie', params: { tilt: 90, hip: 175, knee: 168, face: 'side', elbow: 178, support: true, hipLift: 2.2 }, criterion: { hipClear: value } };
   }

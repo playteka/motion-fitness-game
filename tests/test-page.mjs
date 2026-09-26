@@ -386,8 +386,9 @@ console.log('\n[3] 静态资源与模型文件');
       judged.every((id) => new RegExp(`\\b${id}:`).test(focusBlock)), judged.join(', '));
     ok('不标角度的动作（开合跳 / 波比跳 / 站立体前屈）不会多出一个躯干数字',
       clean.length > 0 && clean.every((id) => !new RegExp(`\\b${id}:`).test(focusBlock)), clean.join(', '));
-    // 宽距 / 窄距俯卧撑已删除（18 → 16）；坐姿体前屈按用户反馈「没有显示角度」补上（16 → 17）
-    ok('躯干倾角覆盖了全部「角度判定」的动作（17 个）', judged.length === 17, String(judged.length));
+    // 宽距 / 窄距俯卧撑已删除（18 → 16）；坐姿体前屈按用户反馈「没有显示角度」补上（16 → 17）；
+    // 侧平板支撑删除（17 → 16）
+    ok('躯干倾角覆盖了全部「角度判定」的动作（16 个）', judged.length === 16, String(judged.length));
     ok('坐姿体前屈：标「髋」+「躯干」（它判的就是前折幅度，用户反馈过没有数字）',
       /seatedForwardFold:\s*\['hip'\]/.test(focusBlock), focusBlock.slice(-120));
   }
@@ -427,12 +428,12 @@ console.log('\n[4] 动作库与界面一致性');
   const EXPECT = {
     upper: ['pushup'],
     lower: ['squat', 'squatSumo', 'lunge', 'lungeBack', 'bridge', 'buttKick'],
-    core: ['plank', 'sidePlank', 'deadBug', 'crunch', 'reverseCrunch', 'lyingLegRaise'],
+    core: ['plank', 'deadBug', 'crunch', 'reverseCrunch', 'lyingLegRaise'],
     full: ['squatJump', 'burpee', 'mountainClimber', 'jumpingJack', 'boxJump'],
     stretch: ['standingForwardFold', 'seatedForwardFold'],
   };
   const expectIds = [...new Set(Object.values(EXPECT).flat())];
-  ok('动作库就是约定的 20 个动作（弓步跳、宽距/窄距俯卧撑已删除；新增勾腿跳；深蹲跳移到全身）',
+  ok('动作库就是约定的 19 个动作（弓步跳、宽距/窄距俯卧撑、侧平板支撑已删除；新增勾腿跳；深蹲跳移到全身）',
     EXERCISES.map((x) => x.id).sort().join(',') === expectIds.sort().join(','),
     `实际 ${EXERCISES.length} 个：${EXERCISES.map((x) => x.id).join(',')}`);
   for (const [cat, ids] of Object.entries(EXPECT)) {
