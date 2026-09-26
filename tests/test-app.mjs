@@ -2044,9 +2044,55 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     && api.CORNER_RING_INSET_PX === 18, `左边缘=${Math.round(c.x - px() / 2)}px`);
   ok('直径和右上角 HUD 圆环一样（共用 CSS 变量 --ring-px，见 test-page 的样式断言）',
     px() > 0 && api.ringHitRadius('corner', { w: SW, h: SH }) > 0, `${px()}px`);
-  ok('圆环下沿留在判定进度条上方（不压住进度条）',
-    SH - (c.y + px() / 2) >= api.CORNER_RING_BOTTOM_PX - 0.5,
-    `下沿离底部 ${Math.round(SH - (c.y + px() / 2))}px`);
+  ok('圆环比上一版更大（用户要求「退出圆环放大一点」：兜底下限 96 → 104）',
+    api.RING_PX_FALLBACK.min >= 104 && api.RING_PX_FALLBACK.max >= 140 && px() >= 104,
+    `${px()}px（兜底 ${api.RING_PX_FALLBACK.min}~${api.RING_PX_FALLBACK.max}）`);
+  // 用户要求：「让退出圆环可以放在画面的左下角，和右上角的进度圆环对称」
+  // —— 严格中心对称：左边距 = HUD 右边距（18px）、下边距 = HUD 上边距（16px = .hud 的 padding-top）
+  ok('左下角 / 右上角两个圆环严格对称（左边距 18px = HUD 右边距；下边距 16px = HUD 上边距）',
+    Math.round(c.x - px() / 2) === 18 && Math.round(SH - (c.y + px() / 2)) === 16
+    && api.CORNER_RING_INSET_PX === 18 && api.CORNER_RING_BOTTOM_PX === 16,
+    `左=${Math.round(c.x - px() / 2)} 下=${Math.round(SH - (c.y + px() / 2))}`);
+  ok('圆环真的贴在左下角（不再是抬到进度条上方那版：下边距远小于 122px）',
+    api.CORNER_RING_BOTTOM_PX < 40, String(api.CORNER_RING_BOTTOM_PX));
+  // 不压进度条靠的是**进度条自己让位**（CSS 的 --bar-side-space = 左边距 + 圆环直径 + 间隙），
+  // 所以这里校验同一套算式：进度条左边缘必须在圆环右边缘的右边。
+  {
+    const barW = Math.min(880, SW - 2 * (18 + px() + 12));
+    const barLeft = (SW - barW) / 2;
+    ok('进度条给圆环留出了位置（进度条左边缘在圆环右边缘右侧，两者不重叠）',
+      barLeft >= c.x + px() / 2, `进度条左=${Math.round(barLeft)} vs 圆环右=${Math.round(c.x + px() / 2)}`);
+  }
+  // 🐞 回归①：**先显示再量尺寸**。
+  // 元素还在 display:none 时 clientWidth 是 0，量到的是兜底值，那个值会被写进行内 width/height ——
+  // 于是左下角圆环永远比右上角的 HUD 圆环小一圈（用户反馈「退出圆环放大一点」的真实原因）。
+  // 🐞 回归②：**重摆时先清掉行内尺寸再量** —— 行内 px 会盖住 CSS 的 `--ring-px`，
+  // 不清的话窗口一改大小圆环就被旧尺寸钉住，又和右上角那个不一样大。
+  {
+    const boxEl = elements.get('cornerExit');
+    const btnEl = elements.get('ringQuickExit');
+    const CSS_SIZE = 140;     // 模拟 CSS 的 --ring-px（行内尺寸会盖住它，就像真实浏览器）
+    Object.defineProperty(btnEl, 'clientWidth', {
+      configurable: true,
+      // 藏着 = 量不到（真实浏览器就是这样）；显示着且没写行内尺寸 = 量到 CSS 的 --ring-px
+      get: () => (boxEl.hidden ? 0 : (btnEl.style.width ? parseFloat(btnEl.style.width) : CSS_SIZE)),
+    });
+    api.hideCornerExit();
+    api.showCornerExit();
+    ok('显示之后才量尺寸：量到真实直径就用它（不会被元素藏着的兜底值写死）',
+      btnEl.style.width === `${CSS_SIZE}px` && btnEl.style.height === `${CSS_SIZE}px`,
+      `${btnEl.style.width} / ${btnEl.style.height}`);
+    // 把行内尺寸改成一个「旧的」值，再重摆 —— 必须清掉行内尺寸、重新量到 CSS 的 140px
+    btnEl.style.width = '200px';
+    btnEl.style.height = '200px';
+    api.layoutCornerRing();
+    ok('重摆时先清掉行内尺寸再量（否则窗口一改大小圆环就被旧 px 钉住、和右上角不再等大）',
+      btnEl.style.width === `${CSS_SIZE}px` && btnEl.style.height === `${CSS_SIZE}px`,
+      `${btnEl.style.width} / ${btnEl.style.height}`);
+    // 还给后面用兜底值的断言：量不到尺寸（clientWidth = 0）
+    Object.defineProperty(btnEl, 'clientWidth', { configurable: true, get: () => 0 });
+    api.layoutCornerRing(); // 重新按兜底直径摆一次，免得把量到的尺寸留在行内样式里
+  }
   ok('位置按像素摆好（left/top 就是圆心，宽高就是圆环直径）',
     ringBtn().style.left === `${c.x}px` && ringBtn().style.top === `${c.y}px`
     && ringBtn().style.width === `${px()}px` && ringBtn().style.height === `${px()}px`,

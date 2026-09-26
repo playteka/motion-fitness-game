@@ -174,16 +174,34 @@ console.log('\n[3] 静态资源与模型文件');
     ok('左下角退出圆环有自己的容器（不与「一组结束后」的两个圆环共用显隐）',
       /\.corner-ring\s*\{[^}]*position:\s*absolute/.test(css)
       && /\.corner-ring\[hidden\]\s*\{\s*display:\s*none/.test(css));
+    // 用户要求「退出圆环放大一点」：下限抬高到 ≥104px
+    const ringMin = Number((ringPx || '').split(',')[0].replace(/[^\d.]/g, ''));
+    ok('圆环直径比上一版更大（clamp 下限 ≥104px）', ringMin >= 104, `下限=${ringMin}px`);
+    // 小屏也必须还是「两个一起收」：.hud-ring 不许再写死尺寸（以前写过 84px，会和左下角那个不一样大）
+    ok('小屏时右上角 HUD 圆环不再写死尺寸（改用同一个 --ring-px，两个圆环仍然等大）',
+      !/@media[^{]*720px[^{]*\{[^@]*\.hud-ring\s*\{[^}]*width:\s*\d+px/.test(css), 'hud-ring 有写死的宽高');
   }
 
-  // 判定进度条：铺满视频底边的大部分，图标要够大（不然看不清姿态）
+  // 判定进度条：**用户要求「缩短一点、高度也变小一些」** ——
+  //   宽度不再铺满（上限 880px，并且两侧用 --bar-side-space 给左下角的退出圆环留位置）；
+  //   高度由 --criteria-icon-h 推出来（图标 44~60px，比上一版的 58~82px 矮一截）。
   const barBlock = /\.criteria-bar\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
-  const barWidthPct = Number(/width:\s*min\([^,]+,\s*([\d.]+)%\)/.exec(barBlock)?.[1]);
-  ok('判定进度条铺满视频底边的大部分（≥90%）', barWidthPct >= 90, `width=${barWidthPct}%`);
+  ok('进度条宽度不再铺满画面（上限 ≤900px，且两侧给圆环留出位置）',
+    /width:\s*min\((\d+)px,\s*calc\(100%\s*-\s*2\s*\*\s*var\(--bar-side-space\)\)\)/.test(barBlock)
+    && Number(/width:\s*min\((\d+)px/.exec(barBlock)[1]) <= 900, barBlock.trim().slice(0, 120));
+  const sideSpace = /--bar-side-space:\s*calc\(([^;]*)\);/.exec(css)?.[1] || '';
+  ok('进度条让出的两侧空间 = 左边距 + 圆环直径 + 间隙（圆环和进度条各占各的地方）',
+    /18px\s*\+\s*var\(--ring-px\)\s*\+/.test(sideSpace), String(sideSpace));
+  const iconVar = /--criteria-icon-h:\s*clamp\((\d+)px,\s*([\d.]+)vh,\s*(\d+)px\)/.exec(css);
   const iconBlock = /\.criteria-icon\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
-  const iconH = Number(/height:\s*clamp\((\d+)px/.exec(iconBlock)?.[1]
-    ?? /height:\s*(\d+)px/.exec(iconBlock)?.[1]);
-  ok('进度条图标够大（高度 ≥55px，姿态才看得清）', iconH >= 55, `height=${iconH}px`);
+  ok('进度条图标高度走共用变量 --criteria-icon-h（改一处整条一起收）',
+    !!iconVar && /height:\s*var\(--criteria-icon-h\)/.test(iconBlock), iconBlock.trim().slice(0, 60));
+  ok('进度条变矮了（图标 44~60px，比上一版的 58~82px 小一截）但仍然看得清（≥40px）',
+    !!iconVar && Number(iconVar[1]) >= 40 && Number(iconVar[3]) <= 64,
+    iconVar ? `${iconVar[1]}~${iconVar[3]}px` : '没读到 --criteria-icon-h');
+  ok('进度条总高度由图标高度推出来（提示条让位也用它，不会两处对不上）',
+    /--criteria-bar-h:\s*calc\(var\(--criteria-icon-h\)\s*\+/.test(css)
+    && /\.stage\.has-criteria \.pose-hint\s*\{[^}]*bottom:\s*calc\([^)]*var\(--criteria-bar-h\)/.test(css));
   ok('图标等比缩放（有 max-width，不会被拉变形）', /max-width:/.test(iconBlock));
   ok('进度条出现时底部提示条会让位（不会两块叠在一起）',
     /\.stage\.has-criteria \.pose-hint\s*\{[^}]*bottom:/.test(css));

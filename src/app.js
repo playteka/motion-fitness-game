@@ -746,20 +746,31 @@ const GESTURE_GRACE_MS = 300;
  * 同样的顺时针走满一圈动画、同样的 `paintRing` / `updateGesture` 逻辑、同样的 3 秒
  * （`GESTURE_HOLD_MS`）与同样宽容度（`GESTURE_GRACE_MS`）；尺寸与右上角的 HUD 进度环
  * **共用 CSS 变量 `--ring-px`**（所以「各个圆环大小一样」是一条样式约束，不会各写各的），
- * 位置摆在**左下角**、与右上角那个成对角。区别只有：
- *   - 手**或脚**都算（手腕/手掌中心，或踝关节）；
+ * 位置摆在**左下角**、与右上角那个**严格成对角**（左边距 = 右边距、下边距 = 上边距）。区别只有：
+ *   - 手**或脚**都算（手掌中心，或整只脚的中心）；
  *   - 触发后退出这一组**并退出全屏**（`showHome()` 里本来就会退出全屏）；
  *   - **只在摄像头开着的时候显示**（`camera.active`）。
+ *
+ * 用户后来把两件事一起定下来：「让退出圆环可以放在画面的左下角，和右上角的进度圆环对称。
+ *   退出圆环放大一点，大小和右上角的进度圆环保持一样大小。」—— 所以它现在真的贴在左下角，
+ *   而**进度条自己把两侧空间让出来**（CSS 变量 `--bar-side-space` = 左边距 + 圆环直径 + 间隙），
+ *   两者各占各的地方，不用再靠「把圆环抬高」来避让（原来是 `CORNER_RING_BOTTOM_PX = 122`）。
  */
-/** 圆环外沿离画面左边这么远（与右上角 HUD 圆环的 18px 外边距左右对称） */
+/** 圆环外沿离画面左边这么远（与右上角 HUD 圆环的 18px 右边距左右对称） */
 const CORNER_RING_INSET_PX = 18;
 /**
- * 圆环下沿离画面底部留这么高：判定进度条画在画面底边（`bottom: 12px` + 图标约 100px），
- * 圆环必须留在它上方，否则会压住最左边那一格关键帧。
+ * 圆环下沿离画面底部这么高：**与右上角 HUD 圆环的上内边距（`.hud` 的 `padding: 16px 18px`）一致**，
+ * 这样左下角 / 右上角两个圆环是严格的中心对称关系。
+ *
+ * 原来这里是 122px（把圆环抬到判定进度条上方）；现在进度条**变短了**（最多 880px，并且两侧
+ * 用 `--bar-side-space` 给圆环留了位置），所以圆环可以贴回左下角，不会再压住最左边那一格。
  */
-const CORNER_RING_BOTTOM_PX = 122;
-/** 读不到元素真实尺寸时的兜底直径（与 style.css 里 `--ring-px` 的 clamp 参数保持一致） */
-const RING_PX_FALLBACK = { min: 96, vw: 0.10, max: 132 };
+const CORNER_RING_BOTTOM_PX = 16;
+/**
+ * 读不到元素真实尺寸时的兜底直径（与 style.css 里 `--ring-px` 的 clamp 参数保持一致）。
+ * 用户要求「退出圆环放大一点」：96/132 → 104/140（右上角那个共用同一个变量，一起变大、仍然等大）。
+ */
+const RING_PX_FALLBACK = { min: 104, vw: 0.105, max: 140 };
 /** 手指/脚趾要落在圆心这个比例（占直径）以内才算「进到圆环里」—— 约环半径的 60% */
 const RING_HIT_RATIO = 0.30;
 
@@ -776,14 +787,20 @@ const gestureState = {
 /**
  * 圆环的直径（像素）。
  *
- * 优先读元素真实尺寸（CSS 里的 `--ring-px`），读不到（还没布局 / 测试桩）就按
- * 同一组 clamp 参数算 —— 这样判定半径和屏幕上看到的圆环永远对得上。
+ * 优先读元素真实尺寸（CSS 里的 `--ring-px`）；读不到（元素还藏着 / 测试桩）就按**同一组 clamp 参数**
+ * 算 —— 这样判定半径和屏幕上看到的圆环永远对得上。
+ *
+ * ⚠️ 兜底公式用的是**视口宽度（vw）**，不是舞台宽度：CSS 里 `--ring-px: clamp(104px, 10.5vw, 140px)`
+ * 里的 vw 就是视口宽度，右上角那个 HUD 圆环完全由 CSS 决定（= 11vw）。以前这里用舞台宽度算，
+ * 比 vw 小一圈，于是**在元素还没显示出来的时候量到的直径会被写死在行内样式上** ——
+ * 结果就是「左下角的退出圆环看起来比右上角的进度圆环小」（用户反馈）。现在两边口径一致。
  */
 function ringPx(key) {
   const el = ringEl(key);
   const w = el?.clientWidth || 0;
   if (w > 0) return w;
-  return Math.round(clamp(stageSize().w * RING_PX_FALLBACK.vw, RING_PX_FALLBACK.min, RING_PX_FALLBACK.max));
+  const vw = (typeof window !== 'undefined' && window.innerWidth) || stageSize().w;
+  return Math.round(clamp(vw * RING_PX_FALLBACK.vw, RING_PX_FALLBACK.min, RING_PX_FALLBACK.max));
 }
 
 /** 圆环的圆心（**像素**）：中间两个按比例摆，左下角那个固定贴在左下角 */
@@ -863,6 +880,11 @@ function layoutCornerRing() {
   const el = ringEl('corner');
   if (!el) return;
   const size = stageSize();
+  // ⚠️ 先清掉行内尺寸再量：行内 px 会盖住 CSS 的 `--ring-px`，如果不清，
+  // 上一次量到的旧尺寸会被一直沿用 —— 窗口一改大小（或跨过小屏断点）圆环就不跟着变了，
+  // 于是又和右上角那个 HUD 圆环不一样大（这正是用户反馈的那个「看起来小一圈」）。
+  el.style.width = '';
+  el.style.height = '';
   const px = ringPx('corner');
   const c = ringCenter('corner', size.w, size.h);
   el.style.left = `${c.x}px`;
@@ -996,7 +1018,6 @@ function updateGesture(landmarks, now) {
 function showCornerExit() {
   const box = $('cornerExit');
   if (!box || gestureState.cornerVisible) return;
-  layoutCornerRing();
   const st = gestureState.corner;
   st.p = 0; st.since = 0; st.lastInside = 0; st.done = false;
   ringEl('corner')?.classList.remove('dwelling', 'done');
@@ -1005,8 +1026,12 @@ function showCornerExit() {
   const timer = $('ringQuickExitTimer');
   if (timer) timer.textContent = '';
   paintRing('corner', 0);
+  // ⚠️ 顺序很重要：**先显示再量尺寸**。元素还在 `display: none` 时 `clientWidth` 是 0，
+  // 量到的是兜底值，那个值会被写进行内 width/height —— 于是圆环会一直比右上角的 HUD 圆环小一圈
+  // （用户反馈「退出圆环放大一点，大小和右上角的进度圆环保持一样大小」就是这个原因）。
   box.hidden = false;
   gestureState.cornerVisible = true;
+  layoutCornerRing();
 }
 
 function hideCornerExit() {
@@ -1038,7 +1063,8 @@ function updateCornerExit(landmarks, now) {
   if (st.done) return false;
   const size = stageSize();
   const pts = touchPoints(landmarks, size.w, size.h, state.settings.mirror);
-  const inside = handInRing(pts, 'corner', size);  if (inside) {
+  const inside = handInRing(pts, 'corner', size);
+  if (inside) {
     st.lastInside = now;
     if (!st.since) st.since = now;
     st.p = clamp((now - st.since) / GESTURE_HOLD_MS, 0, 1);
@@ -3147,7 +3173,7 @@ window.__mfg = {
   // 左下角常驻的「退出」圆环（手或脚进去停 3 秒 → 退出这一组 + 退出全屏）
   showCornerExit, hideCornerExit, updateCornerExit, triggerCornerExit, syncCornerExit,
   layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, stageSize,
-  CORNER_RING_INSET_PX, CORNER_RING_BOTTOM_PX, RING_HIT_RATIO,
+  CORNER_RING_INSET_PX, CORNER_RING_BOTTOM_PX, RING_PX_FALLBACK, RING_HIT_RATIO,
   announceHoldCount, HOLD_COUNT_EVERY,
   announceTimeLeft, TIME_CALL_AT, targetPresetsFor, targetStepFor,
   buildMusicTracks, selectMusicTrack,

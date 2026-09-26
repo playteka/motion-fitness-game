@@ -21,8 +21,26 @@
    * 右上角的 HUD 进度圆环与左下角的「退出」圆环都用它 —— 改这一个数，两个圆环一起变，
    * 所以它们永远一样大、永远成对角。小屏用 clamp 收一收，免得在小窗口里比例失真。
    * （app.js 里读不到元素尺寸时会按同一组 clamp 参数兜底，见 RING_PX_FALLBACK。）
+   *
+   * 用户后来要求「退出圆环放大一点，大小和右上角的进度圆环保持一样大小」：
+   * 只把整体抬一点点（下限 96 → 104、上限 132 → 140），真正的「放大」来自修掉一个 bug ——
+   * 左下角那个圆环以前在**元素还藏着的时候**量尺寸（`clientWidth` = 0），量到的是兜底值，
+   * 于是它一直被写死在比右上角那个更小的尺寸上（见 app.js 的 showCornerExit / ringPx）。
    */
-  --ring-px: clamp(96px, 10vw, 132px);
+  --ring-px: clamp(104px, 10.5vw, 140px);
+  /**
+   * **判定进度条给圆环让出的两侧空间**：左边距（18px，与右上角 HUD 圆环的右边距对称）
+   * + 圆环直径 + 12px 间隙。进度条的宽度用这个变量算，所以左下角的退出圆环**永远不会压住进度条**
+   * （圆环和进度条各占各的地方，不用再靠「把圆环抬高」来避让）。
+   */
+  --bar-side-space: calc(18px + var(--ring-px) + 12px);
+  /**
+   * **判定进度条里的图标高度**（用户要求「进度条缩短一点，高度也变小一些」）。
+   * 整条的高度由它推出来（见 --criteria-bar-h），提示条让位也按它算，所以只有这一处需要改。
+   */
+  --criteria-icon-h: clamp(44px, 5.4vh, 60px);
+  /** 判定进度条的总高度 = 图标高 + 上下内边距 + 一格的内边距（提示条按它让位） */
+  --criteria-bar-h: calc(var(--criteria-icon-h) + 35px);
 }
 
 * { box-sizing: border-box; }
@@ -520,12 +538,14 @@ kbd {
 .criteria-bar {
   position: absolute;
   left: 50%;
-  bottom: 12px;
+  bottom: 10px;
   transform: translateX(-50%);
-  /* 铺满视频底边的大部分：宽到接近整幅画面，图标才能放大 */
-  width: min(1180px, 95%);
-  padding: 8px 12px 10px;
-  border-radius: 16px;
+  /* 宽度：上限 880px，并且**两侧一定给圆环留出位置**（--bar-side-space）——
+     所以左下角的退出圆环摆在左下角也不会压住最左边那一格。
+     用户要求「所有运动的进度条都缩短一点」：以前是 min(1180px, 95%)。 */
+  width: min(880px, calc(100% - 2 * var(--bar-side-space)));
+  padding: 6px 10px 8px;
+  border-radius: 14px;
   background: rgba(8, 15, 26, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.36);
@@ -564,7 +584,7 @@ kbd {
 .criteria-bar.idle .criteria-seg { border-color: rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); }
 /* 识别到人且正在计数：彩色状态，表示「已经开始工作」 */
 .criteria-bar.active { border-color: rgba(56, 189, 248, 0.35); }
-.criteria-head { display: flex; justify-content: flex-end; margin-bottom: 2px; min-height: 16px; }
+.criteria-head { display: flex; justify-content: flex-end; margin-bottom: 1px; min-height: 13px; }
 .criteria-earned {
   font-size: 13px;
   font-weight: 800;
@@ -580,7 +600,7 @@ kbd {
   70% { opacity: 1; transform: translateY(0) scale(1); }
   100% { opacity: 0; transform: translateY(-6px) scale(1); }
 }
-.criteria-track { display: flex; gap: 10px; align-items: stretch; }
+.criteria-track { display: flex; gap: 8px; align-items: stretch; }
 /* 每一格只画一个线条图标（没有文字）
    三种状态的对比要拉得很开，一眼就能看出「哪几格已经做到了」：
      未做到 = 虚线灰框 + 很淡的细线条；已做到 = 实心亮绿底 + 加粗绿线条 + 右上角对勾 + 外发光；
@@ -591,8 +611,8 @@ kbd {
   min-width: 0;
   display: grid;
   place-items: center;
-  padding: 4px 4px 3px;
-  border-radius: 12px;
+  padding: 3px 3px 2px;
+  border-radius: 10px;
   /* 边框宽度**三态一致（都是 1px）**：变成「正在等」时只换颜色 + 加一圈外发光。
      以前 `current` 用 2px 边框，格子内容区会窄掉 2px，里面的图标跟着缩放一下 ——
      每点亮一格就抖一次，用户反馈「进度条抖得厉害」。 */
@@ -604,11 +624,12 @@ kbd {
   /* 只过渡颜色类属性：位置 / 尺寸一概不动（transition 里不写 transform / width / height） */
   transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
-/* 图标放大到铺满格子高度（横躺的姿势会长一些，站姿高一些，都是等比缩放不变形） */
+/* 图标铺满格子高度（横躺的姿势会长一些，站姿高一些，都是等比缩放不变形）。
+   高度走 --criteria-icon-h：用户要求「进度条缩短一点、高度也变小一些」，改那一个变量整条一起收。 */
 .criteria-icon {
   width: 100%;
-  height: clamp(58px, 7.4vh, 82px);
-  max-width: 150px;
+  height: var(--criteria-icon-h);
+  max-width: 112px;
   display: block;
   fill: none;
   stroke: rgba(148, 163, 184, 0.3);       /* 未做到：又灰又淡 */
@@ -737,8 +758,9 @@ kbd {
   100% { box-shadow: 0 6px 20px rgba(0, 0, 0, 0.36); border-color: rgba(74, 222, 128, 0.6); }
 }
 
-/* 进度条出现时，把底部提示条往上让一格（进度条现在占得更高），避免两块叠在一起 */
-.stage.has-criteria .pose-hint { bottom: 124px; }
+/* 进度条出现时，把底部提示条往上让一格（进度条现在占得更高），避免两块叠在一起。
+   让位高度跟着进度条自己的高度变量走，改图标尺寸时不用两处改。 */
+.stage.has-criteria .pose-hint { bottom: calc(10px + var(--criteria-bar-h) + 10px); }
 
 /* 建议项没达标（不拦人）与更柔和的提示配色 */
 .calib-item.soft { opacity: 0.72; }
@@ -902,7 +924,7 @@ kbd {
 }
 /* ---- 左下角常驻的「退出」圆环（手或脚进去保持 3 秒 = 退出这一组 + 退出全屏）----
    动画、进度、触发方式与上面两个圆环完全共用（同一套 .ring-* 与 paintRing 逻辑），
-   只是位置固定在左下角、尺寸小一点，免得挡住动作画面。 */
+   位置固定在**左下角**、与右上角的 HUD 进度圆环**严格对称**、直径也**完全一致**。 */
 .corner-ring {
   position: absolute;
   inset: 0;
@@ -912,20 +934,35 @@ kbd {
 .corner-ring[hidden] { display: none; }
 .corner-ring .ring-btn {
   /* 直径与右上角的 HUD 进度圆环**同一个变量**（用户要求「各个圆环大小一样」）；
-     圆心位置由 JS 按舞台尺寸设（左下角，下沿留在判定进度条上方） */
+     圆心位置由 JS 按舞台尺寸设（**左下角**，与右上角那个严格成对角：
+     左边距 = HUD 的右边距 18px，下边距 = HUD 的上边距 16px）。
+     进度条两侧已经给它留好了位置（--bar-side-space），所以它不用再抬高避让。 */
   width: var(--ring-px);
   height: var(--ring-px);
-  opacity: 0.9;
-  background: rgba(6, 12, 20, 0.32);
+  opacity: 0.92;
+  background: rgba(6, 12, 20, 0.34);
 }
 .corner-ring .ring-btn:hover { opacity: 1; }
-.corner-ring .ring-label { font-size: clamp(12px, 1.25vw, 17px); }
-.corner-ring .ring-timer { font-size: clamp(11px, 1vw, 14px); }
+.corner-ring .ring-label { font-size: clamp(13px, 1.35vw, 19px); }
+.corner-ring .ring-timer { font-size: clamp(12px, 1.1vw, 15px); }
 
+/* 小屏：两个圆环一起收（同一个变量），所以永远还是等大 */
+@media (max-width: 720px) {
+  :root { --ring-px: 84px; }
+}
 @media (max-width: 560px) {
   .ring-btn { width: 26%; min-width: 78px; }
   .corner-ring .ring-btn { width: var(--ring-px); height: var(--ring-px); }
   .gesture-hint { font-size: 12px; }
+  /* 屏幕很窄时横向排不下「圆环 + 进度条」，这时让进度条整体挪到圆环上方 */
+  :root { --ring-px: 72px; }
+  .criteria-bar {
+    width: min(100% - 20px, 880px);
+    bottom: calc(16px + var(--ring-px) + 12px);
+  }
+  .stage.has-criteria .pose-hint {
+    bottom: calc(16px + var(--ring-px) + 12px + var(--criteria-bar-h) + 10px);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .ring-btn { animation: none; }
@@ -1475,7 +1512,6 @@ kbd {
   .brand-text p { display: none; }
   .hud-value { font-size: 54px; }
   .hud-score { font-size: 20px; }
-  .hud-ring { width: 84px; height: 84px; }
   .exercise-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .ex-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   .search-field { min-width: 0; width: 100%; }
