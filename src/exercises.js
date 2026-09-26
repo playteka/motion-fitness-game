@@ -15,7 +15,7 @@ import {
   DetectorBase, HoldDetector, setCueKeyResolver,
 } from './detector-base.js';
 import { EXERCISES, EXERCISE_MAP, CATEGORIES, isTimedReps, targetUnitKey } from './catalog.js';
-import { createEngineDetector } from './engines.js';
+import { createEngineDetector, bodyLift, GATES, GATE_HINT } from './engines.js';
 
 // 提示文案的兜底：动作没写专属提示时用通用提示（见 detector-base.js）
 setCueKeyResolver(hasKey);
@@ -1419,6 +1419,322 @@ class CrunchDetector extends DetectorBase {
 }
 
 /* ------------------------------------------------------------------ *
+ * 计数类：跳箱（画面里画一个箱子，**跳过它**才算一次）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 跳箱的判定参数（用户要求：「要在视频画面中画出一个箱子让用户跳跃，当用户跳过这个箱子则计一次」）。
+ *
+ * 口径：
+ *   - 画面里画一个**箱子**，箱顶就是判定线（画面上的箱顶 = 判定用的那条线，一处定义不会漂移）；
+ *   - **箱子的高度按用户自己的膝高定**（0.55 × 站立膝高 ≈ 25cm 的箱子）：
+ *     机位远近、个子高矮都跟着变，不会出现「离得远就永远跳不过去」；
+ *   - **脚的最低点越过箱顶**就是一次（`lift = 地面线 − 身体最低点 ≥ 箱高`）：
+ *     这正是用户在画面里看到的「人跳到箱子上面去了」；
+ *   - 计次发生在**越过箱顶那一帧**（不是落地后），跳过去立刻报数；
+ *   - 越过去之后要先落回地面（离地回落到箱高的 45% 以下）才允许下一次，不会连续刷数。
+ */
+export const BOXJUMP = {
+  /** 箱子高度 = 站立时**膝高**的这个比例（0.55 × 膝高 ≈ 25cm 的箱子，跨得过去又不算白给） */
+  boxKneeFrac: 0.55,
+  /** 膝高基线是「最大值 + 每帧缓慢衰减」：下蹲不会把它拉低，机位慢慢漂移能跟上 */
+  baseDecay: 0.0015,
+  /** 站姿基线只在这些条件下更新：躯干基本竖直 + 膝接近伸直（下蹲/前倾的读数不参与） */
+  baseTiltMax: 25,
+  baseKneeMin: 155,
+  /** 还没量到基线时的兜底箱高（画面高为单位），以及箱高的上下限 */
+  fallbackBox: 0.11,
+  minBox: 0.05,
+  maxBox: 0.20,
+  /**
+   * 起跳：离地超过箱高的这个比例就算「脚离地了」。
+   * ⚠️ 必须**大于** `landFrac`（迟滞带的方向不能反）：反过来的话，人下落经过「起跳线」时
+   * 会被当成又跳了一次，接着就冒出一句「跳得不够高」（探针里真的复现了）。
+   */
+  takeoffFrac: 0.25,
+  /** 落地：离地回落到箱高的这个比例以下，才允许下一次（迟滞带，必须小于 takeoffFrac） */
+  landFrac: 0.15,
+  /** 蓄力一直不起跳多久才提醒「要跳起来」（正常蓄力不该被念） */
+  crouchHintMs: 900,
+  /** 「屈膝蓄力」那一格的膝角线（≤ 这个角度 = 蓄好力了） */
+  crouchKnee: 150,
+  /** 蓄力进度的比例尺：膝角从 168° 弯到 100° 算满 */
+  crouchFrom: 168,
+  crouchTo: 100,
+  /**
+   * 两次计次之间最少间隔（滤掉「一两帧的毛刺」）。
+   *
+   * ⚠️ 写得很小是**故意的**：真人跳起 25cm 只需要约 0.23 秒（自由落体反过来算 `t=√(2h/g)`），
+   * 所以「起跳 → 越过箱顶」这段真实时间只有 100~200ms，门槛一大就会把**真跳**也判成「太快」
+   * （真跳被吃掉比放过一次毛刺严重得多）。防误触主要靠另外两条**物理**约束：
+   *   ① 起跳必须从「脚还在地面附近」（progress < takeoffFrac）**升上来**；
+   *   ② 越过去之后必须先落回地面（progress ≤ landFrac）才允许下一次。
+   * 这两条已经排掉了抖动：单帧毛刺连「起跳 → 计次」两帧都走不完。
+   */
+  minRepMs: 90,
+  /** 一轮最多这么久（卡在半空/一直不过顶就作废这一轮） */
+  maxRepMs: 4000,
+  /** 箱子宽度 = 肩宽的倍数，并按上下限夹住（单位都是画面高） */
+  widthK: 1.25,
+  minWidth: 0.12,
+  maxWidth: 0.34,
+  /** 箱子的横向跟随（每帧 EMA）：箱子一直在人的正前方，但不会跟着识别抖动左右跳 */
+  cxFollow: 0.08,
+  /** 箱子离画面左/右边缘至少留这么多（画面宽比例） */
+  cxMargin: 0.02,
+};
+
+class BoxJumpDetector extends DetectorBase {
+  onReset() {
+    this.stage = 'ready';        // ready（站在箱子前）→ air（腾空）→ 计次 → 落回 ready
+    this.phase = 'ready';
+    this.lift = 0;               // 离地高度（画面高为单位）：脚的最低点离地面线多高
+    this.progress = 0;           // 0~1：离箱顶还有多远（1 = 脚越过箱顶 = 计次那一刻）
+    this.crouchPct = 0;          // 屈膝蓄力进度（0~1）
+    this.baseKnee = NaN;         // 站立膝高基线（自校准箱高用）
+    this.boxH = BOXJUMP.fallbackBox;
+    this.boxCleared = false;     // 这一轮已经越过箱顶（进度条最后一格用它点亮）
+    this.landed = false;         // 越过箱顶之后**又落回地面**了（「屈膝缓冲落地」那一步分用它）
+    this.peak = 0;               // 这一轮最高跳到箱高的几倍
+    this.peakLift = 0;
+    this.peakLoaded = false;
+    this.cycleStartAt = 0;
+    this.clearedAt = 0;
+    this.crouchSince = 0;
+    /** 最近一次跳跃的结果（诊断用：`peakLift` 每轮会清零，这一份留着看「上次跳了多高」） */
+    this.lastJump = { lift: NaN, boxH: NaN, ok: false };
+    this.box = null;             // 箱子几何（画面里画它，见 render.js 的 drawBox）
+    this._cx = NaN;              // 箱子的横向位置（平滑后的髋-肩中线）
+  }
+
+  onLost() {
+    this.stage = 'ready';
+    this.phase = 'ready';
+    this.lift = 0;
+    this.progress = 0;
+    this.depthPct = 0;
+    this.boxCleared = false;
+    this.box = null;
+    this.cycleStartAt = 0;
+    this.clearedAt = 0;
+  }
+
+  onNewCycle() { this.peak = 0; this.peakLift = 0; }
+
+  /** 「越过箱顶」那条判定线：动态的（跟着用户自己的膝高走），弹窗与进度条都读它 */
+  get boxLine() { return this.boxH; }
+
+  /**
+   * 箱子的几何 + 膝高基线。**每帧都要调**（校准 / 倒计时 / 训练中都要看得见箱子），
+   * 所以它不参与计数：计数在 step() 里。
+   *
+   * 返回 `{ cx, w, h, baseY, lift, cleared }`（`cx` 是画面宽比例，`w/h/baseY/lift` 是画面高为单位）：
+   * 画面上的箱顶 `baseY - h` 和判定用的那条线**是同一个数**。
+   */
+  trackBox(f, now) {
+    if (!f || !f.ok) {
+      this.box = null;
+      this.lift = 0;
+      return null;
+    }
+    const ground = Number.isFinite(f.groundRef) ? f.groundRef : f.groundY;
+    // 站立膝高（画面高为单位）= 膝离地高度（躯干长为单位）× 躯干长
+    const kneeY = Number.isFinite(f.kneeClear) && Number.isFinite(f.torsoLen)
+      ? f.kneeClear * f.torsoLen
+      : NaN;
+    if (Number.isFinite(kneeY) && f.torsoIncl <= BOXJUMP.baseTiltMax && f.kneeExtended >= BOXJUMP.baseKneeMin) {
+      this.baseKnee = Number.isFinite(this.baseKnee)
+        ? Math.max(kneeY, this.baseKnee - BOXJUMP.baseDecay)
+        : kneeY;
+    }
+    const base = Number.isFinite(this.baseKnee) ? this.baseKnee : NaN;
+    this.boxH = clamp(
+      (Number.isFinite(base) ? base : BOXJUMP.fallbackBox / BOXJUMP.boxKneeFrac) * BOXJUMP.boxKneeFrac,
+      BOXJUMP.minBox,
+      BOXJUMP.maxBox,
+    );
+    // 箱子摆在人的正前方：横向跟着「肩-髋中线」（平滑），高度贴着地面线。
+    // ⚠️ 用 `centerXFrac`（**画面宽度比例**）而不是 `centerX` —— 后者是「按宽高比校正过」的
+    // 度量坐标（单位 = 画面高度），直接当宽度比例用会让箱子偏到画面右边（实测偏了 0.39）。
+    const cxNow = Number.isFinite(f.centerXFrac) ? f.centerXFrac : f.centerX;
+    if (Number.isFinite(cxNow)) {
+      this._cx = Number.isFinite(this._cx)
+        ? this._cx + (cxNow - this._cx) * BOXJUMP.cxFollow
+        : cxNow;
+    }
+    const w = clamp(
+      (Number.isFinite(f.shoulderWidth) ? f.shoulderWidth : 0.2) * BOXJUMP.widthK,
+      BOXJUMP.minWidth,
+      BOXJUMP.maxWidth,
+    );
+    const aspect = Number.isFinite(f.aspect) && f.aspect > 0 ? f.aspect : 16 / 9;
+    const halfX = w / 2 / aspect;      // 箱宽的一半（画面宽比例）= (画面高为单位的宽度) / 宽高比
+    const margin = Math.min(BOXJUMP.cxMargin, halfX);
+    const cx = Number.isFinite(this._cx)
+      ? clamp(this._cx, halfX + margin, 1 - halfX - margin)
+      : NaN;
+    this.box = (Number.isFinite(ground) && Number.isFinite(cx))
+      ? {
+        cx, w, h: this.boxH, baseY: ground, lift: this.lift, cleared: this.boxCleared,
+      }
+      : null;
+    return this.box;
+  }
+
+  /** 计数诊断（🐞 面板）：箱高、离地高度、上一次跳了多高 */
+  diag() {
+    const last = this.lastJump || { lift: NaN, ok: false };
+    return [
+      { key: 'debug.diag.stage', value: this.stage },
+      { key: 'debug.diag.boxLine', value: `${this.boxH.toFixed(2)}` },
+      { key: 'debug.diag.liftNow', value: `${this.lift.toFixed(2)}/${this.boxH.toFixed(2)}` },
+      {
+        key: 'debug.diag.jumpPeak',
+        value: Number.isFinite(last.lift) ? `${last.lift.toFixed(2)}${last.ok ? '✓' : ''}` : '—',
+      },
+      { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
+      ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
+    ];
+  }
+
+  step(f, now) {
+    const gate = GATES[this.meta.params?.gate || 'stand'];
+    const gated = !!gate(f);
+    this.gateOk = gated;
+    if (!gated) {
+      this.active = false;
+      this.standby = `status.need.${GATE_HINT[this.meta.params?.gate || 'stand'] || 'stand'}`;
+      this.stage = 'ready';
+      this.phase = 'ready';
+      this.lift = 0;
+      this.progress = 0;
+      this.depthPct = 0;
+      this.boxCleared = false;
+      this.cycleStartAt = 0;
+      this.trackBox(f, now);
+      this.cue('notReady', null, 'info', now, 9000);
+      return;
+    }
+    this.active = true;
+    this.standby = '';
+    this.trackBox(f, now);
+
+    /**
+     * 离地高度 = 地面线 − **身体最低点**（脚）。
+     * 用最低点而不是脚踝：要「整个人真的从箱子上过去」，脚掌/脚尖也得跟着上来
+     *（`bodyLift` 就是这么定义的，和深蹲跳/开合跳用的是同一个量）。
+     */
+    const lift = Math.max(0, bodyLift(this, f, now));
+    this.lift = lift;
+    this.progress = clamp(lift / this.boxH, 0, 1.4);
+    this.depthPct = clamp(Math.round(this.progress * 100), 0, 100);
+    this.peak = Math.max(this.peak, this.progress);
+    this.peakLift = Math.max(this.peakLift, lift);
+    this.crouchPct = clamp((BOXJUMP.crouchFrom - f.kneeAngle) / (BOXJUMP.crouchFrom - BOXJUMP.crouchTo), 0, 1);
+    if (this.box) this.box.lift = lift;
+
+    /**
+     * 实时纠正：**跳得不够高**。
+     *
+     * 判据写成「已经过了最高点、开始往下落、还是没到箱顶」——不能在「升到一半」时就喊，
+     * 否则每一次成功的跳跃在上升途中都会被念一句「再跳高一点」（实测真的会）。
+     */
+    if (this.phase === 'air' && this.peak < 1 && this.progress < this.peak - 0.06) {
+      this.cue('boxLow', { pct: Math.round(this.peak * 100) }, 'warn', now, 2500);
+    }
+    if (this.phase === 'ready' && this.crouchPct >= 0.5) {
+      // 蓄力一直不起跳才提醒「要跳起来」——正常的「蹲一下再跳」不该被念一句
+      if (!this.crouchSince) this.crouchSince = now;
+      if (now - this.crouchSince > BOXJUMP.crouchHintMs) this.cue('needJump', null, 'info', now, 6000);
+    } else {
+      this.crouchSince = 0;
+    }
+
+    switch (this.phase) {
+      case 'cleared':
+        // 越过去了：等落回地面（迟滞），才允许下一轮
+        this.stage = 'cleared';
+        if (this.progress <= BOXJUMP.landFrac) {
+          // 落地了：`landed` 留给要领分（「屈膝缓冲落地」那一步）；跳过箱顶的那一轮才算
+          this.landed = !!this.boxCleared;
+          this.phase = 'ready';
+          this.boxCleared = false;
+          this.stage = 'ready';
+          this.cycleStartAt = 0;
+          this.nextCycle(now);
+        } else if (now - this.clearedAt > BOXJUMP.maxRepMs) {
+          // 一直挂在上面（挂在单杠上？）：放开状态，别锁死
+          this.phase = 'ready';
+          this.boxCleared = false;
+          this.stage = 'ready';
+        }
+        break;
+
+      case 'air':
+        this.stage = 'air';
+        if (this.progress >= 1) {
+          // ---- 计次：**脚越过箱顶的那一刻**（用户要求「跳过这个箱子则计一次」）----
+          const dur = now - this.cycleStartAt;
+          this.clearedAt = now;
+          this.boxCleared = true;
+          this.phase = 'cleared';
+          this.stage = 'cleared';
+          if (dur > 0 && dur < BOXJUMP.minRepMs) {
+            this.partialReps += 1;
+            this.reject('tempo', `${Math.round(dur)}ms`);
+            this.emit({ type: 'rep', valid: false, reason: 'tempo' });
+          } else {
+            this.lastReject = null;
+            this.validReps += 1;
+            this.reps = this.validReps;
+            this.cycleHadValidRep = true;
+            this.lastJump = { lift: this.peakLift, boxH: this.boxH, ok: true };
+            // 质量分：越过箱顶越高越好，蓄力那一下有屈膝再加一点（宽松：不标准也计次，只是分低）
+            const over = clamp((this.peak - 1) / 0.4, 0, 1);
+            const loadOk = this.peakLoaded ? 8 : 4;
+            this.emit({
+              type: 'rep', valid: true, index: this.validReps,
+              quality: clamp(Math.round(58 + over * 30 + loadOk), 0, 100), duration: dur,
+              lift: this.peakLift, boxH: this.boxH,
+            });
+          }
+        } else if (now - this.cycleStartAt > BOXJUMP.maxRepMs) {
+          // 跳了半天没过顶：安静地作废这一轮，不刷次数
+          this.reject('boxLow', `${this.peakLift.toFixed(2)}<${this.boxH.toFixed(2)}`);
+          this.phase = 'ready';
+          this.stage = 'ready';
+          this.cycleStartAt = 0;
+        } else if (this.progress <= BOXJUMP.landFrac && this.peakLift > 0) {
+          // 跳了一下又落地了（没过顶）：记一笔「差多少」但不算一次
+          this.phase = 'ready';
+          this.stage = 'ready';
+          this.lastJump = { lift: this.peakLift, boxH: this.boxH, ok: false };
+          this.reject('boxLow', `${this.peakLift.toFixed(2)}<${this.boxH.toFixed(2)}`);
+          this.cycleStartAt = 0;
+          this.nextCycle(now);
+        }
+        break;
+
+      default:
+        // 站在箱子前：屈膝蓄力（`crouchPct`）→ 脚离地进入腾空
+        this.stage = this.crouchPct >= 0.3 ? 'crouch' : 'ready';
+        if (this.progress >= BOXJUMP.takeoffFrac) {
+          this.phase = 'air';
+          this.stage = 'air';
+          this.cycleStartAt = now;
+          this.peak = this.progress;
+          this.peakLift = lift;
+          this.peakLoaded = this.crouchPct >= 0.35;
+          this.landed = false;      // 又起跳了：上一次的「落地」标记作废
+        } else if (this.cycleStartAt && now - this.cycleStartAt > BOXJUMP.maxRepMs) {
+          this.cycleStartAt = 0;
+        }
+        break;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 计时类：平板支撑
  * ------------------------------------------------------------------ */
 
@@ -1517,6 +1833,7 @@ const BUILTIN = {
   bridge: GluteBridgeDetector,
   plank: PlankDetector,
   crunch: CrunchDetector,
+  boxJump: BoxJumpDetector,
 };
 
 export function createDetector(id, opts = {}) {
@@ -1527,4 +1844,4 @@ export function createDetector(id, opts = {}) {
   return createEngineDetector(meta, opts);
 }
 
-export { DetectorBase, HoldDetector, CrunchDetector };
+export { DetectorBase, HoldDetector, CrunchDetector, BoxJumpDetector };

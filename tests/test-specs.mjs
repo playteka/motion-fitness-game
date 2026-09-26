@@ -81,9 +81,11 @@ console.log('\n[1] 每个动作都有技术指标');
 console.log('\n[2] 通用引擎类：数值等于 (up, down) 与进度阈值算出来的那条线');
 {
   const bendIds = EXERCISES.filter((e) => e.engine === 'bend').map((e) => e.id);
-  // 卷腹改成了手写识别器（CrunchDetector，判据按用户给的模型重做）→ 屈伸族从 8 个变 7 个
-  ok('有屈伸类动作可测', bendIds.length >= 7, `实际 ${bendIds.length}`);
+  // 卷腹、跳箱后来都改成了手写识别器（CrunchDetector / BoxJumpDetector）→ 屈伸族只剩 6 个
+  ok('有屈伸类动作可测', bendIds.length >= 6, `实际 ${bendIds.length}`);
   ok('卷腹已经不在通用屈伸族里（它有自己的识别器）', !bendIds.includes('crunch'), bendIds.join(','));
+  ok('跳箱也不在通用屈伸族里（画面里要画箱子，见 BoxJumpDetector）',
+    !bendIds.includes('boxJump'), bendIds.join(','));
   for (const id of bendIds) {
     const p = EXERCISE_MAP[id].params || {};
     const up = Number.isFinite(p.up) ? p.up : 170;

@@ -610,6 +610,50 @@ export const STEP_PLANS = {
     ],
   },
 
+  /* 跳箱：三格关键帧（站好 → 屈膝蓄力 → **跳过箱顶**），所以单独写一套方案 ——
+     族方案 jump 的四步里「落地站稳」没有对应的关键帧（计次发生在越过箱顶那一刻，见 BOXJUMP）。
+     `planKeyOf` 优先取同名方案，所以这个键用动作 id。 */
+  boxJump: {
+    perCycle: true,
+    repBonus: 8,
+    steps: [
+      {
+        id: 'setup',
+        labelKey: 'steps.boxJump.setup.label',
+        points: 5,
+        check: (f, d) => d.gateOk && f.kneeExtended > 135,
+        hint: () => H('steps.boxJump.setup.hint'),
+      },
+      {
+        id: 'load',
+        labelKey: 'steps.boxJump.load.label',
+        points: 8,
+        check: (f, d) => d.crouchPct >= 0.45,
+        hint: () => H('steps.boxJump.load.hint'),
+      },
+      {
+        id: 'clear',
+        labelKey: 'steps.boxJump.clear.label',
+        points: 14,
+        check: (f, d) => !!d.boxCleared,
+        hint: () => H('steps.boxJump.clear.hint'),
+      },
+      {
+        id: 'land',
+        labelKey: 'steps.boxJump.land.label',
+        points: 6,
+        /**
+         * 跳过箱顶之后**屈膝缓冲落地**。
+         *
+         * 判定看识别器自己的「落地了没有」标记（`landed`：越过箱顶之后又回到地面）加上落地那一刻的膝角 ——
+         * 膝盖绷直砸下来（> 165°）拿不到这一分。这是**要领分**，不拦计次（计次只看「跳过箱顶」）。
+         */
+        check: (f, d) => !!d.landed && Number.isFinite(f.kneeAngle) && f.kneeAngle <= 165,
+        hint: () => H('steps.boxJump.land.hint'),
+      },
+    ],
+  },
+
   /* 计时：姿势类（平板/空心/超人/熊爬/螃蟹走） */
   holdPose: {
     perCycle: false,

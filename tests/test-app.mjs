@@ -131,6 +131,8 @@ const ctxStub = {
     ctxCounts.lineWidth = this.lineWidth;
   },
   fill() { ctxCounts.fill += 1; },
+  // 跳箱的箱体是一块填充矩形（drawBox 用 fillRect）
+  fillRect() { ctxCounts.fill += 1; },
   arc() { ctxCounts.arc += 1; },
   fillText(txt) { ctxCounts.fillText += 1; texts.push(String(txt)); },
   measureText: () => ({ width: 40 }),
@@ -525,7 +527,27 @@ console.log('\n[1b] 运动设定弹窗');
     api.renderExerciseSettings();
   }
 
-  // ===== 关键帧 + 判分标准：用户要求「把对应动作的关键帧判别标准以及对应的判分标准列出来」 =====
+  // 跳箱：用户要求「要在视频画面中画出一个箱子让用户跳跃，当用户跳过这个箱子则计一次」
+  //   → 弹窗里必须写明「跳过箱顶」这条判据 + 箱子高度是**按你自己的膝高**定的（不是写死的数）
+  {
+    api.openExercise('boxJump');
+    api.renderExerciseSettings();
+    const boxHtml = elements.get('exerciseSpecs').innerHTML;
+    ok('跳箱：弹窗里是三格关键帧（站好 → 屈膝蓄力 → 跳过箱顶）',
+      (boxHtml.match(/spec-row spec-kf/g) || []).length === 3
+      && boxHtml.includes('跳过箱顶') && boxHtml.includes('蓄力'),
+      String((boxHtml.match(/spec-row spec-kf/g) || []).length));
+    ok('跳箱：计次那条判据写明「跳过箱顶」（脚离地高度 ≥ 箱高）',
+      boxHtml.includes('跳过箱顶') && boxHtml.includes('离地高度') && boxHtml.includes('箱顶'),
+      boxHtml.slice(0, 600));
+    ok('跳箱：说明里写出「箱子高度按你自己站着时的膝高定（0.55 × 膝高）」，不是写死的数字',
+      boxHtml.includes('0.55') && boxHtml.includes('膝高'), boxHtml.slice(-900));
+    ok('跳箱：屈膝蓄力那条判据的膝角线（≤ 150°）也在弹窗里',
+      boxHtml.includes('150'), boxHtml.slice(0, 600));
+    api.openExercise('pushup');
+    api.renderExerciseSettings();
+  }
+
   {
     const { specStages: stagesOf, stagePoints } = await import('../src/specs.js');
     const { uniqueStages: uniq } = await import('../src/icons.js');
@@ -3496,6 +3518,140 @@ console.log(`\n[14] 虚线轮廓：识别成功就隐藏（真实主循环，全
   Object.defineProperty(globalThis, 'performance', { value: savedPerf, configurable: true, writable: true });
   windowStub.performance = savedPerf;
   api.toCalibration({ silent: true });
+  api.state.session = 'idle';
+}
+
+console.log(`\n[15] 跳箱的箱子：画面上真的画出来，而且箱顶就是判定线`);
+{
+  const { LM: LMK } = await import('../src/geometry.js');
+  const { standingPose: sp3 } = await import('./synthetic-pose.mjs');
+  const api = windowStub.__mfg;
+
+  // ===== ① 画布本身：drawBox 真的落了笔、也写了字（用记录型 ctx 桩）=====
+  {
+    resetCtxCounts();
+    texts.length = 0;
+    api.renderer.drawBox(
+      { cx: 0.4, w: 0.2, h: 0.12, baseY: 0.9, lift: 0.06, cleared: false },
+      { label: '跳过箱子' },
+    );
+    ok('箱子是真的画在画布上的（画了箱体 + 箱顶 + 高度标尺，还写了「跳过箱子」）',
+      ctxCounts.stroke >= 6 && ctxCounts.fill >= 1 && texts.includes('跳过箱子'),
+      `stroke=${ctxCounts.stroke} fill=${ctxCounts.fill} texts=${texts.join('|')}`);
+    resetCtxCounts();
+    texts.length = 0;
+    api.renderer.drawBox(null, { label: '跳过箱子' });
+    ok('没有箱子（几何为 null）时什么都不画', ctxCounts.stroke === 0 && texts.length === 0);
+  }
+
+  // ===== ② 真实主循环：箱子随人摆、只在跳箱时出现，箱顶 = 判定线 =====
+  const savedStream = api.camera.stream;
+  const savedDetect = api.engine.detect;
+  const savedEngineReady = api.state.engineReady;
+  const savedDraw = api.renderer.draw;
+  const savedPerf = globalThis.performance;
+  api.camera.stream = { getTracks: () => [], getVideoTracks: () => [] };
+  api.camera.video.readyState = 4;
+  api.state.engineReady = true;
+  let clock = 6_000_000;
+  const fakePerf = { now: () => clock, timeOrigin: savedPerf.timeOrigin };
+  Object.defineProperty(globalThis, 'performance', { value: fakePerf, configurable: true, writable: true });
+  windowStub.performance = fakePerf;
+
+  let pose = null;
+  api.engine.detect = () => (pose ? { landmarks: pose, worldLandmarks: null } : null);
+  const seen = [];
+  api.renderer.draw = (o) => { seen.push({ session: api.state.session, box: o?.box ?? null, label: o?.boxLabel ?? '' }); };
+  const fit3 = (lm, { k = 0.8, cx0 = 0.5, groundY = 0.92, dy = 0, dx = 0 } = {}) => {
+    const ankleY = Math.max(lm[LMK.L_ANKLE].y, lm[LMK.R_ANKLE].y);
+    const cx = (lm[LMK.L_HIP].x + lm[LMK.R_HIP].x + lm[LMK.L_SHOULDER].x + lm[LMK.R_SHOULDER].x) / 4;
+    return lm.map((p) => ({ ...p, x: cx0 + dx + (p.x - cx) * k, y: groundY + (p.y - ankleY) * k - dy }));
+  };
+  let t = 5_000_000;
+  const pump = (lm, n = 1) => {
+    pose = lm;
+    for (let i = 0; i < n; i++) {
+      clock += 33.4;
+      t += 33.4;
+      api.camera.video.currentTime = t;
+      api.state.engineReady = true;
+      if (!api.camera.stream) api.camera.stream = { getTracks: () => [], getVideoTracks: () => [] };
+      api.loop();
+    }
+  };
+  const idle = () => fit3(sp3({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }));
+
+  api.openExercise('boxJump');
+  pump(null, 3);
+  pump(idle(), 40);                     // 校准 + 就位：这时候箱子就该出现了
+  const boxFrames = seen.filter((f) => f.box);
+  ok('识别到人之后，画面上就摆出了箱子（不用等开练，用户要先看着箱子调站位）',
+    boxFrames.length > 20, `${boxFrames.length}/${seen.length} 帧有箱子`);
+  const last = boxFrames[boxFrames.length - 1];
+  ok('箱子的箱顶就摆在「判定线」上（画出来的箱顶 = 识别器判的那条线，同一个数）',
+    Math.abs((last.box.baseY - last.box.h) - (api.state.detector.box.baseY - api.state.detector.boxLine)) < 1e-9
+    && Math.abs(last.box.h - api.state.detector.boxLine) < 1e-9,
+    `h=${last.box.h?.toFixed(3)} boxLine=${api.state.detector.boxLine?.toFixed(3)}`);
+  ok('箱子的底边贴在校准地面线上（箱底 = 地面线）',
+    Number.isFinite(api.state.detector.box.baseY)
+    && Math.abs(last.box.baseY - api.state.calibrator.groundRef) < 0.03,
+    `箱底=${last.box.baseY?.toFixed(3)} 地面线=${api.state.calibrator.groundRef?.toFixed(3)}`);
+  ok('箱子始终整个留在画面里（宽高比换算后左右都不越界）',
+    last.box.cx - (last.box.w / 2) / 1.6 > 0 && last.box.cx + (last.box.w / 2) / 1.6 < 1,
+    JSON.stringify(last.box));
+  ok('箱子正面写着「跳过箱子」（文案走 i18n，不写死在画布里）',
+    boxFrames.every((f) => f.label === '跳过箱子'), boxFrames[0]?.label);
+
+  // 箱子跟着人走：人往左挪，箱子也往左挪
+  {
+    const cxBefore = api.state.detector.box.cx;
+    pump(fit3(sp3({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' }), { dx: -0.25 }), 60);
+    const cxAfter = api.state.detector.box.cx;
+    ok('箱子跟着人走（人往左挪，箱子也跟着挪到人的正前方）',
+      cxAfter < cxBefore - 0.08, `${cxBefore.toFixed(3)} → ${cxAfter.toFixed(3)}`);
+  }
+
+  // 别的动作不该出现箱子
+  api.openExercise('squat');
+  pump(null, 3);
+  pump(idle(), 10);
+  ok('别的动作画面上没有箱子（只有跳箱才有）', seen.slice(-12).every((f) => f.box === null));
+
+  // 跳过箱顶：箱子转成「已越过」，并且真的计一次
+  api.openExercise('boxJump');
+  pump(null, 3);
+  pump(idle(), 60);
+  // 走 [14] 那条路：就位后主循环会自己进倒计时，把倒计时起点往前挪就立刻开练
+  api.state.countdownStartedAt = clock - 4000;
+  pump(idle(), 25);
+  ok('跳箱也能真的进入计数状态（不是空跑）', api.state.session === 'running', api.state.session);
+  const boxH = api.state.detector.boxLine;
+  const sawCleared = [];
+  api.renderer.draw = (o) => {
+    seen.push({ session: api.state.session, box: o?.box ?? null, label: o?.boxLabel ?? '' });
+    if (o?.box) sawCleared.push(!!o.box.cleared);
+  };
+  const startReps = api.state.detector.validReps;
+  // 一次跳过去的弧线：整具骨架按正弦抬起（最高点比箱顶高 35%）
+  for (let i = 0; i < 16; i++) {
+    pump(fit3(sp3({ knee: 120 + 58 * (i / 15), lean: 8, armDown: 0, ankleX: 1.0, view: 'front' }), {
+      dy: boxH * 1.35 * Math.sin(Math.PI * (i / 15)),
+    }), 1);
+  }
+  pump(idle(), 30);
+  ok('跳过箱顶 → 计一次（用户要求「当用户跳过这个箱子则计一次」）',
+    api.state.detector.validReps > startReps,
+    `${startReps} → ${api.state.detector.validReps}`);
+  ok('越过去之后画面上的箱子转成「已越过」（cleared = true）', sawCleared.some(Boolean));
+
+  // 恢复现场
+  api.renderer.draw = savedDraw;
+  api.engine.detect = savedDetect;
+  api.state.engineReady = savedEngineReady;
+  api.camera.stream = savedStream;
+  api.camera.video.currentTime = 0;
+  Object.defineProperty(globalThis, 'performance', { value: savedPerf, configurable: true, writable: true });
+  windowStub.performance = savedPerf;
   api.state.session = 'idle';
 }
 

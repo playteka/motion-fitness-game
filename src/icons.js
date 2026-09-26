@@ -64,10 +64,11 @@ const seg = (a, b) => ({ a, b });
  * @param o.elbow     肘角
  * @param o.armDown   上臂相对向下的角度
  * @param o.airborne  跳起来（整幅图离地）
+ * @param o.box       脚下画一个**箱子**（跳箱那一格：人要跳过它）
  */
 function buildStand({
   knee = 176, thighFwd = null, backKnee = null, stride = 0, lean = 6,
-  armDown = 0, elbow = 172, airborne = false,
+  armDown = 0, elbow = 172, airborne = false, box = false,
 } = {}) {
   const lines = [];
   const circles = [];
@@ -108,8 +109,28 @@ function buildStand({
     x: p.x * STAND_SCALE + STAND_HIP_X,
     y: (p.y - lowest) * STAND_SCALE + STAND_FLOOR - (airborne ? 1.8 : 0),
   });
+  const drawn = lines.map((l) => seg(shift(l.a), shift(l.b)));
+  /**
+   * 跳箱那一格：脚下画一个**箱子**（四条边，已经是图标坐标，不参与上面的平移缩放）。
+   * 人已经腾空（`airborne` 把脚抬到了地面线上方），箱子就摆在原本脚底的位置上 ——
+   * 一眼就能看出「这一格是要跳过那个箱子」。
+   */
+  if (box) {
+    const bw = 7.4;
+    const bh = 2.6;
+    const x0 = STAND_HIP_X - bw / 2;
+    const x1 = STAND_HIP_X + bw / 2;
+    const y1 = STAND_FLOOR + 1.4;
+    const y0 = y1 - bh;
+    drawn.push(
+      seg({ x: x0, y: y0 }, { x: x1, y: y0 }),
+      seg({ x: x1, y: y0 }, { x: x1, y: y1 }),
+      seg({ x: x1, y: y1 }, { x: x0, y: y1 }),
+      seg({ x: x0, y: y1 }, { x: x0, y: y0 }),
+    );
+  }
   return {
-    lines: lines.map((l) => seg(shift(l.a), shift(l.b))),
+    lines: drawn,
     circles: circles.map((c) => ({ ...shift(c), r: c.r * STAND_SCALE })),
   };
 }
@@ -575,7 +596,14 @@ export function poseFor(stage, ctx = {}) {
         : { builder: 'stand', params: { elbow: drawn, armDown: 6 }, criterion: { elbow: value }, drawn: { elbow: drawn } };
     }
     case 'lift':
-      return { builder: 'stand', params: { knee: 150, lean: 10, armDown: -25, elbow: 168, airborne: true } };
+      // 跳箱那一格（`boxCleared` / `boxLine`）：人腾空到箱子上面，脚下画着那个箱子
+      return {
+        builder: 'stand',
+        params: {
+          knee: 150, lean: 10, armDown: -25, elbow: 168, airborne: true,
+          ...(stage.detFlag === 'boxCleared' || stage.valueFrom === 'boxLine' ? { box: true } : {}),
+        },
+      };
     case 'shoulderDrop':
       // 肩膀沉到接近地面：撑地姿势下肘弯得越多、身体越低（物理上就是这么回事）
       return {

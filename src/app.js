@@ -2889,11 +2889,21 @@ function loop() {
   // 实时指标（调试用）
   renderDebug(frame, outline);
 
+  /**
+   * 跳箱的**箱子**：几何由识别器自己算（`trackBox`）——箱顶就是判定线，一处定义不会漂移。
+   * 每帧都调、不只在计数时调：校准 / 3-2-1 倒计时 / 暂停时箱子都要在画面上摆着，
+   * 用户才能看着箱子调整站位（用户要求「在视频画面中画出一个箱子让用户跳跃」）。
+   */
+  const box = (!state.homeMode && state.exerciseId === 'boxJump' && det?.trackBox)
+    ? det.trackBox(frame, now)
+    : null;
+
   // 绘制
   const status = !frame.ok ? 'idle'
     : (!det || det.active ? (now - state.lastCueAt < 2000 ? 'warn' : 'ok') : 'warn');
   renderer.draw({
     landmarks, frame, exerciseId: state.exerciseId, status, outline,
+    box, boxLabel: box ? t('box.label') : '',
   });
 
   updateHud();

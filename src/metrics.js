@@ -438,6 +438,11 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     coreVis,
     visFloor,
     groundY,
+    /**
+     * 画面宽高比（= 宽 / 高）：把「画面高为单位」的长度换算成「画面宽比例」时要用它。
+     * 跳箱的箱子在画面上有宽度，识别器要把宽度摆正、还要把人挡住箱子的一半时用它。
+     */
+    aspect,
     shoulderWidth: shoulderW,
     hipWidth: hipW,
     points: metric,

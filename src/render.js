@@ -189,13 +189,17 @@ export class PoseRenderer {
    *   exerciseId 当前动作
    *   status    'ok' | 'good' | 'warn' | 'bad' | 'idle'
    *   outline   { kind, status, flip } 传入时先画校准轮廓
+   *   box       跳箱的箱子（`BoxJumpDetector.trackBox` 的结果）—— 先画箱子再画骨架，
+   *             这样人跳起来时骨架在箱子上面，看起来才像「从箱子后面跳过去」
    */
   draw({
-    landmarks, frame, exerciseId, status = 'idle', outline = null,
+    landmarks, frame, exerciseId, status = 'idle', outline = null, box = null, boxLabel = '',
   }) {
     const { ctx, canvas } = this;
     this.clear();
     if (outline) this.drawOutline(outline.kind || outline.view, outline.status, !!outline.flip);
+    // 箱子画在最底层：与地面线、人体一起出现在同一套视频坐标里
+    if (box) this.drawBox(box, { label: boxLabel });
     if (!landmarks || !landmarks.length) return;
 
     const W = canvas.width;
@@ -258,6 +262,105 @@ export class PoseRenderer {
     if (this.showAngles && frame && frame.ok) {
       this.drawAngles(landmarks, frame, exerciseId, W, H, base);
     }
+  }
+
+  /**
+   * 跳箱的**箱子**（用户要求：「要在视频画面中画出一个箱子让用户跳跃」）。
+   *
+   * 位置和高度**完全来自识别器**（`BoxJumpDetector.trackBox`）：箱子贴着校准地面线摆，
+   * 箱顶就是判定线「脚越过这里才算一次」—— 画面上看到的箱顶与识别器判的那条线是同一个数，
+   * 不会出现「看着跳过去了却没计」。
+   *
+   * 画三层：
+   *   1. 立柱 + 箱体（正面一条亮边、顶面一条更宽的亮边 = 要越过去的那条线）；
+   *   2. 左侧一根**高度标尺**：里面的填充 = 现在脚离地多高 ÷ 箱高 —— 跳的时候能直接看出还差多少；
+   *   3. 越过去之后整只箱子转成绿色（和进度条的「点亮」同一个语言）。
+   *
+   * @param {{cx:number,w:number,h:number,baseY:number,lift:number,cleared:boolean}} box
+   *        cx 是画面宽比例；w / h / baseY / lift 都是「画面高为单位」
+   * @param {{label?:string}} o 箱子正面那行小字（走 i18n，由调用方传进来）
+   */
+  drawBox(box, { label = '' } = {}) {
+    if (!box) return;
+    const { ctx, canvas } = this;
+    const W = canvas.width;
+    const H = canvas.height;
+    const base = Math.max(2, W / 420);
+    const w = box.w * H;
+    const h = box.h * H;
+    const cx = box.cx * W;
+    const bottom = box.baseY * H;
+    const top = bottom - h;
+    const left = cx - w / 2;
+    const right = cx + w / 2;
+    const cleared = !!box.cleared;
+    const pct = Math.max(0, Math.min(1, (box.lift || 0) / (box.h || 1)));
+    const edge = cleared ? '#4ade80' : '#38bdf8';
+
+    ctx.save();
+    // ---- 箱体：正面一块半透明底 + 两条横向木条，看起来是个能跳的箱子 ----
+    ctx.fillStyle = cleared ? 'rgba(74,222,128,0.20)' : 'rgba(30,41,59,0.62)';
+    ctx.fillRect(left, top, w, h);
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = base * 1.6;
+    ctx.globalAlpha = 0.95;
+    ctx.beginPath();
+    ctx.moveTo(left, top);
+    ctx.lineTo(left, bottom);
+    ctx.lineTo(right, bottom);
+    ctx.lineTo(right, top);
+    ctx.stroke();
+    // 横条（木箱的分层）：让箱子不是一块空白
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = base * 0.9;
+    for (const k of [0.34, 0.67]) {
+      const y = top + h * k;
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+      ctx.stroke();
+    }
+    // ---- 箱顶 = 判定线：画粗一点、亮一点（这是「跳过去」的那条线） ----
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = base * 2.6;
+    ctx.strokeStyle = edge;
+    ctx.shadowColor = edge;
+    ctx.shadowBlur = base * 6;
+    ctx.beginPath();
+    ctx.moveTo(left, top);
+    ctx.lineTo(right, top);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // ---- 高度标尺：脚离地多高（填充到箱顶就计次） ----
+    const gaugeX = left - base * 3.4;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = base * 1.2;
+    ctx.strokeStyle = '#94a3b8';
+    ctx.beginPath();
+    ctx.moveTo(gaugeX, top);
+    ctx.lineTo(gaugeX, bottom);
+    ctx.stroke();
+    ctx.globalAlpha = 0.95;
+    ctx.strokeStyle = cleared ? '#4ade80' : '#fbbf24';
+    ctx.lineWidth = base * 2.2;
+    ctx.beginPath();
+    ctx.moveTo(gaugeX, bottom);
+    ctx.lineTo(gaugeX, bottom - h * pct);
+    ctx.stroke();
+
+    // ---- 正面那行小字（i18n 由调用方给；没有就不画） ----
+    if (label) {
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = `600 ${Math.max(10, Math.round(h * 0.30))}px system-ui, -apple-system, "Noto Sans SC", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, cx, top + h * 0.55);
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+    }
+    ctx.restore();
   }
 
   drawAngles(landmarks, frame, exerciseId, W, H, base) {

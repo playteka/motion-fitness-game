@@ -30,7 +30,7 @@ import { HOLD_PRIME_MS, HOLD_GRACE_MS } from './detector-base.js';
 import { getStepPlan, planKeyOf } from './steps.js';
 import { t } from './i18n.js';
 import {
-  SQUAT, LUNGE, PUSHUP, BRIDGE, PLANK, CRUNCH,
+  SQUAT, LUNGE, PUSHUP, BRIDGE, PLANK, CRUNCH, BOXJUMP,
 } from './exercises.js';
 
 /* ------------------------------------------------------------------ *
@@ -630,6 +630,52 @@ function crunchSpecs() {
 }
 
 /* ------------------------------------------------------------------ *
+ * 跳箱（画面里画一个箱子，**跳过它**才算一次）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 用户要求：「要在视频画面中画出一个箱子让用户跳跃，当用户跳过这个箱子则计一次」。
+ *
+ * 判据只有两条，而且**两条都能在画面上看见**：
+ *   ② 屈膝蓄力：膝角 ≤ `BOXJUMP.crouchKnee`（不蓄力直接蹦也能计次，只是拿不到这一步的分）；
+ *   ③ **跳过箱顶**：脚的最低点离地高度 ≥ 箱高 —— 这一条就是「人跳到箱子上面去了」。
+ *
+ * ⚠️ 箱高**不是写死的常数**：它是「0.55 × 你自己站着时的膝高」（见 `BOXJUMP.boxKneeFrac`），
+ * 所以机位远近、个子高矮都跟得上；弹窗里显示的这条线（`boxLine`）、画面上画出来的箱顶、
+ * 识别器判定用的那条线**是同一个数**（`valueFrom: 'boxLine'`）。
+ */
+function boxJumpSpecs() {
+  return {
+    count: [
+      item({
+        labelKey: 'spec.boxLoad',
+        metricKey: 'metric.knee',
+        op: 'lte',
+        value: roundFor(BOXJUMP.crouchKnee, DEG),
+        unit: DEG,
+        noteKey: 'spec.note.boxLoad',
+      }),
+      item({
+        labelKey: 'spec.boxTop',
+        metricKey: 'metric.lift',
+        op: 'gte',
+        value: roundFor(BOXJUMP.fallbackBox, LIFT),
+        unit: LIFT,
+        noteKey: 'spec.note.boxTop',
+        noteParams: {
+          frac: BOXJUMP.boxKneeFrac,
+          min: BOXJUMP.minBox.toFixed(2),
+          max: BOXJUMP.maxBox.toFixed(2),
+        },
+      }),
+      item({ labelKey: 'spec.minRep', op: 'gte', value: roundFor(BOXJUMP.minRepMs / 1000, S), unit: S, noteKey: 'spec.note.boxTempo' }),
+    ],
+    posture: gateItems('standUpright'),
+    advice: advisoryItems('standUpright'),
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * 姿态提醒（只出声纠正，不拦计数）
  * ------------------------------------------------------------------ */
 
@@ -664,6 +710,7 @@ const BUILDERS = {
   plank: plankSpecs,
   crunch: crunchSpecs,
   seatedForwardFold: seatedFoldSpecs,
+  boxJump: boxJumpSpecs,
 };
 
 /**
@@ -886,6 +933,11 @@ const SHORT_LABEL = {
   'spec.bridgeSupine': 'spec.short.supine',
   'spec.postureKeep': 'spec.short.pose',
   'spec.pushupPose': 'spec.short.prone',
+  // 跳箱（用户要求「画面里画出一个箱子让用户跳跃」）：三格的短标签
+  //   ① 站好 = 站姿门控那一格（spec.pose.standUpright → spec.short.stand，上面已经有了）
+  //   ② 屈膝蓄力 / ③ 跳过箱顶（画面上就画着那个箱子）
+  'spec.boxLoad': 'spec.short.boxLoad',
+  'spec.boxTop': 'spec.short.boxTop',
 };
 
 const STAGE_TOLERANCE = { deg: 2, torso: 0.03, shin: 0.05, lift: 0.01, s: 0.05, count: 0.5 };
@@ -1126,6 +1178,22 @@ export function specStages(id) {
     if (onStage) stages.push(onStage);
     pushItem(count.find((it) => it.labelKey === switchKey) || pick('spec.altSwitch'),
       { kind: 'finish', detFlag: 'switched' });
+  } else if (id === 'boxJump') {
+    /**
+     * 跳箱（用户要求「画面里画一个箱子，跳过去就计一次」）：三格关键帧
+     *   ① **站好**（面对箱子）= 上面的门控格（不依赖地面线的站姿判据）
+     *   → ② **屈膝蓄力**
+     *   → ③ **跳过箱顶**（脚的最低点高过箱顶）—— 这一格点亮的那一刻就是计次那一刻
+     *     （`detFlag: 'boxCleared'` = 识别器自己的计次状态，`valueFrom: 'boxLine'` = 画面上画的那个箱顶）。
+     *
+     * 「落地站稳」不占一格：计次发生在**越过箱顶那一帧**（跳过去立刻报数），
+     * 落地只是允许下一次的前提（迟滞），写成格子反而会出现「条满了但还没计次」。
+     */
+    pushItem(pick('spec.boxLoad'), { kind: 'count' });
+    const topItem = pick('spec.boxTop');
+    if (topItem) {
+      stages.push(toStage(topItem, { kind: 'finish', valueFrom: 'boxLine', detFlag: 'boxCleared' }));
+    }
   } else if (meta.engine === 'sequence') {
     // 多段动作：按顺序每一段都要做到，最后一段完成即计次
     const seq = count.filter((it) => /^spec\.seq\d+$/.test(it.labelKey));
@@ -1247,6 +1315,12 @@ const STEP_STAGE = {
  */
 const STEP_STAGE_BY_ID = {
   crunch: { setup: 'crunchLie', engage: 'crunchCurl', top: 'crunchTop', lower: 'crunchLie' },
+  // 跳箱（动作自己的三格方案）：站好（站姿门控那一格）→ 屈膝蓄力 → 跳过箱顶（计次）
+  //   「屈膝缓冲落地」这一步的分**也记在最后一格**上：计次发生在越过箱顶那一刻，
+  //   落地没有自己的关键帧（多一格会出现「条满了但还没计次」），但它确实是这一格的收尾动作。
+  boxJump: {
+    setup: 'stand', load: 'boxLoad', clear: 'boxTop', land: 'boxTop',
+  },
 };
 
 /**

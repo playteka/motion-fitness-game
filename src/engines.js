@@ -264,7 +264,7 @@ export const GATES = {
 };
 
 /** 每个门控对应「现在该怎么做」的提示键后缀 */
-const GATE_HINT = {
+export const GATE_HINT = {
   stand: 'stand', standWide: 'stand', standUpright: 'stand', standOneLeg: 'stand', standWall: 'stand',
   standHeelUp: 'stand', standArmCross: 'stand', standFold: 'stand',
   prone: 'prone', proneHigh: 'prone', proneFloor: 'prone', proneLift: 'prone',
