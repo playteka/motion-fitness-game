@@ -285,6 +285,8 @@ export function foldShin(lm, side, foldDeg) {
   const iHip = LM[`${side}_HIP`];
   const iKnee = LM[`${side}_KNEE`];
   const iAnkle = LM[`${side}_ANKLE`];
+  const iHeel = LM[`${side}_HEEL`];
+  const iFoot = LM[`${side}_FOOT`];
   const toM = (p) => ({ x: p.x * ASPECT, y: p.y });
   const hip = toM(lm[iHip]);
   const knee = toM(lm[iKnee]);
@@ -294,6 +296,26 @@ export function foldShin(lm, side, foldDeg) {
   const a = thighDir + (foldDeg * Math.PI) / 180;
   const x = knee.x + Math.cos(a) * shinLen;
   const y = knee.y + Math.sin(a) * shinLen;
+  /**
+   * 脚跟 / 脚尖跟着小腿一起转（绕着膝转同样的角度）。
+   * 不转它们的话，「脚跟到髋的距离」这个指标在测试里永远是站立的 1.0 ——
+   * 而勾腿跳的**第二路证据**判的正是它（见 metrics.js 的 perSide.kick）。
+   */
+  const rot = (p) => {
+    const dx = p.x - knee.x;
+    const dy = p.y - knee.y;
+    const cos = Math.cos((foldDeg * Math.PI) / 180);
+    const sin = Math.sin((foldDeg * Math.PI) / 180);
+    return { x: knee.x + dx * cos - dy * sin, y: knee.y + dx * sin + dy * cos };
+  };
+  if (lm[iHeel]) {
+    const h = rot(toM(lm[iHeel]));
+    lm[iHeel] = { ...lm[iHeel], x: h.x / ASPECT, y: h.y };
+  }
+  if (lm[iFoot]) {
+    const ft = rot(toM(lm[iFoot]));
+    lm[iFoot] = { ...lm[iFoot], x: ft.x / ASPECT, y: ft.y };
+  }
   lm[iAnkle] = { ...lm[iAnkle], x: x / ASPECT, y };
   return lm;
 }

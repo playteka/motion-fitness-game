@@ -327,6 +327,8 @@ export const SIDE_METRICS = {
   ankleY: (f, s) => f.perSide?.[s]?.ankleY,
   // 单侧「腿伸出去的程度」（膝角与髋角取小，见 metrics.js）：死虫式用它
   legOut: (f, s) => f.perSide?.[s]?.legOut,
+  // 单侧「脚跟到同侧髋的距离 ÷ 腿长」（站立 ≈1.0、真勾腿 ≈0.5）：勾腿跳的第二路证据
+  kick: (f, s) => f.perSide?.[s]?.kick,
 };
 
 /**
@@ -641,6 +643,37 @@ class AltRepDetector extends DetectorBase {
      * 换边时另一条腿大概 200~400ms 就回到桌面位了，1.2 秒还没回去说明是真的两条腿一起动。
      */
     this.pendingMs = p.pendingMs ?? 1200;
+    /**
+     * **第二路证据**（可选，勾腿跳在用）：`{ metric, dip, leadMin }` —— **相对判据**。
+     *
+     * 用户反馈「跳得时候经常无法计数，尤其是跳得快的时候」。查下来有两层原因：
+     *   ① 快节奏 + 动作模糊 + 平滑滤波会把**采样到的**最小膝角压浅（实测差 10~30°），
+     *      而膝角那条线必须卡得很紧（松一点「原地小跑」就会被算成勾腿）；
+     *   ② **跳得快时人是在原地小弹跳，两条腿都不会再伸直** —— 支撑腿一直停在判定线附近，
+     *      「这一侧不在做」这个状态再也不出现，交替的上升沿就再也抓不到，后面的次数全丢。
+     *
+     * 所以补一路**跨度大、而且相对自己基线**的证据：`perSide.kick` = 脚跟到同侧髋的距离 ÷ 腿长
+     * （见 metrics.js）：站立 ≈1.0、原地小跑 ≥0.95、真正勾到臀部 ≈0.45~0.7。
+     * 判定写成「**比自己最近『腿伸直』时的读数近了 `dip`（默认 0.12，勾腿跳就用 0.12）**」——
+     *   - 小跑的相对变化只有 0.02~0.05，永远够不到 ✅ 不会被误算成勾腿；
+     *   - 真勾腿哪怕是快跳、膝角读数被压浅，脚跟确实上来了 0.3~0.45 ✅ 照样计上；
+     *   - 它跟着你自己的基线走，所以**两条腿不用伸直也能各自判定**（解决了上面 ② 那层原因）。
+     *
+     * 两路证据取「**或**」，谁先到线算谁的（和臀桥 / 平板支撑那套「或」判据同一个思路）。
+     * `altLeadMin` 是这一路自己的「明显更深」门槛（比例量：默认 0.08 = 8% 腿长，勾腿跳配 0.06 = 6%）。
+     */
+    this.altMetric = p.altMetric || null;
+    this.altDip = p.altDip ?? 0.12;
+    /** 膝角那一路额外要求「脚跟至少也上来一点」（见 deepNow 的说明；0 = 不额外要求） */
+    this.altKneeDip = p.altKneeDip ?? 0;
+    this.altLeadMin = p.altLeadMin ?? 0.08;
+    /** 每一侧「腿伸直」时的基线（相对判据的基准，见 altActive） */
+    this.altBase = { L: NaN, R: NaN };
+    /**
+     * 「两条腿同帧跨线、但一时分不出谁更深」时等多久（毫秒）：等这段时间里谁先明显更深就算谁，
+     * 一直分不出来（两条腿一起弯，不是交替）就整帧丢掉。
+     */
+    this.tieMs = p.tieMs ?? 200;
   }
 
   /** 另一侧现在是不是还在休息位（没配 otherHold 就永远成立） */
@@ -663,6 +696,8 @@ class AltRepDetector extends DetectorBase {
     /** 挂起的『已经伸出来、但另一条腿还没回到休息位』的那一侧（见 flushPending） */
     this.pendingSide = null;
     this.pendingAt = 0;
+    /** 挂起的『两条腿同帧进线、一时分不出谁更深』的那一对（见 flushTie） */
+    this.tiePair = null;
     /** 每一侧「现在正在做」的迟滞状态（进入用 onValue、退出用 offValue）—— 只用于显示 */
     this.sideOn = { L: false, R: false };
     /** 每一侧这一轮「在做」是从什么时候开始的（用于 strokeMs 超时退出） */
@@ -686,6 +721,75 @@ class AltRepDetector extends DetectorBase {
   isActive(v) {
     if (!Number.isFinite(v)) return false;
     return this.cmp === 'lt' ? v <= this.onValue : v >= this.onValue;
+  }
+
+  /** 第二路证据的读数（没配就返回 NaN） */
+  altRead(f, s) {
+    if (!this.altMetric) return NaN;
+    const read = SIDE_METRICS[this.altMetric] || SIDE_METRICS.knee;
+    return read(f, s);
+  }
+
+  /**
+   * 第二路证据到线了没有：**比自己「腿伸直」时的基线近了 `altDip`**（相对判据，见构造函数）。
+   * 基线还没测到（比如刚站起来）时这一路不参与，交给膝角那条路。
+   */
+  altActive(v, s) {
+    if (!this.altMetric || !Number.isFinite(v)) return false;
+    const base = this.altBase[s];
+    if (!Number.isFinite(base) || base < 0.75) return false;
+    return v <= base - this.altDip;
+  }
+
+  /** 更新第二路证据的基线（缓慢回落的「最大值」，跟着姿势漂移） */
+  updateAltBase(f) {
+    if (!this.altMetric) return;
+    for (const s of ['L', 'R']) {
+      const v = this.altRead(f, s);
+      if (!Number.isFinite(v)) continue;
+      const prev = Number.isFinite(this.altBase[s]) ? this.altBase[s] : v;
+      this.altBase[s] = Math.max(v, prev - (this.p.altDecay ?? 0.003));
+    }
+  }
+
+  /**
+   * 这一帧某一侧算不算「在做」（勾腿跳这类配了第二路证据的动作）。
+   *
+   * 规则（**两路证据取「或」，但第二路一旦可用就以「脚跟有没有上来」为准**）：
+   *   ① 没配第二路证据（死虫式 / 登山者）→ 就是原来的指标线；
+   *   ② 第二路可用（脚跟看得见、而且已经测到「腿伸直」的基线）：
+   *      - 脚跟比自己伸直时近了 `altDip`（0.12）→ 算「勾起来了」；
+   *      - 指标（膝角）到线，**并且脚跟至少也上来一点**（`altKneeDip`，0.06）→ 也算。
+   *        为什么膝角这一路还要加「脚跟也上来一点」：快跳时**支撑腿的膝盖也会弯到线内**
+   *        （实测 120~140°），只看膝角会把支撑腿也当成「在勾」，交替的上升沿就乱了 ——
+   *        而「脚跟到髋的距离」不受这个影响（支撑腿的脚跟几乎不动）。
+   *   ③ 第二路量不到（脚跟不可见 / 还没建立基线）→ 退回指标线，绝不因为量不到就不计次。
+   */
+  deepNow(f, s) {
+    const kneeOk = this.isActive((SIDE_METRICS[this.metricName] || SIDE_METRICS.knee)(f, s));
+    if (!this.altMetric) return kneeOk;
+    const v = this.altRead(f, s);
+    const base = this.altBase[s];
+    // 脚跟的可见度：太低时这一路不参与（退回指标线，宁可放过也不要漏计）
+    const heelVis = Number(f.perSide?.[s]?.heelVis);
+    const visOk = !Number.isFinite(heelVis) || heelVis >= 0.4;
+    const armed = Number.isFinite(v) && Number.isFinite(base) && base >= 0.75 && visOk;
+    if (!armed) return kneeOk;
+    if (v <= base - this.altDip) return true;
+    return kneeOk && v <= base - this.altKneeDip;
+  }
+
+  /**
+   * 「深了多少」的统一尺度（用来比较两条腿谁更深，只在**同一路证据**之间比较）：
+   *   角度类 → 越过判定线多少度；相对比例类（kick）→ 比自己基线近了多少（×100 变成可比的量级）。
+   */
+  depthMargin(f, s) {
+    const v = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee)(f, s);
+    const km = Number.isFinite(v) ? (this.cmp === 'lt' ? this.onValue - v : v - this.onValue) : -Infinity;
+    const av = this.altRead(f, s);
+    const base = this.altBase[s];
+    const am = Number.isFinite(av) && Number.isFinite(base) ? (base - av) * 100 : -Infinity;
+    return { knee: km, alt: am };
   }
 
   isIdle(v) {
@@ -742,18 +846,18 @@ class AltRepDetector extends DetectorBase {
    * 就按更深的那一侧计次；两条腿一样深（一起弯，不是交替）仍然不认。
    */
   countRises(f, now) {
-    const read = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee);
     const rise = [];
     const val = {};
     for (const s of ['L', 'R']) {
-      const v = read(f, s);
-      val[s] = v;
-      const deep = this.isActive(v);          // 这一帧是否「在做」（不看迟滞）
+      val[s] = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee)(f, s);
+      const deep = this.deepNow(f, s);        // 两路证据取「或」（不看迟滞）
       if (deep && !this.wasDeep[s]) rise.push(s);
       this.wasDeep[s] = deep;
     }
     // 先处理上一帧被「另一条腿还在动」挡下来的那一侧
     this.flushPending(f, now);
+    // 再处理「上一帧两条腿一起进线、一时分不出谁更深」的那一对（见 tieSide）
+    this.flushTie(f, now);
     if (!rise.length) return;
     // 配了 otherHold 的动作（死虫式）：另一条腿必须还在休息位，一次只做一条腿。
     // 不满足时先把这一侧**挂起来**（见 flushPending），不要因为换边那一瞬间
@@ -776,15 +880,57 @@ class AltRepDetector extends DetectorBase {
     }
     if (rise.length === 2) {
       const [a, b] = rise;
-      const va = val[a];
-      const vb = val[b];
-      const deeper = this.cmp === 'lt' ? (va <= vb ? a : b) : (va >= vb ? a : b);
-      const lead = Math.abs(va - vb);
-      if (Number.isFinite(lead) && lead >= this.leadMin && allow(deeper)) {
-        if (deeper !== this.lastSide) this.switched = false;
-        this.countRep(deeper, now);
+      const pick = this.deeperOf(f, a, b);
+      if (!pick) {
+        // 两条腿同帧进线、这一帧还分不出谁更深：**别丢**，挂起来等一小会儿（见 flushTie）。
+        // 用户反馈「跳得快的时候经常无法计数」——快跳时两条腿常常同一帧跨线，
+        // 而更深的那一条往往要再一两帧才显出来；旧写法这一帧直接丢掉，那一次就永远没了。
+        this.tiePair = { a, b, at: now };
+        return;
       }
+      if (!allow(pick)) return;
+      if (pick !== this.lastSide) this.switched = false;
+      this.countRep(pick, now);
     }
+  }
+
+  /**
+   * 两条腿同帧进线时，判断哪一条是**真正勾起来**的那条。
+   *
+   * 判据是「明显更深」，而且**在同一路证据内部**比较：
+   *   - 两腿都靠「脚跟到髋的比例」过的线 → 用比例差（`altLeadMin`，勾腿跳 = 0.06 腿长）——
+   *     这一路跨度大（1.0 → 0.5），真实勾腿与支撑腿差得很开；
+   *   - 否则用膝角差（`leadMin`，勾腿跳 = 18°）。
+   * 两条腿一样深（一起弯，不是交替）返回 null。
+   */
+  deeperOf(f, a, b) {
+    const ma = this.depthMargin(f, a);
+    const mb = this.depthMargin(f, b);
+    const bothAlt = this.altMetric && this.altActive(this.altRead(f, a), a) && this.altActive(this.altRead(f, b), b);
+    const bothKnee = Number.isFinite(ma.knee) && Number.isFinite(mb.knee)
+      && this.isActive((SIDE_METRICS[this.metricName] || SIDE_METRICS.knee)(f, a))
+      && this.isActive((SIDE_METRICS[this.metricName] || SIDE_METRICS.knee)(f, b));
+    const key = bothAlt ? 'alt' : (bothKnee ? 'knee' : (Number.isFinite(ma.alt) && Number.isFinite(mb.alt) ? 'alt' : 'knee'));
+    const lead = Math.abs(ma[key] - mb[key]);
+    const need = key === 'alt' ? this.altLeadMin * 100 : this.leadMin;
+    if (!Number.isFinite(lead) || lead < need) return null;
+    return ma[key] >= mb[key] ? a : b;
+  }
+
+  /** 补记「两条腿同帧进线、稍后才分出更深那一条」的那一次（见 countRises 的 tiePair） */
+  flushTie(f, now) {
+    if (!this.tiePair) return;
+    const { a, b, at } = this.tiePair;
+    // 两条腿都不在「在做」里了 → 这一对早结束了，丢掉
+    if (!this.deepNow(f, a) && !this.deepNow(f, b)) { this.tiePair = null; return; }
+    const pick = this.deeperOf(f, a, b);
+    if (pick) {
+      this.tiePair = null;
+      if (pick !== this.lastSide) this.switched = false;
+      this.countRep(pick, now);
+      return;
+    }
+    if (now - at > this.tieMs) this.tiePair = null;   // 等超时：当作「两条腿一起弯」丢掉
   }
 
   /**
@@ -849,14 +995,21 @@ class AltRepDetector extends DetectorBase {
     const read = (SIDE_METRICS[this.metricName] || SIDE_METRICS.knee);
     const one = (s) => {
       const v = read(this._lastFrame || {}, s);
-      return `${s}:${Number.isFinite(v) ? Math.round(v) : '—'}${this.sideOn[s] ? '✓' : ''}`;
+      // 第二路证据（勾腿跳的「脚跟到髋」）也摆出来：快跳时看得见它有没有到线
+      const av = this.altRead(this._lastFrame || {}, s);
+      const altTxt = Number.isFinite(av) ? `/${fmt(av)}` : '';
+      return `${s}:${Number.isFinite(v) ? Math.round(v) : '—'}${altTxt}${this.sideOn[s] ? '✓' : ''}`;
     };
     const line = this.cmp === 'lt'
       ? `≤${fmt(this.onValue)}/≥${fmt(this.offValue)}`
       : `≥${fmt(this.onValue)}/≤${fmt(this.offValue)}`;
+    // 第二路证据是**相对判据**：比自己「腿伸直」时的基线近了 altDip 就算勾起来
+    const altLine = this.altMetric ? `${this.altMetric}≤base-${fmt(this.altDip)}` : '';
     return [
       { key: 'debug.diag.sides', value: `${one('L')} ${one('R')}` },
       { key: 'debug.diag.line', value: line },
+      // 第二路证据单独一行（标签走 i18n，值里不写中文 —— 源码里不允许出现写死的中文）
+      ...(altLine ? [{ key: 'debug.diag.lineAlt', value: altLine }] : []),
       // 死虫式：另一条腿必须留在桌面位（这条不满足时这一帧不会计次，所以单独摆出来）
       ...(this.otherHold
         ? [{
@@ -909,8 +1062,19 @@ class AltRepDetector extends DetectorBase {
     //    「保持 25ms 才计次」整轮抓不到；而「回到休息位再结算」在快节奏下也漏 ——
     //    勾完那条腿只回到 121°~126°，迟滞状态会「粘住」。上升沿只看这一帧有没有进到线内。
     // ④ 退出的线（offValue）只用于**显示**的迟滞状态与 700ms 超时，不参与计次。
+    // ⚠️ 顺序：先用**上一帧的基线**判「在做」，再更新基线 —— 否则这一帧自己的读数会先把基线拉低，
+    // 相对判据就永远差一点点够不到（经典的「自己把自己压下去」）。
     this.countRises(f, now);
+    this.updateAltBase(f);
     this.updateSides(f, now);     // 只驱动深度条与 🐞 诊断行
+    /**
+     * 「现在有任意一条腿正在做」——进度条第一格用它点亮。
+     *
+     * 为什么不用「某一侧的膝角 ≤ onValue」当那一格的判据：配了第二路证据的动作（勾腿跳）
+     * 可能是**靠第二路计的次**（快跳时膝角读数被压浅），那样会出现「链还没走完就已经计次」，
+     * 正好违反「所有关键帧都做完才计次」这条约定。所以这一格直接用识别器自己的判定结果。
+     */
+    this.anyKicked = ['L', 'R'].some((s) => this.deepNow(f, s));
 
     const on = ['L', 'R'].filter((s) => this.sideOn[s]);
     const target = on.length === 1 ? on[0] : (on.length === 2 ? this.sideNow : null);

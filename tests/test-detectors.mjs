@@ -1616,6 +1616,40 @@ console.log('\n[7c] 勾腿跳：快节奏也能计上（真实帧）');
     const { reps } = runKick(600, { both: true, depth: 110 });
     ok('反例：两条腿同相一起弯（不是交替）不计次', reps <= 1, `计到 ${reps} 次`);
   }
+
+  /* ---- 用户第二次反馈：「跳得时候经常无法计数，尤其是跳得快的时候」 ----
+     查下来是：快跳时人是在原地小弹跳，**支撑腿的膝盖也会弯到判定线以内**（实测 120~140°），
+     于是「这一侧不在做」这个状态再也不出现，交替的上升沿抓不到、后面的次数全丢。
+     修法是给勾腿跳补一路**相对自己基线**的证据：`perSide.kick`（脚跟到同侧髋 ÷ 腿长），
+     并且规定「膝角到线时，脚跟至少也要上来一点」—— 支撑腿的脚跟几乎不动，就不会再被当成勾腿。 */
+  {
+    // 支撑腿也下得很深（膝角时常进线）：旧判据在这种模型里只能计到 15/37 左右
+    for (const [cyc, idle] of [[500, 60], [430, 70]]) {
+      const { reps, expect } = runKick(cyc, { idleFold: idle, depth: 110 });
+      ok(`勾腿跳：支撑腿也弯到判定线以内（折 ${idle}°）时，${cyc}ms 一轮照样计得上`,
+        reps >= Math.round(expect * 0.9), `计到 ${reps}/${expect} 次`);
+    }
+    {
+      // 极端压力模型：支撑腿折 80°（几乎和勾腿一样深，真人不会这样）—— 也要计到 ≥80%
+      const { reps, expect } = runKick(430, { idleFold: 80, depth: 110 });
+      ok('勾腿跳：极端情况下（支撑腿折 80°，两条腿读数接近）仍计到 ≥80%',
+        reps >= Math.round(expect * 0.8), `计到 ${reps}/${expect} 次`);
+    }
+    // 第二路证据本身：站立 ≈1.0、原地小跑 ≥0.95、真勾腿 ≈0.5~0.7（跨度大，被平滑压一点也够用）
+    const kickOf = (fold) => {
+      const lm = fit(standingPose({ knee: 172, lean: 5, armDown: 0, ankleX: 1.0, view: 'side' })).map((p) => ({ ...p }));
+      if (fold) foldLeg(lm, 'L', fold);
+      return frameOf(lm, 0).perSide.L.kick;
+    };
+    const kStand = kickOf(0);
+    ok('勾腿跳第二路证据：腿伸直时「脚跟到髋 ÷ 腿长」≈1.0',
+      kStand > 0.95 && kStand < 1.1, String(kStand));
+    ok('勾腿跳第二路证据：原地小跑（折 35°）仍在 0.95 以上 —— 所以不会被误算成勾腿',
+      kickOf(35) > 0.95, String(kickOf(35)));
+    const kKick = kickOf(120);
+    ok('勾腿跳第二路证据：真正勾到臀部（折 120°）掉到 0.5~0.7 之间',
+      kKick > 0.5 && kKick < 0.72, String(kKick));
+  }
 }
 
 /* ------------------------------------------------------------------ *

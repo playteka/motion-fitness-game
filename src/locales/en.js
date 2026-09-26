@@ -324,6 +324,8 @@ export default {
       // Alternating exercises (butt kick / mountain climber / dead bug): both legs, the alternation lines, last side
       sides: 'Both sides',
       line: 'Line (enter/exit)',
+      // Second evidence for the alternating family (butt kick: heel-to-hip distance / leg length)
+      lineAlt: 'Second evidence (OR)',
       otherHold: 'Other-leg rule',
       // Crunch: trunk tilt (now / lying baseline), shoulder-hip ratio (now / line), head height (now / line)
       torsoTilt: 'Trunk tilt (now/base)',
@@ -819,6 +821,7 @@ export default {
     otherSide: 'Knee angle on the other side',
     // Dead bug: the criterion is "how far the leg reaches out" = the smaller of knee and hip angle
     oneSideLeg: 'Reach of the extending leg (smaller of knee/hip)',
+    kick: 'Heel to hip (× leg length)',
     otherSideLeg: 'Reach of the other leg (smaller of knee/hip)',
   },
 
@@ -920,6 +923,7 @@ export default {
     altOnButtKick: 'Kick (heel up toward your glutes)',
     altSwitchButtKick: 'Kick the other leg (counts at the switch)',
     altOtherHold: 'Keep the other leg in the tabletop',
+    altKick: 'How far the heel came up towards the glutes (second evidence)',
     altHold: 'How long the movement must be held',
     altGap: 'Gap between two counted reps',
     twistAmount: 'Twist range of the upper body',
@@ -1039,6 +1043,10 @@ export default {
         + 'The side you just used has to come back to {rel}{rest}°, and two reps have to be at least {gap} s apart.',
       altHold: 'The working side has to stay there this long to count once (filters out jitter).',
       altGap: 'At least this much time between two counted reps.',
+      altKick: '**Second evidence (an OR)**: the heel-to-hip distance divided by leg length — coming {dip} closer than when your leg is straight counts as a kick.'
+        + ' Why it is needed: when you jump fast neither leg straightens any more and even the support leg\u2019s knee crosses the line, so the knee angle alone starts counting the support leg and the alternation gets confused;'
+        + ' the heel-to-glute distance is unaffected (a jog changes it by only 0.02-0.05, a real kick by 0.3-0.45).'
+        + ' The knee-angle path additionally requires the heel to come up at least {kneeDip}, so both legs bending together is still never counted as a kick.',
       altOtherHold: '**The other leg has to stay in the starting position** (for the dead bug: the bent-knee tabletop at 90°) — '
         + 'when this does not hold, that frame is not counted, because “both legs extending at once” is a different exercise, not the dead bug alternation.',
       supineLying: 'There are **two ways to prove you are lying down, and either one is enough**: the torso is close to horizontal in '

@@ -987,11 +987,14 @@ console.log('\n[6] alt 引擎：左右交替');
   // 手搓帧的符号必须跟真实量一致：站着 shoulderAboveHip ≈ **+1.0**（hipRise 则是 −1.0）。
   // 真实帧上的符号由 tests/test-detectors.mjs 用合成姿势 + computeFrame 兜底验证 ——
   // 这里曾经把 hipRise 写成 +1.0，于是门控和测试一起错、真机上永远提示「还没进入这个动作的姿势」。
-  const kickFrame = (kick) => ({
+  //
+  // `kick` 是**第二路证据**（脚跟到同侧髋的距离 ÷ 腿长，见 metrics.js）：手搓帧里不给它时
+  // 识别器就退回膝角那一路（**绝不因为量不到就不计次**）；给了就按「比自己伸直时近了 0.12」判。
+  const kickFrame = (kick, kickVals = null) => ({
     ok: true, torsoIncl: 10, shoulderAboveHip: 1.0, hipRise: -1.0, kneeClear: 0.5, hipClear: 1.0,
     perSide: {
-      L: { knee: kick === 'L' ? 65 : 170 },
-      R: { knee: kick === 'R' ? 65 : 170 },
+      L: { knee: kick === 'L' ? 65 : 170, ...(kickVals ? { kick: kickVals.L, heelVis: 0.9 } : {}) },
+      R: { knee: kick === 'R' ? 65 : 170, ...(kickVals ? { kick: kickVals.R, heelVis: 0.9 } : {}) },
     },
   });
   const det = createDetector('buttKick');
@@ -1014,10 +1017,17 @@ console.log('\n[6] alt 引擎：左右交替');
   r.run([{ f: kickFrame('L'), ms: 200 }]);
   const d = det.diag();
   const got = (key) => d.find((x) => x.key === key)?.value;
-  ok('勾腿跳：诊断行给出两条腿的读数（在做的那一侧带 ✓）',
+  ok('勾腿跳：诊断行给出两条腿的读数（手搓帧没有脚跟数据时只显示膝角）',
     /^L:\d+✓ R:\d+$/.test(got('debug.diag.sides')), String(got('debug.diag.sides')));
   ok('勾腿跳：诊断行给出真正的交替线（进入 126 / 退出 132）',
     got('debug.diag.line') === '≤126/≥132', String(got('debug.diag.line')));
+  ok('勾腿跳：诊断行单独列出第二路证据（相对自己「腿伸直」的基线，两路取「或」）',
+    got('debug.diag.lineAlt') === 'kick≤base-0.12', String(got('debug.diag.lineAlt')));
+  // 有脚跟数据时，那一行会把两路读数都摆出来（快跳时看得见 kick 到没到线）
+  r.run([{ f: kickFrame('L', { L: 0.62, R: 1.0 }), ms: 200 }]);
+  ok('勾腿跳：诊断行在有脚跟数据时同时显示「膝角/脚跟到髋」',
+    /^L:\d+\/0\.6\d✓ R:\d+\/1(\.0\d)?$/.test(String(det.diag().find((x) => x.key === 'debug.diag.sides')?.value)),
+    String(det.diag().find((x) => x.key === 'debug.diag.sides')?.value));
   ok('勾腿跳：诊断行给出当前侧与「上一侧 / 间隔」',
     got('debug.diag.side') === 'L' && /^[LR] \d+ms$/.test(got('debug.diag.lastSide')),
     `${got('debug.diag.side')} / ${got('debug.diag.lastSide')}`);

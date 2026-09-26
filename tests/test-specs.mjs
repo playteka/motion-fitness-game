@@ -944,6 +944,14 @@ console.log('\n[10] 关键帧线条图标');
       && uniqueStages(stK, ctxK).length === 3);
     ok('勾腿跳：最后一格判据用识别器自己的「换边成功」标记（点亮即计次）',
       stK[2].detFlag === 'switched', String(stK[2].detFlag));
+    // 第二路证据（脚跟到髋）：弹窗里要列出来，第一格也要用识别器自己的判定结果点亮 ——
+    // 否则「靠第二路计了次、进度条第一格还是灰的」，违反「关键帧全做完才计次」。
+    ok('勾腿跳：弹窗里列出第二路证据「脚跟往臀部勾起来」（相对自己伸直的基线，单位 ×腿长）',
+      itemsOf('buttKick').some((it) => it.labelKey === 'spec.altKick'
+        && it.metricKey === 'metric.kick' && it.unit === 'ratio'),
+      JSON.stringify(itemsOf('buttKick').map((it) => `${it.labelKey}:${it.metricKey}`)));
+    ok('勾腿跳：第二格「勾腿」用识别器自己的判定（两路证据取「或」之后的结果）点亮',
+      stK[1].detFlag === 'anyKicked', String(stK[1].detFlag));
     // 用户要求「第二格之后应该是『勾腿』『勾另一条腿』」→ 关键帧名称按这个动作说
     ok('勾腿跳：关键帧短标签是「勾腿 / 勾另一条腿」（不是通用的「发力 / 换边」）',
       stK[1].shortKey === 'spec.short.tuck' && stK[2].shortKey === 'spec.short.tuckOther'
@@ -953,10 +961,13 @@ console.log('\n[10] 关键帧线条图标');
       JSON.stringify(stagePoints('buttKick').map((r) => r.points)) === '[5,10,22]'
       && stagePoints('buttKick')[2].bonus === 6,
       JSON.stringify(stagePoints('buttKick')));
-    ok('勾腿跳：最后一格的补充说明带上了「回到 ≥132°/最短间隔 0.1 秒」的参数',
+    // 最短间隔 = 勾腿跳参数里的 minRepMs（这一版为快节奏从 95ms 收到 80ms）
+    const gapSec = Number(((EXERCISE_MAP.buttKick.params || {}).minRepMs ?? 0) / 1000);
+    ok('勾腿跳：最后一格的补充说明带上了「回到 ≥132°/最短间隔」的参数（跟在参数上）',
       stK[2].item.noteKey === 'spec.note.altSwitch'
-      && stK[2].item.noteParams?.rest === 132 && stK[2].item.noteParams?.gap === 0.1,
-      JSON.stringify(stK[2].item.noteParams));
+      && stK[2].item.noteParams?.rest === 132
+      && Number(stK[2].item.noteParams?.gap) === Number(gapSec.toFixed(2)),
+      JSON.stringify([stK[2].item.noteParams, gapSec]));
   }
   // 死虫式（用户反馈「关键帧判别标准都不对」→ 判据重做）：
   // 判「腿伸出去的程度」（膝角与髋角取小）而不是膝角，而且另一条腿必须留在桌面位。

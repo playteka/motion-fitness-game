@@ -243,6 +243,25 @@ function altSpecs(meta) {
     })
     : null;
   if (otherItem) items.splice(1, 0, otherItem);
+  /**
+   * **第二路证据**（勾腿跳）：`perSide.kick` = 脚跟到同侧髋的距离 ÷ 腿长，判的是
+   * 「比自己腿伸直时近了 altDip」。它是「或」的关系，所以列在计次判据里、并说明这一点 ——
+   * 用户反馈「跳得快的时候经常无法计数」时，靠的就是这一路（见 engines.js 的 deepNow）。
+   */
+  if (p.altMetric === 'kick') {
+    items.push(item({
+      labelKey: 'spec.altKick',
+      metricKey: 'metric.kick',
+      op: 'lte',
+      value: roundFor(1 - (p.altDip ?? 0.12), RATIO),
+      unit: RATIO,
+      noteKey: 'spec.note.altKick',
+      noteParams: {
+        dip: (p.altDip ?? 0.12).toFixed(2),
+        kneeDip: (p.altKneeDip ?? 0).toFixed(2),
+      },
+    }));
+  }
   items.push(item({ labelKey: 'spec.altHold', op: 'gte', value: roundFor(holdMs / 1000, S), unit: S, noteKey: 'spec.note.altHold' }));
   items.push(item({ labelKey: 'spec.altGap', op: 'gte', value: roundFor(minRepMs / 1000, S), unit: S, noteKey: 'spec.note.altGap' }));
   return {
@@ -1083,6 +1102,12 @@ export function specStages(id) {
     const onItem = count.find((it) => it.labelKey === onKey) || count.find((it) => it.labelKey === 'spec.altOn');
     const holdItem = count.find((it) => it.labelKey === 'spec.altOtherHold');
     const onStage = onItem ? toStage(onItem, { kind: 'count' }) : null;
+    /**
+     * 配了第二路证据的动作（勾腿跳）：第一格「在做」直接用**识别器自己的判定结果**点亮
+     * （`anyKicked` = 两路证据取「或」之后的结果）。
+     * 不然会出现「靠第二路计了次，而进度条第一格还是灰的」——违反「所有关键帧都做完才计次」。
+     */
+    if (onStage && meta.params?.altMetric) onStage.detFlag = 'anyKicked';
     // 「另一条腿留在桌面位」（死虫式的 otherHold）是**计次的必要条件**，
     // 所以挂在同一格上（`also`，渲染成「… 且 …」），不另开一格 ——
     // 否则「所有关键帧都做完 = 计次」这条约定就破了。
