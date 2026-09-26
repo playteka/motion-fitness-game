@@ -15,6 +15,14 @@
   --score: #ffd166;
   --radius: 16px;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  /**
+   * **所有圆环共用的直径**（用户要求「各个圆环大小一样，保持对称」）。
+   *
+   * 右上角的 HUD 进度圆环与左下角的「退出」圆环都用它 —— 改这一个数，两个圆环一起变，
+   * 所以它们永远一样大、永远成对角。小屏用 clamp 收一收，免得在小窗口里比例失真。
+   * （app.js 里读不到元素尺寸时会按同一组 clamp 参数兜底，见 RING_PX_FALLBACK。）
+   */
+  --ring-px: clamp(96px, 10vw, 132px);
 }
 
 * { box-sizing: border-box; }
@@ -277,7 +285,7 @@ kbd {
 .hud-sub { color: #cfe4f7; font-size: 13.5px; margin-top: 2px; opacity: 0.9; }
 .hud-extra { color: var(--muted); font-size: 12.5px; margin-top: 6px; min-height: 18px; }
 
-.hud-ring { position: relative; width: 118px; height: 118px; }
+.hud-ring { position: relative; width: var(--ring-px); height: var(--ring-px); }
 .hud-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: rgba(255, 255, 255, 0.14); stroke-width: 9; }
 .ring-fg {
@@ -903,11 +911,10 @@ kbd {
 }
 .corner-ring[hidden] { display: none; }
 .corner-ring .ring-btn {
-  /* 位置与大小由 JS 按舞台比例设（见 app.js 的 CORNER_RING / CORNER_RING_SIZE）：
-     贴在左下角，下沿留在判定进度条上方 */
-  width: 11%;
-  max-width: 150px;
-  min-width: 60px;
+  /* 直径与右上角的 HUD 进度圆环**同一个变量**（用户要求「各个圆环大小一样」）；
+     圆心位置由 JS 按舞台尺寸设（左下角，下沿留在判定进度条上方） */
+  width: var(--ring-px);
+  height: var(--ring-px);
   opacity: 0.9;
   background: rgba(6, 12, 20, 0.32);
 }
@@ -917,7 +924,7 @@ kbd {
 
 @media (max-width: 560px) {
   .ring-btn { width: 26%; min-width: 78px; }
-  .corner-ring .ring-btn { width: 18%; min-width: 56px; }
+  .corner-ring .ring-btn { width: var(--ring-px); height: var(--ring-px); }
   .gesture-hint { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {

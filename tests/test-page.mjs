@@ -156,6 +156,26 @@ console.log('\n[3] 静态资源与模型文件');
   }
   ok('两种语言的提示条文案都不超过 130 字（折 2 行以内）', overlong.length === 0, overlong.join(', '));
 
+  /* ---- 圆环尺寸：右上角的 HUD 进度环与左下角的「退出」环共用同一个变量，所以永远一样大 ----
+     用户要求：「左下角这个退出圆环…和右上角的圆环成对角的状态…各个圆环大小一样，保持对称」。 */
+  {
+    const ringPx = /--ring-px:\s*clamp\(([^)]*)\)/.exec(css)?.[1];
+    ok('圆环直径是一个共用变量 --ring-px（clamp 形式，小屏自己收一收）',
+      !!ringPx && ringPx.trim().split(',').length === 3, String(ringPx));
+    const hudBlock = /\.hud-ring\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    const cornerBlock = /\.corner-ring\s+\.ring-btn\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    ok('右上角 HUD 圆环的宽高 = --ring-px（不再写死 118px）',
+      /width:\s*var\(--ring-px\)/.test(hudBlock) && /height:\s*var\(--ring-px\)/.test(hudBlock),
+      hudBlock.trim());
+    ok('左下角「退出」圆环的宽高 = 同一个 --ring-px（所以两个圆环永远等大、成对角）',
+      /width:\s*var\(--ring-px\)/.test(cornerBlock) && /height:\s*var\(--ring-px\)/.test(cornerBlock),
+      cornerBlock.trim());
+    // 左下角的容器铺满舞台、靠 JS 摆到左下角，且不属于「一组结束」那两个圆环那一组
+    ok('左下角退出圆环有自己的容器（不与「一组结束后」的两个圆环共用显隐）',
+      /\.corner-ring\s*\{[^}]*position:\s*absolute/.test(css)
+      && /\.corner-ring\[hidden\]\s*\{\s*display:\s*none/.test(css));
+  }
+
   // 判定进度条：铺满视频底边的大部分，图标要够大（不然看不清姿态）
   const barBlock = /\.criteria-bar\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
   const barWidthPct = Number(/width:\s*min\([^,]+,\s*([\d.]+)%\)/.exec(barBlock)?.[1]);

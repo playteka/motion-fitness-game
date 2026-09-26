@@ -427,8 +427,9 @@ function showWorkout() {
   $('btnHome').hidden = false;
   $('btnExercise').hidden = false;   // 动作页才有「运动设定」
   renderExerciseSettings();
-  // 动作页的左下角一直摆着「退出」圆环（手或脚进去停 3 秒 → 退出这一组 + 退出全屏）
-  showCornerExit();
+  // 左下角的「退出」圆环不在这里摆：它**只在摄像头开着的时候**显示（用户要求），
+  // 由主循环里的 syncCornerExit() 每帧对齐（摄像头一开一关它自己出现/消失）。
+  syncCornerExit();
 }
 
 /** 从主页点进某个动作（进入训练页） */
@@ -739,25 +740,29 @@ const GESTURE_GRACE_MS = 300;
  *
  * 「在画面左下角划一个『退出』圆环，手或者脚进入之后保持 3 秒则退出运动以及全屏状态。
  *   圆环的动画效果和运动结束后的退出圆环保持一样。」
+ * 后续又要求：「左下角，和右上角的圆环成对角的状态，直径还可以再大一点，
+ *   右上角的圆环直径可以小一点，**各个圆环大小一样，保持对称**；而且只在打开摄像头的时候显示。」
  *
  * 所以它和「一组结束后」的那两个圆环**共用同一套东西**：同样的 `.ring-*` 样式与 SVG、
  * 同样的顺时针走满一圈动画、同样的 `paintRing` / `updateGesture` 逻辑、同样的 3 秒
- * （`GESTURE_HOLD_MS`）与同样宽容度（`GESTURE_GRACE_MS`），只是：
- *   - 位置固定在**左下角**、尺寸小一点（不挡动作画面）；
+ * （`GESTURE_HOLD_MS`）与同样宽容度（`GESTURE_GRACE_MS`）；尺寸与右上角的 HUD 进度环
+ * **共用 CSS 变量 `--ring-px`**（所以「各个圆环大小一样」是一条样式约束，不会各写各的），
+ * 位置摆在**左下角**、与右上角那个成对角。区别只有：
  *   - 手**或脚**都算（手腕/手掌中心，或踝关节）；
- *   - 触发后退出这一组**并退出全屏**（`showHome()` 里本来就会退出全屏）。
+ *   - 触发后退出这一组**并退出全屏**（`showHome()` 里本来就会退出全屏）；
+ *   - **只在摄像头开着的时候显示**（`camera.active`）。
  */
-const CORNER_RING = { x: 0.085, y: 0.74, labelKey: 'ui.gestureExit', timerId: 'ringQuickExitTimer' };
+/** 圆环外沿离画面左边这么远（与右上角 HUD 圆环的 18px 外边距左右对称） */
+const CORNER_RING_INSET_PX = 18;
 /**
- * 左下角圆环的直径（舞台宽度的比例，比中间那两个小一圈）。
- *
- * 位置是量过的：判定进度条画在画面底边（`bottom: 12px`、图标约 60~80px，约占画面高度 12%），
- * 所以圆环**下沿要留在进度条上方**（16:9 时圆环下沿 ≈ y + size×16/9/2 = 0.74 + 0.098 ≈ 0.84 < 0.86）。
- * 这样它贴着左下角、又不压住进度条（`tests/test-app.mjs` 里钉住了这条几何约束）。
+ * 圆环下沿离画面底部留这么高：判定进度条画在画面底边（`bottom: 12px` + 图标约 100px），
+ * 圆环必须留在它上方，否则会压住最左边那一格关键帧。
  */
-const CORNER_RING_SIZE = 0.11;
-/** 手脚要落在圆心这个半径内（同 RING_HIT 的口径，按画面宽度算） */
-const CORNER_RING_HIT = RING_HIT;
+const CORNER_RING_BOTTOM_PX = 122;
+/** 读不到元素真实尺寸时的兜底直径（与 style.css 里 `--ring-px` 的 clamp 参数保持一致） */
+const RING_PX_FALLBACK = { min: 96, vw: 0.10, max: 132 };
+/** 手指/脚趾要落在圆心这个比例（占直径）以内才算「进到圆环里」—— 约环半径的 60% */
+const RING_HIT_RATIO = 0.30;
 
 /** 手势圆环的运行时状态（进度 0~1、进入时刻、最后在里面的一刻） */
 const gestureState = {
@@ -769,15 +774,36 @@ const gestureState = {
   cornerVisible: false,
 };
 
-/** 圆环的圆心（舞台内的比例 → 像素） */
+/**
+ * 圆环的直径（像素）。
+ *
+ * 优先读元素真实尺寸（CSS 里的 `--ring-px`），读不到（还没布局 / 测试桩）就按
+ * 同一组 clamp 参数算 —— 这样判定半径和屏幕上看到的圆环永远对得上。
+ */
+function ringPx(key) {
+  const el = ringEl(key);
+  const w = el?.clientWidth || 0;
+  if (w > 0) return w;
+  return Math.round(clamp(stageSize().w * RING_PX_FALLBACK.vw, RING_PX_FALLBACK.min, RING_PX_FALLBACK.max));
+}
+
+/** 圆环的圆心（**像素**）：中间两个按比例摆，左下角那个固定贴在左下角 */
 function ringCenter(key, stageW, stageH) {
-  const r = key === 'corner' ? CORNER_RING : GESTURE_RINGS[key];
+  if (key === 'corner') {
+    const px = ringPx('corner');
+    return {
+      x: CORNER_RING_INSET_PX + px / 2,
+      y: stageH - CORNER_RING_BOTTOM_PX - px / 2,
+    };
+  }
+  const r = GESTURE_RINGS[key];
   return { x: r.x * stageW, y: r.y * stageH };
 }
 
-/** 圆环尺寸（比例的基准是舞台宽度） */
-function ringSize(key) {
-  return (key === 'corner' ? CORNER_RING_SIZE : RING_SIZE) * stageSize().w;
+/** 圆环的判定半径（像素）：中间两个沿用原来的比例口径，左下角那个按自己的直径算 */
+function ringHitRadius(key, size) {
+  if (key === 'corner') return ringPx('corner') * RING_HIT_RATIO;
+  return RING_HIT * size.w;
 }
 
 /**
@@ -833,19 +859,26 @@ function layoutGestureRings() {
   layoutCornerRing();
 }
 
-/** 左下角退出圆环的位置（同一套比例定位，全屏/横竖屏切换后要重摆） */
+/** 左下角退出圆环的位置（左下角、与右上角 HUD 圆环成对角；全屏/横竖屏切换后要重摆） */
 function layoutCornerRing() {
   const el = ringEl('corner');
   if (!el) return;
-  el.style.left = `${CORNER_RING.x * 100}%`;
-  el.style.top = `${CORNER_RING.y * 100}%`;
-  el.style.width = `${CORNER_RING_SIZE * 100}%`;
+  const size = stageSize();
+  const px = ringPx('corner');
+  const c = ringCenter('corner', size.w, size.h);
+  el.style.left = `${c.x}px`;
+  el.style.top = `${c.y}px`;
+  el.style.width = `${px}px`;
+  el.style.height = `${px}px`;
 }
 
 function ringEl(key) {
   if (key === 'corner') return $('ringQuickExit');
   return $(key === 'exit' ? 'ringExit' : 'ringRetry');
 }
+
+/** 左下角退出圆环上那个「退出」文案 / 计时器的元素 */
+function cornerLabelEl() { return $('ringQuickExitLabel'); }
 
 /** 一组做完 → 亮出两个圆环，并提示怎么用（语音 + 屏幕上方的提示条） */
 function showGestureRings({ speak = true } = {}) {
@@ -892,8 +925,8 @@ function hideGestureRings() {
     st.p = 0; st.since = 0; st.lastInside = 0; st.done = false;
     ringEl(key)?.classList.remove('dwelling', 'done');
   }
-  // 两个大圆环收起后，左下角那个常驻圆环重新摆出来（动作页上一直有）
-  if (state.session !== 'idle' && !state.homeMode) showCornerExit();
+  // 左下角那个常驻圆环的显示/隐藏由「摄像头开着没有」决定（每帧同步，见 syncCornerExit）
+  syncCornerExit();
 }
 
 /** 圆环的进度：顺时针走满一圈（dashoffset 从满到 0） */
@@ -908,11 +941,11 @@ function paintRing(key, p) {
   if (st.done) el.classList.add('done');
 }
 
-/** 手掌在不在这个圆环的中央 */
-function handInRing(palms, key, size) {
+/** 手/脚在不在这个圆环的中央（判定半径由 ringHitRadius 决定，每个环自己的口径） */
+function handInRing(points, key, size) {
   const c = ringCenter(key, size.w, size.h);
-  const hit = RING_HIT * size.w;
-  return palms.some((p) => Math.hypot(p.x - c.x, p.y - c.y) <= hit);
+  const hit = ringHitRadius(key, size);
+  return points.some((p) => Math.hypot(p.x - c.x, p.y - c.y) <= hit);
 }
 
 /**
@@ -955,9 +988,11 @@ function updateGesture(landmarks, now) {
 /**
  * 左下角的常驻「退出」圆环：显示 / 隐藏。
  *
- * 显示时机：**动作页上**（校准 / 倒计时 / 计数中 / 暂停 都算）都摆着 —— 手上全是汗、离键盘远的时候，
- * 手或脚伸进左下角那个圆环停 3 秒就能退出，不用去够按钮。
- * 「一组结束」的两个大圆环出来时收起来（那儿已经有「退出」了），回主页也收起来。
+ * 显示时机（用户要求）：**只在摄像头开着的时候**（`camera.active`）摆出来 —— 摄像头没开、
+ * 或者出错了，圆环就没意义（手/脚也识别不到）。摄像头开着时在校准 / 倒计时 / 计数中 / 暂停
+ * 都一直摆着，手或脚伸进去停 3 秒就能退出，不用去够按钮。
+ * 「一组结束」的两个大圆环出来时收起来（那儿已经有「退出」了）。
+ * 这一同步在每一帧做（`syncCornerExit`），所以摄像头一开一关它自己跟着出现/消失。
  */
 function showCornerExit() {
   const box = $('cornerExit');
@@ -966,9 +1001,9 @@ function showCornerExit() {
   const st = gestureState.corner;
   st.p = 0; st.since = 0; st.lastInside = 0; st.done = false;
   ringEl('corner')?.classList.remove('dwelling', 'done');
-  const label = $('ringQuickExitLabel');
-  if (label) label.textContent = t(CORNER_RING.labelKey);
-  const timer = $(CORNER_RING.timerId);
+  const label = cornerLabelEl();
+  if (label) label.textContent = t('ui.gestureExit');
+  const timer = $('ringQuickExitTimer');
   if (timer) timer.textContent = '';
   paintRing('corner', 0);
   box.hidden = false;
@@ -985,6 +1020,16 @@ function hideCornerExit() {
 }
 
 /**
+ * 把左下角退出圆环的显示状态与「摄像头开着没有」对齐（每帧调用，很便宜）。
+ * 条件：摄像头开着 + 不在主页 + 「一组结束」的两个大圆环没摆着。
+ */
+function syncCornerExit() {
+  const want = !!camera.active && !state.homeMode && !gestureState.visible;
+  if (want === gestureState.cornerVisible) return;
+  if (want) showCornerExit(); else hideCornerExit();
+}
+
+/**
  * 每帧更新左下角退出圆环：**手或脚**在圆心附近停满 GESTURE_HOLD_MS 就退出。
  * 进度与动画完全复用中间那两个圆环的那一套（paintRing / 同一组常量）。
  */
@@ -994,8 +1039,7 @@ function updateCornerExit(landmarks, now) {
   if (st.done) return false;
   const size = stageSize();
   const pts = touchPoints(landmarks, size.w, size.h, state.settings.mirror);
-  const inside = handInRing(pts, 'corner', size);
-  if (inside) {
+  const inside = handInRing(pts, 'corner', size);  if (inside) {
     st.lastInside = now;
     if (!st.since) st.since = now;
     st.p = clamp((now - st.since) / GESTURE_HOLD_MS, 0, 1);
@@ -1004,7 +1048,7 @@ function updateCornerExit(landmarks, now) {
     st.p = Math.max(0, st.p - 0.06);
   }
   paintRing('corner', st.p);
-  const timer = $(CORNER_RING.timerId);
+  const timer = $('ringQuickExitTimer');
   if (timer) {
     const left = Math.max(0, GESTURE_HOLD_MS - (now - st.since)) / 1000;
     timer.textContent = st.p > 0.02 && st.p < 1 ? `${left.toFixed(1)}s` : '';
@@ -2557,6 +2601,8 @@ function loop() {
     updateGesture(res ? res.landmarks : null, now);
   }
   // 左下角常驻的「退出」圆环：手或脚进去停满 3 秒 → 退出这一组 + 退出全屏
+  // （显示与否由摄像头开着没有决定，见 syncCornerExit）
+  syncCornerExit();
   if (gestureState.cornerVisible && updateCornerExit(res ? res.landmarks : null, now)) {
     triggerCornerExit();
   }
@@ -3100,8 +3146,9 @@ window.__mfg = {
   showGestureRings, hideGestureRings, updateGesture, triggerGesture, retrySet,
   gestureState, GESTURE_RINGS, GESTURE_HOLD_MS, RING_HIT,
   // 左下角常驻的「退出」圆环（手或脚进去停 3 秒 → 退出这一组 + 退出全屏）
-  showCornerExit, hideCornerExit, updateCornerExit, triggerCornerExit,
-  layoutCornerRing, touchPoints, CORNER_RING, CORNER_RING_SIZE,
+  showCornerExit, hideCornerExit, updateCornerExit, triggerCornerExit, syncCornerExit,
+  layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, stageSize,
+  CORNER_RING_INSET_PX, CORNER_RING_BOTTOM_PX, RING_HIT_RATIO,
   announceHoldCount, HOLD_COUNT_EVERY,
   announceTimeLeft, TIME_CALL_AT, targetPresetsFor, targetStepFor,
   buildMusicTracks, selectMusicTrack,
