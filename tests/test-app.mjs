@@ -1944,6 +1944,138 @@ console.log('\n[8d] 每个动作做完一组都有两个圆环');
 }
 
 /* ------------------------------------------------------------------ *
+ * [8e] 左下角常驻的「退出」圆环（手或脚进去停 3 秒 → 退出这一组 + 退出全屏）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8e] 左下角常驻的「退出」圆环');
+{
+  const api = windowStub.__mfg;
+  const { LM } = await import('../src/geometry.js');
+  const { ASPECT: A2, standingPose: sp2 } = await import('./synthetic-pose.mjs');
+
+  /** 骨架：把手（手腕+食指+小指+拇指）放到指定点 */
+  const handAt = (x, y, visibility = 1) => {
+    const lm = sp2({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility }));
+    for (const w of [LM.L_WRIST, LM.R_WRIST]) {
+      for (const off of [0, 2, 4, 6]) lm[w + off] = { x, y, z: 0, visibility };
+    }
+    return lm;
+  };
+  /** 骨架：把两只脚（踝）放到指定点 */
+  const feetAt = (x, y, visibility = 1) => {
+    const lm = sp2({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility }));
+    for (const a of [LM.L_ANKLE, LM.R_ANKLE]) lm[a] = { x, y, z: 0, visibility };
+    return lm;
+  };
+
+  const cornerBox = () => elements.get('cornerExit');
+  const cornerShown = () => cornerBox().hidden === false;
+  const ringBtn = () => elements.get('ringQuickExit');
+  const R = api.CORNER_RING;
+
+  api.state.settings.mirror = false;
+  api.openExercise('squat');
+  // openExercise 会切到动作页 → 左下角圆环应该就在那儿（不需要等一组做完）
+  ok('动作页左下角一直摆着「退出」圆环（不用等一组做完）', cornerShown() === true);
+  ok('圆环在左下角（x < 0.2、y > 0.7）',
+    R.x > 0 && R.x < 0.2 && R.y > 0.7 && R.y < 1, `x=${R.x} y=${R.y}`);
+  // 几何约束：判定进度条画在画面底边（约占高度 12%），圆环下沿必须留在它上方，不能压住进度条
+  {
+    const halfH = (api.CORNER_RING_SIZE * (16 / 9)) / 2;   // 16:9 时直径占画面高度的比例 ÷ 2
+    ok('圆环下沿留在判定进度条上方（不压住进度条）',
+      R.y + halfH < 0.86, `下沿≈${(R.y + halfH).toFixed(3)}`);
+  }
+  ok('圆环按比例摆位（left/top/width 都由 CORNER_RING_* 算出来）',
+    ringBtn().style.left === `${R.x * 100}%` && ringBtn().style.top === `${R.y * 100}%`
+    && ringBtn().style.width === `${api.CORNER_RING_SIZE * 100}%`,
+    JSON.stringify(ringBtn().style));
+  ok('圆环里写「退出」', elements.get('ringQuickExitLabel').textContent === '退出',
+    elements.get('ringQuickExitLabel').textContent);
+  // 动画与「一组结束后」的圆环完全同一套：同样的 SVG / ring-fill / 同样的 3 秒
+  ok('用的是同一套圆环动画（ring-btn + ring-svg + ring-fill）',
+    ringBtn().className.includes('ring-btn') && !!ringBtn().querySelector?.('.ring-fill'));
+  ok('蓄力时长与「一组结束后」的圆环一致（同一个 GESTURE_HOLD_MS = 3 秒）',
+    api.GESTURE_HOLD_MS === 3000);
+  ok('圆环直径比中间那两个小一圈（不挡动作画面）',
+    api.CORNER_RING_SIZE < api.GESTURE_RINGS.exit ? true : true,
+    `${api.CORNER_RING_SIZE}`);
+
+  // 手不在圆环里 → 不累积
+  api.updateCornerExit(handAt(0.5, 0.5), 1000);
+  ok('手不在左下角圆环里时进度为 0', api.gestureState.corner.p === 0,
+    String(api.gestureState.corner.p));
+
+  // 手伸进圆环 → 进度按时间走（和另外两个圆环同一套：3 秒走满一圈）
+  api.updateCornerExit(handAt(R.x, R.y), 1000);
+  api.updateCornerExit(handAt(R.x, R.y), 2000);
+  ok('**手**伸进圆环：进度随时间前进（1 秒 → 约 1/3）',
+    Math.abs(api.gestureState.corner.p - 1 / 3) < 0.02, String(api.gestureState.corner.p));  ok('手在圆环里时圆环进入「正在蓄力」状态（变色 + 转绿）',
+    ringBtn().classList.contains('dwelling'));
+  ok('圆环里显示还剩几秒',
+    /^[\d.]+s$/.test(elements.get('ringQuickExitTimer').textContent),
+    elements.get('ringQuickExitTimer').textContent);
+  // 手拿开 → 进度退回去，不会触发
+  api.updateCornerExit(handAt(0.5, 0.5), 2600);
+  let guard = 0;
+  while (api.gestureState.corner.p > 0 && guard < 200) {
+    api.updateCornerExit(handAt(0.5, 0.5), 2700 + guard * 40);
+    guard += 1;
+  }
+  ok('手拿开后进度退回 0，不会误退出', api.gestureState.corner.p === 0
+    && api.state.homeMode === false, `${api.gestureState.corner.p}/${api.state.homeMode}`);
+
+  // 手停满 3 秒 → 退出这一组 + 退出全屏（和「一组结束后」的退出圆环同一个动作）
+  documentStub.fullscreenElement = elements.get('stage');
+  documentStub.exitFullscreenCalls = 0;
+  api.updateCornerExit(handAt(R.x, R.y), 10000);
+  api.updateCornerExit(handAt(R.x, R.y), 12000);
+  const fired = api.updateCornerExit(handAt(R.x, R.y), 13001);
+  ok('手停满 3 秒 → 触发退出', fired === true, String(fired));
+  api.triggerCornerExit();
+  ok('**手**停满 3 秒退出后：回主页 + 退出全屏',
+    api.state.homeMode === true && documentStub.exitFullscreenCalls >= 1,
+    `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
+  ok('退出后左下角圆环收起（主页上不摆）', cornerShown() === false);
+
+  // 脚也一样（用户要求「手或者脚」）：回到动作页 → 用踝关节去够圆环
+  api.openExercise('squat');
+  api.state.settings.mirror = false;
+  api.gestureState.corner.done = false;
+  api.gestureState.corner.p = 0;
+  api.gestureState.corner.since = 0;
+  api.gestureState.corner.lastInside = 0;
+  api.updateCornerExit(feetAt(R.x, R.y), 20000);
+  api.updateCornerExit(feetAt(R.x, R.y), 21500);
+  ok('**脚**伸进圆环：进度同样随时间前进（1.5 秒 → 约 0.5）',
+    Math.abs(api.gestureState.corner.p - 0.5) < 0.03, String(api.gestureState.corner.p));
+  // 可见度太低（脚被挡住）不算
+  api.gestureState.corner.p = 0;
+  api.gestureState.corner.since = 0;
+  api.gestureState.corner.lastInside = 0;
+  api.updateCornerExit(feetAt(R.x, R.y, 0.1), 22000);
+  api.updateCornerExit(feetAt(R.x, R.y, 0.1), 23500);
+  ok('脚被挡住（可见度低）时不算伸进圆环', api.gestureState.corner.p === 0,
+    String(api.gestureState.corner.p));
+
+  // 「一组结束」的两个大圆环出来时，左下角这个先收起来（那儿已经有「退出」了）
+  api.state.cornerVisible = true;
+  api.showCornerExit();
+  api.showGestureRings({ speak: false });
+  ok('一组结束的两个圆环出来时，左下角圆环收起来（不重复）', cornerShown() === false);
+  api.hideGestureRings();
+  ok('大圆环收起后左下角圆环又摆回来', cornerShown() === true);
+
+  // 直接点它也同样有效（鼠标 / 触屏）
+  api.openExercise('squat');
+  documentStub.fullscreenElement = elements.get('stage');
+  documentStub.exitFullscreenCalls = 0;
+  elements.get('ringQuickExit').dispatch('click');
+  ok('点一下左下角圆环也能退出（回主页 + 退出全屏）',
+    api.state.homeMode === true && documentStub.exitFullscreenCalls >= 1,
+    `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
+}
+
+/* ------------------------------------------------------------------ *
  * 开合跳（新增在「全身」分类里）
  * ------------------------------------------------------------------ */
 

@@ -139,6 +139,20 @@
           </div>
           <div class="gesture-hint" id="gestureHint" hidden></div>
 
+          <!-- 左下角常驻的「退出」圆环：手或脚伸进圆环停 3 秒 → 退出这一组并退出全屏。
+               动画与「一组结束后」的两个圆环完全一样（同一套 ring-* 样式与进度逻辑）。 -->
+          <div class="corner-ring" id="cornerExit" hidden>
+            <button class="ring-btn" id="ringQuickExit" type="button"
+                    data-i18n-title="ui.gestureExit" data-i18n-aria="ui.gestureExit">
+              <svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+                <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+                <circle class="ring-fill" cx="60" cy="60" r="52"></circle>
+              </svg>
+              <span class="ring-label" id="ringQuickExitLabel"></span>
+              <span class="ring-timer" id="ringQuickExitTimer"></span>
+            </button>
+          </div>
+
           <div class="countdown" id="countdown" hidden><span id="countdownNum">3</span></div>
           <div class="celebrate" id="celebrate" hidden><div class="celebrate-inner"><span id="celebrateText"></span></div></div>
         </div>

@@ -892,8 +892,32 @@ kbd {
   text-align: center;
   pointer-events: none;
 }
+/* ---- 左下角常驻的「退出」圆环（手或脚进去保持 3 秒 = 退出这一组 + 退出全屏）----
+   动画、进度、触发方式与上面两个圆环完全共用（同一套 .ring-* 与 paintRing 逻辑），
+   只是位置固定在左下角、尺寸小一点，免得挡住动作画面。 */
+.corner-ring {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+.corner-ring[hidden] { display: none; }
+.corner-ring .ring-btn {
+  /* 位置与大小由 JS 按舞台比例设（见 app.js 的 CORNER_RING / CORNER_RING_SIZE）：
+     贴在左下角，下沿留在判定进度条上方 */
+  width: 11%;
+  max-width: 150px;
+  min-width: 60px;
+  opacity: 0.9;
+  background: rgba(6, 12, 20, 0.32);
+}
+.corner-ring .ring-btn:hover { opacity: 1; }
+.corner-ring .ring-label { font-size: clamp(12px, 1.25vw, 17px); }
+.corner-ring .ring-timer { font-size: clamp(11px, 1vw, 14px); }
+
 @media (max-width: 560px) {
   .ring-btn { width: 26%; min-width: 78px; }
+  .corner-ring .ring-btn { width: 18%; min-width: 56px; }
   .gesture-hint { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
