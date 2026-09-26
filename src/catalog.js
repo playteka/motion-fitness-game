@@ -310,7 +310,11 @@ export const EXERCISES = [
   }),
   e('seatedForwardFold', '🧎‍♂️', 'stretch', {
     kind: 'hold', plan: 'stretchHold', posture: 'seated', judge: 'pose', target: 30,
-    params: { gate: 'seatedFold' },
+    // 坐姿体前屈（用户给的运动学描述重做）：
+    //   ① 起始姿势「坐好」= 侧对镜头坐直：躯干 ≈0°、髋角 ≈90°、双腿伸直、坐在垫子上（seatedFoldStart，认到就锁存）；
+    //   ② 「前折到位」= 躯干前倾 ≈30°（此时髋角 ≈60°，两者之和 ≈90°）→ 这一条成立就开始计时。
+    //   全部是**角度判据**，不看校准地面线 —— 原来那条「髋离地高度 ≤0.9」就是「实际没有计时」的原因。
+    params: { gate: 'seatedFold', startGate: 'seatedFoldStart' },
   }),
 ];
 

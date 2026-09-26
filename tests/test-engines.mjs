@@ -1249,15 +1249,68 @@ console.log('\n[9] hold 引擎：姿势计时');
   atLeast('站姿体前屈：再折下去继续累积', det.holdMs - frozen, 2100);
 }
 {
-  // 坐姿体前屈：坐姿门控（seatedFold）
+  // 坐姿体前屈（用户给的运动学模型）：
+  //   ① 初始关键帧 = 侧对镜头坐好：躯干 ≈0°、髋角 ≈90°、双腿伸直 → **锁存**起始姿势；
+  //   ② 身体前折、躯干 ≈30° 就到位 → **开始计时**（此时髋角 ≈60°，两者之和 ≈90°）。
+  // 原来那两条判据（髋离地 ≤0.9 + 躯干 ≥40）在「校准地面线偏低」时永远不成立 —— 用户反馈「实际没有计时」。
+  const seatedUpright = (torsoUp = 0) => supinePose({
+    hip: { x: 0.68, y: 0.86 }, thighUp: 90, knee: 175, torsoUp, armDown: 0, elbow: 170,
+  });
   const det = createDetector('seatedForwardFold');
   const r = makeRunner(det);
-  r.run([{ pose: seatedFoldPose(245), ms: 4000 }]);
-  near('坐姿体前屈：折住 4 秒 ≈ 计时 4 秒', det.holdMs / 1000, 4, 0.3);
-  r.run([{ pose: seatedFoldPose(340), ms: 2000 }]);
-  ok('坐姿体前屈：坐直（躯干不再前折）→ 暂停计时', r.holds.some((h) => h.action === 'pause'),
+  r.run([{ pose: seatedUpright(0), ms: 1000 }]);
+  ok('坐姿体前屈：坐好（躯干 0°、髋 90°、腿伸直）会锁存起始姿势', det.startSeen === true,
+    `startSeen=${det.startSeen}`);
+  ok('坐姿体前屈：只坐好、还没前折 → 不计时', det.holdMs === 0 && det.active === false,
+    `holdMs=${det.holdMs} active=${det.active}`);
+  r.run([{ pose: seatedUpright(30), ms: 4000 }]);
+  near('坐姿体前屈：前折到躯干 ≈30° 就开始计时（4 秒 ≈ 计时 4 秒）', det.holdMs / 1000, 4, 0.4);
+  r.run([{ pose: seatedUpright(60), ms: 2000 }]);
+  ok('坐姿体前屈：折得更深继续计时', det.holdMs / 1000 > 5.4, `${(det.holdMs / 1000).toFixed(2)}s`);
+  r.run([{ pose: seatedUpright(0), ms: 2500 }]);
+  ok('坐姿体前屈：坐直回来（不再前折）→ 停表', r.holds.some((h) => h.action === 'pause'),
     JSON.stringify(r.holds.map((h) => h.action)));
   ok('坐姿体前屈：坐直后 active 归 false', det.active === false, `active=${det.active}`);
+}
+{
+  // 没坐好就直接前折 → 不计时（用户说「初始关键帧就是坐好」，所以起始姿势是前提）
+  const det = createDetector('seatedForwardFold');
+  const r = makeRunner(det);
+  r.run([{ pose: supinePose({ hip: { x: 0.68, y: 0.86 }, thighUp: 90, knee: 175, torsoUp: 45, armDown: 0, elbow: 170 }), ms: 3000 }]);
+  ok('坐姿体前屈：没坐好就直接前折 → 不计时', det.holdMs === 0 && det.active === false,
+    `holdMs=${det.holdMs}`);
+  ok('坐姿体前屈：提示「先坐直坐好」',
+    t(det.standby) !== det.standby && det.standby.includes('notSeated'), `${det.standby} → ${t(det.standby)}`);
+}
+{
+  // 旧判据的死穴：校准地面线偏低（旧「髋离地 ≤0.9」永远不成立）→ 现在照样计时。
+  // 新的四条判据全是角度（躯干倾角 / 髋角 / 膝角 / 髋比膝高），**完全不看地面线**。
+  const seatedFrame = (o = {}) => ({
+    ok: true, view: 'side', torsoIncl: o.torsoIncl ?? 40, hipAngle: o.hipAngle ?? 50,
+    foldSum: (o.torsoIncl ?? 40) + (o.hipAngle ?? 50), kneeAngle: 170, hipAboveKnee: 0.02,
+    shoulderClear: 0.9, hipClear: o.hipClear ?? 1.4, bodyStraight: 170, hipLineDev: 0,
+    torsoLen: 0.3, groundRef: 0.99, perSide: { L: {}, R: {} },
+  });
+  const det = createDetector('seatedForwardFold');
+  const r = makeFrameRunner(det);
+  r.run([{ f: seatedFrame({ torsoIncl: 0, hipAngle: 90, hipClear: 1.4 }), ms: 800 }]);   // 坐好（地面线偏低）
+  ok('坐姿体前屈：地面线偏低（髋离地 1.4）时也能锁存起始姿势', det.startSeen === true);
+  r.run([{ f: seatedFrame({ torsoIncl: 40, hipAngle: 50, hipClear: 1.4 }), ms: 4000 }]); // 前折
+  near('坐姿体前屈：地面线偏低时照样计时（旧的「髋离地 ≤0.9」在这里一次都不计时）',
+    det.holdMs / 1000, 4, 0.4);
+}
+{
+  // 反例①：站着（躯干 ≈0°、髋 ≈175° → 躯干+髋 ≈180°）不该计时
+  const det = createDetector('seatedForwardFold');
+  const r = makeRunner(det);
+  r.run([{ pose: IDLE_SIDE, ms: 3000 }]);
+  ok('坐姿体前屈：站着不计时', det.holdMs === 0 && det.active === false, `holdMs=${det.holdMs}`);
+  // 反例②：屈膝糊弄（膝只到 100°）也不计时
+  const det2 = createDetector('seatedForwardFold');
+  const r2 = makeRunner(det2);
+  r2.run([{ pose: supinePose({ hip: { x: 0.68, y: 0.86 }, thighUp: 90, knee: 100, torsoUp: 45, armDown: 0, elbow: 170 }), ms: 3000 }]);
+  ok('坐姿体前屈：屈着膝盖前折不计时（腿要伸直放平）', det2.holdMs === 0, `holdMs=${det2.holdMs}`);
+  void r; void r2;
 }
 {
   // 门控 hold 版本的垃圾姿势：站着喂侧平板

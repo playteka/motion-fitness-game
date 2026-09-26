@@ -325,6 +325,75 @@ function holdSpecs(meta) {
   return { count, posture: gateItems(gate), advice: [] };
 }
 
+/**
+ * 坐姿体前屈（用户给的运动学描述）。
+ *
+ * 「初始关键帧其实就是侧面向镜头坐好，此刻髋角度约 90°、躯干角度约为 0°。
+ *   当身体前屈的时候，躯干角度和髋角度相加之和应该始终在 90° 左右。
+ *   当身体前倾、躯干角度在 30 左右基本也就到位、可以开始计时了。」
+ *
+ * 所以两组判据分别对应两格关键帧：
+ *   ① **坐好**（`seatedFoldStart`，认到一次就锁存）：躯干 ≈0°、髋角 ≈90°、双腿伸直、坐在垫子上；
+ *   ② **前折到位**（`seatedFold`，成立就开始计时）：躯干倾角 ≥30°，并且
+ *      髋不比膝高、双腿仍伸直、**躯干角 + 髋角仍在 60°~125°**（用户给的恒等式 ≈90°）。
+ */
+function seatedFoldSpecs() {
+  const K = GATE_LIMITS.seatedFold;
+  const S0 = GATE_LIMITS.seatedFoldStart;
+  const count = [
+    item({ labelKey: 'spec.holdPrime', op: 'gte', value: roundFor(HOLD_PRIME_MS / 1000, S), unit: S, noteKey: 'spec.note.holdPrime' }),
+    item({ labelKey: 'spec.holdGrace', op: 'lte', value: roundFor(HOLD_GRACE_MS / 1000, S), unit: S, noteKey: 'spec.note.holdGrace' }),
+  ];
+  const posture = [
+    // ① 起始姿势「坐好」：躯干直立（≈0°）、髋角 ≈90°、双腿伸直、坐在垫子上
+    item({
+      labelKey: 'spec.seatedStart',
+      metricKey: 'metric.torsoIncl',
+      op: 'lte',
+      value: roundFor(S0.torsoIncl[1], DEG),
+      unit: DEG,
+      noteKey: 'spec.note.seatedStart',
+      noteParams: {
+        trunk: roundFor(S0.torsoIncl[1], DEG),
+        hipMin: roundFor(S0.hip[0], DEG),
+        hipMax: roundFor(S0.hip[1], DEG),
+        knee: roundFor(S0.knee[0], DEG),
+      },
+    }),
+    item({
+      labelKey: 'spec.seatedStart',
+      metricKey: 'metric.hip',
+      op: 'range',
+      value: roundFor(S0.hip[0], DEG),
+      value2: roundFor(S0.hip[1], DEG),
+      unit: DEG,
+    }),
+    item({ labelKey: 'spec.seatedStart', metricKey: 'metric.knee', op: 'gte', value: roundFor(S0.knee[0], DEG), unit: DEG }),
+    item({ labelKey: 'spec.seatedStart', metricKey: 'metric.hipAboveKnee', op: 'lte', value: roundFor(S0.hipAboveKnee[1], SHIN), unit: SHIN }),
+    // ② 前折到位 = 开始计时
+    item({
+      labelKey: 'spec.seatedFold',
+      metricKey: 'metric.torsoIncl',
+      op: 'gte',
+      value: roundFor(K.torsoIncl[0], DEG),
+      unit: DEG,
+      noteKey: 'spec.note.seatedFold',
+      noteParams: {
+        trunk: roundFor(K.torsoIncl[0], DEG),
+        sumMin: roundFor(K.foldSum[0], DEG),
+        sumMax: roundFor(K.foldSum[1], DEG),
+        knee: roundFor(K.knee[0], DEG),
+        hipAbove: roundFor(K.hipAboveKnee[1], SHIN),
+      },
+    }),
+    item({ labelKey: 'spec.seatedFold', metricKey: 'metric.foldSum', op: 'range', value: roundFor(K.foldSum[0], DEG), value2: roundFor(K.foldSum[1], DEG), unit: DEG }),
+    item({ labelKey: 'spec.seatedFold', metricKey: 'metric.knee', op: 'gte', value: roundFor(K.knee[0], DEG), unit: DEG }),
+    item({ labelKey: 'spec.seatedFold', metricKey: 'metric.hipAboveKnee', op: 'lte', value: roundFor(K.hipAboveKnee[1], SHIN), unit: SHIN }),
+  ];
+  const advice = advisoryItems('seated') || [];
+  return { count, posture, advice };
+}
+
 /* ------------------------------------------------------------------ *
  * 五个手写识别器（阈值最精确，直接读它们的常量表）
  * ------------------------------------------------------------------ */
@@ -507,6 +576,7 @@ const BUILDERS = {
   pushup: pushupSpecs,
   bridge: bridgeSpecs,
   plank: plankSpecs,
+  seatedForwardFold: seatedFoldSpecs,
 };
 
 /**
@@ -571,6 +641,8 @@ export const SPEC_METRICS = {
   torsoIncl: (f) => f.torsoIncl,
   // 肩关节角（髋-肩-肘）：平板支撑用它判「上臂有没有撑住」（不依赖地面线）
   shoulderAngle: (f) => f.shoulderAngle,
+  // 「躯干倾角 + 髋角」之和：坐姿体前屈的恒等式 ≈90°（见 metrics.js 的说明）
+  foldSum: (f) => f.foldSum,
   shoulderClear: (f) => f.shoulderClear,
   kneeClear: (f) => f.kneeClear,
   hipClear: (f) => f.hipClear,
@@ -702,6 +774,9 @@ const SHORT_LABEL = {
   'spec.plankHard': 'spec.short.holdPlank',
   // 平板支撑第二格：肩关节角（髋-肩-肘）——「上臂撑住了」
   'spec.plankHard|shoulderAngle': 'spec.short.prop',
+  // 坐姿体前屈：① 坐好（起始姿势）② 前折到位（开始计时）
+  'spec.seatedStart': 'spec.short.seat',
+  'spec.seatedFold': 'spec.short.fold',
   'spec.plankSoft': 'spec.short.line',
   'spec.plankKnee': 'spec.short.knee',
   'spec.holdPrime': 'spec.short.holdTime',
@@ -777,7 +852,9 @@ export function specStages(id) {
   //    （深蹲「髋比膝高 ≥ 0.86」、箭步蹲「双腿伸直角 ≥ 145°」）。
   const GATED_BUILTINS = new Set(['pushup', 'bridge']);
   const gateItem = posture.find(isLiveItem);
-  if (gateItem) {
+  // 坐姿体前屈有两格关键帧（坐好 → 前折到位），门控格在下面按它自己的两格单独摆，
+  // 不走这里通用的「第一格 = 门控」那条路（否则第一格会挂上识别器的 gateOk 而不是锁存的 startSeen）。
+  if (gateItem && id !== 'seatedForwardFold') {
     const flag = isHold ? 'gateOk' : (GATED_BUILTINS.has(id) ? 'active' : (BUILDERS[id] ? null : 'gateOk'));
     const gateStage = toStage(gateItem, { kind: 'gate', detFlag: flag, pose: true });
     // 「或」门控（仰卧类）：第二条证据是**替代**判据，不是「还要满足」——写成 alt 让界面显示成「A 或 B」
@@ -789,7 +866,20 @@ export function specStages(id) {
   }
 
   if (isHold) {
-    // 计时类没有「往复」，姿势的每一条就是一个台阶（撑起来 → 离地 → 手贴地）；
+    // 坐姿体前屈（用户给的两格关键帧）：① 坐好（起始姿势，认到一次就常亮）
+    //   → ② 前折到位（**开始计时**那一刻）。
+    // 两格各自用识别器自己的标记：第一格是**锁存的** startSeen（前折不会把它取消），
+    // 第二格是 gateOk（= 躯干前倾 ≥30° 且髋不比膝高、腿伸直、躯干角+髋角 ≈90°）。
+    if (id === 'seatedForwardFold') {
+      const startItems = posture.filter((it) => it.labelKey === 'spec.seatedStart');
+      const foldItems = posture.filter((it) => it.labelKey === 'spec.seatedFold');
+      const startStage = startItems.filter(isStageItem)[0];
+      const foldStage = foldItems.filter(isStageItem)[0];
+      if (startStage) stages.push(toStage(startStage, { kind: 'gate', detFlag: 'startSeen', pose: true }));
+      if (foldStage) stages.push(toStage(foldStage, { kind: 'hold', detFlag: 'gateOk' }));
+      return dedupeStages(stages);
+    }
+    // 其余计时类没有「往复」，姿势的每一条就是一个台阶（撑起来 → 离地 → 手贴地）；
     // 最后一格 = 姿势到位、计时开始（计时类没有「计次」，所以不参与「最后一格=计次」的约定）
     for (const it of posture.filter(isLiveItem).slice(0, 4)) {
       if (it === gateItem) continue;

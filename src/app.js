@@ -587,18 +587,17 @@ function keyframeRowsHtml(id) {
     const condText = `${cond}${altText}${alsoText}`;
     const lines = [];
     if (stage.item?.noteKey) lines.push(t(stage.item.noteKey, stage.item.noteParams || null));
-    // 第一格 = 「进入这个动作的姿势」：其余姿势要求也属于这一格（按判据文字去重，避免重复同一句）。
-    // 注意：带替代判据（「A 或 B」，例如仰卧类的「躯干接近水平 或 肩膀贴近地面线」）时，
-    // B 已经写在上面那行里了，不能再当成「还要满足」重复一遍 —— 那会把 OR 说成 AND。
-    if (i === 0) {
-      const mine = stage.item ? specCondition(stage.item) : '';
-      const altCond = stage.alt ? specCondition(stage.alt.item || stage.alt) : '';
-      const extra = postureItems.filter((it) => {
-        const c = specCondition(it);
-        return c !== mine && c !== altCond;
-      });
-      if (extra.length) lines.push(`${t('spec.poseExtra')}${extra.map((it) => specCondition(it)).join('、')}`);
-    }
+    // 这一格下面挂「和它同一组（同一个 labelKey）的其余姿势要求」：
+    //   ① 第一格还额外带上纯文字类的要求（例如「请正对摄像头」）；
+    //   ② 已经被别的格子当判据用掉的条目不再重复（否则第二个关键帧的判据会跑到第一格下面）。
+    // 原先只在第一格挂、且不分组，遇到「一个动作有两组姿势要求」（坐姿体前屈：坐好 + 前折到位）就会串位。
+    const usedByStages = new Set(stages.map((s) => s.item).filter(Boolean));
+    const mine = stage.item ? specCondition(stage.item) : '';
+    const sameGroup = (it) => it.labelKey === stage.item?.labelKey;
+    const extra = postureItems.filter((it) => it !== stage.item && !usedByStages.has(it)
+      && specCondition(it) !== mine
+      && (sameGroup(it) || (i === 0 && !!it.textKey)));
+    if (extra.length) lines.push(`${t('spec.poseExtra')}${extra.map((it) => specCondition(it)).join('、')}`);
     // 「计次」那一格：把深度线 / 更浅只算晃了一下的线也挂在它下面
     if (stage.item?.labelKey === 'spec.countLine') {
       const bottom = pick('spec.bottomLine');
@@ -810,15 +809,15 @@ function ringHitRadius(key, size) {
  * 画面里的「手 / 脚」落点（舞台像素坐标，已经考虑镜像）。
  *
  * 手：手腕 + 食指 + 小指 + 拇指的平均点当手掌中心（只用手腕会偏 —— 手掌伸进圆环时手腕可能还在环外）；
- * 脚：踝关节（再往前一点就是脚掌，但踝点最稳）。左下角那个退出圆环**手或脚都算**（用户要求）。
+ * 脚：踝 + 脚跟 + 脚趾尖的平均点当**脚的中心**（用户要求「脚进入圆环内部三秒」——
+ *     只取踝点的话脚尖已经踩进圆环里了踝还在环外；取整只脚的中心最接近「脚进去了」）。
+ * 左下角那个退出圆环**手或脚都算**（用户要求）。
  */
 function touchPoints(landmarks, stageW, stageH, mirror) {
   if (!landmarks || !landmarks.length) return [];
-  const at = (p) => (p && Number.isFinite(p.x) && Number.isFinite(p.y)
-    && (p.visibility === undefined || p.visibility >= 0.4)
-    ? { x: (mirror ? 1 - p.x : p.x) * stageW, y: p.y * stageH } : null);
-  const palm = (w, i, pk, th) => {
-    const pts = [w, i, pk, th].filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)
+  /** 一组关键点的中心（至少要有 2 个可见点，否则这一段就当没看见） */
+  const centre = (...raw) => {
+    const pts = raw.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)
       && (p.visibility === undefined || p.visibility >= 0.4));
     if (pts.length < 2) return null;
     const cx = pts.reduce((n, p) => n + p.x, 0) / pts.length;
@@ -826,10 +825,10 @@ function touchPoints(landmarks, stageW, stageH, mirror) {
     return { x: (mirror ? 1 - cx : cx) * stageW, y: cy * stageH };
   };
   return [
-    palm(landmarks[LM.L_WRIST], landmarks[LM.L_INDEX], landmarks[LM.L_PINKY], landmarks[LM.L_THUMB]),
-    palm(landmarks[LM.R_WRIST], landmarks[LM.R_INDEX], landmarks[LM.R_PINKY], landmarks[LM.R_THUMB]),
-    at(landmarks[LM.L_ANKLE]),
-    at(landmarks[LM.R_ANKLE]),
+    centre(landmarks[LM.L_WRIST], landmarks[LM.L_INDEX], landmarks[LM.L_PINKY], landmarks[LM.L_THUMB]),
+    centre(landmarks[LM.R_WRIST], landmarks[LM.R_INDEX], landmarks[LM.R_PINKY], landmarks[LM.R_THUMB]),
+    centre(landmarks[LM.L_ANKLE], landmarks[LM.L_HEEL], landmarks[LM.L_FOOT]),
+    centre(landmarks[LM.R_ANKLE], landmarks[LM.R_HEEL], landmarks[LM.R_FOOT]),
   ].filter(Boolean);
 }
 

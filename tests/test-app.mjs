@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 无浏览器的集成测试：用最小 DOM 桩真实加载 src/app.js，
  * 检查界面接线、要领导分清单、音效触发与 HUD 刷新是否正常。
  *
@@ -463,6 +463,36 @@ console.log('\n[1b] 运动设定弹窗');
     api.renderExerciseSettings();
   }
 
+  // 坐姿体前屈：用户给的判据是「初始关键帧就是侧面向镜头坐好，髋角约 90°、躯干角约 0°；
+  //   前屈时躯干角 + 髋角之和始终在 90° 左右；躯干角到 30 左右就到位置、可以开始计时」
+  //   → 弹窗必须是**两格关键帧**：① 坐好（认到一次就常亮）② 前折到位（开始计时那一刻）。
+  {
+    api.openExercise('seatedForwardFold');
+    api.renderExerciseSettings();
+    const seatHtml = elements.get('exerciseSpecs').innerHTML;
+    ok('坐姿体前屈：弹窗里是两格关键帧（「坐好」→「前折到位」）',
+      (seatHtml.match(/spec-row spec-kf/g) || []).length === 2
+      && seatHtml.includes('坐好') && seatHtml.includes('前折到位'),
+      String((seatHtml.match(/spec-row spec-kf/g) || []).length));
+    ok('坐姿体前屈：第一格列出「坐好」的四条数（躯干 ≤ 25°、髋 70°–115°、膝 ≥ 130°、髋不比膝高）',
+      seatHtml.includes('25') && seatHtml.includes('70') && seatHtml.includes('115')
+      && seatHtml.includes('130') && seatHtml.includes('躯干倾角'),
+      seatHtml.slice(0, 500));
+    ok('坐姿体前屈：第二格列出计时线的数（躯干 ≥ 28° +「躯干角+髋角」60°–125°）',
+      seatHtml.includes('28') && seatHtml.includes('躯干角+髋角')
+      && seatHtml.includes('60') && seatHtml.includes('125'),
+      seatHtml.slice(400, 900));
+    ok('坐姿体前屈：说明里写出用户给的恒等式（髋角 = 90° − 躯干倾角，所以两者之和始终在 90° 附近）',
+      seatHtml.includes('90° − 躯干倾角') && /躯干角 \+ 髋角 ≈ 60°~125°/.test(seatHtml),
+      seatHtml.slice(-700));
+    ok('坐姿体前屈：第一格写明「认到一次就常亮」（前折不会把它取消）',
+      seatHtml.includes('常亮'), seatHtml.slice(-700));
+    ok('坐姿体前屈：最后一格标「开始计时」（计时类没有「计次那一刻」）',
+      seatHtml.includes('开始计时') && !seatHtml.includes('计次那一刻'), seatHtml.slice(-300));
+    api.openExercise('pushup');
+    api.renderExerciseSettings();
+  }
+
   // ===== 关键帧 + 判分标准：用户要求「把对应动作的关键帧判别标准以及对应的判分标准列出来」 =====
   {
     const { specStages: stagesOf, stagePoints } = await import('../src/specs.js');
@@ -884,7 +914,7 @@ console.log('\n[6] 火柴人开关');
     ok('躯干倾角是合理读数（0~90°，0=直立 / 90=水平）',
       texts.some((x) => /^躯干\s+(\d+)°$/.test(x) && Number(/^躯干\s+(\d+)°$/.exec(x)[1]) <= 90),
       texts.join(' | '));
-    // 坐姿体前屈：用户反馈「没有显示角度」—— 它判的就是前折幅度（躯干倾角 ≥40°），
+    // 坐姿体前屈：用户反馈「没有显示角度」—— 它判的就是前折幅度（躯干倾角 ≥28°、躯干角+髋角 ≈90°），
     // 所以现在标出「髋」和「躯干」两个数（同一套胶囊，位置跟着关节走）
     {
       const { supinePose: seatPose } = await import('./synthetic-pose.mjs');
@@ -896,7 +926,7 @@ console.log('\n[6] 火柴人开关');
       api.renderer.draw({ landmarks: seat, frame: seatFrame, exerciseId: 'seatedForwardFold', status: 'ok' });
       ok('坐姿体前屈：画面上标出「髋」（躯干与腿的夹角，折得越深越小）',
         texts.some((x) => x.startsWith('髋')), texts.join(' | '));
-      ok('坐姿体前屈：标出「躯干 xx°」（门控要的就是躯干倾角 ≥40°，折多深一眼能看到）',
+      ok('坐姿体前屈：标出「躯干 xx°」（关键帧要的就是躯干倾角 ≥28°，折多深一眼能看到）',
         texts.some((x) => /^躯干\s+\d+°$/.test(x)), texts.join(' | '));
     }
     // 平板支撑：用户反馈「没有计时」+「主要是判断关节角度（肘 90、肩 90、髋膝 180、躯干 80）」
@@ -1961,10 +1991,25 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     }
     return lm;
   };
-  /** 骨架：把两只脚（踝）放到指定点 */
+  /**
+   * 骨架：把两只脚（踝 + 脚跟 + 脚尖）放到指定点。
+   * 用户最新口径是「**脚**进入圆环内部三秒」，所以判定点取整只脚的中心（三点均值），
+   * 桩里就得三点一起挪，否则中心会偏。
+   */
   const feetAt = (x, y, visibility = 1) => {
     const lm = sp2({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility }));
-    for (const a of [LM.L_ANKLE, LM.R_ANKLE]) lm[a] = { x, y, z: 0, visibility };
+    for (const a of [LM.L_ANKLE, LM.R_ANKLE, LM.L_HEEL, LM.R_HEEL, LM.L_FOOT, LM.R_FOOT]) {
+      lm[a] = { x, y, z: 0, visibility };
+    }
+    return lm;
+  };
+  /** 骨架：**只有踝**探进圆环，脚跟/脚尖还留在远处（脚掌没进去） */
+  const ankleOnlyAt = (x, y) => {
+    const lm = sp2({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility: 1 }));
+    for (const a of [LM.L_ANKLE, LM.R_ANKLE]) lm[a] = { x, y, z: 0, visibility: 1 };
+    for (const f of [LM.L_HEEL, LM.R_HEEL, LM.L_FOOT, LM.R_FOOT]) {
+      lm[f] = { x: x + 0.25, y, z: 0, visibility: 1 };
+    }
     return lm;
   };
 
@@ -2075,6 +2120,23 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
   api.updateCornerExit(feetAt(p1.x, p1.y, 0.1), 23500);
   ok('脚被挡住（可见度低）时不算伸进圆环', api.gestureState.corner.p === 0,
     String(api.gestureState.corner.p));
+
+  // 用户口径是「**脚**进入圆环内部」—— 判定点取整只脚的中心（踝 + 脚跟 + 脚尖的均值），
+  // 所以「只有踝探进去、脚掌还在环外」不该算数（踝是脚脖子，脚尖才是真的踩进去了）。
+  {
+    const tp = api.touchPoints(ankleOnlyAt(p1.x, p1.y), SW, SH, false);
+    ok('「脚」的判定点是整只脚的中心（踝 + 脚跟 + 脚尖的均值），不是只有踝一个点',
+      tp.length === 4 && Math.abs(tp[2].x / SW - (p1.x + 1 / 6)) < 0.002
+      && Math.abs(tp[3].x / SW - (p1.x + 1 / 6)) < 0.002,
+      JSON.stringify(tp.map((p) => [Number((p.x / SW).toFixed(3)), Number((p.y / SH).toFixed(3))])));
+    api.gestureState.corner.p = 0;
+    api.gestureState.corner.since = 0;
+    api.gestureState.corner.lastInside = 0;
+    api.updateCornerExit(ankleOnlyAt(p1.x, p1.y), 24000);
+    api.updateCornerExit(ankleOnlyAt(p1.x, p1.y), 25500);
+    ok('只有踝探进圆环、脚掌还在环外时不计时（脚的中心还在环外）',
+      api.gestureState.corner.p === 0, String(api.gestureState.corner.p));
+  }
 
   // 「一组结束」的两个大圆环出来时，左下角这个先收起来（那儿已经有「退出」了）
   api.state.cornerVisible = true;

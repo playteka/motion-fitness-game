@@ -288,6 +288,7 @@ export default {
       topBase: 'Tracked top',
       drop: 'Shoulder drop',
       standLine: 'Standing line',
+      startSeen: 'Starting pose',
       bothMin: 'Both knees (back/line)',
       ridgeRise: 'Hip lift (top/floor line)',
       bridgeAngle: 'Hip angle (angle-path line)',
@@ -779,6 +780,8 @@ export default {
     shoulderClear: 'Shoulder height off the floor',
     // Shoulder joint angle (hip-shoulder-elbow) - the plank judges "are you propped up" with it
     shoulderAngle: 'Shoulder joint angle',
+    // "Trunk tilt + hip angle" sum: the seated forward fold identity (~90 deg)
+    foldSum: 'Trunk + hip angle',
     wristClear: 'Hand height off the floor',
     wristClearMin: 'Hand height off the floor',
     backKneeDrop: 'Back knee height off the floor',
@@ -844,6 +847,9 @@ export default {
     bridgeSupine: 'Supine bent-knee position',
     plankHard: 'Held up (required)',
     plankSoft: 'Body in one line (recommended)',
+    // Seated forward fold (the user's kinematic description): (1) the seated start pose, (2) folded = timer starts
+    seatedStart: 'Sit up (starting pose)',
+    seatedFold: 'Folded far enough (timer starts)',
     plankKnee: 'Knees off the floor (recommended)',
     holdPrime: 'Timer starts once the pose is steady',
     holdGrace: 'Grace time when the pose breaks',
@@ -964,6 +970,14 @@ export default {
       handOnFloor: 'Hands or forearms must be near the floor; propping on a chair or step goes past this line.',
       holdPrime: 'The timer only starts after the pose has been steady this long (avoids momentary misreads).',
       holdGrace: 'A brief break in the pose (tracking noise) does not stop the timer within this long.',
+      // Seated forward fold (the user's kinematic description)
+      seatedStart: '**The starting pose is simply “sitting up”**: sideways to the camera, sitting tall — trunk essentially vertical (≤{trunk}°), '
+        + 'hip angle around {hipMin}°–{hipMax}° (thighs flat in front of you), legs straight (knee ≥{knee}°) and sitting on the mat (hips not above the knees). '
+        + 'Once this pose has been seen it **stays lit**, so folding forward never cancels it — the segment asks “did you sit up”, not “are you sitting tall right now”.',
+      seatedFold: '**Folding far enough starts the timer**: the trunk leans ≥{trunk}° forward (the user: “around 30° of trunk angle is basically there”). '
+        + 'It also needs the legs still straight (knee ≥{knee}°), the hips not above the knees (≤{hipAbove}× shin length, i.e. still seated), '
+        + 'and **trunk angle + hip angle ≈ {sumMin}°–{sumMax}°** — the kinematics the user described: sitting with the legs flat, the hip angle is 90° minus the trunk tilt, '
+        + 'so the two always add up to about 90°; standing folds read about 180° and lying poses 180°–270°, so this line rules those out.',
       holdPosture: 'A clearly broken body line triggers a spoken reminder but does not stop the timer straight away.',
       pushupPose: 'The rep is only judged while you are in the push-up plank position (down on the floor, hands planted).',
       bodyStraight: 'A body that is not in one line only triggers a spoken reminder and a discounted quality score — it never costs you a rep.',
@@ -1003,6 +1017,8 @@ export default {
     depth: 'A bit more range — go deeper next time',
     tempo: 'Slow down and keep the rhythm',
     notReady: 'You’re not in position for this move yet — set up as shown first',
+    // Seated forward fold: sit up first (the starting pose), then fold
+    notSeated: 'Sit up first: sideways to the camera, sitting tall with your legs straight (hip angle about 90°, trunk vertical), then fold forward',
     moreRange: 'Bigger range — move all the way for it to count',
     needJump: 'You need to jump: both feet off the floor to count',
     tooFast: 'Slow down — that was too fast',

@@ -224,6 +224,9 @@ console.log('\n[5] 姿势要求用的就是 GATES 的那张表');
     const p = ex.params || {};
     const gate = ex.engine === 'builtin' ? null : (p.gate || null);
     if (!gate || !GATE_LIMITS[gate]) continue;
+    // 坐姿体前屈的姿势要求**分成两格关键帧**（① 坐好 ② 前折到位），条目挂在两个 labelKey 下、
+    // 还有第二条起始姿势门控（seatedFoldStart）—— 所以它单独一套断言，见下面的 [5a]。
+    if (ex.id === 'seatedForwardFold') continue;
     const shown = itemsOf(ex.id).filter((it) => it.labelKey === `spec.pose.${gate}`);
     const limits = GATE_LIMITS[gate];
     ok(`${ex.id}：门控 ${gate} 的每条阈值都列出来了`,
@@ -280,6 +283,96 @@ console.log('\n[5] 姿势要求用的就是 GATES 的那张表');
     itemsOf('bridge').some((it) => it.metricKey === 'metric.trunk' && it.value === BRIDGE.supineTorso)
     && itemsOf('bridge').some((it) => it.metricKey === 'metric.shoulderClear' && it.value === BRIDGE.shoulderClearMax)
     && itemsOf('bridge').some((it) => it.metricKey === 'metric.kneeClear' && it.value === BRIDGE.kneeClearMin));
+}
+
+/* ------------------------------------------------------------------ *
+ * 5a. 坐姿体前屈：两格关键帧（① 坐好 ② 前折到位 = 开始计时）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[5a] 坐姿体前屈：两格关键帧各自的判据都来自同一张表');
+{
+  // 用户给的判据（原话）：「初始关键帧其实就是侧面向镜头坐好，此刻髋角度约 90°、躯干角度约为 0°。
+  //   当身体前屈的时候，躯干角度和髋角度相加之和应该始终在 90° 左右。
+  //   当身体前倾、躯干角度在 30 左右基本也就到位、可以开始计时了。」
+  // 两格判据分别写在 GATE_LIMITS.seatedFoldStart / GATE_LIMITS.seatedFold，
+  // 弹窗必须逐条复刻，而且「前折到位」那一格的数值就是**真正开始计时**的那条线。
+  const S0 = GATE_LIMITS.seatedFoldStart;
+  const K = GATE_LIMITS.seatedFold;
+  const start = itemsOf('seatedForwardFold').filter((it) => it.labelKey === 'spec.seatedStart');
+  const fold = itemsOf('seatedForwardFold').filter((it) => it.labelKey === 'spec.seatedFold');
+
+  ok('坐姿体前屈：第一格「坐好」列出 seatedFoldStart 的全部 4 条',
+    start.length === Object.keys(S0).length, `弹窗 ${start.length} 条 vs 表 ${Object.keys(S0).length} 条`);
+  ok('坐姿体前屈：第二格「前折到位」列出 seatedFold 的全部 4 条',
+    fold.length === Object.keys(K).length, `弹窗 ${fold.length} 条 vs 表 ${Object.keys(K).length} 条`);
+
+  // 起始姿势：躯干直立（≤25°，用户说 ≈0°）、髋角 70–115°（用户说 ≈90°）、腿伸直、坐在垫子上
+  ok('坐姿体前屈：起始「坐好」= 躯干倾角 ≤ seatedFoldStart.torsoIncl（用户说 ≈0°）',
+    start.some((it) => it.metricKey === 'metric.torsoIncl' && it.op === 'lte' && near(it.value, S0.torsoIncl[1], 0.0001)),
+    JSON.stringify(start.map((it) => `${it.metricKey}${it.op}${it.value}`)));
+  ok('坐姿体前屈：起始「坐好」= 髋角落在 seatedFoldStart.hip 区间（用户说 ≈90°）',
+    start.some((it) => it.metricKey === 'metric.hip' && it.op === 'range'
+      && near(it.value, S0.hip[0], 0.0001) && near(it.value2, S0.hip[1], 0.0001)
+      && S0.hip[0] <= 90 && 90 <= S0.hip[1]),
+    JSON.stringify(start.map((it) => `${it.metricKey}${it.op}${it.value}-${it.value2}`)));
+  ok('坐姿体前屈：起始「坐好」= 双腿伸直（膝角 ≥ seatedFoldStart.knee）+ 坐在垫子上（髋不比膝高）',
+    start.some((it) => it.metricKey === 'metric.knee' && it.op === 'gte' && near(it.value, S0.knee[0], 0.0001))
+    && start.some((it) => it.metricKey === 'metric.hipAboveKnee' && it.op === 'lte' && near(it.value, S0.hipAboveKnee[1], 0.0001)),
+    JSON.stringify(start.map((it) => `${it.metricKey}${it.op}${it.value}`)));
+
+  // 前折到位：躯干倾角 ≥28°（用户说「30 左右」）、躯干角+髋角仍在 60–125°（用户的恒等式 ≈90°）、
+  // 髋不比膝高、腿仍伸直
+  const foldTrunk = fold.find((it) => it.metricKey === 'metric.torsoIncl');
+  ok('坐姿体前屈：计时线 = 躯干倾角 ≥ seatedFold.torsoIncl，且就是用户说的「30 左右」（28 留了 2° 抖动余量）',
+    foldTrunk && foldTrunk.op === 'gte' && near(foldTrunk.value, K.torsoIncl[0], 0.0001)
+    && K.torsoIncl[0] >= 26 && K.torsoIncl[0] <= 30,
+    JSON.stringify(foldTrunk && [foldTrunk.op, foldTrunk.value]));
+  const foldSum = fold.find((it) => it.metricKey === 'metric.foldSum');
+  ok('坐姿体前屈：躯干角 + 髋角之和写成区间，且用户的恒等式 90° 落在区间里',
+    foldSum && foldSum.op === 'range' && near(foldSum.value, K.foldSum[0], 0.0001)
+    && near(foldSum.value2, K.foldSum[1], 0.0001)
+    && K.foldSum[0] < 90 && 90 < K.foldSum[1],
+    JSON.stringify(foldSum && [foldSum.value, foldSum.value2]));
+  ok('坐姿体前屈：前折期间双腿仍要伸直、髋仍不比膝高（前折不会让计时中途断掉）',
+    fold.some((it) => it.metricKey === 'metric.knee' && it.op === 'gte' && near(it.value, K.knee[0], 0.0001))
+    && fold.some((it) => it.metricKey === 'metric.hipAboveKnee' && it.op === 'lte' && near(it.value, K.hipAboveKnee[1], 0.0001)),
+    JSON.stringify(fold.map((it) => `${it.metricKey}${it.op}${it.value}`)));
+
+  // 两格的说明文字要带上用户那套力学（式子里的数都得是表里的数）
+  const startNote = start.find((it) => it.noteKey === 'spec.note.seatedStart');
+  ok('坐姿体前屈：起始格说明里写清了「躯干 ≈0° / 髋 ≈90°」这两个来自表的数',
+    startNote && Number(startNote.noteParams.trunk) === roundFor(S0.torsoIncl[1], 'deg')
+    && Number(startNote.noteParams.hipMin) === roundFor(S0.hip[0], 'deg')
+    && Number(startNote.noteParams.hipMax) === roundFor(S0.hip[1], 'deg'),
+    JSON.stringify(startNote && startNote.noteParams));
+  const foldNote = fold.find((it) => it.noteKey === 'spec.note.seatedFold');
+  ok('坐姿体前屈：前折格说明里写出「躯干倾角 + 髋角 ≈ 90°（区间取表里的 60–125）」的恒等式',
+    foldNote && Number(foldNote.noteParams.sumMin) === roundFor(K.foldSum[0], 'deg')
+    && Number(foldNote.noteParams.sumMax) === roundFor(K.foldSum[1], 'deg')
+    && Number(foldNote.noteParams.trunk) === roundFor(K.torsoIncl[0], 'deg'),
+    JSON.stringify(foldNote && foldNote.noteParams));
+
+  // 进度条就两格：第一格是**锁存**的 startSeen（前折不会把它取消），第二格是 gateOk（计时开始那一刻）
+  const sf = specStages('seatedForwardFold');
+  ok('坐姿体前屈：进度条只有两格（① 坐好 ② 前折到位）', sf.length === 2,
+    JSON.stringify(sf.map((st) => `${st.kind}:${st.detFlag}`)));
+  ok('坐姿体前屈：第一格用锁存的 startSeen，不是识别器的 gateOk',
+    sf[0] && sf[0].kind === 'gate' && sf[0].detFlag === 'startSeen',
+    JSON.stringify(sf[0] && [sf[0].kind, sf[0].detFlag]));
+  ok('坐姿体前屈：第二格是 hold + gateOk（那一刻才开始计时）',
+    sf[1] && sf[1].kind === 'hold' && sf[1].detFlag === 'gateOk',
+    JSON.stringify(sf[1] && [sf[1].kind, sf[1].detFlag]));
+  ok('坐姿体前屈：两格各自挂在自己的姿势条目上（第一格躯干直立、第二格躯干前折）',
+    sf[0].metric === 'torsoIncl' && sf[0].op === 'lte' && near(sf[0].value, S0.torsoIncl[1], 0.0001)
+    && sf[1].metric === 'torsoIncl' && sf[1].op === 'gte' && near(sf[1].value, K.torsoIncl[0], 0.0001),
+    JSON.stringify(sf.map((st) => `${st.metric}${st.op}${st.value}`)));
+
+  // 计时宽容：和别的计时动作同一套常量
+  ok('坐姿体前屈：计时宽容 = HOLD_PRIME_MS / HOLD_GRACE_MS（和其他计时动作一致）',
+    near(findItem('seatedForwardFold', 'spec.holdPrime').value, HOLD_PRIME_MS / 1000, 0.001)
+    && near(findItem('seatedForwardFold', 'spec.holdGrace').value, HOLD_GRACE_MS / 1000, 0.001));
+  ok('坐姿体前屈：没有混进旧的「髋离地高度 ≤0.9×躯干长」这条依赖地面线的判据',
+    !itemsOf('seatedForwardFold').some((it) => it.metricKey === 'metric.hipClear'));
 }
 
 /* ------------------------------------------------------------------ *

@@ -178,6 +178,18 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     ? perSide[best.s].shoulderAngle : val('shoulderAngle');
 
   const torsoIncl = tiltFromVertical(hipMid, shoulderMid);          // 0=直立, 90=水平
+  /**
+   * **「躯干倾角 + 髋关节角」之和**（坐姿体前屈用）。
+   *
+   * 用户给的运动学描述：「初始关键帧其实就是侧面向镜头坐好，此刻髋角度约 90°、躯干角度约为 0°。
+   * 当身体前屈的时候，**躯干角度和髋角度相加之和应该始终在 90° 左右**。」
+   * 这确实是几何恒等式：坐在垫子上、双腿伸直放平（大腿水平）时，
+   * 躯干与大腿的夹角（髋角）= 90° − 躯干相对竖直的倾角，所以两者之和恒为 ≈90°。
+   *
+   * 好处：这个和**完全不依赖地面线**，而且能把「站着前折」（≈180°）、
+   * 「躺着 / 仰卧屈膝」（180°~270°）一眼排除掉 —— 后两者都不会落在这个区间里。
+   */
+  const foldSum = torsoIncl + hipAngle;
 
   // ---- 地面参考线 ----
   // 默认用「脚踝所在的最低点」当地面 —— 站立、俯撑时都对。
@@ -342,6 +354,8 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     elbowAngle,
     // 肩关节角（髋-肩-肘）：平板支撑用它判「上臂有没有撑住」（不依赖地面线）
     shoulderAngle,
+    // 「躯干倾角 + 髋角」之和：坐姿体前屈的恒等式 ≈90°（见上面的说明）
+    foldSum,
     bodyStraight,
     // 比例量
     torsoLen,

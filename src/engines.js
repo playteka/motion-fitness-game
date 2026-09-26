@@ -114,15 +114,50 @@ export const GATE_LIMITS = {
     hipClear: [0.08, null],
     wristClearMin: [null, 0.6],
   },
-  /** 站立体前屈：站着但躯干往前折 */
+  /** 站立体前屈：站着但躯干往前折（髋离地 ≥0.65 倍躯干长 = 不是坐/躺） */
   standFold: {
     torsoIncl: [55, null],
     hipClear: [0.65, null],
   },
-  /** 坐姿体前屈：坐着 + 躯干往前折 */
+  /**
+   * 坐姿体前屈：**按用户给的运动学描述重做过**（原来「髋离地 ≤0.9 + 躯干倾角 ≥40」判不出计时）。
+   *
+   * 用户的描述：「初始关键帧其实就是侧面向镜头坐好，此刻**髋角度约 90°、躯干角度约为 0°**。
+   * 当身体前屈的时候，**躯干角度和髋角度相加之和应该始终在 90° 左右**。
+   * 当身体前倾、**躯干角度在 30 左右**基本也就到位、可以开始计时了。」
+   *
+   * 原来的两条都有问题：
+   *   ① `hipClear ≤ 0.9`（髋离地高度）**依赖校准地面线** —— 地面线偏低（床上/沙发上做、机位偏）
+   *      就永远读成 1.0 以上 → 一次都不计时（用户反馈「实际没有计时」）；
+   *   ② `torsoIncl ≥ 40` 比用户说的 30 更严。
+   *
+   * 现在全部改成**不看地面线**的角度判据：
+   *   - `hipAboveKnee ≤ 0.40`：髋不比膝高 → 坐在垫子上（站立 ≈ +0.9、深蹲 ≥ +0.5 都进不来）；
+   *   - `knee ≥ 125°`：双腿伸直放平（屈膝糊弄不算；前折全程都成立，不会打断计时）；
+   *   - `foldSum ∈ [60, 125]`：**躯干角 + 髋角 ≈ 90°**（用户给的恒等式；站着 ≈180°、躺着 ≥180° 都被排除）；
+   *   - `torsoIncl ≥ 28°`：身体前倾到位 → **这一条成立就开始计时**
+   *     （用户说「躯干角度在 30 左右基本也就到位」，阈值取 28° 留 2° 识别抖动余量）。
+   *
+   * 键名用的是**弹窗指标名**（`knee` → `metric.knee`、`hip` → `metric.hip`），
+   * 而 GATES 里读的是帧上的字段（`f.kneeAngle` / `f.hipAngle`）—— 和其他门控同一个写法，见下面的 GATES。
+   */
   seatedFold: {
-    hipClear: [null, 0.9],
-    torsoIncl: [40, null],
+    hipAboveKnee: [null, 0.40],
+    knee: [125, null],
+    foldSum: [60, 125],
+    torsoIncl: [28, null],
+  },
+  /**
+   * 坐姿体前屈的**起始姿势**（用户的「初始关键帧」）：侧对镜头坐好 ——
+   * 躯干基本竖直（≈0°）、髋角 ≈90°（大腿在身前、放平）、双腿伸直、坐在垫子上。
+   * 识别到一次就**锁存**（`startSeen`），之后前折不会把它取消 ——
+   * 进度条第一格「坐好」点亮后常亮，第二格「前折到位」才是开始计时那一刻。
+   */
+  seatedFoldStart: {
+    torsoIncl: [null, 25],
+    hip: [70, 115],
+    knee: [130, null],
+    hipAboveKnee: [null, 0.40],
   },
 };
 
@@ -213,8 +248,16 @@ export const GATES = {
   /** 坐在地上的低姿（俄罗斯转体） */
   seatedLow: (f) => f.hipClear < 0.9 && f.torsoIncl > 15,
   /** 坐姿体前屈：坐着 + 躯干往前折 */
-  seatedFold: (f) => inLimit(f.hipClear, GATE_LIMITS.seatedFold.hipClear)
-    && inLimit(f.torsoIncl, GATE_LIMITS.seatedFold.torsoIncl),
+  /** 坐姿体前屈：**全部是角度判据**（不看地面线）—— 见 GATE_LIMITS.seatedFold 的说明 */
+  seatedFold: (f) => inLimit(f.torsoIncl, GATE_LIMITS.seatedFold.torsoIncl)
+    && inLimit(f.kneeAngle, GATE_LIMITS.seatedFold.knee)
+    && inLimit(f.hipAboveKnee, GATE_LIMITS.seatedFold.hipAboveKnee)
+    && inLimit(f.foldSum, GATE_LIMITS.seatedFold.foldSum),
+  /** 坐姿体前屈的**起始姿势**（坐直、双腿伸直）：识别到一次就锁存，用于进度条第一格 */
+  seatedFoldStart: (f) => inLimit(f.torsoIncl, GATE_LIMITS.seatedFoldStart.torsoIncl)
+    && inLimit(f.hipAngle, GATE_LIMITS.seatedFoldStart.hip)
+    && inLimit(f.kneeAngle, GATE_LIMITS.seatedFoldStart.knee)
+    && inLimit(f.hipAboveKnee, GATE_LIMITS.seatedFoldStart.hipAboveKnee),
   /** 蝴蝶式：坐姿 + 双膝打开 */
   butterfly: (f) => f.hipClear < 0.95 && f.kneeSpread > 0.55 && f.torsoIncl < 55,
   /** 青蛙趴：俯卧/跪趴 + 双膝打开 */
@@ -240,7 +283,7 @@ const GATE_HINT = {
   supine: 'supine', supineLow: 'supine', supineFlat: 'supine', hollow: 'supine', crab: 'supine',
   quadruped: 'quadruped', bearCrawl: 'quadruped',
   kneel: 'kneel', kneelFold: 'kneel', childPose: 'kneel', wristStretch: 'kneel',
-  seated: 'seated', seatedLow: 'seated', seatedFold: 'seated', butterfly: 'seated',
+  seated: 'seated', seatedLow: 'seated', seatedFold: 'seated', seatedFoldStart: 'seated', butterfly: 'seated',
   vSit: 'seated', frogPose: 'prone',
   sideLying: 'side', inverted: 'inverted', hang: 'hang', dips: 'stand',
 };
@@ -1061,18 +1104,47 @@ class PoseHoldDetector extends HoldDetector {
     const p = meta.params || {};
     this.p = p;
     this.gateName = p.gate || 'stand';
+    /** 可选的「起始姿势」门控（坐姿体前屈在用）：认出来一次就锁存（见 startSeen） */
+    this.startGateName = p.startGate || null;
   }
 
-  /** 计数诊断（🐞 面板显示）：现在计到几秒、姿势门控过没过 */
+  onReset() {
+    super.onReset();
+    this.startSeen = false;
+  }
+
+  /**
+   * 计数诊断（🐞 面板显示）：现在计到几秒、姿势门控过没过、起始姿势认出来没有。
+   * 「起始姿势」那一行只有配了 `startGate` 的动作才显示（坐姿体前屈）。
+   */
   diag() {
     return [
       { key: 'debug.diag.hold', value: `${(this.holdMs / 1000).toFixed(1)}s` },
       { key: 'debug.diag.pose', value: this.gateOk ? 'ok' : 'no' },
+      ...(this.startGateName
+        ? [{ key: 'debug.diag.startSeen', value: this.startSeen ? 'ok' : 'no' }]
+        : []),
       ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
     ];
   }
 
   checkHold(f) {
+    /**
+     * 「起始姿势」门控（坐姿体前屈：坐直、双腿伸直、髋角 ≈90°）—— 认出来一次就**锁存**。
+     *
+     * 用户的模型是「初始关键帧 = 侧对镜头坐好 → 前折」，所以前折必须**从坐好开始**：
+     * 没认到过起始姿势就先不计时，并提示「先坐直坐好」（`notSeated`）。
+     * 锁存之后身体前折不会把它取消 —— 进度条第一格「坐好」点亮后常亮，第二格「前折到位」才开始计时。
+     */
+    if (this.startGateName) {
+      const startGate = GATES[this.startGateName];
+      if (startGate && startGate(f)) this.startSeen = true;
+      if (!this.startSeen) {
+        this.gateOk = false;
+        this.depthPct = 0;
+        return { valid: false, reason: 'notSeated' };
+      }
+    }
     const gate = GATES[this.gateName] || GATES.stand;
     const ok = !!gate(f);
     // 计分步骤（holdPose / stretchHold 方案）要靠 gateOk 判断「姿势到位」这一步
