@@ -469,16 +469,18 @@ console.log('\n[1b] 运动设定弹窗');
     ok('每一格都画了那个关键帧的线条图标',
       (raw.match(/spec-kf-icon"><svg class="criteria-icon"/g) || []).length === shown.length,
       String((raw.match(/spec-kf-icon"><svg class="criteria-icon"/g) || []).length));
-    ok('俯卧撑：四格的分数 5 / 7 / 14 / 8 都列出来了',
-      ['+5', '+7', '+14', '+8'].every((x) => raw.includes(x)), raw.slice(0, 400));
+    ok('俯卧撑：四格的分数 5 / 8 / 7 / 14 都列出来了（回到顶位 8、最低点计次 14）',
+      ['+5', '+8', '+7', '+14'].every((x) => raw.includes(x)), raw.slice(0, 400));
     ok('俯卧撑：整轮满分 6 分标在最后一格上', raw.includes('+6 整轮满分'), raw.slice(-400));
     ok('最后一格标出「计次那一刻」', raw.includes('计次那一刻'), raw.slice(0, 300));
-    ok('说明里写了每轮总分（5+7+14+8+6 = 40）', raw.includes('每轮 40 分'),
+    ok('说明里写了每轮总分（5+8+7+14+6 = 40）', raw.includes('每轮 40 分'),
       (raw.match(/共 \d+ 格[\s\S]{0,150}/) || [''])[0]);
-    ok('弹窗里的关键帧判据就是进度条格子上的判据（肘角 146°/138° 都在）',
-      raw.includes('146') && raw.includes('138'), raw.slice(0, 400));
-    ok('分数与 stagePoints 一致（弹窗不会自己编一套：5 / 7 / 14 / 8 + 满轮 6 = 40）',
-      stagePoints('pushup').map((r) => r.points).join(',') === '5,7,14,8'
+    ok('弹窗里的关键帧判据就是进度条格子上的判据（肘角 148°/150°/146° 都在）',
+      raw.includes('148') && raw.includes('150') && raw.includes('146'), raw.slice(0, 500));
+    ok('俯卧撑：最后一格写明「计次发生在最低点」（用户要求的那一刻）',
+      raw.includes('最低点'), raw.slice(-600));
+    ok('分数与 stagePoints 一致（弹窗不会自己编一套：5 / 8 / 7 / 14 + 满轮 6 = 40）',
+      stagePoints('pushup').map((r) => r.points).join(',') === '5,8,7,14'
       && stagePoints('pushup')[3].bonus === 6
       && stagePoints('pushup').reduce((n, r) => n + r.points + r.bonus, 0) === 40,
       stagePoints('pushup').map((r) => `${r.points}+${r.bonus}`).join(' '));

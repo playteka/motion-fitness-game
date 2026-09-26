@@ -937,6 +937,11 @@ export default {
       flight: 'Jumping exercises also require the lift to pass this line.',
       giveUp: 'A rep stuck longer than this is force-settled (and counts if deep enough) — reps are never swallowed.',
       pushupEnter: 'Bending {v}° below your own top also starts the rep, so people who cannot straighten their arms are still recognised (a side camera flattens the elbow reading).',
+      pushupBottom: '**The rep is counted at the bottom** (the user asked for “the counting moment to be when the body reaches its lowest point”): '
+        + 'once the depth line has been crossed (this line, or the shoulder drop), the instant your elbow/shoulder **starts coming back up** '
+        + '(or you hold at the bottom for about 0.18 s) the rep counts — the call-out, the sound and the counter all fire right then, with no wait '
+        + 'for the press. Pressing back to the top is the **precondition for the next rep** (holding at the bottom cannot farm reps), '
+        + 'so the “press back up” segment still belongs to this rep and still scores.',
       shoulderDrop: 'Looking down at a laptop screen flattens the elbow angle, so this signal is used alongside it: the shoulders dropping {start} already starts the rep, dropping to the line above counts a rep, and {full} earns full depth credit. Closing a rep needs the shoulders back within {ret} of your top (between “start” and “count”, so a rep cannot be called done the moment you begin to sink).',
       squatBottom: 'Squat until the thighs are close to horizontal (hip level with knee = 0).',
       squatLean: 'With a front-facing camera, leaning past this angle does not count as the standing stance.',

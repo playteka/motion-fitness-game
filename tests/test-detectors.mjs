@@ -632,6 +632,38 @@ console.log('\n[3] 俯卧撑计数');
   ok('无半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
 }
 {
+  // ===== 用户要求：「计次的那一刻要选在身体到达最低点的时候，给出即时的反馈」 =====
+  // 以前是推起来回到顶位才计次（反馈晚半秒多）；现在到最低点（开始回升/在底部停住）就计次。
+  // `pushupMix()` 一个循环里 p=0.5 是最低点（肘角最小），所以计次应该紧跟在最低点之后，
+  // 而不是落在循环后半段（推起来的那一段）。
+  const cycleMs = 1600;
+  const per = Math.round(cycleMs / DT);
+  const det = fresh('pushup');
+  const sm = new LandmarkSmoother();
+  const pose = pushupMix();
+  let t = 0;
+  const marks = [];
+  for (let i = 0; i < per * 3; i += 1) {
+    const f = computeFrame(toMetric(sm.apply(pose((i % per) / per), t / 1000), ASPECT), null, t, false, null);
+    const evs = det.update(f, t);
+    if (evs.some((e) => e.type === 'rep' && e.valid)) {
+      marks.push({ phase: (i % per) / per, elbow: f.elbowAngle, t });
+    }
+    t += DT;
+  }
+  atLeast('俯卧撑：3 个循环计到 3 次', marks.length, 3);
+  ok('俯卧撑：计次就在**最低点**那一刻（相位落在最低点附近，不是推起来之后）',
+    marks.length >= 3 && marks.every((m) => m.phase > 0.42 && m.phase < 0.68),
+    marks.map((m) => `p=${m.phase.toFixed(2)}`).join(' '));
+  ok('俯卧撑：计次那一刻肘角还在深处（离顶位很远，说明没等推起来才计）',
+    marks.length >= 3 && marks.every((m) => m.elbow < 120),
+    marks.map((m) => Math.round(m.elbow)).join(','));
+  // 推起来回到顶位之前不会重复计数（在最低点停住也只是一次）
+  const before = det.validReps;
+  det.update(computeFrame(toMetric(sm.apply(pose(0.5), t / 1000), ASPECT), null, t, false, null), t);
+  ok('俯卧撑：停在最低点不会连着刷次数', det.validReps === before, `${before} → ${det.validReps}`);
+}
+{
   // 政策：识别与计数都放宽——塌腰也照样算一次（大体做到了就计次数），
   // 但必须用语音/文字把“塌腰”纠正出来，而且拿不到整轮满分奖励（分数仍然体现质量）。
   const det = fresh('pushup');

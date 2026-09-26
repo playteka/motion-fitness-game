@@ -389,7 +389,7 @@ function pushupSpecs() {
   return {
     count: [
       item({ labelKey: 'spec.pushupEnter', metricKey: 'metric.elbow', op: 'lte', value: roundFor(P.elbowEnter, DEG), unit: DEG, noteKey: 'spec.note.pushupEnter', noteParams: { v: P.enterDrop } }),
-      item({ labelKey: 'spec.countLine', metricKey: 'metric.elbow', op: 'lte', value: roundFor(P.looseElbow, DEG), unit: DEG, noteKey: 'spec.note.looseMode' }),
+      item({ labelKey: 'spec.countLine', metricKey: 'metric.elbow', op: 'lte', value: roundFor(P.looseElbow, DEG), unit: DEG, noteKey: 'spec.note.pushupBottom' }),
       item({ labelKey: 'spec.bottomLine', metricKey: 'metric.elbow', op: 'lte', value: roundFor(P.elbowFull, DEG), unit: DEG, noteKey: 'spec.note.bottomLine' }),
       item({
         labelKey: 'spec.shoulderDrop',
@@ -818,20 +818,17 @@ export function specStages(id) {
     } else pushItem(topItem, { kind: 'count', valueFrom: 'topLine' });
     pushItem(pick('spec.bridgeDown'), { kind: 'finish', detFlag: 'atBottom' });
   } else if (id === 'pushup') {
-    // 俯卧撑：开始 → 计次（肘角到位**或**肩膀已经沉到接近地面）→ 回到顶位（计次那一刻）
-    pushItem(pick('spec.pushupEnter'), { kind: 'enter' });
-    const countItem = pick('spec.countLine');
-    const dropItem = pick('spec.shoulderDrop');
-    if (countItem && dropItem) {
-      const stage = toStage(countItem, { kind: 'count' });
-      stage.alt = toStage(dropItem);
-      stages.push(stage);
-    } else pushItem(countItem, { kind: 'count' });
-    // 「回到顶位」用识别器自己的动态线（跟着用户自己举到的最高点走），
-    // 而且必须**同时**肩膀也抬回来了（识别器收尾要求的就是这两条，缺一条就会
-    // 在下沉刚起步那一帧误判成「已经回到顶位」）
+    /**
+     * 俯卧撑（用户要求：**计次的那一刻选在身体到达最低点的时候**）：
+     *   ① 俯撑（门控）→ ② 回到顶位（起始位，下一轮的前提）→ ③ 开始下沉 → ④ **最低点 = 计次那一刻**。
+     *
+     * 顺序按「一轮真实动作」排：先撑好，再回到顶位，然后下沉、到最低点 —— 深度线一到就计次，
+     * 反馈（报数 + 音效 + 计数跳动）就在那一刻出来，不用等推起来（用户反馈「这样感觉更好」）。
+     * 「回到顶位」仍然是计次的必要条件：识别器计完一次会停在 'recover' 状态，
+     * 必须把肘角推回自己的顶位附近、肩膀也抬回来，才允许开始下一次（所以在最低点停住不会刷次数）。
+     */
     pushItem(pick('spec.backLine'), {
-      kind: 'finish',
+      kind: 'enter',
       valueFrom: 'backLine',
       also: {
         metric: 'shoulderDrop',
@@ -842,6 +839,16 @@ export function specStages(id) {
         k: STAGE_TOLERANCE.torso,
       },
     });
+    pushItem(pick('spec.pushupEnter'), { kind: 'count' });
+    const countItem = pick('spec.countLine');
+    const dropItem = pick('spec.shoulderDrop');
+    if (countItem && dropItem) {
+      // 最后一格 = **最低点**：深度线到过、并且「到底了」（开始回升或在底部停住）——
+      // 和识别器的 atBottom 是同一帧，所以「这一格点亮」＝「计上一次」＝「计数跳动/音效」同一刻。
+      const stage = toStage(countItem, { kind: 'finish', detFlag: 'atBottom' });
+      stage.alt = toStage(dropItem);
+      stages.push(stage);
+    } else pushItem(countItem, { kind: 'finish', detFlag: 'atBottom' });
   } else if (meta.engine === 'alt') {
     // 左右交替：一侧发力 → **换另一条腿也做到**（换边成立那一刻计次）。
     // 用户要求「第二格之后应该是『勾腿』『勾另一条腿』」—— 所以最后一格的判据就是
@@ -964,7 +971,7 @@ const STEP_STAGE = {
   lunge: {
     stance: 'stance', split: 'start', stride: 'start', sink: 'count', backknee: 'both', return: 'back',
   },
-  pushup: { setup: 'prone', lower: 'start', depth: 'count', press: 'back' },
+  pushup: { setup: 'prone', press: 'back', lower: 'start', depth: 'count' },
   bridge: { setup: 'supine', lift: 'count', top: 'count', lower: 'down' },
   repStand: { stance: 'stand', lower: 'start', bottom: 'count', up: 'back' },
   // 开合跳只画三格（`skipEnter`，用户要求）：并拢站好（stance）→ 跳开（open 属于这一格）

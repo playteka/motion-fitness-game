@@ -574,19 +574,23 @@ console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格'
   ok('箭步蹲：还蹲着（前膝 90°）时「回位」那一格过不了',
     !stageHolds(lungeStages[lungeFinish], fake(90, 95, 95), createDetector('lunge')));
 
-  // 俯卧撑：计次那一格同时接受「肩膀沉到接近地面」这条更稳的证据
+  // 俯卧撑：**计次那一刻在最低点**（用户要求）—— 最后一格是「到最低点」，
+  // 深度仍是两路证据（肘角 或 肩膀下沉），推起还原那一格在这一轮里（下一轮的前提）。
   const pushStages = specStages('pushup');
-  const pushCount = pushStages.find((s) => s.kind === 'count');
-  ok('俯卧撑：计次那一格带「肩膀下沉」替代判据',
-    pushCount && pushCount.alt && pushCount.alt.metric === 'shoulderDrop'
+  const pushCount = pushStages[pushStages.length - 1];
+  ok('俯卧撑：计次那一格（最低点）带「肩膀下沉」替代判据',
+    pushCount && pushCount.kind === 'finish' && pushCount.alt
+    && pushCount.alt.metric === 'shoulderDrop'
     && pushCount.alt.value === PUSHUP.dropMin,
     JSON.stringify(pushCount?.alt && { m: pushCount.alt.metric, v: pushCount.alt.value }));
-  // 收尾那一格（回到顶位）要同时要求「肩膀抬回顶位」——宽容度就是识别器用的 dropReturn
-  const pushFinish = pushStages[pushStages.length - 1];
-  ok('俯卧撑：收尾那一格要求肩膀抬回顶位 dropReturn 以内（与识别器同一个常量）',
-    pushFinish && pushFinish.also && pushFinish.also.metric === 'shoulderDrop'
-    && pushFinish.also.value === Number(PUSHUP.dropReturn.toFixed(2)),
-    JSON.stringify(pushFinish?.also && { m: pushFinish.also.metric, v: pushFinish.also.value }));
+  ok('俯卧撑：计次那一格用识别器自己的「到最低点了」标记（进度条点亮 = 计次 = 报数同一刻）',
+    pushCount && pushCount.detFlag === 'atBottom', String(pushCount?.detFlag));
+  // 「回到顶位」那一格（这一轮的第 2 格）要同时要求「肩膀抬回顶位」——宽容度就是识别器用的 dropReturn
+  const pushTop = pushStages.find((s) => s.item?.labelKey === 'spec.backLine');
+  ok('俯卧撑：「回到顶位」那一格要求肩膀抬回顶位 dropReturn 以内（与识别器同一个常量）',
+    pushTop && pushTop.also && pushTop.also.metric === 'shoulderDrop'
+    && pushTop.also.value === Number(PUSHUP.dropReturn.toFixed(2)),
+    JSON.stringify(pushTop?.also && { m: pushTop.also.metric, v: pushTop.also.value }));
 }
 
 /* ------------------------------------------------------------------ *
@@ -623,8 +627,9 @@ console.log('\n[11] 得分分配到关键帧');
     JSON.stringify(stagePoints('bridge').map((r) => r.points)) === '[5,20,8]'
     && stagePoints('bridge')[2].bonus === 6,
     JSON.stringify(stagePoints('bridge')));
-  ok('俯卧撑：俯撑 5 / 开始 7 / 计次 14 / 回位 8 + 满轮 6 = 40 分',
-    JSON.stringify(stagePoints('pushup').map((r) => r.points)) === '[5,7,14,8]'
+  // 俯卧撑的分数跟着新的关键帧顺序走：俯撑 5 → 回到顶位 8（推起还原）→ 开始下沉 7 → 最低点计次 14 + 满轮 6
+  ok('俯卧撑：俯撑 5 / 回到顶位 8 / 开始下沉 7 / 最低点计次 14 + 满轮 6 = 40 分',
+    JSON.stringify(stagePoints('pushup').map((r) => r.points)) === '[5,8,7,14]'
     && stagePoints('pushup')[3].bonus === 6,
     JSON.stringify(stagePoints('pushup')));
 }
@@ -809,28 +814,29 @@ console.log('\n[10] 关键帧线条图标');
     .filter((s) => s.metric === 'elbow')
     .every((s) => iconAngle(s, pushCtx) === s.value),
   JSON.stringify(pushStages.filter((s) => s.metric === 'elbow').map((s) => iconAngle(s, pushCtx))));
-  ok('俯卧撑：肘弯得越多，图标里身体越低（撑地高度随肘角变小）', (() => {
-    // 只看「往下走」的那几格（最后那格是「回到顶位」，本来就该画得更高）
-    const elbowStages = pushStages.filter((s) => s.metric === 'elbow' && s.kind !== 'finish');
-    const heights = elbowStages.map((s) => {
-      const ic = stageIcon(s, pushCtx);
-      const shoulderY = ic.lines[0].a.y;
-      const handY = Math.max(...ic.lines.flatMap((l) => [l.a.y, l.b.y]));
-      return handY - shoulderY;   // 撑地高度：手在地面时 = 肩到手的距离
-    });
-    return heights.length >= 2 && heights.every((v, i) => i === 0 || v <= heights[i - 1]);
-  })(), JSON.stringify(pushStages.filter((s) => s.metric === 'elbow').map((s) => `${s.kind}:${s.value}`)));
-  ok('俯卧撑：「回到顶位」那一格画得比「计次」那一格高（看得出是回去了）', (() => {
+  // 俯卧撑的链（用户要求「计次的那一刻选在身体到达最低点」）：
+  // ① 俯撑 → ② 回到顶位（起始位，148°）→ ③ 开始下沉（150°）→ ④ **最低点 = 计次那一刻**（深度线 146°）。
+  ok('俯卧撑：四格 = 俯撑 → 回到顶位 → 开始下沉 → 最低点（计次那一刻）',
+    pushStages.length === 4 && pushStages[0].kind === 'gate'
+    && pushStages[1].item.labelKey === 'spec.backLine'
+    && pushStages[2].item.labelKey === 'spec.pushupEnter'
+    && pushStages[3].kind === 'finish' && pushStages[3].item.labelKey === 'spec.countLine'
+    && pushStages[3].detFlag === 'atBottom',
+    JSON.stringify(pushStages.map((s) => `${s.item.labelKey}:${s.kind}`)));
+  ok('俯卧撑：「最低点」那一格画得比「回到顶位」低（一眼看出这一格是沉到底）', (() => {
     const h = (s) => {
       const ic = stageIcon(s, pushCtx);
       const shoulderY = ic.lines[0].a.y;
       const handY = Math.max(...ic.lines.flatMap((l) => [l.a.y, l.b.y]));
       return handY - shoulderY;
     };
-    const count = pushStages.find((s) => s.kind === 'count');
-    const finish = pushStages.find((s) => s.kind === 'finish');
-    return count && finish && h(finish) > h(count);
-  })());
+    const top = pushStages.find((s) => s.item.labelKey === 'spec.backLine');
+    const bottom = pushStages[pushStages.length - 1];
+    return top && bottom && h(top) > h(bottom);
+  })(), JSON.stringify(pushStages.map((s) => `${s.item.labelKey}:${s.value}`)));
+  ok('俯卧撑：三格肘角图标都能区分（判据数值不同，图标按判据画）',
+    new Set(pushStages.filter((s) => s.metric === 'elbow').map((s) => stageIcon(s, pushCtx).pose.params.elbow)).size === 3,
+    JSON.stringify(pushStages.filter((s) => s.metric === 'elbow').map((s) => stageIcon(s, pushCtx).pose.params.elbow)));
   ok('俯卧撑：撑地类姿势用「手在地面」的画法（support）',
     pushStages.filter((s) => s.metric === 'elbow').every((s) => stageIcon(s, pushCtx).pose.params.support === true));
 
