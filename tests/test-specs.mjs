@@ -684,6 +684,50 @@ console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格'
     pushTop && pushTop.also && pushTop.also.metric === 'shoulderDrop'
     && pushTop.also.value === Number(PUSHUP.dropReturn.toFixed(2)),
     JSON.stringify(pushTop?.also && { m: pushTop.also.metric, v: pushTop.also.value }));
+
+  // 坐姿体前屈：**用真实帧走一遍进度条**（用户反馈「实际没有计时」就是这一条没走通）——
+  //   ① 坐好（躯干 0°、髋 90°、腿伸直）→ 第一格「坐好」点亮；
+  //   ② 前折到躯干 ≈30° → 第二格「前折到位」点亮 = 开始计时。
+  //   没坐好就直接前折时，第一格也不该亮（识别器的起始姿势是前提，锁存之后才允许走第二格）。
+  {
+    const { supinePose } = await import('./synthetic-pose.mjs');
+    const seated = (torsoUp) => supinePose({
+      hip: { x: 0.68, y: 0.86 }, thighUp: 90, knee: 175, torsoUp, armDown: 0, elbow: 170,
+    });
+    const seatStages = specStages('seatedForwardFold');
+    // 真实的时序：帧要一帧一帧喂给识别器（锁存与计时都靠内部状态）
+    const run = (poses) => {
+      const det = createDetector('seatedForwardFold');
+      const smoother = new LS();
+      const seen = [];
+      let t = 0;
+      for (const p of poses) {
+        const frames = Math.max(1, Math.round(p.ms / 33));
+        for (let i = 0; i < frames; i++) {
+          t += 33;
+          const f = cf(tm(smoother.apply(p.pose.map((q) => ({ ...q, v: q.visibility })), t / 1000), A), null, t, false, null);
+          det.update(f, t);
+          const at = seatStages.map((st, k) => (k === 0 || seen[k - 1] ? stageHolds(st, f, det) : false));
+          seen.push(at);
+        }
+      }
+      const last = seen[seen.length - 1] || [];
+      return { det, last, maxLit: seen.reduce((n, a) => Math.max(n, a.filter(Boolean).length), 0) };
+    };
+    const sitThenFold = run([{ pose: seated(0), ms: 1200 }, { pose: seated(30), ms: 4000 }]);
+    ok('坐姿体前屈：坐好 → 前折，进度条两格依次点亮（走到「前折到位」= 开始计时那一刻）',
+      sitThenFold.last[0] === true && sitThenFold.last[1] === true
+      && sitThenFold.maxLit === 2, JSON.stringify(sitThenFold.last));
+    ok('坐姿体前屈：前折到位那一刻真的开始计时（「链走完」与「计时开始」同刻：姿势稳定 0.25 秒后秒表就在跑）',
+      sitThenFold.det.active === true && sitThenFold.det.holdMs > 2000,
+      `active=${sitThenFold.det.active} holdMs=${sitThenFold.det.holdMs}`);
+    ok('坐姿体前屈：只坐好、还没前折时第一格亮、第二格不亮',
+      run([{ pose: seated(0), ms: 1200 }]).last[1] === false);
+    const foldedOnly = run([{ pose: seated(45), ms: 2000 }]);
+    ok('坐姿体前屈：没坐好就直接前折 → 两格都不亮（起始姿势是前提）',
+      foldedOnly.last[0] === false && foldedOnly.last[1] === false && foldedOnly.det.holdMs === 0,
+      JSON.stringify(foldedOnly.last));
+  }
 }
 
 /* ------------------------------------------------------------------ *
