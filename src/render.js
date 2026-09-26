@@ -42,7 +42,12 @@ export const FOCUS = {
   bridge: ['hip', 'knee'],
   plank: ['hip', 'elbow', 'shoulderJoint'],
   deadBug: ['knee', 'hip'],
-  crunch: ['hip', 'shoulder'],
+  /**
+   * 卷腹：判据是**躯干倾角变小 + 肩-髋距缩到躺平时的 ≈70% + 头离地**（见 exercises.js 的 CRUNCH）。
+   * 「躯干 xx°」由 showsTrunkAngle 自动带上（FOCUS 里有条目就会标），
+   * 这里再标两个：屈膝的「膝 xx°」和「头 (离地) x.xx」—— 都是用户在描述里点名的指标。
+   */
+  crunch: ['knee', 'head'],
   reverseCrunch: ['hip', 'knee'],
   // 仰卧抬腿：判据就是「腰腿夹角」（+ 膝角用来看腿有没有绷直）
   lyingLegRaise: ['hip', 'knee'],
@@ -298,6 +303,20 @@ export class PoseRenderer {
     // 和「髋 / 膝」同一套胶囊，标在肩关节上。
     if (focus.includes('shoulderJoint') && Number.isFinite(frame.shoulderAngle)) {
       items.push({ at: P(S[side]), text: `${t('debug.shoulderJoint')} ${Math.round(frame.shoulderAngle)}°` });
+    }
+    // 头离地高度（× 躯干长）：卷腹用它判「头有没有离开地面」（用户点名的关键指标之一）。
+    // 识别器会把**相对躺平抬起了多少**写回帧上（`frame.headUp`）—— 用差值，
+    // 绝对高度（`headClear`）受校准地面线影响，躺着也会读出一大截。
+    // 锚点取头（鼻子/耳朵都在时取它们的中点），和别的胶囊同一套画法。
+    if (focus.includes('head')) {
+      const up = Number.isFinite(frame.headUp) ? frame.headUp : frame.headClear;
+      if (Number.isFinite(up)) {
+        const headPts = [P(LM.NOSE), P(LM.L_EAR), P(LM.R_EAR)].filter((p) => p && Number.isFinite(p.x));
+        const at = headPts.length
+          ? headPts.reduce((a, p) => ({ x: a.x + p.x / headPts.length, y: a.y + p.y / headPts.length }), { x: 0, y: 0 })
+          : P(LM.NOSE);
+        if (at) items.push({ at, text: `${t('debug.head')} ${up.toFixed(2)}` });
+      }
     }
     // 躯干倾角：和「髋」「膝」一模一样的画法（深色胶囊 + 度数），只是要不要标由下面的规则决定。
     // 锚点取躯干中段（肩中点 ↔ 髋中点的中点），并**垂直于躯干方向往外让开一段**：

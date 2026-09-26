@@ -201,6 +201,8 @@ export default {
       supine: 'Lie down on the mat: on your back with knees bent, set up for the move',
       // Lying leg raise: the start is simply lying flat with straight legs (the "knees bent" line is the bridge/crunch pose)
       supineStraight: 'Lie flat on the mat: body flat, legs straight and relaxed (hip and knee both flat, about 180°)',
+      // Crunch: the starting pose is "lie down with knees bent" (different from the bridge / leg raise start)
+      crunchLying: 'Lie on the mat with your knees bent: trunk flat (tilt about 90°), knees bent to about 90°, feet planted',
       quadruped: 'Get on all fours: hands and knees on the floor',
       kneel: 'Kneel down: knees on the floor, torso tall',
       seated: 'Sit down on the mat and set up for the move',
@@ -269,6 +271,8 @@ export default {
     hipClear: 'Hip off floor',
     thighFromHoriz: 'Thigh from horizontal',
     visibility: 'Visibility',
+    // Short name for the on-screen "head off the floor" readout (a key crunch metric)
+    head: 'Head',
     // The 🐞 panel line showing the quantity this exercise is actually judged by
     progress: 'progress',
     sound: 'Sound',
@@ -310,6 +314,10 @@ export default {
       sides: 'Both sides',
       line: 'Line (enter/exit)',
       otherHold: 'Other-leg rule',
+      // Crunch: trunk tilt (now / lying baseline), shoulder-hip ratio (now / line), head height (now / line)
+      torsoTilt: 'Trunk tilt (now/base)',
+      torsoShrink: 'Shoulder-hip (now/line)',
+      headClear: 'Head off floor (now/line)',
       side: 'Current side',
       lastSide: 'Last side/gap',
       reject: 'Last not counted',
@@ -775,6 +783,9 @@ export default {
     body: 'Body line angle',
     trunk: 'Trunk tilt',
     torsoIncl: 'Trunk tilt',
+    // Crunch: shoulder-hip distance / lying length (a pure ratio), and head height off the floor
+    torsoShrink: 'Shoulder-hip distance',
+    headClear: 'Head off floor',
     hipAboveKnee: 'Hip above knee',
     hipRise: 'Hip lift',
     // Criterion name for the standing gate: how much higher the shoulders are than the hips
@@ -830,6 +841,9 @@ export default {
       lift: '× frame height',
       s: 's',
       count: '×',
+      // Pure ratio (the crunch's "shoulder-hip distance / lying length"): it cannot read "× torso length",
+      // because that unit *is* the shoulder-hip distance itself
+      ratio: '× lying length',
     },
     enterLine: 'Starts the rep',
     countLine: 'Counts as one rep (relaxed mode)',
@@ -855,6 +869,12 @@ export default {
     seatedStart: 'Sit up (starting pose)',
     seatedFold: 'Folded far enough (timer starts)',
     plankKnee: 'Knees off the floor (recommended)',
+    // Crunch (the user's model): (1) lie down with knees bent (2) trunk tilt shrinks (3) shoulder-hip distance ≈70-80%, or the head leaves the floor
+    crunchLying: 'Lie down with knees bent (starting pose)',
+    crunchTilt: 'Trunk tilt shrinks (curling up)',
+    crunchShrink: 'Shoulder-hip distance down to 70%-80% of lying',
+    crunchHead: 'Head off the floor',
+    crunchHands: 'Do not pull on your neck (recommended)',
     holdPrime: 'Timer starts once the pose is steady',
     holdGrace: 'Grace time when the pose breaks',
     holdStraight: 'Body line angle',
@@ -925,6 +945,10 @@ export default {
       seat: 'Seated',
       fold: 'Fold',
       holdPlank: 'Held up',
+      // Crunch's three segments: lie down → curl → curled into place (counts)
+      crunchLie: 'Lie',
+      crunchCurl: 'Curl',
+      crunchTop: 'Curled',
       // Plank, second segment: shoulder joint angle (arms propping you up)
       prop: 'Arms propped',
       lift: 'Off floor',
@@ -960,6 +984,19 @@ export default {
       bridgeCount: 'Lifting the hips past this line is what makes it “up” (the line follows your own lowest point); lifting higher scores higher, and the rep itself is counted when you come back down.',
       bridgeAngle: '**Angle path** (an “or” with the height line above): the on-screen “Hip” readout *is* the shoulders–hips–knees angle — about 135°–145° lying flat with bent knees, about 170°–180° when lifted into one line. The user measured that “the hips hit their highest point at about 170°”, so reaching that angle counts as “up” — you no longer have to hit a specific height (which also covers people whose shoulders lift with them, or who have a long torso).',
       bridgeKnee: 'The knee angle must stay inside this range: too small means no knee bend, too large means the leg is straight.',
+      // Crunch (the user's model, see CRUNCH in exercises.js)
+      crunchLying: '**The starting pose is “lie down with knees bent”**: lie on your back sideways to the camera — trunk close to horizontal (tilt ≥ {tilt}°, flat is about 90°), knees bent (knee angle around 90°).',
+      crunchKnee: 'Lying with bent knees: the knee angle must fall inside this range (too small means no bend at all, too large means the leg is straight — that is a leg raise).',
+      crunchTilt: '**“Curling up” is judged by how many degrees you lose against your own lying pose** (≥ {drop}°), not by a fixed angle —'
+        + ' the lying baseline follows your own readings (the largest value among frames with trunk tilt ≥ {floor}°),'
+        + ' so a slightly off camera or a soft mat still works.',
+      crunchShrink: '**The shoulder-to-hip length**: as you curl, the trunk folds and this length shrinks noticeably —'
+        + ' it starts around {start} and **{count}** already counts as a rep (the user measured about {full} in practice; this line keeps a margin).'
+        + ' The denominator is *your own lying length*, so body type, distance from the camera and camera angle do not matter.',
+      crunchHead: '**Head off the floor** (another key signal, and an OR with the shrink line above):'
+        + ' the head (nose/ear) leaving the floor by more than this line counts as curled — it catches small, quick reps.',
+      crunchTempo: 'At least this long between two crunches: it only filters out wobbles faster than a human can move; slower and shallower reps still count.',
+      crunchHands: 'If you put your hands behind your head, do not pull with your neck — cross your arms on your chest or rest your fingertips by your ears instead.',
       bridgeTempo: 'A whole round (leaving the floor → back on the floor) has to take at least this long; it only filters out a quick bounce.',
       bothKnees: 'The straighter leg (usually the back one) must also bend past this line, or {v}° below how straight you personally stand, whichever is stricter. Moving only the front leg is logged as a partial rep.',
       lungeCount: 'Bending the front knee past this line already counts (no 90° required); if you stand straighter and read a lower angle, the line adapts to you.',
@@ -1012,6 +1049,8 @@ export default {
       lungeBack: 'Rise {pct}% of the way back from this rep’s deepest point, or {deg}° above it',
       lungeWobble: 'Less than {deg}° below how straight you stand: not counted and nothing is spoken',
       pushupWobble: 'Less than {deg}° below your own top and no shoulder drop: not counted and nothing is spoken',
+      crunchTilt: 'More than {drop}° less than your own lying pose (flat is about 90°, curled into place about 70°)',
+      crunchHands: 'Cross your arms on your chest or rest your fingertips by your ears — do not pull yourself up with your neck',
       outOfPose: 'Return to the starting position of this exercise',
     },
   },

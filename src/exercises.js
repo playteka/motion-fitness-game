@@ -1107,6 +1107,242 @@ class GluteBridgeDetector extends DetectorBase {
 }
 
 /* ------------------------------------------------------------------ *
+ * 仰卧卷腹（判据按用户给的模型重做）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 卷腹的判据（**用户给的模型**）：
+ *
+ * > 「初始关键帧就是屈膝躺下，那么躯干倾角应该是差不多 90 度，膝关节弯曲，应该也在 90 度或者更小。
+ * >  真正计次的关键帧，和初始关键帧的变化，应该是**躯干倾角变小了**，与此同时，
+ * >  **肩关节到髋关节的长度**因为卷腹而变小，可能只有初始关键帧长度的 **70% 左右**。
+ * >  当然，**头部离地**也是一个关键指标。请根据我的描述优化卷腹这个动作的关键帧，让计数更为流畅。」
+ *
+ * 所以现在是三个信号（前两个是「与起始关键帧的**变化量**」，全部自校准，不写死绝对值）：
+ *
+ * | 关键帧 | 判据 | 参考值 |
+ * |---|---|---|
+ * | ① 屈膝躺下（起始姿势） | 躯干接近水平（倾角 ≥62°）+ 屈膝（膝角 25°~118°） | 躺平 ≈90°、屈膝 ≈90° |
+ * | ② 卷起来（躯干倾角变小） | 躯干倾角比**自己躺平的基线**小 ≥13° | 卷到位时 ≈65°~75° |
+ * | ③ 计次（肩-髋距缩到 70~80% **或** 头离地） | `torsoShrink ≤ 0.80` **或** `headClear ≥ 0.16×躯干长` | 缩到 ≈0.70×、头离地 ≈0.2~0.4× |
+ *
+ * 为什么要重做：原来是通用屈伸引擎按 **`shoulderClear`（肩离地高度）** 判的，有两个坑 ——
+ *   ① 它**依赖校准地面线**（床上/沙发上做、机位偏一点，地面线就落在身体下面，读数整体虚高）；
+ *   ② 它除以 `torsoLen`，而 `torsoLen` 就是「肩-髋距离」**本身**：卷腹时这个距离缩小，
+ *      于是分母一起变小、读数被放大 —— 越卷越容易满分，判据反而和动作脱钩。
+ * 现在直接判**肩-髋距离相对躺平时的比例**（用户说的「只有初始长度的 70% 左右」），
+ * 分母是**躺平时的最长值**（自校准），所以读数与机位、体型、离镜头远近都无关。
+ *
+ * 「让计数更流畅」的几处设计：
+ *   - **在卷到位的最高点立刻计次**（和俯卧撑「在最低点计次」同一个思路），
+ *     所以「关键帧做完」和「记上一个数」是同一刻，不用等躺回去才结算；
+ *   - 三条线都留了余量（用户观察 ≈70%，计次线取 80%；倾角变化取 13°），
+ *     幅度小一点、慢一点都能计上；
+ *   - 抖动过滤只滤掉「比人能做到的还快」的上下抖（0.32 秒以内一轮），不因为慢而扣次数。
+ */
+export const CRUNCH = {
+  // ---- ① 起始关键帧：屈膝躺下 ----
+  lyingTilt: 62,        // 躯干接近水平（0=直立、90=水平）；躺平 ≈90，这里留足余量
+  kneeMin: 25,          // 屈膝的下限（腿完全伸直贴地 = 抬腿动作，不是卷腹）
+  kneeMax: 118,         // 屈膝的上限（用户说「90 度或者更小」，放宽到 118°）
+  /**
+   * 还「在不在这个动作里」的宽松门槛（见 step 里的说明）：
+   * 卷起来时躯干倾角会掉到 62° 以下，不能因此把它判成「离开了起始姿势」（那会一轮计两次）。
+   * 只有明显坐起来（倾角 <35°）或腿伸直（膝角 >140°）才算离开。
+   */
+  activeTilt: 35,
+  activeKneeMax: 140,
+  // ---- 基线（自校准）----
+  baseTiltFloor: 68,    // 躺到这么平才更新「躺平基线」
+  // ---- ② 卷起来 ----
+  tiltDrop: 13,         // 躯干倾角比躺平基线小这么多度才算卷起来
+  shrinkStart: 0.90,    // 「开始卷起」那一步（进度条第二格）
+  // ---- ③ 计次 ----
+  shrinkCount: 0.80,    // 肩-髋距缩到躺平时的 80%（用户观察 ≈70%，留余量）→ 计次
+  shrinkFull: 0.72,     // 满分深度（≈用户说的 70%）
+  headClearCount: 0.16, // 头离地（× 躯干长）—— 与上面的缩距判据取「或」
+  // ---- 躺回起始位（下一轮的前提）----
+  backShrink: 0.94,     // 肩-髋距回到 94% 以上（参考值：判定用的是「倾角回位 + 进度掉下来」，见 step）
+  backTilt: 7,          // 倾角回到基线 7° 以内
+  backProgress: 0.30,   // 或三个信号合起来的进度掉到 0.30 以下（幅度小的人也回得来）
+  // ---- 抖动过滤 ----
+  minRepMs: 320,        // 一次卷腹最快 0.32 秒（比人快的一定是抖；第一次不判）
+};
+
+class CrunchDetector extends DetectorBase {
+  onReset() {
+    this.stage = 'down';
+    this.phase = 'down';
+    this.baseTilt = 0;      // 躺平基线（躯干倾角的最大值，缓慢衰减以跟上机位变化）
+    this.refTorso = 0;      // 躺平时的肩-髋距离（= 用户说的「初始关键帧长度」）
+    this.baseHead = NaN;    // 躺平时的头高（头离地用差值：抬头高度 − 躺平时的头高）
+    this.torsoShrink = NaN; // 当前肩-髋距 / 躺平时的长度
+    this.headUp = NaN;      // 头离地（× 躯干长）
+    this.tiltDropNow = 0;
+    this.progress = 0;      // 0~1：离「计次线」还有多远（进度条与要领分都用它）
+    this.peak = 0;
+    this.cycleStartAt = 0;
+    this.by = '';           // 这一次是靠哪个信号计上的（缩距 / 头离地）—— 诊断用
+  }
+
+  onLost() { this.stage = 'down'; this.phase = 'down'; this.cycleStartAt = 0; }
+  onNewCycle() { this.peak = 0; this._minShrink = NaN; this._maxHead = NaN; }
+
+  /** 这一帧算不算「屈膝躺下」（起始关键帧） */
+  isLying(f) {
+    return f.torsoIncl >= CRUNCH.lyingTilt
+      && f.kneeAngle >= CRUNCH.kneeMin && f.kneeAngle <= CRUNCH.kneeMax;
+  }
+
+  /** 计数诊断（🐞 面板）：把三个信号和两条线都摊出来 */
+  diag() {
+    return [
+      { key: 'debug.diag.stage', value: this.stage },
+      { key: 'debug.diag.torsoTilt', value: `${Number.isFinite(this._lastTilt) ? Math.round(this._lastTilt) : '—'}/${Math.round(this.baseTilt)}` },
+      { key: 'debug.diag.torsoShrink', value: `${Number.isFinite(this.torsoShrink) ? this.torsoShrink.toFixed(2) : '—'}/${CRUNCH.shrinkCount}` },
+      { key: 'debug.diag.headClear', value: `${Number.isFinite(this.headUp) ? this.headUp.toFixed(2) : '—'}/${CRUNCH.headClearCount}` },
+      { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
+      ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
+    ];
+  }
+
+  step(f, now) {
+    this._lastTilt = f.torsoIncl;
+
+    /**
+     * ⚠️ 两个「在不在这个动作里」的判定必须分开（探针查出来的真 bug）：
+     *
+     *   - `lying`（起始姿势）：进门的**严格**条件 —— 躯干接近水平 + 屈膝。进度条第一格、
+     *     以及建立基线都用它；
+     *   - `inExercise`（还在这套动作里）：**宽松**条件 —— 只要人还躺着/卷着、膝还屈着就算。
+     *
+     * 曾经只用 `lying` 一条：卷起来之后躯干倾角掉到 62° 以下 → 被当成「不在起始姿势」→
+     * `phase` 被重置成 'down' → 手一放下又满足计次线 → **一轮计两次**（探针里 4 轮计了 8 次）。
+     * 现在只有真正离开动作（坐起来 / 站起来 / 腿伸直）才重置。
+     */
+    const inExercise = f.torsoIncl >= CRUNCH.activeTilt
+      && f.kneeAngle >= CRUNCH.kneeMin && f.kneeAngle <= CRUNCH.activeKneeMax;
+    const lying = this.isLying(f);
+    this.lying = lying;
+    this.gateOk = lying;
+
+    if (!inExercise) {
+      // 真的不在这个动作里了：停判，但**保留基线**（用户中途调整一下不该把校准丢掉）
+      this.active = false;
+      this.curled = false;
+      this.topNow = false;
+      this.headUp = NaN;
+      this.standby = 'status.need.crunchLying';
+      this.stage = 'down';
+      this.phase = 'down';
+      this.depthPct = 0;
+      this.progress = 0;
+      this.cycleStartAt = 0;
+      if (f.torsoIncl < 35) this.cue('notSupine', null, 'info', now, 8000);
+      return;
+    }
+    this.active = true;
+    this.standby = '';
+
+    // ---- 自校准基线：躺平的那几帧才更新 ----
+    // 倾角基线 = 「自己躺得最平」的读数（缓慢衰减，跟着机位/体态走）
+    if (f.torsoIncl >= CRUNCH.baseTiltFloor) {
+      this.baseTilt = Math.max(f.torsoIncl, this.baseTilt - 0.12);
+    }
+    if (!(this.baseTilt > 0)) this.baseTilt = Math.max(f.torsoIncl, CRUNCH.baseTiltFloor);
+    this.tiltDropNow = this.baseTilt - f.torsoIncl;
+    const curledHalf = this.tiltDropNow >= CRUNCH.tiltDrop * 0.5;
+    if (!curledHalf && Number.isFinite(f.torsoLen)) {
+      // 肩-髋距基线 = 「自己躺平时的长度」：只有还没卷起来的那几帧参与，取最大值
+      this.refTorso = Math.max(f.torsoLen, this.refTorso * 0.9995);
+      // 头离地基线 = 躺平时的头高（**相对量**：抬头高度减去躺平时的头高）。
+      // 用差值而不是「离地面线的绝对高度」：地面线是校准来的、机位一变就整体平移，
+      // 绝对高度会让「躺着」也读到 0.5，差值把这些系统性偏差全部抵消。
+      if (Number.isFinite(f.headClear)) {
+        this.baseHead = Math.min(f.headClear, this.baseHead + 0.004);
+      }
+    }
+    if (!(this.refTorso > 0) && Number.isFinite(f.torsoLen)) this.refTorso = f.torsoLen;
+    if (!Number.isFinite(this.baseHead) && Number.isFinite(f.headClear)) this.baseHead = f.headClear;
+    this.torsoShrink = this.refTorso > 0 ? f.torsoLen / this.refTorso : NaN;
+    // 本轮卷得最深时缩到了多少（诊断用：看得出来「离计次线还差多少」）；
+    // `_deepestShrink` 跨轮不清零 = 这一组卷到过的最深值，`_minShrink` 每轮重置
+    this._minShrink = Math.min(Number.isFinite(this._minShrink) ? this._minShrink : 9, this.torsoShrink);
+    this._deepestShrink = Math.min(Number.isFinite(this._deepestShrink) ? this._deepestShrink : 9, this.torsoShrink);
+    this._maxHead = Math.max(Number.isFinite(this._maxHead) ? this._maxHead : 0, Number.isFinite(this.headUp) ? this.headUp : 0);
+    this.headUp = Number.isFinite(f.headClear) && Number.isFinite(this.baseHead)
+      ? Math.max(0, f.headClear - this.baseHead)
+      : NaN;
+    // 识别器把「相对躺平抬起了多少」写回帧上：画面上的「头 x.xx」标注与进度条都读它
+    f.headUp = this.headUp;
+
+    // ---- 三个信号 → 进度（与计次线严格对齐：progress ≥ 1 就是计次那一刻）----
+    const byTilt = this.tiltDropNow / CRUNCH.tiltDrop;
+    const byShrink = Number.isFinite(this.torsoShrink) ? (1 - this.torsoShrink) / (1 - CRUNCH.shrinkCount) : 0;
+    const byHead = Number.isFinite(this.headUp) ? this.headUp / CRUNCH.headClearCount : 0;
+    const byDepth = Math.max(byShrink, byHead);
+    this.progress = clamp(Math.min(byTilt, byDepth), 0, 1);
+    this.peak = Math.max(this.peak, this.progress);
+    this.depthPct = Math.round(this.progress * 100);
+    this.stage = this.progress >= 1 ? 'top' : (this.progress > 0.15 ? 'rising' : 'down');
+    // 进度条那三格用的标记（specs.js 的 specStages 直接用它们）：
+    this.curled = this.tiltDropNow >= CRUNCH.tiltDrop;      // 「躯干倾角变小了」
+    this.topNow = this.progress >= 1;                        // 「缩到 80% 或 头离地」= 计次那一刻
+    this.curlLine = this.baseTilt - CRUNCH.tiltDrop;         // 「卷起来」那条动态线（跟着躺平基线走）
+    this.shrinkLine = CRUNCH.shrinkCount;                    // 「缩到多少」那条线
+
+    // 卷得不够高：出声提示再卷一点（只在明显开始卷了、又离计次线还远时提示）
+    if (this.phase === 'down' && this.progress > 0.35 && this.progress < 0.85 && byTilt > byDepth) {
+      this.cue('curlMore', null, 'warn', now, 3500);
+    }
+
+    if (this.phase === 'down') {
+      if (!this.cycleStartAt) this.cycleStartAt = now;
+      if (this.progress >= 1) {
+        // ---- 计次：卷到位的最高点立刻记（用户要求「计数更为流畅」）----
+        const dur = now - this.cycleStartAt;
+        this.by = byShrink >= byHead ? 'shrink' : 'head';
+        const peak = this.peak;
+        this.cycleStartAt = 0;
+        this.phase = 'up';
+        if (dur > 0 && dur < CRUNCH.minRepMs) {
+          // 比人能做到的还快：只滤抖，不算次数（但要躺回去才能重来）
+          this.partialReps += 1;
+          this.lastReject = { code: 'tempo', value: `${Math.round(dur)}ms` };
+          this.cue('tempo', null, 'warn', now, 3000);
+          this.emit({ type: 'rep', valid: false, reason: 'tempo' });
+        } else {
+          this.lastReject = null;
+          this.validReps += 1;
+          this.reps = this.validReps;
+          this.cycleHadValidRep = true;
+          // 质量分：卷得越深越高，屈膝角度合适再加一点（宽松：不标准也计次，只是分低）
+          const depthPts = Number.isFinite(this.torsoShrink)
+            ? clamp(Math.round(((CRUNCH.shrinkStart - this.torsoShrink) / (CRUNCH.shrinkStart - CRUNCH.shrinkFull)) * 30), 0, 30)
+            : 0;
+          const kneeOk = f.kneeAngle >= 60 && f.kneeAngle <= 110 ? 8 : 4;
+          this.emit({
+            type: 'rep', valid: true, index: this.validReps,
+            quality: clamp(58 + depthPts + kneeOk, 0, 100), duration: dur,
+            // 计次那一刻的三个读数（诊断 / 测试用：看得出来是靠哪条证据计上的）
+            shrink: this.torsoShrink, headUp: this.headUp, tiltDrop: this.tiltDropNow, by: this.by,
+          });
+        }
+      }
+    } else if (this.tiltDropNow <= CRUNCH.backTilt && this.progress <= CRUNCH.backProgress) {
+      // ---- 躺回起始位：下一轮从这里开始 ----
+      // 用「倾角回到基线附近 **且** 三个信号合起来的进度掉回 0.30 以下」来判，
+      // 而不是单看「肩-髋距回到 94%」：有的人卷腹幅度小、躺平时肩-髋距也回不满，
+      // 只盯那一条会永远停在 'up'、后面几次一次都计不上（「计数不流畅」最常见的成因）。
+      this.phase = 'down';
+      this.stage = 'down';
+      this.cycleStartAt = 0;
+      this.nextCycle(now);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 计时类：平板支撑
  * ------------------------------------------------------------------ */
 
@@ -1204,6 +1440,7 @@ const BUILTIN = {
   pushup: PushupDetector,
   bridge: GluteBridgeDetector,
   plank: PlankDetector,
+  crunch: CrunchDetector,
 };
 
 export function createDetector(id, opts = {}) {
@@ -1214,4 +1451,4 @@ export function createDetector(id, opts = {}) {
   return createEngineDetector(meta, opts);
 }
 
-export { DetectorBase, HoldDetector };
+export { DetectorBase, HoldDetector, CrunchDetector };

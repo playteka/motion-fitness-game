@@ -155,11 +155,17 @@ export function supinePose(o = {}) {
     thighUp = 50,       // 髋→膝 相对正上方（>90 表示膝在髋前方且更高）
     knee = 100,
     torsoUp = 270,      // 髋→肩 相对正上方（270 = 水平指向 -x，即躺下）
+    /**
+     * 髋→肩 的**长度**（默认就是整条躯干 SEG.torso）。
+     * 卷腹时躯干会折起来：胸廓向骨盆卷过去，肩到髋的距离随之变短
+     * （用户观察「只有初始关键帧长度的 70% 左右」），所以这里可以传一个更短的值来建模。
+     */
+    torsoLen = SEG.torso,
     armDown = -90,      // 上臂沿地面指向后方
     elbow = 178,
     facing = 1,
   } = o;
-  const shoulder = add(hip, up(torsoUp), SEG.torso);
+  const shoulder = add(hip, up(torsoUp), torsoLen);
   const { knee: kneePos, ankle } = legFromHip(hip, thighUp, knee);
   const arm = armFromShoulder(shoulder, armDown, elbow);
   return assemble({ hip, shoulder, knee: kneePos, ankle, ...arm, facing, view: 'side' });

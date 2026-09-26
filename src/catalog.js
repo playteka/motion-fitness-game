@@ -213,8 +213,12 @@ export const EXERCISES = [
     },
   }),
   e('crunch', '🌀', 'core', {
-    plan: 'repSupine', posture: 'supine', judge: 'clear', target: 20,
-    params: bend({ metric: 'shoulderClear', gate: 'supine', up: 0.20, down: 0.62, minRepMs: 340 }),
+    engine: 'builtin', plan: 'repSupine', posture: 'supine', judge: 'clear', target: 20,
+    // 卷腹的判据**按用户给的模型重做过**（手写识别器 CrunchDetector，见 exercises.js）：
+    //   ① 起始关键帧 = 屈膝躺下（躯干倾角 ≈90°、膝角 ≈90°）
+    //   ② 计次关键帧 = 躯干倾角变小 **且**（肩-髋距缩到躺平时的 ≈70~80% **或** 头离地）
+    // 原来那套（通用屈伸引擎判 `shoulderClear`）既依赖校准地面线，又除以会跟着卷腹缩短的
+    // `torsoLen`，越卷读数越虚高 —— 换成「肩-髋距离相对躺平长度的比例」之后就与机位无关了。
   }),
   e('reverseCrunch', '🔃', 'core', {
     plan: 'repSupine', posture: 'supine', judge: 'hip', target: 15,

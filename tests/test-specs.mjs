@@ -12,7 +12,7 @@
  * 用法：node tests/test-specs.mjs
  */
 
-import { createDetector, EXERCISES } from '../src/exercises.js';
+import { createDetector, EXERCISES, CRUNCH } from '../src/exercises.js';
 import { EXERCISE_MAP } from '../src/catalog.js';
 import {
   exerciseSpecs, specKeys, roundFor, specTextRows, specStages, stageText, stageHolds, SPEC_METRICS,
@@ -45,7 +45,7 @@ const ALL = EXERCISES.map((e) => e.id);
 const specsOf = (id) => exerciseSpecs(id);
 const itemsOf = (id) => specsOf(id).groups.flatMap((g) => g.items);
 const findItem = (id, labelKey) => itemsOf(id).find((it) => it.labelKey === labelKey);
-const UNITS = new Set(['deg', 'torso', 'shin', 'lift', 's', 'count']);
+const UNITS = new Set(['deg', 'torso', 'shin', 'lift', 's', 'count', 'ratio']);
 const OPS = new Set(['lte', 'gte', 'lt', 'gt', 'range']);
 
 /* ------------------------------------------------------------------ *
@@ -81,7 +81,9 @@ console.log('\n[1] 每个动作都有技术指标');
 console.log('\n[2] 通用引擎类：数值等于 (up, down) 与进度阈值算出来的那条线');
 {
   const bendIds = EXERCISES.filter((e) => e.engine === 'bend').map((e) => e.id);
-  ok('有屈伸类动作可测', bendIds.length >= 8, `实际 ${bendIds.length}`);
+  // 卷腹改成了手写识别器（CrunchDetector，判据按用户给的模型重做）→ 屈伸族从 8 个变 7 个
+  ok('有屈伸类动作可测', bendIds.length >= 7, `实际 ${bendIds.length}`);
+  ok('卷腹已经不在通用屈伸族里（它有自己的识别器）', !bendIds.includes('crunch'), bendIds.join(','));
   for (const id of bendIds) {
     const p = EXERCISE_MAP[id].params || {};
     const up = Number.isFinite(p.up) ? p.up : 170;
@@ -373,6 +375,75 @@ console.log('\n[5a] 坐姿体前屈：两格关键帧各自的判据都来自同
     && near(findItem('seatedForwardFold', 'spec.holdGrace').value, HOLD_GRACE_MS / 1000, 0.001));
   ok('坐姿体前屈：没有混进旧的「髋离地高度 ≤0.9×躯干长」这条依赖地面线的判据',
     !itemsOf('seatedForwardFold').some((it) => it.metricKey === 'metric.hipClear'));
+}
+
+/* ------------------------------------------------------------------ *
+ * 5a-2. 卷腹：按用户给的模型重做后的三格关键帧
+ * ------------------------------------------------------------------ */
+
+console.log('\n[5a-2] 卷腹：屈膝躺下 → 卷起 → 卷到位（肩-髋距 70~80% 或 头离地）');
+{
+  // 用户原话：「初始关键帧就是屈膝躺下，那么躯干倾角应该是差不多 90 度，膝关节弯曲，
+  //   应该也在 90 度或者更小。真正计次的关键帧……应该是躯干倾角变小了，与此同时，
+  //   肩关节到髋关节的长度因为卷腹而变小，可能只有初始关键帧长度的 70% 左右。
+  //   当然，头部离地也是一个关键指标。」
+  const C = CRUNCH;
+  const posture = itemsOf('crunch').filter((it) => it.labelKey === 'spec.crunchLying');
+  const count = itemsOf('crunch').filter((it) => ['spec.crunchTilt', 'spec.crunchShrink', 'spec.crunchHead'].includes(it.labelKey));
+
+  // ① 起始关键帧：屈膝躺下（躯干 ≈90°、膝角 ≈90°）
+  ok('卷腹：起始格列出「躯干倾角 ≥62°（躺平）+ 膝角 25°~118°（屈膝）」两条',
+    posture.some((it) => it.metricKey === 'metric.trunk' && it.op === 'gte' && near(it.value, C.lyingTilt, 0.0001))
+    && posture.some((it) => it.metricKey === 'metric.knee' && it.op === 'range'
+      && near(it.value, C.kneeMin, 0.0001) && near(it.value2, C.kneeMax, 0.0001)),
+    JSON.stringify(posture.map((it) => `${it.metricKey}${it.op}${it.value}`)));
+
+  // ② 「躯干倾角变小」是**相对自己的躺平基线**（动态线），所以那条判据是文字条 + 动态值
+  const tilt = count.find((it) => it.labelKey === 'spec.crunchTilt');
+  ok('卷腹：「躯干倾角变小」写成文字条（判定线是识别器自己的躺平基线 − 13°，不是固定角度）',
+    tilt && !tilt.metricKey && tilt.textKey === 'spec.text.crunchTilt'
+    && Number(tilt.noteParams.drop) === C.tiltDrop,
+    JSON.stringify(tilt && { m: tilt.metricKey, t: tilt.textKey, p: tilt.noteParams }));
+
+  // ③ 计次：肩-髋距缩到 80%（单位是「×躺平时」）或 头离地 ≥0.16×躯干长
+  const shrink = count.find((it) => it.labelKey === 'spec.crunchShrink');
+  ok('卷腹：计次线 = 「肩-髋距 ≤0.80×躺平时」（用户观察 ≈70%，留了余量）',
+    shrink && shrink.metricKey === 'metric.torsoShrink' && shrink.op === 'lte'
+    && near(shrink.value, C.shrinkCount, 0.0001) && shrink.unit === 'ratio',
+    JSON.stringify(shrink && [shrink.metricKey, shrink.op, shrink.value, shrink.unit]));
+  ok('卷腹：肩-髋距的单位是「×躺平时」而不是「×躯干长」（那个单位本身就是肩-髋距，会自己绕圈）',
+    shrink && shrink.unit === 'ratio' && Number(shrink.noteParams.full) === C.shrinkFull
+    && Number(shrink.noteParams.start) === C.shrinkStart,
+    JSON.stringify(shrink && shrink.noteParams));
+  const head = count.find((it) => it.labelKey === 'spec.crunchHead');
+  ok('卷腹：头离地是「或」的第二条证据（≥0.16×躯干长）',
+    head && head.metricKey === 'metric.headClear' && head.op === 'gte'
+    && near(head.value, C.headClearCount, 0.0001) && head.unit === 'torso',
+    JSON.stringify(head && [head.metricKey, head.op, head.value]));
+
+  // 进度条三格：① 躺下（lying）② 卷起（curled，动态线）③ 卷到位（topNow = 计次那一刻）
+  const st = specStages('crunch');
+  ok('卷腹：进度条三格（躺下 / 卷起 / 卷到位），短标签不是通用的「一步」',
+    st.length === 3 && st.every((x) => x.shortKey !== 'spec.short.step'),
+    JSON.stringify(st.map((x) => x.shortKey)));
+  ok('卷腹：第一格是门控 + 识别器的 lying 标记（屈膝躺下）',
+    st[0].kind === 'gate' && st[0].detFlag === 'lying' && st[0].metric === 'trunk',
+    JSON.stringify([st[0].kind, st[0].detFlag, st[0].metric]));
+  ok('卷腹：第二格「卷起」用识别器自己的动态线（躺平基线 − 13°）',
+    st[1].kind === 'count' && st[1].detFlag === 'curled' && st[1].valueFrom === 'curlLine',
+    JSON.stringify([st[1].kind, st[1].detFlag, st[1].valueFrom]));
+  ok('卷腹：最后一格 = 计次那一刻（topNow），判据是肩-髋距，头离地作为「或」的替代判据',
+    st[2].kind === 'finish' && st[2].detFlag === 'topNow' && st[2].metric === 'torsoShrink'
+    && st[2].valueFrom === 'shrinkLine' && st[2].alt && st[2].alt.metric === 'headClear',
+    JSON.stringify([st[2].kind, st[2].detFlag, st[2].metric, st[2].alt && st[2].alt.metric]));
+
+  // 分数全部落在格子上（4+8 / 7 / 14+6 = 39）
+  const pts = stagePoints('crunch');
+  ok('卷腹：每一格的分加起来 = 每轮总分 39',
+    pts.reduce((n, r) => n + r.points + r.bonus, 0) === 39, JSON.stringify(pts));
+  ok('卷腹：四个得分项都分到了格子上（躺下 4+8 / 卷起 7 / 卷到位 14+满轮 6）',
+    pts[0].points === 12 && pts[1].points === 7 && pts[2].points === 14 && pts[2].bonus === 6,
+    JSON.stringify(pts.map((r) => `${r.points}+${r.bonus}`)));
 }
 
 /* ------------------------------------------------------------------ *

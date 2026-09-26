@@ -20,7 +20,7 @@
 
 import { toMetric, LandmarkSmoother, LM } from '../src/geometry.js';
 import { computeFrame } from '../src/metrics.js';
-import { createDetector, EXERCISE_MAP } from '../src/exercises.js';
+import { createDetector, EXERCISE_MAP, CrunchDetector } from '../src/exercises.js';
 import { EXERCISES } from '../src/catalog.js';
 import { t, setLang } from '../src/i18n.js';
 import {
@@ -204,15 +204,16 @@ function jumpCycle(air, { view = 'front', kneeMin = 95, dy = AIR_DY } = {}) {
   };
 }
 
-/** 卷腹一次循环：躺平（torsoUp 270）→ 肩抬到 topTorsoUp（数越大抬得越高） */
-function crunchCycle(topTorsoUp) {
-  return (p) => {
-    const s = Math.sin(Math.PI * p);
-    return supinePose({
-      hip: { x: 0.75, y: 0.89 }, thighUp: 55, knee: 100,
-      torsoUp: 270 + (topTorsoUp - 270) * s, armDown: -90, elbow: 178,
-    });
-  };
+/**
+ * 卷腹的姿势（用户给的模型：屈膝躺下 → 卷起来）：
+ *   `torsoUp` 270 = 躺平（躯干倾角 ≈90°），越大表示肩膀卷得越高；
+ *   `fold` 是**肩-髋距相对躺平时的比例**（真实卷腹会缩到 ≈70%，见 synthetic-pose 的 torsoLen）。
+ */
+function crunchPose(torsoUp = 270, fold = 1, knee = 100) {
+  return supinePose({
+    hip: { x: 0.75, y: 0.89 }, thighUp: 55, knee,
+    torsoUp, torsoLen: SEG.torso * fold, armDown: -90, elbow: 178,
+  });
 }
 
 /**
@@ -316,7 +317,7 @@ console.log('\n[0] 引擎与目录');
   // createDetector(id) 必须按目录条目的 engine 字段选出对应的通用引擎
   const expected = {
     squatSumo: BendRepDetector,
-    lungeBack: BendRepDetector, crunch: BendRepDetector,
+    lungeBack: BendRepDetector,
     reverseCrunch: BendRepDetector, lyingLegRaise: BendRepDetector, squatJump: BendRepDetector,
     boxJump: BendRepDetector,
     deadBug: AltRepDetector, mountainClimber: AltRepDetector,
@@ -331,7 +332,7 @@ console.log('\n[0] 引擎与目录');
     [BendRepDetector, AltRepDetector, TwistRepDetector, SequenceRepDetector, PoseHoldDetector]
       .every((C) => typeof C.prototype.update === 'function' && typeof C.prototype.snapshot === 'function'));
   ok('六个经典动作仍然是手写识别器（没有被通用引擎顶掉）',
-    ['squat', 'lunge', 'pushup', 'bridge', 'plank']
+    ['squat', 'lunge', 'pushup', 'bridge', 'plank', 'crunch']
       .every((id) => !(createDetector(id) instanceof BendRepDetector)
         && !(createDetector(id) instanceof AltRepDetector)
         && !(createDetector(id) instanceof PoseHoldDetector)));
@@ -342,6 +343,7 @@ console.log('\n[0] 引擎与目录');
     ['deadBug', new AltRepDetector(EXERCISE_MAP.deadBug)],
     ['burpee', new SequenceRepDetector(EXERCISE_MAP.burpee)],
     ['sidePlankDemo', new PoseHoldDetector(HOLD_DEMO)],
+    ['crunch', new CrunchDetector(EXERCISE_MAP.crunch)],
   ];
   for (const [id, direct] of pairs) {
     ok(`直接构造 ${direct.constructor.name}（${id}）可用`, typeof direct.snapshot === 'function');
@@ -351,6 +353,7 @@ console.log('\n[0] 引擎与目录');
         r.run([{ pose: LOST, ms: 200 }, { pose: BURPEE_STAND, ms: 700 }, { pose: BURPEE_CROUCH, ms: 500 },
           { pose: BURPEE_PLANK, ms: 700 }, { pose: BURPEE_JUMP, ms: 400 }, { pose: BURPEE_STAND, ms: 400 }]);
       } else if (id === 'sidePlankDemo') r.run([{ pose: holdDemoPose(), ms: 3000 }]);
+      else if (id === 'crunch') r.run([{ pose: crunchPose(270, 1), ms: 900 }, { pose: crunchPose(305, 0.75), ms: 800 }]);
       else if (id === 'deadBug') r.run([{ pose: deadBugPose('L'), ms: 600 }, { pose: deadBugPose('R'), ms: 600 }]);
       else r.run(repeat(kneeCycle(95), 1800, 2));
     }
@@ -413,24 +416,69 @@ console.log('\n[1] bend 引擎：一次循环一次数');
   ok('相扑深蹲：正面站姿满足「双腿分开」门控', f.ankleSpread > 0.35, `ankleSpread=${f.ankleSpread.toFixed(2)}`);
 }
 {
-  // 卷腹：仰卧，肩离地高度就是指标（up 0.20 → down 0.62，数值越大进度越高）
-  const det = createDetector('crunch');
-  const r = makeRunner(det);
-  r.run(repeat(crunchCycle(300), 1400, 4));
-  ok('卷腹：4 个完整循环 = 4 次', det.validReps === 4, `实际 ${det.validReps}`);
-  ok('卷腹：没有半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
-}
-{
-  // 回归：卷得高（肩离地超过 0.6 倍躯干长）也必须计数。
-  // 曾经的 bug：supine 门控要求 shoulderClear < 0.6，而卷腹的到位线就是 0.62 ——
-  // 卷得越标准反而把门控踢掉，次数变成 0 + 一串「太快了」的半程。
-  const det = createDetector('crunch');
-  const r = makeRunner(det);
-  r.run(repeat(crunchCycle(335), 1400, 4));
-  ok('卷腹：卷得高也计数', det.validReps === 4, `实际 ${det.validReps}`);
-  ok('卷腹：卷得高不误记半程', det.partialReps === 0, `实际 ${det.partialReps}`);
-  ok('卷腹：卷得高不该提示太快', !r.cues.some((c) => c.code === 'tooFast'),
-    r.cues.map((c) => c.code).join(','));
+  // 卷腹（**判据按用户给的模型重做过**，手写识别器 CrunchDetector）：
+  //   ① 起始关键帧 = 屈膝躺下（躯干倾角 ≈90°、膝角 ≈90°）
+  //   ② 计次关键帧 = 躯干倾角变小 **且**（肩-髋距缩到躺平时的 ≈70~80% **或** 头离地）
+  // 三条证据各测一遍 —— 后两条是「或」的关系，谁先到都算。
+  const flat = () => crunchPose(270, 1);
+  const curled = (torsoUp, fold) => crunchPose(torsoUp, fold);
+  {
+    // ① 靠「躯干折起来」（肩-髋距缩短）：倾角掉 35°、长度缩到 75%
+    const det = createDetector('crunch');
+    const r = makeRunner(det);
+    for (let i = 0; i < 4; i++) {
+      r.run([{ pose: flat(), ms: 900 }, { pose: curled(305, 0.75), ms: 800 }, { pose: flat(), ms: 900 }]);
+    }
+    ok('卷腹：4 轮「卷起来 → 躺回」= 4 次（肩-髋距缩到 75% 的路线）',
+      det.validReps === 4 && det.partialReps === 0, `${det.validReps}/${det.partialReps}`);
+    // 每一次计上来的那一下，都必须真的满足「倾角变小 **且**（缩到 80% **或** 头离地）」——
+    // 哪条证据先到都行（这里是头离地先到：肩膀一卷起来它就过线了）
+    ok('卷腹：每一次计次都满足「倾角变小 且（肩-髋距 ≤80% 或 头离地）」',
+      r.reps.length === 4 && r.reps.every((rep) => rep.tiltDrop >= 13
+        && (rep.shrink <= 0.80 || rep.headUp >= 0.16)),
+      JSON.stringify(r.reps.map((rep) => ({ s: Number(rep.shrink?.toFixed(2)), h: Number(rep.headUp?.toFixed(2)), d: Math.round(rep.tiltDrop) }))));
+    // 卷到最深的时候，肩-髋距确实缩到 80% 以下（用户说的「只有初始长度的 70% 左右」）
+    ok('卷腹：卷到位时肩-髋距缩到 80% 以下',
+      det._deepestShrink <= 0.80, String(det._deepestShrink));
+  }
+  {
+    // ② 靠「头离地」（躯干长度不变，只把肩膀卷起来）
+    const det = createDetector('crunch');
+    const r = makeRunner(det);
+    for (let i = 0; i < 4; i++) {
+      r.run([{ pose: flat(), ms: 900 }, { pose: curled(300, 1), ms: 800 }, { pose: flat(), ms: 900 }]);
+    }
+    ok('卷腹：4 轮「头离地 → 躺回」= 4 次（头离地那条路线）',
+      det.validReps === 4 && det.partialReps === 0, `${det.validReps}/${det.partialReps}`);
+  }
+  {
+    // ③ 幅度小一点也要计（用户要求「计数更流畅」）：倾角掉 15°、长度几乎不变、头抬一点
+    const det = createDetector('crunch');
+    const r = makeRunner(det);
+    for (let i = 0; i < 4; i++) {
+      r.run([{ pose: flat(), ms: 900 }, { pose: curled(285, 0.97), ms: 800 }, { pose: flat(), ms: 900 }]);
+    }
+    ok('卷腹：幅度小的卷腹（倾角掉 15°）也计 4 次', det.validReps === 4, `实际 ${det.validReps}`);
+  }
+  {
+    // ④ 躺平不动 / 只轻轻晃一下：一次都不计（也不能刷半程）
+    const det = createDetector('crunch');
+    const r = makeRunner(det);
+    r.run([{ pose: flat(), ms: 3000 }]);
+    ok('卷腹：躺着不动不计次', det.validReps === 0 && det.partialReps === 0,
+      `${det.validReps}/${det.partialReps}`);
+    r.run([{ pose: curled(276, 1), ms: 1200 }]);
+    ok('卷腹：只轻轻晃一下（倾角掉 6°）不计次', det.validReps === 0 && det.partialReps === 0,
+      `${det.validReps}/${det.partialReps}`);
+  }
+  {
+    // ⑤ 腿伸直（那是仰卧抬腿的起始姿势）不算「屈膝躺下」
+    const det = createDetector('crunch');
+    const r = makeRunner(det);
+    r.run([{ pose: crunchPose(270, 1, 175), ms: 1500 }]);
+    ok('卷腹：腿伸直躺着不算起始姿势（膝角要在 25°~118°）',
+      det.active === false && det.lying === false && det.validReps === 0, `active=${det.active}`);
+  }
 }
 {
   // 反向卷腹 / 仰卧抬腿：用髋角（躯干-大腿夹角，度）当指标，数值变小 = 抬起来
@@ -584,21 +632,24 @@ console.log('\n[2] bend 引擎：只有宽松档');
   void r;
 }
 {
-  // 卷腹同一档：只卷起一点也算一次，只是质量分低（宽距/窄距俯卧撑删除后，
-  // 这组「浅的也算、深的更高分」的断言改由卷腹承担，测的还是同一个 bend 引擎）
-  const shallow = repeat(crunchCycle(290), 1500, 4);
-  const det = createDetector('crunch');
-  const r = makeRunner(det);
-  r.run(shallow);
-  ok('浅卷腹（肩抬到 290°）：算 4 次', det.validReps === 4, `实际 ${det.validReps}`);
-  ok('浅卷腹：不算半程', det.partialReps === 0, `实际 ${det.partialReps}`);
-  // 深度进分数：卷得更高 → 质量分更高
+  // 「浅的也算、深的更高分」这一档：宽度/窄距俯卧撑删除后由卷腹承担（同一套宽松口径）。
+  // 卷腹现在是手写识别器（CrunchDetector），质量分照旧按卷的深度给。
+  const shallow = createDetector('crunch');
+  const rShallow = makeRunner(shallow);
+  for (let i = 0; i < 4; i++) {
+    rShallow.run([{ pose: crunchPose(270, 1), ms: 900 }, { pose: crunchPose(285, 0.97), ms: 800 }, { pose: crunchPose(270, 1), ms: 900 }]);
+  }
+  ok('浅卷腹（倾角掉 15°）：算 4 次', shallow.validReps === 4, `实际 ${shallow.validReps}`);
+  ok('浅卷腹：不算半程', shallow.partialReps === 0, `实际 ${shallow.partialReps}`);
+  // 深度进分数：卷得更深 → 质量分更高
   const deep = createDetector('crunch');
   const rDeep = makeRunner(deep);
-  rDeep.run(repeat(crunchCycle(315), 1500, 4));
-  ok('卷得更高的那一次质量分更高（深度分照旧区分质量）',
-    rDeep.reps[0].quality > r.reps[0].quality,
-    `${rDeep.reps[0].quality} vs ${r.reps[0].quality}`);
+  for (let i = 0; i < 4; i++) {
+    rDeep.run([{ pose: crunchPose(270, 1), ms: 900 }, { pose: crunchPose(315, 0.70), ms: 800 }, { pose: crunchPose(270, 1), ms: 900 }]);
+  }
+  ok('卷得更深的那一次质量分更高（深度分照旧区分质量）',
+    rDeep.reps[0].quality > rShallow.reps[0].quality,
+    `${rDeep.reps[0].quality} vs ${rShallow.reps[0].quality}`);
 }
 
 /* ------------------------------------------------------------------ *
@@ -670,8 +721,8 @@ console.log('\n[3] bend 引擎：晃动与过快的边界');
 
 console.log('\n[4] bend 引擎：姿势门控');
 {
-  // 站着做卷腹：仰卧门控拦住一切，躺下之后立刻放行
-  // （原来这一格用的是「站着做俯卧撑」（prone 门控），宽距/窄距俯卧撑删除后改由 supine 门控承担）
+  // 站着做卷腹：屈膝躺下这个起始姿势拦住一切，躺下之后立刻放行
+  // （原来这一格用的是「站着做俯卧撑」（prone 门控），宽距/窄距俯卧撑删除后改由卷腹承担）
   const det = createDetector('crunch');
   const r = makeRunner(det);
   r.run([{ pose: IDLE_SIDE, ms: 1500 }]);
@@ -680,9 +731,12 @@ console.log('\n[4] bend 引擎：姿势门控');
   ok('站着做卷腹：提示键能取到中文文案', t(det.standby) !== det.standby, `${det.standby} → ${t(det.standby)}`);
   ok('站着做卷腹：一次也不计', det.validReps === 0 && det.partialReps === 0);
   ok('站着做卷腹：进度归零', det.depthPct === 0);
-  r.run([{ pose: crunchCycle(335), ms: 600 }]);
-  ok('躺下之后：门控放行', det.active === true && det.standby === '', `active=${det.active} standby=${det.standby}`);
-  r.run(repeat(crunchCycle(300), 1400, 2));
+  r.run([{ pose: crunchPose(270, 1), ms: 900 }]);
+  ok('躺下之后：门控放行', det.active === true && det.lying === true && det.standby === '',
+    `active=${det.active} lying=${det.lying} standby=${det.standby}`);
+  for (let i = 0; i < 2; i++) {
+    r.run([{ pose: crunchPose(305, 0.75), ms: 800 }, { pose: crunchPose(270, 1), ms: 900 }]);
+  }
   ok('躺下之后：正常计数', det.validReps === 2, `实际 ${det.validReps}`);
 }
 {

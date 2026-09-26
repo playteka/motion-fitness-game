@@ -493,6 +493,34 @@ console.log('\n[1b] 运动设定弹窗');
     api.renderExerciseSettings();
   }
 
+  // 卷腹：用户给了新的关键帧模型（屈膝躺下 → 卷起来：躯干倾角变小 + 肩-髋距缩到 ≈70% + 头离地），
+  // 弹窗里必须逐条如实列出——他调动作就是照着这个弹窗看数字的。
+  {
+    api.openExercise('crunch');
+    api.renderExerciseSettings();
+    const crunchHtml = elements.get('exerciseSpecs').innerHTML;
+    ok('卷腹：弹窗里是三格关键帧（躺下 → 卷起 → 卷到位）',
+      (crunchHtml.match(/spec-row spec-kf/g) || []).length === 3
+      && crunchHtml.includes('躺下') && crunchHtml.includes('卷起'),
+      String((crunchHtml.match(/spec-row spec-kf/g) || []).length));
+    ok('卷腹：起始格写着「躯干倾角 ≥ 62°」+「膝关节 25°–118°」（屈膝躺下）',
+      crunchHtml.includes('62') && crunchHtml.includes('118') && crunchHtml.includes('屈膝躺下'),
+      crunchHtml.slice(0, 500));
+    ok('卷腹：计次格写着「肩-髋距 ≤ 0.8×躺平时」（单位是「×躺平时」，不是「×躯干长」）',
+      crunchHtml.includes('0.8') && crunchHtml.includes('×躺平时') && !crunchHtml.includes('肩-髋距 ≤ 0.8×躯干长'),
+      crunchHtml.slice(0, 700));
+    ok('卷腹：计次格同时列出「头离地 ≥ 0.16×躯干长」这条「或」的证据',
+      crunchHtml.includes('头离地') && crunchHtml.includes('0.16'), crunchHtml.slice(0, 700));
+    ok('卷腹：说明里写出用户那套读数（缩到 0.80 就算一次、实际能缩到 0.72 左右）',
+      crunchHtml.includes('缩到') && crunchHtml.includes('0.80') && crunchHtml.includes('0.72')
+      && crunchHtml.includes('0.90'),
+      crunchHtml.slice(-600));
+    ok('卷腹：「躯干倾角变小」那条说明写的是「比自己躺平小 13°」（相对基线，不是固定角度）',
+      crunchHtml.includes('13°') && crunchHtml.includes('躺平约 90°'), crunchHtml.slice(-900));
+    api.openExercise('pushup');
+    api.renderExerciseSettings();
+  }
+
   // ===== 关键帧 + 判分标准：用户要求「把对应动作的关键帧判别标准以及对应的判分标准列出来」 =====
   {
     const { specStages: stagesOf, stagePoints } = await import('../src/specs.js');

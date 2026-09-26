@@ -215,6 +215,19 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const shoulderAboveHip = (hipMid.y - shoulderMid.y) / torsoLen;
   const kneeClear = (groundRef - P(idx.knee).y) / torsoLen;          // 膝离地高度
   const wristClear = (groundRef - P(idx.wrist).y) / torsoLen;        // 手离地高度
+  /**
+   * **头离地高度**（躯干长为单位）—— 卷腹的关键指标之一（用户要求）。
+   *
+   * 「头」取鼻子与两只耳朵里**可见**的那些点的中心（侧拍躺姿时耳朵常比鼻子清楚），
+   * 高度用和肩/膝/手同一套口径：`(地面线 − 头的高度) / 躯干长`。
+   * 卷腹时头离地 0.1~0.4×躯干长；平躺时≈0；坐着/站着会更大（但那时门控已经不通过了）。
+   */
+  const headPts = [P(LM.NOSE), P(LM.L_EAR), P(LM.R_EAR)]
+    .filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y) && (p.v === undefined || p.v >= 0.2));
+  const headY = headPts.length
+    ? headPts.reduce((n, p) => n + p.y, 0) / headPts.length
+    : NaN;
+  const headClear = Number.isFinite(headY) ? (groundRef - headY) / torsoLen : NaN;
   const hipLineDev = signedLineDev(shoulderMid, P(idx.ankle), hipMid) / torsoLen; // >0 塌腰, <0 撅臀
 
   // 视角判断：肩宽 / 躯干长。正面 ≈ 0.8+，侧面 ≈ 0.1~0.4
@@ -362,6 +375,8 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     torsoIncl,
     trunkLean,
     shoulderClear,
+    // 头离地高度（卷腹的关键指标，用户要求）
+    headClear,
     hipRise,
     shoulderAboveHip,
     kneeClear,

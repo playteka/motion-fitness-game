@@ -21,7 +21,7 @@ import {
 } from '../src/calibration.js';
 import { t, setLang } from '../src/i18n.js';
 import {
-  ASPECT, standingPose, pronePose, supinePose, twoLegPose, lostFrame, foldShin,
+  ASPECT, SEG, standingPose, pronePose, supinePose, twoLegPose, lostFrame, foldShin,
 } from './synthetic-pose.mjs';
 
 const DT = 1000 / 30;
@@ -317,6 +317,15 @@ const bridgePose = (p, toTop = true, top = BRIDGE_TOP, amp = 1) => {
     armDown: -90, elbow: 178,
   });
 };
+
+/**
+ * 卷腹（判据按用户给的模型重做的那个动作）：`torsoUp` 270 = 躺平，
+ * 越大表示肩膀卷得越高；`fold` 是**肩-髋距相对躺平时的比例**（真实卷腹缩到 ≈70%）。
+ */
+const crunchStill = (torsoUp = 270, fold = 1, knee = 100) => supinePose({
+  hip: { x: 0.75, y: 0.89 }, thighUp: 55, knee,
+  torsoUp, torsoLen: SEG.torso * fold, armDown: -90, elbow: 178,
+});
 
 // 小臂平板支撑：身体线 78°、肘 90°、手撑地
 const plankPose = (opts = {}) => pronePose({  hip: opts.hip ?? { x: 0.95, y: 0.75 },
@@ -843,6 +852,12 @@ console.log('\n[6] 进度条与计次一致（关键帧全做完就必须计次�
     ['pushup', repeat(pushupMix(), 1400, 2)],
     ['bridge', repeat((p) => bridgePose(p), 1800, 2)],
     ['jumpingJack', repeat((p) => jackPose(p), 1000, 2)],
+    // 卷腹（判据按用户给的模型重做过）：躺下 → 卷起来（肩-髋距缩到 75%）→ 躺回
+    ['crunch', [
+      { pose: crunchStill(270, 1), ms: 900 },
+      { pose: crunchStill(305, 0.75), ms: 800 },
+      { pose: crunchStill(270, 1), ms: 900 },
+    ]],
   ];
   for (const [id, segments] of cases) {
     const r = barTrace(id, segments);

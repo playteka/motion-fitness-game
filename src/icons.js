@@ -456,6 +456,15 @@ export function poseFor(stage, ctx = {}) {
 
   // 躯干倾角：「不要超过 X°」是站姿门槛（画站直），「至少 X°」是要你趴下/折下去（画那个姿态）
   if (metric === 'torsoIncl' || metric === 'trunk') {
+    // 卷腹「卷起来」那一格：判定线是识别器自己算的（躺平基线 −13°），
+    // 所以画成**肩离地、躯干折起来的卷腹**（比「屈膝躺下」那格明显高出一截、头也离开地面）。
+    if (stage.valueFrom === 'curlLine' || stage.detFlag === 'curled') {
+      return {
+        builder: 'lie',
+        params: { tilt: 92, hip: 118, knee: 96, face: 'up', elbow: 130, shoulderRise: 0.5 },
+        criterion: { trunk: value },
+      };
+    }
     const towardFloor = stage.op === 'gte' || stage.op === 'gt';
     if (!towardFloor) return gatePose(posture, value, stages, metric, ctx);
     if (posture === 'prone') return { builder: 'lie', params: { tilt: 90, hip: 178, knee: 172, elbow: 178, face: 'down', support: true } };
@@ -464,8 +473,16 @@ export function poseFor(stage, ctx = {}) {
     // 波比跳的「俯撑」那一段：趴下去，比水平略斜
     return { builder: 'lie', params: { tilt: clamp(value + 25, 50, 90), hip: 178, knee: 172, elbow: 176, face: 'down', support: true } };
   }
-  if (metric === 'hipClear') {
-    // 髋离地：前折这类就是「髋抬起来」
+  if (metric === 'torsoShrink') {
+    // 卷腹「卷到位」那一格（计次）：肩-髋距缩到躺平时的 ≈70~80% —— 画成**卷得最深的卷腹**
+    // （比「卷起来」那格再高一截，一眼看得出是最后一步）。
+    return {
+      builder: 'lie',
+      params: { tilt: 92, hip: 118, knee: 96, face: 'up', elbow: 130, shoulderRise: 0.85 },
+      criterion: { torsoShrink: value },
+    };
+  }
+  if (metric === 'hipClear') {    // 髋离地：前折这类就是「髋抬起来」
     if (ctx.plan === 'stretchHold') return gatePose(posture, value, stages, metric, ctx);
     return { builder: 'lie', params: { tilt: 90, hip: 175, knee: 168, face: 'side', elbow: 178, support: true, hipLift: 2.2 }, criterion: { hipClear: value } };
   }

@@ -30,7 +30,7 @@ import { HOLD_PRIME_MS, HOLD_GRACE_MS } from './detector-base.js';
 import { getStepPlan, planKeyOf } from './steps.js';
 import { t } from './i18n.js';
 import {
-  SQUAT, LUNGE, PUSHUP, BRIDGE, PLANK,
+  SQUAT, LUNGE, PUSHUP, BRIDGE, PLANK, CRUNCH,
 } from './exercises.js';
 
 /* ------------------------------------------------------------------ *
@@ -43,9 +43,14 @@ const SHIN = 'shin';
 const LIFT = 'lift';
 const S = 's';
 const COUNT = 'count';
+/**
+ * 纯比例（没有物理单位）：卷腹的「肩-髋距 / 躺平时的长度」用它 ——
+ * 显示成「≤ 0.80×躺平时」，不能写成「×躯干长」（那个单位本身就是肩-髋距，会自己绕圈）。
+ */
+const RATIO = 'ratio';
 
 /** 不同单位的显示精度：角度取整，比例两位小数，秒两位小数 */
-const PRECISION = { deg: 0, torso: 2, shin: 2, lift: 3, s: 2, count: 0 };
+const PRECISION = { deg: 0, torso: 2, shin: 2, lift: 3, s: 2, count: 0, ratio: 2 };
 
 /** 按单位取整（界面显示用；判定本身用的仍是原始常量） */
 export function roundFor(v, unit) {
@@ -65,6 +70,8 @@ export const METRIC_UNITS = {
   shoulderAboveHip: TORSO,
   hipLineDevAbs: TORSO, valgus: TORSO, shoulderDrop: TORSO, wristTwist: TORSO,
   backKneeDrop: SHIN, hipAboveKnee: SHIN,
+  // 卷腹：肩-髋距 / 躺平时的长度（纯比例）与头离地高度（×躯干长）
+  torsoShrink: RATIO, headClear: TORSO,
 };
 
 /** 进度 → 指标值：progress = (up - v) / (up - down)，反解 v */
@@ -543,6 +550,66 @@ function plankSpecs() {
   };
 }
 
+/**
+ * 卷腹（**按用户给的模型重做的判据**）。
+ *
+ * > 「初始关键帧就是屈膝躺下，那么躯干倾角应该是差不多 90 度，膝关节弯曲，应该也在 90 度或者更小。
+ * >  真正计次的关键帧……应该是躯干倾角变小了，与此同时，肩关节到髋关节的长度因为卷腹而变小，
+ * >  可能只有初始关键帧长度的 70% 左右。当然，头部离地也是一个关键指标。」
+ *
+ * 所以弹窗里逐条列出（数值全部取自 `CRUNCH` 常量，和识别器用的是同一份）：
+ *   ① 起始：躯干倾角 ≥62°（躺平）、膝角 25°~118°（屈膝躺下）；
+ *   ② 卷起来：躯干倾角比「自己躺平的基线」小 13°（基线自校准，所以写成文字条）；
+ *   ③ 计次：肩-髋距 ≤0.80×躺平时 **或** 头离地 ≥0.16×躯干长。
+ */
+function crunchSpecs() {
+  const C = CRUNCH;
+  return {
+    count: [
+      // ② 躯干倾角变小：判定线是「自己躺平的基线 − 13°」，跟着人走，所以写成文字条
+      item({
+        labelKey: 'spec.crunchTilt',
+        textKey: 'spec.text.crunchTilt',
+        noteKey: 'spec.note.crunchTilt',
+        noteParams: { drop: C.tiltDrop, floor: C.baseTiltFloor },
+      }),
+      // ③ 计次两条证据取「或」：肩-髋距缩到 80%（用户观察 ≈70%）或 头离地
+      item({
+        labelKey: 'spec.crunchShrink',
+        metricKey: 'metric.torsoShrink',
+        op: 'lte',
+        value: roundFor(C.shrinkCount, RATIO),
+        unit: RATIO,
+        noteKey: 'spec.note.crunchShrink',
+        noteParams: {
+          count: C.shrinkCount.toFixed(2),
+          full: C.shrinkFull.toFixed(2),
+          start: C.shrinkStart.toFixed(2),
+          back: C.backShrink.toFixed(2),
+        },
+      }),
+      item({
+        labelKey: 'spec.crunchHead',
+        metricKey: 'metric.headClear',
+        op: 'gte',
+        value: roundFor(C.headClearCount, TORSO),
+        unit: TORSO,
+        noteKey: 'spec.note.crunchHead',
+      }),
+      item({ labelKey: 'spec.minRep', op: 'gte', value: roundFor(C.minRepMs / 1000, S), unit: S, noteKey: 'spec.note.crunchTempo' }),
+    ],
+    posture: [
+      // ① 起始关键帧：屈膝躺下
+      item({ labelKey: 'spec.crunchLying', metricKey: 'metric.trunk', op: 'gte', value: roundFor(C.lyingTilt, DEG), unit: DEG, noteKey: 'spec.note.crunchLying', noteParams: { tilt: C.lyingTilt } }),
+      item({ labelKey: 'spec.crunchLying', metricKey: 'metric.knee', op: 'range', value: roundFor(C.kneeMin, DEG), value2: roundFor(C.kneeMax, DEG), unit: DEG, noteKey: 'spec.note.crunchKnee' }),
+      item({ labelKey: 'spec.viewSide', textKey: 'spec.text.viewSide' }),
+    ],
+    advice: [
+      item({ labelKey: 'spec.crunchHands', textKey: 'spec.text.crunchHands', noteKey: 'spec.note.adviceOnly' }),
+    ],
+  };
+}
+
 /* ------------------------------------------------------------------ *
  * 姿态提醒（只出声纠正，不拦计数）
  * ------------------------------------------------------------------ */
@@ -576,6 +643,7 @@ const BUILDERS = {
   pushup: pushupSpecs,
   bridge: bridgeSpecs,
   plank: plankSpecs,
+  crunch: crunchSpecs,
   seatedForwardFold: seatedFoldSpecs,
 };
 
@@ -672,6 +740,11 @@ export const SPEC_METRICS = {
   otherSideLeg: (f, det) => SPEC_METRICS.otherSide(f, det),
   // 通用引擎的「本轮进度」（0 = 起始位，1 = 到位）：最后的「回到起始位」那一格直接问它
   progress: (f, det) => det?.progress,
+  // 卷腹：**肩-髋距离 / 躺平时的长度**（用户说的「只有初始关键帧长度的 70% 左右」）
+  // 与**头离地**（用户说的「头部离地也是一个关键指标」）—— 两个都是识别器内部算的（要基线）。
+  // 头离地用**差值**（比躺平时抬起了多少），所以取识别器的值而不是帧上的绝对高度。
+  torsoShrink: (f, det) => det?.torsoShrink,
+  headClear: (f, det) => (Number.isFinite(det?.headUp) ? det.headUp : f.headUp),
 };
 
 function sideValues(f, metric) {
@@ -788,6 +861,9 @@ const SHORT_LABEL = {
   'spec.pose.supineFlat': 'spec.short.supine',
   'spec.pose.standFold': 'spec.short.fold',
   'spec.pose.seatedFold': 'spec.short.fold',
+  // 卷腹三格的短标签（进度条上写「躺下 / 卷起 / 卷到位」）
+  'spec.crunchShrink|torsoShrink': 'spec.short.crunchTop',
+  'spec.crunchHead|headClear': 'spec.short.crunchTop',
   'spec.bridgeSupine': 'spec.short.supine',
   'spec.postureKeep': 'spec.short.pose',
   'spec.pushupPose': 'spec.short.prone',
@@ -849,7 +925,10 @@ export function specStages(id) {
   const gateItem = posture.find(isLiveItem);
   // 坐姿体前屈有两格关键帧（坐好 → 前折到位），门控格在下面按它自己的两格单独摆，
   // 不走这里通用的「第一格 = 门控」那条路（否则第一格会挂上识别器的 gateOk 而不是锁存的 startSeen）。
-  if (gateItem && id !== 'seatedForwardFold') {
+  // 卷腹同理：它的第一格「屈膝躺下」自己带短标签（躺下）与识别器标记（lying），
+  // 走通用那条路会先塞一个短标签是「一步」、没有标记的门控格进来，把真正那一格挤掉。
+  const CUSTOM_FIRST_STAGE = new Set(['seatedForwardFold', 'crunch']);
+  if (gateItem && !CUSTOM_FIRST_STAGE.has(id)) {
     const flag = isHold ? 'gateOk' : (GATED_BUILTINS.has(id) ? 'active' : (BUILDERS[id] ? null : 'gateOk'));
     const gateStage = toStage(gateItem, { kind: 'gate', detFlag: flag, pose: true });
     // 「或」门控（仰卧类）：第二条证据是**替代**判据，不是「还要满足」——写成 alt 让界面显示成「A 或 B」
@@ -934,6 +1013,61 @@ export function specStages(id) {
       stage.alt = toStage(dropItem);
       stages.push(stage);
     } else pushItem(countItem, { kind: 'finish', detFlag: 'atBottom' });
+  } else if (id === 'crunch') {
+    /**
+     * 卷腹（**用户给的两格关键帧**）：① 屈膝躺下 → ② **卷起来 = 计次那一刻**。
+     *
+     * ② 拆成两格来画，是因为「卷起来」有两个条件、用户也都点名了：
+     *   - 「躯干倾角变小了」：这一步的线是**识别器自己算的**（躺平基线 −13°，跟着人走），
+     *     所以用 `detFlag: 'curled'`，不写死绝对角度；
+     *   - 「肩-髋距只有初始的 ≈70%、或头离地」：这就是计次那一刻（`progress >= 1` 同一帧）。
+     * 计次在**卷到位的最高点**立刻发生，所以「最后一格点亮」＝「记上一个数」＝「报数/音效」同一刻
+     * （和俯卧撑「在最低点计次」是同一个思路，用户要求「计数更流畅」）。
+     */
+    stages.push({
+      shortKey: 'spec.short.crunchLie',
+      metric: 'trunk',
+      op: 'gte',
+      value: roundFor(CRUNCH.lyingTilt, DEG),
+      unit: DEG,
+      k: STAGE_TOLERANCE.deg,
+      kind: 'gate',
+      detFlag: 'lying',
+      pose: true,
+      item: {
+        labelKey: 'spec.crunchLying',
+        metricKey: 'metric.trunk',
+        op: 'gte',
+        value: roundFor(CRUNCH.lyingTilt, DEG),
+        unit: DEG,
+        noteKey: 'spec.note.crunchLying',
+        noteParams: { tilt: CRUNCH.lyingTilt },
+      },
+    });
+    const tiltItem = pick('spec.crunchTilt');
+    if (tiltItem) {
+      stages.push({
+        shortKey: 'spec.short.crunchCurl',
+        metric: 'trunk',
+        op: 'lte',
+        value: roundFor(CRUNCH.baseTiltFloor - CRUNCH.tiltDrop, DEG),
+        valueFrom: 'curlLine',
+        unit: DEG,
+        k: STAGE_TOLERANCE.deg,
+        kind: 'count',
+        detFlag: 'curled',
+        item: tiltItem,
+      });
+    }
+    // 最后一格 = 「缩到 80% 或 头离地」：`progress >= 1` 的那一帧就是识别器计次的那一帧
+    const shrinkItem = pick('spec.crunchShrink');
+    const headItem = pick('spec.crunchHead');
+    if (shrinkItem) {
+      const stage = toStage(shrinkItem, { kind: 'finish', valueFrom: 'shrinkLine', detFlag: 'topNow' });
+      stage.metric = 'torsoShrink';
+      if (headItem) stage.alt = toStage(headItem);
+      stages.push(stage);
+    }
   } else if (meta.engine === 'alt') {
     // 左右交替：一侧发力 → **换另一条腿也做到**（换边成立那一刻计次）。
     // 用户要求「第二格之后应该是『勾腿』『勾另一条腿』」—— 所以最后一格的判据就是
@@ -1075,6 +1209,17 @@ const STEP_STAGE = {
 };
 
 /**
+ * **动作自己的**得分项 → 关键帧分配表（**优先于**上面按「族」写的那张）。
+ *
+ * 卷腹用的是 `repSupine` 族方案（步骤 id 还是 setup/engage/top/lower），
+ * 但关键帧换成了「躺下 / 卷起 / 卷到位」，族里那张 token 表就对不上了 ——
+ * 没有这张表的话四个得分项一个都分不到格子上（总分直接变 0，真的踩过）。
+ */
+const STEP_STAGE_BY_ID = {
+  crunch: { setup: 'crunchLie', engage: 'crunchCurl', top: 'crunchTop', lower: 'crunchLie' },
+};
+
+/**
  * 短标签的**别名**。
  *
  * 计分方案（`STEP_STAGE`）是按「族」写的，而族里个别动作会把某一格的短标签说得更具体：
@@ -1111,7 +1256,7 @@ function stageIndexOfToken(stages, token) {
 export function stagePoints(id) {
   const stages = specStages(id);
   const plan = getStepPlan(id);
-  const map = STEP_STAGE[planKeyOf(id)] || {};
+  const map = STEP_STAGE_BY_ID[id] || STEP_STAGE[planKeyOf(id)] || {};
   const out = stages.map(() => ({ points: 0, steps: [], bonus: 0, perSecond: 0 }));
   if (!out.length) return out;
   for (const def of plan.steps || []) {
@@ -1128,7 +1273,7 @@ export function stagePoints(id) {
 /** 步骤 id → 第几格（界面把「这一步加到的分」记到对应格子上时用） */
 export function stageIndexForStep(id, stepId) {
   const stages = specStages(id);
-  const map = STEP_STAGE[planKeyOf(id)] || {};
+  const map = STEP_STAGE_BY_ID[id] || STEP_STAGE[planKeyOf(id)] || {};
   return stageIndexOfToken(stages, map[stepId]);
 }
 
