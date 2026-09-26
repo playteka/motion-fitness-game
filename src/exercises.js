@@ -577,31 +577,43 @@ export const PUSHUP = {
   activeTorso: 32,
   activeShoulderClear: 0.12,
   activeHandOnFloor: 0.62,
-  elbowUp: 156,       // 参考顶位（原来 152；回位线要留在计数线之上，否则往下蹲一格就成了「回到顶位」）
-  elbowEnter: 150,    // 「开始这一轮」的参考角度（原来 146；实际用「顶位基准 − enterDrop」判断，见 step）
-  elbowDown: 132,     // 下放到这里算「到过底部」（中间状态，不参与计次）
-  elbowFull: 128,     // 满分深度（不变：只影响深度分与「再低一点」的提醒）
-  looseElbow: 146,    // 宽松模式计数线（原来 138：用户实测「压不到 138° 就一次都不计」）
-  minBend: 8,         // 一轮至少要比「自己的顶位」弯这么多度才算一次尝试（原来 12）
-  enterDrop: 10,      // 相对顶位弯下去这么多才算「开始做」（原来 22）
+  elbowUp: 170,       // 「顶位」的上限（真人撑起来通常 165~175°；三条线都跟着自己的顶位走，见 countElbow/enterLine/backLine）
+  elbowEnter: 150,    // 「开始下沉」的**参考**角度（实际用「自己的顶位 − enterDrop」，见 enterLine）
+  elbowDown: 132,     // 顶位基准的下限（手臂伸不直的人也不会低于这里）
+  elbowFull: 128,     // 满分深度（只影响深度分与「再低一点」的提醒）
+  /**
+   * 计数线（宽松模式）：肘角到这条线**就计次** ——
+   * 用户最新要求：「**计次不必是人在最低点了**，但是关键帧要优化一下，感觉检测还是不太灵敏」。
+   *
+   * 以前是「到最低点」那一刻才计次（要求肘角/肩膀先回升一点、或者在底部停 0.18 秒才认），
+   * 于是**动作顺下来做的人**要等自己往回推的时候才听到报数 —— 反馈晚、而且连续做的时候
+   * 经常感觉「刚才那次没算上」。现在恢复成「下放到深度线的那一帧就计次」：
+   * 反馈立刻给（报数/音效/计数跳动同一刻），「推回顶位」只作为**下一轮的前提**。
+   *
+   * 这条线同时是**跟着人走**的：`countElbow = min(looseElbow, 自己的顶位 − minBend)` ——
+   * 手臂伸不直（顶位只有 150°）的人按 142° 算，不会出现「顶位比计数线还低、永远计不上」。
+   */
+  looseElbow: 146,
+  minBend: 8,         // 一轮至少要比「自己的顶位」弯这么多度才算一次（也是计数线的下限来源）
+  enterDrop: 6,       // 相对顶位弯下去这么多就算「开始下沉」（进度条第三格）
   returnTol: 8,       // 回到顶位 8° 以内算「推起来了」
-  minRepMs: 260,      // 用时下限（只滤手抖）
+  returnGap: 6,       // 「回到顶位」那条线至少要高出计数线这么多度（否则刚计完就会再计一次）
+  /**
+   * 抖动过滤（**不是**「一轮最短用时」）。
+   *
+   * 为什么不能用「从离开顶位到计数线」的时长来滤抖：计数线离顶位本来就只有 6~26°（见 countElbow），
+   * 这一段真人只要 30~150ms 就穿过去了 —— 拿它当「用时下限」会把每一次正常俯卧撑都判成「太快了」
+   * （实测全部变成半程，正是「不灵敏」的来源之一）。
+   *
+   * 所以改成两个更贴切的守卫：
+   *   - `countDwellMs`：深度线要**连续成立**这么久（约 2 帧）才计次 —— 单帧的读数毛刺不会计上，
+   *     真人只要压下去就一定会满足，主观上还是「一到线就报数」；
+   *   - `minCycleMs`：两次计次之间至少隔这么久（防御性下限；正常一轮远大于它）。
+   */
+  countDwellMs: 70,
+  minCycleMs: 300,
   maxRepMs: 9000,     // 一轮最长时限：超时强制结算，不吞次数
   bodyStraightMin: 138,
-  /**
-   * 「到最低点了」的判定（计次就在这一刻，用户要求）。
-   *
-   * 光看「肘角 ≤146° 的深度线」是不够的：对动作幅度大的人（顶位 172°、最低 85°），
-   * 这条线在他**刚往下弯 10°** 就跨过了 —— 那还在动作的最上面，根本不是最低点。
-   * 所以再加一步「已经到底了」：
-   *   - 肘角从这个回合的最小值**回升 bottomEps 度**（说明已经开始推起来了 → 最低点刚过去），或
-   *   - 肩膀从这个回合的最低点**回升 bottomRise**（斜机位下肘角读数被压平时靠这一路），或
-   *   - 在最低点附近**停住 bottomHoldMs**（有人会在最低点停一拍）。
-   * 三者任一成立、并且深度线到过 → 立刻计次（实测比真正的最低点晚 1 帧左右）。
-   */
-  bottomEps: 4,
-  bottomRise: 0.03,   // 躯干长为单位
-  bottomHoldMs: 180,
   /**
    * 肩膀下沉量（单位：躯干长，见 metrics.js 的 shoulderClear）。
    *
@@ -610,18 +622,15 @@ export const PUSHUP = {
    * 经常判不出深度。这里补一路与肘角无关的深度证据：撑起时肩离地约 0.9~1.2 个躯干长，
    * 压到底时只剩 0.3~0.5 —— 只要肩膀整体沉下去这么多，就认为身体确实接近地面了。
    *
-   * 这一路同时也是**进度条最后一格之前的台阶**：肘角读数被机位压平的人先过这一格，
-   * 不至于卡在「肘 ≤ 146°」那一格上永远点不亮后面。
-   *
    * 四个数的关系（**顺序不能反**）：`dropStart < dropReturn < dropMin < dropFull`。
    * `dropReturn` 是收尾用的「肩膀抬回顶位」的宽容度，必须**小于** `dropMin`：
    * 否则「刚开始下沉、肘还没弯」的那一帧会被同时判成「肩膀抬回来了、深度也够了」，
-   * 凭空多记一次（这一版把它从「复用 dropStart 0.08」拆出来并收到 0.06 就是为了这个）。
+   * 凭空多记一次。
    */
-  dropMin: 0.08,      // 沉这么多 = 算「身体接近地面」，宽松模式可以计次（原来 0.14）
-  dropFull: 0.26,     // 沉这么多 = 深度给满分（原来 0.30）
-  dropStart: 0.05,    // 沉这么多 = 认为「这一轮开始了」（肘角读数被压平时靠这一路起头；原来 0.08）
-  dropReturn: 0.06,   // 收尾时肩膀要抬回顶位基准这么近（原来复用 dropStart 0.08，偏紧、容易不结算）
+  dropMin: 0.08,      // 沉这么多 = 算「身体接近地面」，可以计次
+  dropFull: 0.26,     // 沉这么多 = 深度给满分
+  dropStart: 0.04,    // 沉这么多 = 认为「这一轮开始了」（肘角读数被压平时靠这一路起头）
+  dropReturn: 0.05,   // 收尾时肩膀要抬回顶位基准这么近（必须 < dropMin，见上面的说明）
   dropDecay: 0.01,    // 顶位基准的缓慢回落（跟着用户姿势漂移，不会一直卡在最高点）
 };
 
@@ -641,12 +650,19 @@ class PushupDetector extends DetectorBase {
     // 肩膀下沉量（第二路深度证据，见 PUSHUP.dropMin）
     this.clearBase = 0;
     this.minClear = 9;
-    // 计次在最低点，但「一轮」要推回顶位才算走完（见 finish / step 的 'recover' 分支）
+    // 计数发生在**下放到计数线的那一帧**，推回顶位是下一轮的前提（见 step 的 'recover' 分支）
     this.pendingCycleEnd = false;
-    /** 这一回合「停在最低点」从什么时候开始（计次用，见 PUSHUP.bottomHoldMs） */
-    this.bottomSince = 0;
-    /** 「已经到最低点了」——进度条最后一格用它点亮（见 step 的 descending 分支） */
-    this.atBottom = false;
+    /** 「这一帧肘角到计数线了」——进度条最后一格用它点亮（= 计次那一刻） */
+    this.countNow = false;
+    /** 深度线连续成立的起点（抖动过滤，见 countDwellMs）；0 = 这一帧还没到线 */
+    this.depthSince = 0;
+    /** 上一次计次的时刻（两次之间的下限见 minCycleMs；整轮时长也用它） */
+    this.lastCountAt = 0;
+    /**
+     * 最近一次「人在顶位」的时刻 —— 只在第一次计次之前用来估一轮的时长。
+     * 注意不能拿它当抖动过滤的基准（见 countDwellMs 的说明）。
+     */
+    this.lastTopAt = 0;
   }
   onLost() { this.stage = 'up'; this.repStartAt = 0; }
   onNewCycle() { this.cycleLowered = false; }
@@ -658,16 +674,34 @@ class PushupDetector extends DetectorBase {
       && f.wristClear < PUSHUP.activeHandOnFloor;
   }
 
-  /** 这一轮的「顶位」：用户自己刚才举到的最高角度（不越过参考值 145°） */
+  /** 这一轮的「顶位」：用户自己刚才举到的最高角度（不越过参考值 elbowUp） */
   get topLine() {
     if (!this._recent.length) return Math.min(this.topBase, PUSHUP.elbowUp);
     const max = Math.max(...this._recent.map((r) => r.v));
     return Math.min(Math.max(max, PUSHUP.elbowDown), PUSHUP.elbowUp);
   }
 
-  /** 「推起来」的判定线：回到自己顶位附近，或者手臂确实伸直了 */
+  /**
+   * **计数线**（肘角）：到这条线就计次。
+   *   默认 146°；但手臂伸不直的人（顶位只有 150°）按「自己的顶位 − minBend」算，
+   *   否则会出现「计数线比他的顶位还低 → 永远计不上」。
+   */
+  get countElbow() {
+    return clamp(Math.min(PUSHUP.looseElbow, this.topLine - PUSHUP.minBend), PUSHUP.elbowFull - 8, PUSHUP.looseElbow);
+  }
+
+  /** 「开始下沉」那条线（进度条第三格）：比自己的顶位弯下去 enterDrop 度 */
+  get enterLine() {
+    return clamp(this.topLine - PUSHUP.enterDrop, PUSHUP.elbowFull, PUSHUP.elbowUp);
+  }
+
+  /**
+   * 「推起来了」的判定线：回到自己顶位附近（`topLine − returnTol`），
+   * 但**必须高出计数线 returnGap 度** —— 否则刚计完一次、肘角还停在计数线上，
+   * 立刻又满足「回到顶位」→ 下一轮马上开始 → 同一口气连计好几次。
+   */
   get backLine() {
-    return Math.min(this.topLine - PUSHUP.returnTol, PUSHUP.elbowUp - PUSHUP.returnTol);
+    return Math.max(this.countElbow + PUSHUP.returnGap, Math.min(this.topLine, PUSHUP.elbowUp) - PUSHUP.returnTol);
   }
 
   /** 这一轮肩膀总共往下沉了多少（躯干长为单位）；负值当 0 处理 */
@@ -676,11 +710,11 @@ class PushupDetector extends DetectorBase {
   /** 肩膀已经明显沉下去了：肘角读数被机位压平时，靠这一路认出「开始做了」 */
   get sankEnough() { return this.drop >= PUSHUP.dropStart; }
 
-  /** 计数诊断（🐞 面板显示）：计次线 / 结算线 / 本轮最小肘角 / 跟踪到的顶位 / 上次为什么没计上 */
+  /** 计数诊断（🐞 面板显示）：计数线 / 回到顶位的线 / 本轮最小肘角 / 跟踪到的顶位 / 上次为什么没计上 */
   diag() {
     return [
       { key: 'debug.diag.stage', value: this.stage },
-      { key: 'debug.diag.countLine', value: PUSHUP.looseElbow },
+      { key: 'debug.diag.countLine', value: `${Math.round(this.countElbow)}/${Math.round(this.enterLine)}` },
       { key: 'debug.diag.backLine', value: Math.round(this.backLine) },
       { key: 'debug.diag.repMin', value: Math.round(this.minElbow) },
       { key: 'debug.diag.topBase', value: Math.round(this.topLine) },
@@ -691,7 +725,7 @@ class PushupDetector extends DetectorBase {
   }
 
   /**
-   * 记住最近 1.5 秒的肘角（估用户自己的顶位，见 topLine 的说明）。
+   * 记忆最近 1.5 秒的肘角（估用户自己的顶位，见 topLine 的说明）。
    * 注意：一轮进行中不能把缓冲清空 —— 否则结算时只剩「参考顶位」，
    * 手臂伸不直的人就永远回不到那条线，次数又会被吞掉；所以至少保留最早的两个值。
    */
@@ -725,62 +759,62 @@ class PushupDetector extends DetectorBase {
     switch (this.stage) {
       case 'up':
         this.trackTop(f, elbow, now);
-        // 起步：相对自己的顶位弯下去 enterDrop 度，或者已经到达「开始线」（elbowEnter），
-        // 这样「手肘伸不直」的人也能被认出来；再或者**肩膀已经明显沉下去了**
-        // —— 摄像头斜着往下拍时肘角读数会被压平，只能靠肩膀的高度起头。
-        if (elbow <= Math.max(this.topLine - PUSHUP.enterDrop, PUSHUP.elbowEnter) || this.sankEnough) {
+        // 记下「最近一次真的在顶位」（肘角推回 backLine 之上）—— 只在第一次计次前用来估一轮时长。
+        // 这里**不掺「肩膀抬回来了」那条**：肩膀高度在刚开始下沉时几乎没变，
+        // 掺进来会把「正在下沉」的那几帧也算成顶位，时长就变成 0 了（踩过）。
+        if (elbow >= this.backLine) this.lastTopAt = now;
+        // 起步：相对自己的顶位弯下去 enterDrop 度（这样「手肘伸不直」的人也能被认出来）；
+        // 或者**肩膀已经明显沉下去了** —— 摄像头斜着往下拍时肘角读数会被压平，只能靠肩膀的高度起头。
+        if (elbow <= this.enterLine || this.sankEnough) {
           this.stage = 'descending';
-          this.repStartAt = now;
           this.minElbow = elbow;
           this.minBody = f.bodyStraight;
           this.maxSag = f.hipLineDev;
           this.minSag = f.hipLineDev;
           this.minClear = f.shoulderClear;
-          this.bottomSince = 0;
-          this.atBottom = false;
+          this.countNow = false;
+          this.depthSince = 0;
         }
         break;
       case 'descending':
       case 'bottom': {
-        // 这一帧有没有刷新「最低点」—— 两路信号（肘角 / 肩膀高度）任意一路还在往下，
-        // 就说明人还在下沉、还没到底（见下面 PUSHUP.bottomHoldMs 的判定）。
-        const prevMinElbow = this.minElbow;
-        const prevMinClear = Number.isFinite(this.minClear) ? this.minClear : f.shoulderClear;
         this.minElbow = Math.min(this.minElbow, elbow);
         this.minBody = Math.min(this.minBody, f.bodyStraight);
         this.maxSag = Math.max(this.maxSag, f.hipLineDev);
         this.minSag = Math.min(this.minSag, f.hipLineDev);
         // 一路记「肩膀最低沉到哪」，结算时用它当第二路深度证据
         if (Number.isFinite(f.shoulderClear)) this.minClear = Math.min(this.minClear, f.shoulderClear);
-        if (elbow <= PUSHUP.elbowDown && this.stage === 'descending') this.stage = 'bottom';
 
         /**
-         * **计次就在最低点**（用户要求：「计次的那一刻要选在身体到达最低点的时候，
-         * 给出即时的反馈，让用户的感觉更好」）。
+         * **计次就发生在下放到计数线的那一帧**（用户最新要求：「计次不必是人在最低点了」）。
          *
-         * 以前是「推起来、回到顶位」那一刻才计次 —— 用户做完最低点还要等推上去才听到/看到
-         * 这一次数上了，反馈晚了半秒多。现在**一到底就结算**，而「到底了」有两条证据：
-         *   ① 开始回升：肘角比自己这一回合的最低点回升 bottomEps 度，或肩膀回升 bottomRise；
-         *   ② 停在底部：两路信号都不再刷新最低点、并保持 bottomHoldMs（有人会在最低点停一拍）。
-         * 两者任一成立、并且深度线到过（肘角 ≤ looseElbow 或 肩膀沉 ≥ dropMin）就立刻计次。
+         * 两路证据取「或」，谁先到算谁的：
+         *   ① **肘角**到计数线（`countElbow`，默认 146°，跟着你自己的顶位走）；
+         *   ② **肩膀**下沉够（`dropMin`）—— 斜机位下肘角读数被压平时靠这一路。
          *
-         * 为什么不能只看「肘角到 146°」：对幅度大的人（顶位 172°、最低 85°）这条线在刚弯 10° 时
-         * 就跨过了 —— 那还在动作最上面，根本不是最低点（见 PUSHUP.bottomEps 的说明）。
+         * 以前这里还要等「到最低点」的证据（肘角/肩膀先回升一点，或者在底部停 0.18 秒），
+         * 结果**顺下来做的人**要等自己往回推的时候才听到报数：反馈晚，而且连续做的时候
+         * 常觉得「刚才那次没算上」。现在把那一刻还给「动作到了深度」这一帧；
+         * 「推回顶位」只作为**下一轮的前提**（见 backLine 与 'recover' 分支），
+         * 所以在计数线上停着不动不会连着刷次数。
          *
-         * 计完之后进入 'recover'：**必须先回到顶位**才能开始下一次，
-         * 所以在最低点停着不动不会连着刷次数。
+         * 抖动过滤用**连续成立 countDwellMs**（约 2 帧）而不是「一轮最短用时」，原因见 countDwellMs。
          */
-        const madeNewLow = this.minElbow < prevMinElbow - 1e-6
-          || (Number.isFinite(f.shoulderClear) && f.shoulderClear < prevMinClear - 1e-6);
-        if (madeNewLow) this.bottomSince = 0;
-        else if (!this.bottomSince) this.bottomSince = now;
-        const roseFromBottom = elbow >= prevMinElbow + PUSHUP.bottomEps
-          || (Number.isFinite(f.shoulderClear) && (f.shoulderClear - this.minClear) >= PUSHUP.bottomRise);
-        const heldAtBottom = this.bottomSince > 0 && now - this.bottomSince >= PUSHUP.bottomHoldMs;
-        // 进度条最后一格用它点亮：**depthReached + 到底了** 就是计次那一刻（和上面同一帧）
-        this.atBottom = this.depthReached() && (roseFromBottom || heldAtBottom);
-        if (this.atBottom) this.finish(f, now);
-        else if (now - this.repStartAt > PUSHUP.maxRepMs) {
+        /**
+         * 抖动过滤用的是**当前这一帧**的深度（不是「本轮到过的最深」）：
+         * 毛刺是「一帧掉到线下、下一帧就回来」，用「到过的最深」永远成立、等于没过滤
+         * （实测：一帧 168°→140°→168° 会白记一次）。所以这里看 `depthNow(f)`。
+         */
+        const atDepth = this.depthNow(f);
+        if (atDepth) {
+          if (!this.depthSince) this.depthSince = now;
+        } else {
+          this.depthSince = 0;
+        }
+        const dwelled = this.depthSince > 0 && now - this.depthSince >= PUSHUP.countDwellMs;
+        this.countNow = atDepth && dwelled;
+        if (this.countNow) this.finish(f, now);
+        else if (this.repStartAt && now - this.repStartAt > PUSHUP.maxRepMs) {
           // 卡在半路太久（比如停在半程不动）：安静地回到「顶位」状态，不刷半程也不出声
           this.stage = 'up';
           this.repStartAt = 0;
@@ -788,17 +822,21 @@ class PushupDetector extends DetectorBase {
         break;
       }
       case 'recover':
-        // 刚计完一次，正在推起来：顶位基准照旧跟着走，但要回到顶位才算准备好下一次
+        // 刚计完一次，正在推起来：顶位基准照旧跟着走，但要**回到顶位**才算准备好下一次。
+        // 判定用 `armsBack()` —— 和「推起还原」那一步要领**同一个条件**（见 armsBack 的说明）：
+        // 两条路取「或」：肘角推回 backLine（正路），或者肩膀抬回顶位附近、同时肘角已经
+        // 明显离开计数线（斜机位下肘角读数滞后时靠这一路，免得一直卡在 'recover' 里、
+        // 后面每一次都计不上 —— 这是「不灵敏」的另一个来源）。
         this.trackTop(f, elbow, now);
-        if (elbow >= this.backLine && this.shouldersBack(f)) {
+        if (this.armsBack(f)) {
           // 一轮到这里才算走完：整轮满分奖励与下一轮的要领清单在这一刻结算/重置，
-          // 所以「推起还原 +8」那一格仍然算本轮（用户推起来就拿到），
-          // 而计次本身早就发生在最低点了（见 finish）。
+          // 所以「推起还原 +8」那一格仍然算本轮，而计次本身早就在计数线上给过了（见 finish）。
           if (this.pendingCycleEnd) {
             this.pendingCycleEnd = false;
             this.nextCycle(now);
           }
           this.stage = 'up';
+          this.countNow = false;
         }
         break;
       default:
@@ -824,15 +862,49 @@ class PushupDetector extends DetectorBase {
       || (this.clearBase - f.shoulderClear) <= PUSHUP.dropReturn;
   }
 
-  /** 深度线到了没有（两路证据取「或」）：肘角压够 或 肩膀沉够 —— 这就是「最低点」 */
+  /**
+   * 这一帧算不算「推起来了」（回到顶位）—— **计次的下一轮前提**，
+   * 同时也是「推起还原」那一步要领的判定条件（`steps.js` 的 pushup.press 直接调这个方法）。
+   *
+   * 两条路取「或」：
+   *   ① 肘角推回 `backLine`（跟着自己的顶位走）；
+   *   ② 肩膀抬回顶位附近 **且** 肘角明显离开计数线（≥ 计数线 + returnGap）——
+   *      斜机位下肘角读数滞后时靠这一路，不至于永远卡在 'recover' 里、后面每一次都计不上。
+   *
+   * 两者必须是**同一个条件**：以前要领里写的是 ` elbow >= backLine - 2`，
+   * 而识别器还能靠肩膀那一路提前退出 'recover' —— 于是那一轮的「推起还原」分数与
+   * 整轮满分奖励都拿不到（实测 8 次只有 1 次拿到满轮奖励）。
+   */
+  armsBack(f) {
+    const elbow = f.elbowAngle;
+    if (!Number.isFinite(elbow)) return false;
+    if (elbow >= this.backLine) return true;
+    return this.shouldersBack(f) && elbow >= this.countElbow + PUSHUP.returnGap;
+  }
+
+  /** 深度线到了没有（两路证据取「或」）：肘角压到计数线 或 肩膀沉够 —— 到了就计次 */
   depthReached() {
-    return (Number.isFinite(this.minElbow) && this.minElbow <= PUSHUP.looseElbow)
+    return (Number.isFinite(this.minElbow) && this.minElbow <= this.countElbow)
       || this.drop >= PUSHUP.dropMin;
   }
 
+  /**
+   * **这一帧**的深度证据（两条取「或」）：肘角当前值到计数线，或肩膀当前下沉量到线。
+   *
+   * 抖动过滤必须看当前帧而不是「本轮到过的最深」（`depthReached`）：单帧毛刺一旦被记进去就永远成立，
+   * 过滤等于没做。
+   */
+  depthNow(f) {
+    const elbow = f.elbowAngle;
+    const dropNow = Number.isFinite(f.shoulderClear) ? Math.max(0, this.clearBase - f.shoulderClear) : 0;
+    return (Number.isFinite(elbow) && elbow <= this.countElbow) || dropNow >= PUSHUP.dropMin;
+  }
+
   finish(f, now) {
-    const dur = now - this.repStartAt;
+    // 整轮时长 = 上一次计次到现在（第一次还没计过时退回「最近一次在顶位」；都没有就不做下限判断）
+    const dur = this.lastCountAt ? now - this.lastCountAt : (this.lastTopAt ? now - this.lastTopAt : 0);
     this.repStartAt = 0;
+    this.depthSince = 0;
     // 只是晃了一下：肘角比自己的顶位弯得还不够 minBend°，肩膀也没沉到计数线（dropMin）——
     // 连半程都不记，也不出声。
     // 注意这里比的是 **dropMin**（计次线）而不是 dropStart（起头线）：膝盖/肩膀刚一动就
@@ -845,7 +917,7 @@ class PushupDetector extends DetectorBase {
     const bodyOk = this.minBody >= PUSHUP.bodyStraightMin;
     // 深度两路证据：肘角压到位，**或者**肩膀确实沉下去接近地面了。
     // 后者专治「摄像头看不到胸口贴地」——斜视角下肘角读数被压直，只看肘角会漏判。
-    const elbowLine = PUSHUP.looseElbow;
+    const elbowLine = this.countElbow;
     const deepEnough = this.minElbow <= PUSHUP.elbowFull || this.drop >= PUSHUP.dropFull;
     // 只有宽松一档（用户要求取消严格模式）：肘角读够 或 肩膀沉到线就算一次
     const looseEnough = this.minElbow <= elbowLine || this.drop >= PUSHUP.dropMin;
@@ -860,9 +932,10 @@ class PushupDetector extends DetectorBase {
       this.nextCycle(now);
       return;
     }
-    if (dur < PUSHUP.minRepMs) {
+    // 两次计次之间的防御性下限（正常一轮远大于它；见 PUSHUP.minCycleMs）
+    if (this.lastCountAt && now - this.lastCountAt < PUSHUP.minCycleMs) {
       this.partialReps += 1;
-      this.reject('tempo', `${Math.round(dur)}ms`);
+      this.reject('tempo', `${Math.round(now - this.lastCountAt)}ms`);
       this.cue('tempo', null, 'warn', now, 3000);
       this.emit({ type: 'rep', valid: false, reason: 'tempo' });
       this.stage = 'recover';
@@ -875,23 +948,26 @@ class PushupDetector extends DetectorBase {
     this.validReps += 1;
     this.reps = this.validReps;
     this.cycleHadValidRep = true;
+    this.lastCountAt = now;
     // 质量分按「下放深度」给：压到 elbowFull 以内（或肩膀沉到接近地面）满分，
     // 只到宽松线就少一截 —— 摄像头看不到贴地时按肩膀下沉量给同样的分。
+    // 注意这是**计次那一刻的快照**（计次发生在计数线上，通常还没到最低点）；
+    // 「这一轮到底压得多深」体现在「深度」那一步要领的 14 分上（那一步按帧判定，能看到最深处）。
     const depthGain = this.minElbow <= PUSHUP.elbowFull || this.drop >= PUSHUP.dropFull ? 30
       : this.minElbow <= PUSHUP.elbowFull + 6 ? 24
         : this.minElbow <= PUSHUP.elbowFull + 12 ? 18 : 12;
     const quality = clamp(Math.round(56 + depthGain + (this.minBody > 165 ? 10 : bodyOk ? 5 : 0)), 0, 100);
     this.emit({ type: 'rep', valid: true, index: this.validReps, quality, duration: dur });
     /**
-     * 计次发生在**最低点**（刚才是 depthReached() 成立的那一帧），所以这里进入「推起来」状态：
-     * 回到顶位之后才允许开始下一次（在最低点停住不会连着刷次数）。
-     *
+     * 计次发生在**下放到计数线的那一帧**（见 step 的 'descending' 分支），
+     * 所以这里进入「推起来」状态：回到顶位之后才允许开始下一次（在计数线上停住不会连着刷次数）。
      * 注意**不在这里 `nextCycle()`**：一轮的收尾（整轮满分奖励、下一轮的要领清单）
      * 放到「推回顶位」那一刻结算（见 step 的 'recover' 分支）—— 否则「推起还原 +8」
      * 这一步会被算进下一轮、永远拿不到分。
      */
     this.stage = 'recover';
     this.pendingCycleEnd = true;
+    this.countNow = true;
   }
 }
 

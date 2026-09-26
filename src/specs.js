@@ -478,7 +478,7 @@ function pushupSpecs() {
       }),
       item({ labelKey: 'spec.backLine', metricKey: 'metric.elbow', op: 'gte', value: roundFor(P.elbowUp - P.returnTol, DEG), unit: DEG, noteKey: 'spec.note.adaptive' }),
       item({ labelKey: 'spec.wobble', textKey: 'spec.text.pushupWobble', noteParams: { deg: P.minBend } }),
-      item({ labelKey: 'spec.minRep', op: 'gte', value: roundFor(P.minRepMs / 1000, S), unit: S }),
+      item({ labelKey: 'spec.minRep', op: 'gte', value: roundFor(P.minCycleMs / 1000, S), unit: S, noteKey: 'spec.note.pushupTempo', noteParams: { dwell: Math.round(P.countDwellMs) } }),
       item({ labelKey: 'spec.giveUp', op: 'lte', value: roundFor(P.maxRepMs / 1000, S), unit: S, noteKey: 'spec.note.giveUp' }),
     ],
     posture: [
@@ -983,13 +983,17 @@ export function specStages(id) {
     pushItem(pick('spec.bridgeDown'), { kind: 'finish', detFlag: 'atBottom' });
   } else if (id === 'pushup') {
     /**
-     * 俯卧撑（用户要求：**计次的那一刻选在身体到达最低点的时候**）：
-     *   ① 俯撑（门控）→ ② 回到顶位（起始位，下一轮的前提）→ ③ 开始下沉 → ④ **最低点 = 计次那一刻**。
+     * 俯卧撑（用户最新要求：**计次不必是人在最低点了，关键帧也要更灵敏**）：
+     *   ① 俯撑（门控）→ ② 回到顶位（下一轮的前提）→ ③ 开始下沉 → ④ **到计数线 = 计次那一刻**。
      *
-     * 顺序按「一轮真实动作」排：先撑好，再回到顶位，然后下沉、到最低点 —— 深度线一到就计次，
-     * 反馈（报数 + 音效 + 计数跳动）就在那一刻出来，不用等推起来（用户反馈「这样感觉更好」）。
-     * 「回到顶位」仍然是计次的必要条件：识别器计完一次会停在 'recover' 状态，
-     * 必须把肘角推回自己的顶位附近、肩膀也抬回来，才允许开始下一次（所以在最低点停住不会刷次数）。
+     * ②③④ 三条线**都跟着用户自己的顶位走**（识别器里的 `backLine` / `enterLine` / `countElbow`）：
+     *   ③ 比顶位弯下去 6°、④ 比顶位弯下去 8°（上限 146°）。
+     * 所以手臂伸不直的人（顶位只有 150°）也有自己的三条线，不会出现「线比他的顶位还低、永远计不上」。
+     *
+     * ④ 点亮的那一刻就是计次那一刻（`countNow`，和识别器同一帧）：**下放到深度线就报数**，
+     * 不用等推起来、也不用先在最低点停一下（那是上一版的口径，用户反馈「还是不太灵敏」）。
+     * ②仍然计次的必要条件：识别器计完一次停在 'recover'，必须推回顶位才允许下一次
+     * （所以在计数线上停住不会连着刷次数）。
      */
     pushItem(pick('spec.backLine'), {
       kind: 'enter',
@@ -1003,16 +1007,17 @@ export function specStages(id) {
         k: STAGE_TOLERANCE.torso,
       },
     });
-    pushItem(pick('spec.pushupEnter'), { kind: 'count' });
+    // ③ 开始下沉：动态线（自己的顶位 − 6°）
+    pushItem(pick('spec.pushupEnter'), { kind: 'count', valueFrom: 'enterLine' });
     const countItem = pick('spec.countLine');
     const dropItem = pick('spec.shoulderDrop');
     if (countItem && dropItem) {
-      // 最后一格 = **最低点**：深度线到过、并且「到底了」（开始回升或在底部停住）——
-      // 和识别器的 atBottom 是同一帧，所以「这一格点亮」＝「计上一次」＝「计数跳动/音效」同一刻。
-      const stage = toStage(countItem, { kind: 'finish', detFlag: 'atBottom' });
+      // 最后一格 = **到计数线**（或肩膀沉够）：和识别器的 countNow 同一帧，
+      // 所以「这一格点亮」＝「计上一次」＝「计数跳动/音效」同一刻。
+      const stage = toStage(countItem, { kind: 'finish', valueFrom: 'countElbow', detFlag: 'countNow' });
       stage.alt = toStage(dropItem);
       stages.push(stage);
-    } else pushItem(countItem, { kind: 'finish', detFlag: 'atBottom' });
+    } else pushItem(countItem, { kind: 'finish', valueFrom: 'countElbow', detFlag: 'countNow' });
   } else if (id === 'crunch') {
     /**
      * 卷腹（**用户给的两格关键帧**）：① 屈膝躺下 → ② **卷起来 = 计次那一刻**。

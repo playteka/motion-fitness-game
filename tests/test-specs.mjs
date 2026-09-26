@@ -155,8 +155,9 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
   const pushup = createDetector('pushup');
   ok('俯卧撑：计次线 = PUSHUP.looseElbow', findItem('pushup', 'spec.countLine').value === PUSHUP.looseElbow);
   ok('俯卧撑：深度线 = PUSHUP.elbowFull', findItem('pushup', 'spec.bottomLine').value === PUSHUP.elbowFull);
-  ok('俯卧撑：回到顶位 = 识别器的 backLine（参考顶位）',
-    findItem('pushup', 'spec.backLine').value === pushup.backLine,
+  ok('俯卧撑：回到顶位 = 识别器的 backLine（参考顶位，实际跟着自己的顶位走）',
+    findItem('pushup', 'spec.backLine').value === pushup.backLine
+    && PUSHUP.looseElbow + PUSHUP.returnGap <= pushup.backLine,
     `${findItem('pushup', 'spec.backLine').value} vs ${pushup.backLine}`);
   const drop = findItem('pushup', 'spec.shoulderDrop');
   ok('俯卧撑：肩膀下沉线 = PUSHUP.dropMin', drop.value === PUSHUP.dropMin, `${drop.value} vs ${PUSHUP.dropMin}`);
@@ -738,17 +739,21 @@ console.log('\n[9] 进度条随姿势前进 / 浅动作不会走到最后一格'
   ok('箭步蹲：还蹲着（前膝 90°）时「回位」那一格过不了',
     !stageHolds(lungeStages[lungeFinish], fake(90, 95, 95), createDetector('lunge')));
 
-  // 俯卧撑：**计次那一刻在最低点**（用户要求）—— 最后一格是「到最低点」，
-  // 深度仍是两路证据（肘角 或 肩膀下沉），推起还原那一格在这一轮里（下一轮的前提）。
+  // 俯卧撑：**计次不必到最低点**了（用户最新要求）—— 最后一格是「肘角到计数线」，
+  // 深度仍是两路证据（肘角 或 肩膀下沉），推起还原那一格仍是本轮的一部分（下一轮的前提）。
   const pushStages = specStages('pushup');
   const pushCount = pushStages[pushStages.length - 1];
-  ok('俯卧撑：计次那一格（最低点）带「肩膀下沉」替代判据',
+  ok('俯卧撑：计次那一格（到计数线）带「肩膀下沉」替代判据',
     pushCount && pushCount.kind === 'finish' && pushCount.alt
     && pushCount.alt.metric === 'shoulderDrop'
     && pushCount.alt.value === PUSHUP.dropMin,
     JSON.stringify(pushCount?.alt && { m: pushCount.alt.metric, v: pushCount.alt.value }));
-  ok('俯卧撑：计次那一格用识别器自己的「到最低点了」标记（进度条点亮 = 计次 = 报数同一刻）',
-    pushCount && pushCount.detFlag === 'atBottom', String(pushCount?.detFlag));
+  ok('俯卧撑：计次那一格用识别器自己的「到计数线了」标记（进度条点亮 = 计次 = 报数同一刻）',
+    pushCount && pushCount.detFlag === 'countNow', String(pushCount?.detFlag));
+  ok('俯卧撑：计次那一格与「开始下沉」那一格都用识别器自己的动态线（跟着人自己的顶位走）',
+    pushCount && pushCount.valueFrom === 'countElbow'
+    && pushStages.some((s) => s.valueFrom === 'enterLine'),
+    JSON.stringify(pushStages.map((s) => s.valueFrom || '—')));
   // 「回到顶位」那一格（这一轮的第 2 格）要同时要求「肩膀抬回顶位」——宽容度就是识别器用的 dropReturn
   const pushTop = pushStages.find((s) => s.item?.labelKey === 'spec.backLine');
   ok('俯卧撑：「回到顶位」那一格要求肩膀抬回顶位 dropReturn 以内（与识别器同一个常量）',
@@ -1022,16 +1027,16 @@ console.log('\n[10] 关键帧线条图标');
     .filter((s) => s.metric === 'elbow')
     .every((s) => iconAngle(s, pushCtx) === s.value),
   JSON.stringify(pushStages.filter((s) => s.metric === 'elbow').map((s) => iconAngle(s, pushCtx))));
-  // 俯卧撑的链（用户要求「计次的那一刻选在身体到达最低点」）：
-  // ① 俯撑 → ② 回到顶位（起始位，148°）→ ③ 开始下沉（150°）→ ④ **最低点 = 计次那一刻**（深度线 146°）。
-  ok('俯卧撑：四格 = 俯撑 → 回到顶位 → 开始下沉 → 最低点（计次那一刻）',
+  // 俯卧撑的链（用户最新要求「**计次不必是人在最低点了**」）：
+  // ① 俯撑 → ② 回到顶位（下一轮的前提）→ ③ 开始下沉 → ④ **到计数线 = 计次那一刻**。
+  ok('俯卧撑：四格 = 俯撑 → 回到顶位 → 开始下沉 → 到计数线（计次那一刻）',
     pushStages.length === 4 && pushStages[0].kind === 'gate'
     && pushStages[1].item.labelKey === 'spec.backLine'
     && pushStages[2].item.labelKey === 'spec.pushupEnter'
     && pushStages[3].kind === 'finish' && pushStages[3].item.labelKey === 'spec.countLine'
-    && pushStages[3].detFlag === 'atBottom',
+    && pushStages[3].detFlag === 'countNow',
     JSON.stringify(pushStages.map((s) => `${s.item.labelKey}:${s.kind}`)));
-  ok('俯卧撑：「最低点」那一格画得比「回到顶位」低（一眼看出这一格是沉到底）', (() => {
+  ok('俯卧撑：「计次」那一格画得比「回到顶位」低（一眼看出这一格是沉下去）', (() => {
     const h = (s) => {
       const ic = stageIcon(s, pushCtx);
       const shoulderY = ic.lines[0].a.y;

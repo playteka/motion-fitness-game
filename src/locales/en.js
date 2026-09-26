@@ -980,13 +980,14 @@ export default {
       wobble: 'Below even this range: not counted and nothing is spoken.',
       flight: 'Jumping exercises also require the lift to pass this line.',
       giveUp: 'A rep stuck longer than this is force-settled (and counts if deep enough) — reps are never swallowed.',
-      pushupEnter: 'Bending {v}° below your own top also starts the rep, so people who cannot straighten their arms are still recognised (a side camera flattens the elbow reading).',
-      pushupBottom: '**The rep is counted at the bottom** (the user asked for “the counting moment to be when the body reaches its lowest point”): '
-        + 'once the depth line has been crossed (this line, or the shoulder drop), the instant your elbow/shoulder **starts coming back up** '
-        + '(or you hold at the bottom for about 0.18 s) the rep counts — the call-out, the sound and the counter all fire right then, with no wait '
-        + 'for the press. Pressing back to the top is the **precondition for the next rep** (holding at the bottom cannot farm reps), '
-        + 'so the “press back up” segment still belongs to this rep and still scores.',
+      pushupEnter: 'Bending {v}° below your own top counts as “starting to lower” (the bar\u2019s third segment) — people who cannot straighten their arms are still recognised (a side camera flattens the elbow reading).',
+      pushupBottom: '**Reaching this line counts the rep** (the user\u2019s latest rule: “the count does not have to be at the lowest point”): '
+        + 'the very frame your elbow reaches the counting line (146° by default, and it follows your own top — someone whose top is only 150° gets 142°) '
+        + 'the rep is counted: the call-out, the sound and the counter all fire right then, with no need to wait for the press and no need to pause at the bottom. '
+        + 'The only follow-up requirement is that you **push back to your top** before the next rep can start '
+        + '(so resting on the counting line cannot farm reps). Going deeper than the line still earns more depth credit (down to {full}° for full marks).',
       shoulderDrop: 'Looking down at a laptop screen flattens the elbow angle, so this signal is used alongside it: the shoulders dropping {start} already starts the rep, dropping to the line above counts a rep, and {full} earns full depth credit. Closing a rep needs the shoulders back within {ret} of your top (between “start” and “count”, so a rep cannot be called done the moment you begin to sink).',
+      pushupTempo: 'The debounce only filters reading spikes: the depth line must **hold for {dwell} ms** (about two frames) before the rep counts, and two reps are at least this far apart. A real push-up is far slower than both — slower and shallower reps still count.',
       squatBottom: 'Squat until the thighs are close to horizontal (hip level with knee = 0).',
       squatLean: 'With a front-facing camera, leaning past this angle does not count as the standing stance.',
       startStand: 'Each rep starts from standing: come back up before the next one.',

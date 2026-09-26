@@ -238,9 +238,13 @@ export const STEP_PLANS = {
         labelKey: 'steps.pushup.press.label',
         points: 8,
         // 「推起还原」这一步在**识别器判定这一轮完成的那一刻**就该给分，
-        // 所以直接对齐识别器的结算线（它已经跟着用户自己的幅度自适应了）
+        // 所以直接调识别器自己的 `armsBack()`（它已经跟着用户自己的幅度自适应了）。
+        // ⚠️ 必须和识别器**同一个条件**：以前这里写的是 `肘角 ≥ backLine − 2`，
+        // 而识别器还能靠「肩膀抬回顶位」那一路提前退出，于是这些轮的这一步与整轮满分
+        // 都拿不到（实测 8 次只有 1 次拿到满轮奖励）。
         check: (f, d) => d.cycleLowered
-          && f.elbowAngle >= (Number.isFinite(d.backLine) ? d.backLine - 2 : 142),
+          && (typeof d.armsBack === 'function' ? d.armsBack(f)
+            : f.elbowAngle >= (Number.isFinite(d.backLine) ? d.backLine - 2 : 142)),
         hint: (f) => (f.elbowAngle < 138 ? H('steps.pushup.press.hint') : null),
       },
     ],

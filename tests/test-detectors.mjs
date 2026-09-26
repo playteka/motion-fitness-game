@@ -652,10 +652,11 @@ console.log('\n[3] 俯卧撑计数');
   ok('无半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
 }
 {
-  // ===== 用户要求：「计次的那一刻要选在身体到达最低点的时候，给出即时的反馈」 =====
-  // 以前是推起来回到顶位才计次（反馈晚半秒多）；现在到最低点（开始回升/在底部停住）就计次。
-  // `pushupMix()` 一个循环里 p=0.5 是最低点（肘角最小），所以计次应该紧跟在最低点之后，
-  // 而不是落在循环后半段（推起来的那一段）。
+  // ===== 用户最新要求：「**计次不必是人在最低点了**」—— 下放到计数线就立刻计次 =====
+  // 以前要等「到最低点」的证据（肘角/肩膀先回升一点，或在底部停 0.18 秒），
+  // 顺下来做的人要等自己往回推时才听到报数（反馈晚、连续做时还常觉得没算上）。
+  // `pushupMix()` 一个循环里 p=0.5 是最低点（肘角最小），所以计次应该落在**下沉的前半段**
+  // （p < 0.42，肘角刚到计数线附近），而不是最低点附近、更不是推起来那一段。
   const cycleMs = 1600;
   const per = Math.round(cycleMs / DT);
   const det = fresh('pushup');
@@ -667,21 +668,21 @@ console.log('\n[3] 俯卧撑计数');
     const f = computeFrame(toMetric(sm.apply(pose((i % per) / per), t / 1000), ASPECT), null, t, false, null);
     const evs = det.update(f, t);
     if (evs.some((e) => e.type === 'rep' && e.valid)) {
-      marks.push({ phase: (i % per) / per, elbow: f.elbowAngle, t });
+      marks.push({ phase: (i % per) / per, elbow: f.elbowAngle, line: det.countElbow, t });
     }
     t += DT;
   }
   atLeast('俯卧撑：3 个循环计到 3 次', marks.length, 3);
-  ok('俯卧撑：计次就在**最低点**那一刻（相位落在最低点附近，不是推起来之后）',
-    marks.length >= 3 && marks.every((m) => m.phase > 0.42 && m.phase < 0.68),
+  ok('俯卧撑：计次落在**下沉的路上**（还没到最低点，更不是推起来之后）',
+    marks.length >= 3 && marks.every((m) => m.phase < 0.42),
     marks.map((m) => `p=${m.phase.toFixed(2)}`).join(' '));
-  ok('俯卧撑：计次那一刻肘角还在深处（离顶位很远，说明没等推起来才计）',
-    marks.length >= 3 && marks.every((m) => m.elbow < 120),
-    marks.map((m) => Math.round(m.elbow)).join(','));
-  // 推起来回到顶位之前不会重复计数（在最低点停住也只是一次）
+  ok('俯卧撑：计次那一刻肘角刚过计数线（不是等到最低点才计）',
+    marks.length >= 3 && marks.every((m) => m.elbow <= m.line + 12),
+    marks.map((m) => `${Math.round(m.elbow)}/${Math.round(m.line)}`).join(' '));
+  // 推起来回到顶位之前不会重复计数（停在计数线上也只是一次）
   const before = det.validReps;
   det.update(computeFrame(toMetric(sm.apply(pose(0.5), t / 1000), ASPECT), null, t, false, null), t);
-  ok('俯卧撑：停在最低点不会连着刷次数', det.validReps === before, `${before} → ${det.validReps}`);
+  ok('俯卧撑：停在计数线上不会连着刷次数', det.validReps === before, `${before} → ${det.validReps}`);
 }
 {
   // 政策：识别与计数都放宽——塌腰也照样算一次（大体做到了就计次数），
@@ -698,6 +699,33 @@ console.log('\n[3] 俯卧撑计数');
   r.run([{ pose: standingIdle, ms: 3000 }]);
   ok('站姿不会被误判为俯卧撑', det.validReps === 0 && det.active === false);
   ok('站姿给出准备姿势提示', typeof det.standby === 'string' && det.standby.length > 0);
+}
+{
+  // 抖动过滤：深度线要**连续成立约 2 帧**才计次 ——
+  // 单帧的读数毛刺（33ms 掉进计数线又立刻回来）不该计上；连续到线就计次。
+  const det = fresh('pushup');
+  const r = makeFrameRunner(det);
+  const top = {
+    ok: true, view: 'side', torsoIncl: 78, shoulderClear: 0.95, wristClear: 0.05,
+    elbowAngle: 168, hipAngle: 178, kneeAngle: 178, bodyStraight: 178, hipLineDev: 0, torsoLen: 0.3,
+    perSide: { L: {}, R: {} },
+  };
+  r.run([{ f: top, ms: 400 }]);
+  r.run([{ f: { ...top, elbowAngle: 140 }, ms: 33 }]);      // 一帧毛刺
+  r.run([{ f: top, ms: 400 }]);
+  ok('俯卧撑：单帧的肘角毛刺（33ms）不计次', det.validReps === 0, `实际 ${det.validReps}`);
+  r.run([{ f: { ...top, elbowAngle: 140 }, ms: 200 }]);     // 连续到线
+  ok('俯卧撑：连续到计数线（>70ms）立刻计次', det.validReps === 1, `实际 ${det.validReps}`);
+  ok('俯卧撑：计次那一刻就是进度条最后一格点亮那一刻（countNow）', det.countNow === true);
+}
+{
+  // 用户最新要求：「计次不必是人在最低点了」—— 顺下来做（不在底部停留、直接推起来）时，
+  // 每一次都应该在**下放到计数线**时就计上，不用等自己往回推。
+  const det = fresh('pushup');
+  const r = makeRunner(det);
+  r.run(repeat(pushupMix(), 1200, 6));
+  ok('俯卧撑：连续顺做 6 次 = 6 次（不在底部停留也照样计）', det.validReps === 6,
+    `实际 ${det.validReps}`);
 }
 {
   const det = fresh('pushup');
