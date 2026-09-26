@@ -3,6 +3,9 @@ node_modules/
 _probe/
 _scratch/
 *.log
+# 调试数据记录（运动设定里的「记录调试数据」开关写出来的 jsonl）——
+# 里面是真实的关节数据，只在本地用来排查，不进仓库
+logs/
 
 # 系统文件
 .DS_Store

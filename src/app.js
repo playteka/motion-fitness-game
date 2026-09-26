@@ -18,6 +18,7 @@ import {
 } from './specs.js';
 import { getStepPlan } from './steps.js';
 import { iconSVG, uniqueStages } from './icons.js';
+import { PoseLogger } from './pose-log.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
 } from './i18n.js';
@@ -44,6 +45,11 @@ const DEFAULT_SETTINGS = {
   showAngles: true,
   showSkeleton: true,
   debug: false,
+  /**
+   * 「记录调试数据」（用户要求）：打开后把每一帧的关节点 + 全部判定指标写进 logs/ 里的 jsonl 文件。
+   * 开关放在**运动设定**弹窗里（那个弹窗就是「这个动作怎么判」的地方），状态跟着设置持久化。
+   */
+  poseLog: false,
   exerciseId: 'squat',
   targets: {},
   // 限时计数（开合跳）的时长单独存：这个动作以前的目标是「次数」，
@@ -692,6 +698,78 @@ function renderExerciseSettings() {
     timedEl.hidden = !ex.timed;
   }
   renderExerciseSpecs();
+  renderPoseLogStatus();
+}
+
+/* ------------------------------------------------------------------ *
+ * 调试数据记录（运动设定里的「记录调试数据」开关）
+ *
+ * 用户要求：「请在我测试的时候记录下关节点和一些关键数据……在运动设置里面增加一个『记录调试数据』
+ * 的开关项，只要打开了，就把运动的关节数据按照一定的格式写在一个 log 文件里面。」
+ * 数据格式与落盘方式见 src/pose-log.js（JSONL，一行一帧，写到项目里的 logs/ 目录）。
+ * ------------------------------------------------------------------ */
+
+/** 一行「这次记录的环境」：动作 / 机位 / 校准地面线 / 识别器 / 关键帧判据 / 模型 */
+function poseLogMeta() {
+  const ex = localizedExercise(state.exerciseId);
+  const stages = specStages(state.exerciseId).map((s) => [
+    s.shortKey,
+    `${s.metric}${s.op}${s.value}`,
+    s.valueFrom ? `←${s.valueFrom}` : '',
+    s.detFlag ? `[${s.detFlag}]` : '',
+    s.kind,
+  ].filter(Boolean).join(' '));
+  return {
+    exerciseId: state.exerciseId,
+    name: ex?.name || '',
+    lang: getLang(),
+    mirror: !!state.settings.mirror,
+    view: requiredView(state.exerciseId),
+    target: state.target,
+    unit: ex?.unit || '',
+    video: `${camera.video?.videoWidth || 0}x${camera.video?.videoHeight || 0}`,
+    groundY: Number.isFinite(state.calibrator?.groundRef)
+      ? Number(state.calibrator.groundRef.toFixed(4)) : null,
+    model: state.settings.modelKey,
+    det: state.detector ? state.detector.constructor.name : '',
+    // 识别器真正用的那几行参数（分析时不用再翻代码对照）
+    params: EXERCISE_MAP[state.exerciseId]?.params || null,
+    stages,
+    ua: (typeof navigator !== 'undefined' && navigator.userAgent) || '',
+  };
+}
+
+/** 开关：打开就开始记录（新开一个文件），关掉就收尾并落盘 */
+function setPoseLog(on, { silent = false } = {}) {
+  if (on) {
+    if (!poseLogger.active) {
+      const file = poseLogger.start(poseLogMeta());
+      if (!silent) setCueLine(t('status.poseLogOn', { file }), 'info');
+    }
+  } else if (poseLogger.active) {
+    const file = poseLogger.stop('off');
+    if (!silent) setCueLine(t('status.poseLogOff', { file: file || '' }), 'info');
+  }
+  renderPoseLogStatus();
+  return poseLogger.status();
+}
+
+/** 运动设定弹窗里那一行状态（记了多少帧、文件叫什么、有没有写失败） */
+function renderPoseLogStatus() {
+  const el = $('poseLogStatus');
+  if (!el) return;
+  const s = poseLogger.status();
+  const btn = $('btnPoseLog');
+  if (btn) btn.setAttribute('aria-pressed', String(!!state.settings.poseLog));
+  if (!s.active) {
+    el.textContent = t('exercise.logOff');
+    return;
+  }
+  el.textContent = t('exercise.logOn', {
+    file: s.file,
+    frames: String(s.frames),
+    mb: (s.bytes / 1048576).toFixed(2),
+  }) + (s.error ? ` · ${t('exercise.logError', { err: s.error })}` : '');
 }
 
 function openExerciseSettings() {
@@ -851,6 +929,17 @@ const gestureState = {
   corner: { p: 0, since: 0, lastInside: 0, done: false },
   cornerVisible: false,
 };
+
+/**
+ * 调试数据记录器（见 src/pose-log.js）。
+ *
+ * 用户要求：「请在我测试的时候记录下关节点和一些关键数据……在运动设置里面增加一个『记录调试数据』
+ * 的开关项，只要打开了，就把运动的关节数据按照一定的格式写在一个 log 文件里面，
+ * 这样下次你就可以分析真实的数据了。」
+ *
+ * 放在模块级：主循环每帧都要用它；开关的状态存在 `state.settings.poseLog`（跟着设置持久化）。
+ */
+const poseLogger = new PoseLogger();
 
 /**
  * 圆环的直径（像素）。
@@ -2106,6 +2195,10 @@ function beginCountdown() {
 
   state.session = 'countdown';
   state.countdownStartedAt = performance.now();
+  if (poseLogger.active) {
+    poseLogger.event('meta', poseLogMeta());
+    poseLogger.event('session', { ex: state.exerciseId, s: 'countdown' });
+  }
   // 限时计数：倒计时结束才开始计时，所以这里先把「时间到」清掉
   state.timeUp = false;
   state.timeCallsSaid = new Set();
@@ -2157,12 +2250,18 @@ function finishCountdown(det = state.detector) {
   setCueLine(startEx.timed
     ? t('status.timedGo', { sec: state.target })
     : t('status.countdownGo'), 'good');
+  // 调试记录：一组正式开始（带一行环境，方便把「哪一组」和参数对上）
+  if (poseLogger.active) {
+    poseLogger.event('meta', poseLogMeta());
+    poseLogger.event('session', { ex: state.exerciseId, s: 'running', at: performance.now() });
+  }
   updateButtons();
 }
 
 function pauseSession() {
   if (state.session !== 'running') return;
   state.session = 'paused';
+  if (poseLogger.active) poseLogger.event('session', { ex: state.exerciseId, s: 'paused' });
   audio.pause();
   setCueLine(t('status.paused'));
   setHint(t('status.paused'), 'warn', 2000);
@@ -2172,6 +2271,7 @@ function pauseSession() {
 function resumeSession() {
   if (state.session !== 'paused') return;
   state.session = 'running';
+  if (poseLogger.active) poseLogger.event('session', { ex: state.exerciseId, s: 'resumed' });
   state.lastTick = performance.now();
   state.detector?.resetClock?.();
   setCueLine(t('status.resume'));
@@ -2198,6 +2298,20 @@ function stopSession(reason = 'user') {
   const steps = det.stepStatus();
   const doneCount = steps.filter((s) => s.done).length;
   const hasWork = value > 0 || det.partialReps > 0 || score > 0;
+  if (poseLogger.active) {
+    poseLogger.event('end', {
+      ex: state.exerciseId,
+      s: 'calibrating',
+      reason,
+      value,
+      reps: det.validReps,
+      partial: det.partialReps,
+      score,
+      ms: Math.round(state.elapsedMs),
+      stepsDone: steps.filter((s) => s.done).map((s) => s.id),
+    });
+    poseLogger.flush({ force: true });
+  }
   if (hasWork) saveSession({ ex, value, partial: det.partialReps, reason, score });
   // 本组结果也念出来（以语音为主：用户不必转头看小结卡）。
   // **只念次数 / 时长 + 一句夸奖，不念分数**（用户要求：语音一律不报分数）——
@@ -2641,6 +2755,15 @@ function handleEvents(events, now = performance.now()) {
   const running = state.session === 'running';
 
   for (const ev of events) {
+    // 调试记录：每一个事件都留一行（计次 / 半程 / 提示 / 要领 / 满分）
+    if (poseLogger.active) {
+      const { type, ...rest } = ev;
+      poseLogger.event(type === 'rep' ? (ev.valid ? 'rep' : 'reject') : type, {
+        ex: state.exerciseId,
+        ...rest,
+        ...(type === 'rep' ? { valid: !!ev.valid, index: ev.index, reason: ev.reason || null, quality: ev.quality ?? null, duration: ev.duration ?? null } : {}),
+      });
+    }
     if (ev.type === 'step') {
       // 每一步要领达标：立刻响铃 + 加分飘字，第一次完成时还用语音念出要领
       audio.step(ev.index, ev.total);
@@ -2799,12 +2922,14 @@ function loop() {
   const aspect = camera.aspect;
   let frame = { ok: false, t: now };
   let landmarks = null;
+  let smoothedLm = null;      // 平滑后的关键点（调试记录里也留一份，方便看「平滑是不是把动作磨没了」）
 
   if (res) {
     landmarks = res.landmarks;
     state.poseHits += 1;
     if (state.lostSince) { smoother.reset(); state.lostSince = 0; }
     const smoothed = smoother.apply(landmarks, now / 1000);
+    smoothedLm = smoothed;
     // 把校准阶段观测到的地面线传进去：所有「离地高度」都以它为基准。
     // 否则仰卧抬腿 / 跳跃这类动作里，脚踝会跟着身体一起动，地面基准就飘了。
     frame = computeFrame(toMetric(smoothed, aspect),
@@ -2897,6 +3022,24 @@ function loop() {
   const box = (!state.homeMode && state.exerciseId === 'boxJump' && det?.trackBox)
     ? det.trackBox(frame, now)
     : null;
+
+  /**
+   * 调试数据记录（用户要求）：把这一帧的**原始关键点 + 平滑后关键点 + 全部指标 + 识别器内部状态**
+   * 写进 logs/ 里的文件。放在这里（识别器跑完、进度条算完）才能一次记全：
+   * 「计不上」到底是关键点没识别到、平滑把动作磨平了、还是判定线本身没到。
+   */
+  if (poseLogger.active && !state.homeMode) {
+    poseLogger.frame({
+      exerciseId: state.exerciseId,
+      session: state.session,
+      landmarks: res ? res.landmarks : null,
+      smoothed: smoothedLm,
+      frame,
+      det: state.detector,
+      barIndex: state.criteriaIdx,
+      barTotal: state.criteriaStages ? state.criteriaStages.length : 0,
+    });
+  }
 
   // 绘制
   const status = !frame.ok ? 'idle'
@@ -3181,6 +3324,36 @@ function bindUI() {
   $('btnCloseExercise').addEventListener('click', () => closeExerciseSettings());
   $('exerciseBackdrop').addEventListener('click', () => closeExerciseSettings());
 
+  // ---- 调试数据记录（运动设定弹窗里的开关）----
+  {
+    const btn = $('btnPoseLog');
+    if (btn) {
+      btn.setAttribute('aria-pressed', String(!!state.settings.poseLog));
+      btn.addEventListener('click', () => {
+        const v = !(btn.getAttribute('aria-pressed') === 'true');
+        btn.setAttribute('aria-pressed', String(!!v));
+        state.settings.poseLog = v;
+        saveSettings();
+        setPoseLog(v);
+      });
+    }
+    const save = $('btnPoseLogSave');
+    if (save) {
+      save.addEventListener('click', () => {
+        poseLogger.flush({ force: true });
+        const name = poseLogger.download();
+        setCueLine(t(name ? 'status.poseLogSaved' : 'status.poseLogEmpty', { file: name || '' }), name ? 'info' : 'warn');
+        renderPoseLogStatus();
+      });
+    }
+    // 打开时如果本来就在记录（比如刷新页面后开关还是开的），也把状态补上
+    if (state.settings.poseLog) setPoseLog(true, { silent: true });
+    renderPoseLogStatus();
+    // 关页面 / 切后台时把最后一批数据发出去（否则最后 1.5 秒的采样会丢）
+    window.addEventListener('pagehide', () => poseLogger.flush({ force: true }));
+    window.addEventListener('beforeunload', () => poseLogger.flush({ force: true }));
+  }
+
   // 鼠标移到某一格关键帧上 → 在进度条上方显示这一格的判定标准
   {
     const track = $('criteriaTrack');
@@ -3443,4 +3616,6 @@ window.__mfg = {
   announceHoldCount, HOLD_COUNT_EVERY,
   announceTimeLeft, TIME_CALL_AT, targetPresetsFor, targetStepFor,
   buildMusicTracks, selectMusicTrack,
+  // 调试数据记录（运动设定里的开关）：记录器本体 + 开关函数，测试直接用它们驱动
+  poseLogger, setPoseLog, poseLogMeta, renderPoseLogStatus,
 };

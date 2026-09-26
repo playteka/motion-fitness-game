@@ -3660,6 +3660,161 @@ console.log(`\n[15] 跳箱的箱子：画面上真的画出来，而且箱顶就
   api.state.session = 'idle';
 }
 
+console.log(`\n[16] 调试数据记录（运动设定里的开关，写进 logs/ 的 jsonl）`);
+{
+  const { LM: LMK } = await import('../src/geometry.js');
+  const { standingPose: sp4 } = await import('./synthetic-pose.mjs');
+  const api = windowStub.__mfg;
+
+  // ===== ① 开关在「运动设定」弹窗里，默认关着，点一下打开并记进设置 =====
+  api.openExercise('buttKick');
+  api.renderExerciseSettings();
+  const btn = elements.get('btnPoseLog');
+  ok('运动设定弹窗里有「记录调试数据」开关',
+    !!btn && !!elements.get('btnPoseLogSave') && !!elements.get('poseLogStatus')
+    && /记录调试数据/.test(btn.attributes['data-i18n'] || '') === false
+    && api.state.settings.poseLog === false,
+    JSON.stringify({ btn: !!btn, pressed: btn?.attributes['aria-pressed'] }));
+  const statusOff = elements.get('poseLogStatus').textContent;
+  ok('没打开时状态行写「未开始记录」', /未开始记录/.test(statusOff), statusOff);
+
+  // 打桩：接住「攒批 → POST」那一批数据
+  const savedFetch = globalThis.fetch;
+  const posts = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    posts.push({ url: String(url), body: String(opts.body || '') });
+    return { ok: true, status: 200 };
+  };
+  btn.dispatch('click');
+  ok('点一下开关就开始记录（设置里也存下来了）',
+    api.state.settings.poseLog === true && btn.attributes['aria-pressed'] === 'true',
+    String(api.state.settings.poseLog));
+  ok('状态行显示文件名 / 帧数 / 大小',
+    /记录中/.test(elements.get('poseLogStatus').textContent)
+    && /pose-buttKick-\d{8}-\d{6}\.jsonl/.test(elements.get('poseLogStatus').textContent),
+    elements.get('poseLogStatus').textContent);
+  const saved = JSON.parse(store.get('mfg.settings.v1') || '{}');
+  ok('开关状态写进了 localStorage（刷新后还在）', saved.poseLog === true, JSON.stringify(saved.poseLog));
+
+  // ===== ② 真实主循环跑几帧 → 数据被攒起来并 POST 给本地服务器 =====
+  const savedStream = api.camera.stream;
+  const savedDetect = api.engine.detect;
+  const savedEngineReady = api.state.engineReady;
+  const savedDraw = api.renderer.draw;
+  const savedPerf = globalThis.performance;
+  api.camera.stream = { getTracks: () => [], getVideoTracks: () => [] };
+  api.camera.video.readyState = 4;
+  api.state.engineReady = true;
+  let clock = 7_000_000;
+  const fakePerf = { now: () => clock, timeOrigin: savedPerf.timeOrigin };
+  Object.defineProperty(globalThis, 'performance', { value: fakePerf, configurable: true, writable: true });
+  windowStub.performance = fakePerf;
+  let pose = sp4({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'side' });
+  api.engine.detect = () => (pose ? { landmarks: pose, worldLandmarks: null } : null);
+  api.renderer.draw = () => {};
+  let t = 6_000_000;
+  const pump = (n = 1) => {
+    for (let i = 0; i < n; i++) {
+      clock += 33.4;
+      t += 33.4;
+      api.camera.video.currentTime = t;
+      api.state.engineReady = true;
+      if (!api.camera.stream) api.camera.stream = { getTracks: () => [], getVideoTracks: () => [] };
+      api.loop();
+    }
+  };
+  const logger = api.poseLogger;
+  ok('主循环里能拿到记录器（__mfg 暴露了它，测试才能驱动）', !!logger && typeof api.setPoseLog === 'function', typeof logger);
+  pump(6);
+  logger.flush({ force: true });
+  await new Promise((r) => setTimeout(r, 10));
+  const posted = posts.map((p) => p.body).join('');
+  const lines = posted.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const meta = lines.find((l) => l.k === 'meta');
+  const frames = lines.filter((l) => l.k === 'f');
+  ok('数据是 POST 给本地预览服务器的 /__debug/log（服务端再追加写进 logs/）',
+    posts.length > 0 && posts.every((p) => p.url.startsWith('/__debug/log?file=pose-buttKick-')),
+    posts[0]?.url || '没有发出任何请求');
+  ok('第一批里有一行 meta（动作 / 机位 / 校准地面线 / 识别器 / 关键帧判据）',
+    !!meta && meta.exerciseId === 'buttKick' && typeof meta.det === 'string'
+    && Array.isArray(meta.stages) && meta.stages.length > 0 && typeof meta.ua === 'string',
+    JSON.stringify(meta));
+  ok('每一帧都记下来了：33 个关节点（原始 + 平滑后）+ 全部指标 + 识别器内部状态 + 进度条进度',
+    frames.length >= 4
+    && frames.every((f) => Array.isArray(f.lm) && f.lm.length === 33 && Array.isArray(f.lm[0]) && f.lm[0].length === 4)
+    && frames.every((f) => Array.isArray(f.sm) && f.sm.length === 33)
+    && frames.every((f) => f.m && Number.isFinite(f.m.kneeAngle) && typeof f.m.ok === 'boolean')
+    && frames.every((f) => f.d && Object.keys(f.d).length >= 3 && typeof f.d.gateOk === 'boolean')
+    && frames.every((f) => Array.isArray(f.bar) && f.bar[1] > 0),
+    `帧数 ${frames.length} / ${JSON.stringify(frames[0]?.d || null)}`);
+  ok('帧里带着「这一帧算不算识别到人」和会话状态（分析时先看这两条）',
+    frames.every((f) => typeof f.s === 'string' && typeof f.m.ok === 'boolean')
+    && frames.every((f) => typeof f.ex === 'string' && f.ex === 'buttKick'),
+    JSON.stringify(frames[0]?.s));
+
+  // ===== ③ 计次 / 提示这些事件也各占一行 =====
+  logger.event('rep', { ex: 'buttKick', valid: true, index: 3, quality: 72, duration: 640 });
+  logger.flush({ force: true });
+  await new Promise((r) => setTimeout(r, 10));
+  const lines2 = posts.map((p) => p.body).join('').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  ok('计次事件单独一行（valid / index / quality / duration 都在）',
+    lines2.some((l) => l.k === 'rep' && l.valid === true && l.index === 3 && l.quality === 72),
+    JSON.stringify(lines2.find((l) => l.k === 'rep') || null));
+
+  // ===== ④ 关掉开关：补一行 end，并且不再记帧 =====
+  pump(3);
+  btn.dispatch('click');
+  await new Promise((r) => setTimeout(r, 20));
+  logger.flush({ force: true });
+  await new Promise((r) => setTimeout(r, 20));
+  const all = posts.map((p) => p.body).join('').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  ok('关掉开关时补一行 end（写清原因与总帧数）',
+    !!all.find((l) => l.k === 'end') && all.find((l) => l.k === 'end').frames > 0,
+    JSON.stringify(all.find((l) => l.k === 'end') || null));
+  const frozen = logger.status().frames;
+  pump(3);
+  ok('关掉之后不再记录（帧数不再增长）',
+    api.state.settings.poseLog === false && logger.status().frames === frozen && frozen > 0,
+    `关掉时 ${frozen} → 之后 ${logger.status().frames}`);
+  ok('关掉后状态行回到「未开始记录」', /未开始记录/.test(elements.get('poseLogStatus').textContent),
+    elements.get('poseLogStatus').textContent);
+
+  // ===== ⑤ 兜底：没有服务器时也能把数据下载下来 =====
+  {
+    const savedURL = globalThis.URL;
+    const clicks = [];
+    globalThis.URL = { createObjectURL: () => 'blob:fake', revokeObjectURL() {} };
+    const realCreate = documentStub.createElement;
+    documentStub.createElement = (tag) => {
+      const el = realCreate.call(documentStub, tag);
+      el.click = () => clicks.push({ tag, href: el.href, download: el.download });
+      return el;
+    };
+    api.openExercise('buttKick');
+    api.setPoseLog(true, { silent: true });
+    logger.event('rep', { valid: true });
+    const name = logger.download();
+    ok('「保存/下载文件」能把已记录的数据做成 .jsonl 下载（没有预览服务器时的兜底）',
+      /^pose-buttKick-\d{8}-\d{6}\.jsonl$/.test(name || '') && clicks.length === 1
+      && clicks[0].download === name && clicks[0].href === 'blob:fake',
+      JSON.stringify({ name, clicks }));
+    api.setPoseLog(false, { silent: true });
+    documentStub.createElement = realCreate;
+    globalThis.URL = savedURL;
+  }
+
+  // 恢复现场
+  api.renderer.draw = savedDraw;
+  api.engine.detect = savedDetect;
+  api.state.engineReady = savedEngineReady;
+  api.camera.stream = savedStream;
+  api.camera.video.currentTime = 0;
+  globalThis.fetch = savedFetch;
+  Object.defineProperty(globalThis, 'performance', { value: savedPerf, configurable: true, writable: true });
+  windowStub.performance = savedPerf;
+  api.state.session = 'idle';
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {
   console.log('失败项：');
   for (const f of failures) console.log('  - ' + f);

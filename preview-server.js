@@ -24,6 +24,61 @@ const MIME = {
 };
 
 const server = http.createServer((req, res) => {
+  // 调试数据记录（页面「运动设定」里的「记录调试数据」开关）：
+  // 页面把每一批采样（JSONL 文本）POST 到这里，服务端**追加**写进 logs/ 下的文件 ——
+  // 这样真机测试完之后，日志就落在项目目录里，可以直接拿来分析「为什么没计上」。
+  // 只监听 127.0.0.1，文件名也做了白名单校验（只允许 [A-Za-z0-9._-] + .jsonl）。
+  if (req.method === 'POST' && req.url.startsWith('/__debug/log')) {
+    let body = '';
+    let tooBig = false;
+    req.on('data', (c) => {
+      body += c;
+      if (body.length > 12 * 1024 * 1024) { tooBig = true; req.destroy(); }
+    });
+    req.on('end', () => {
+      const send = (code, obj) => {
+        res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(obj));
+      };
+      if (tooBig) return send(413, { ok: false, error: 'too big' });
+      let name = '';
+      try {
+        name = new URL(req.url, 'http://127.0.0.1').searchParams.get('file') || '';
+      } catch { /* ignore */ }
+      if (!/^[A-Za-z0-9._-]+\.jsonl$/.test(name)) return send(400, { ok: false, error: 'bad file name' });
+      try {
+        const dir = path.join(ROOT, 'logs');
+        fs.mkdirSync(dir, { recursive: true });
+        const file = path.join(dir, name);
+        if (!file.startsWith(dir)) return send(403, { ok: false, error: 'forbidden' });
+        fs.appendFileSync(file, body);
+        return send(200, { ok: true, file: `logs/${name}`, bytes: Buffer.byteLength(body) });
+      } catch (err) {
+        return send(500, { ok: false, error: String(err && err.message) });
+      }
+    });
+    return;
+  }
+
+  // 已经记下来的日志文件列表（排查时方便看一眼「记了多少」）
+  if (req.method === 'GET' && req.url.startsWith('/__debug/logs')) {
+    try {
+      const dir = path.join(ROOT, 'logs');
+      const files = fs.existsSync(dir)
+        ? fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl')).map((f) => {
+          const st = fs.statSync(path.join(dir, f));
+          return { file: f, bytes: st.size, at: st.mtimeMs };
+        })
+        : [];
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: true, files }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: String(err && err.message) }));
+    }
+    return;
+  }
+
   // 自检探针：页面用 ?probe=1 打开时会把运行时诊断 POST 到这里，
   // 便于在无头浏览器 / 无人值守场景下检查页面是否正常启动。
   if (req.method === 'POST' && req.url === '/__probe') {
