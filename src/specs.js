@@ -447,8 +447,23 @@ function plankSpecs() {
     ],
     posture: [
       item({ labelKey: 'spec.plankHard', metricKey: 'metric.trunk', op: 'gte', value: roundFor(K.torsoIncl, DEG), unit: DEG, noteKey: 'spec.note.plankHard' }),
-      item({ labelKey: 'spec.plankHard', metricKey: 'metric.shoulderClear', op: 'gte', value: roundFor(K.shoulderClearMin, TORSO), unit: TORSO }),
-      item({ labelKey: 'spec.plankHard', metricKey: 'metric.wristClear', op: 'lte', value: roundFor(K.handOnFloorMax, TORSO), unit: TORSO, noteKey: 'spec.note.handOnFloor' }),
+      // 「撑住了」= **肩关节角（髋-肩-肘）落在 45°~135°**：上臂明显往下撑住。
+      // 用户反馈「手离地高度 ≤0.55 太严、一秒都不计时」→ 主判据改成这个角度（不看地面线），
+      // 老的地面线判据（肩离地 ≥0.10 且手离地 ≤0.55）作为替代路径写在说明里。
+      item({
+        labelKey: 'spec.plankHard',
+        metricKey: 'metric.shoulderAngle',
+        op: 'range',
+        value: roundFor(K.shoulderAngleMin, DEG),
+        value2: roundFor(K.shoulderAngleMax, DEG),
+        unit: DEG,
+        noteKey: 'spec.note.plankPropped',
+        noteParams: {
+          clear: roundFor(K.shoulderClearMin, TORSO),
+          hand: roundFor(K.handOnFloorMax, TORSO),
+          elbow: roundFor(K.elbowBentMax, DEG),
+        },
+      }),
       item({ labelKey: 'spec.viewSide', textKey: 'spec.text.viewSide' }),
     ],
     advice: [
@@ -554,6 +569,8 @@ export const SPEC_METRICS = {
   body: (f) => f.bodyStraight,
   trunk: (f) => f.torsoIncl,
   torsoIncl: (f) => f.torsoIncl,
+  // 肩关节角（髋-肩-肘）：平板支撑用它判「上臂有没有撑住」（不依赖地面线）
+  shoulderAngle: (f) => f.shoulderAngle,
   shoulderClear: (f) => f.shoulderClear,
   kneeClear: (f) => f.kneeClear,
   hipClear: (f) => f.hipClear,
@@ -683,6 +700,8 @@ const SHORT_LABEL = {
   'spec.altOnButtKick': 'spec.short.tuck',
   'spec.altSwitchButtKick': 'spec.short.tuckOther',
   'spec.plankHard': 'spec.short.holdPlank',
+  // 平板支撑第二格：肩关节角（髋-肩-肘）——「上臂撑住了」
+  'spec.plankHard|shoulderAngle': 'spec.short.prop',
   'spec.plankSoft': 'spec.short.line',
   'spec.plankKnee': 'spec.short.knee',
   'spec.holdPrime': 'spec.short.holdTime',
@@ -957,7 +976,8 @@ const STEP_STAGE = {
   standAlt: { setup: '*gate', first: 'work', switch: 'switch', rhythm: 'switch' },
   sequence: { setup: 'stand', down: 'crouch', middle: 'holdPlank', finish: 'jump' },
   jump: { stance: 'stand', crouch: 'count', flight: 'jump', land: 'back' },
-  plank: { setup: 'lift', align: 'holdPlank', hold3: '*last', hold10: '*last', hold30: '*last' },
+  // 平板支撑：撑起（身体放平）→ 肩撑住（肩关节角 45°~135°）—— 见 plankSpecs 的说明
+  plank: { setup: 'prop', align: 'holdPlank', hold3: '*last', hold10: '*last', hold30: '*last' },
   holdPose: { pose: 'side', align: 'lift', hold3: '*last', hold10: '*last', hold30: '*last' },
   stretchHold: { pose: '*first', settle: '*last', hold10: '*last', hold20: '*last' },
 };

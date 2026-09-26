@@ -258,6 +258,8 @@ export default {
     elbow: 'Elbow',
     hip: 'Hip',
     bodyStraight: 'Body line',
+    // Shoulder joint angle (hip-shoulder-elbow): the plank uses it to judge "are the arms propping you up"
+    shoulderJoint: 'Shoulder',
     hipRise: 'Hip lift',
     // The standing gate (butt kick) judges the positive form “shoulders above hips”: about +1.0 standing,
     // and it is the exact negative of “Hip lift” right above
@@ -775,6 +777,8 @@ export default {
     hipClear: 'Hip height off the floor',
     kneeClear: 'Knee height off the floor',
     shoulderClear: 'Shoulder height off the floor',
+    // Shoulder joint angle (hip-shoulder-elbow) - the plank judges "are you propped up" with it
+    shoulderAngle: 'Shoulder joint angle',
     wristClear: 'Hand height off the floor',
     wristClearMin: 'Hand height off the floor',
     backKneeDrop: 'Back knee height off the floor',
@@ -912,6 +916,8 @@ export default {
       seat: 'Seated',
       fold: 'Fold',
       holdPlank: 'Held up',
+      // Plank, second segment: shoulder joint angle (arms propping you up)
+      prop: 'Arms propped',
       lift: 'Off floor',
       hands: 'Hands down',
       hip: 'Hips',
@@ -944,7 +950,11 @@ export default {
       bothKnees: 'The straighter leg (usually the back one) must also bend past this line, or {v}° below how straight you personally stand, whichever is stricter. Moving only the front leg is logged as a partial rep.',
       lungeCount: 'Bending the front knee past this line already counts (no 90° required); if you stand straighter and read a lower angle, the line adapts to you.',
       lungeEnter: 'This much bend from standing starts the rep.',
-      plankHard: 'Required: the body must be held up and close to horizontal before the timer runs, otherwise it pauses.',
+      plankHard: 'Required: the body must be held up (close to horizontal, arms propping you) before the timer runs, otherwise it pauses.',
+      plankPropped: 'Whether you are propped up is judged by an **angle**: the shoulder joint angle (hip-shoulder-elbow) has to land in this range — the upper arm clearly pushing down. '
+        + 'Measured: a forearm plank is about 90°, a straight-arm plank about 90°, and any elbow angle around {elbow}° counts; “lying flat and resting with the arms at your sides” reads only about 10° and is rejected. '
+        + '**Or** the older rule still works: shoulders at least {clear}× torso off the floor **and** hands/forearms within {hand}× torso of the floor (both at once). '
+        + 'That used to be the only rule, and on a bed or sofa — or with a slightly off camera — it measured the hands as 0.6+ above the floor and never started the timer (user report).',
       plankSoft: 'Recommended: falling short only triggers a spoken reminder, the timer keeps running.',
       handOnFloor: 'Hands or forearms must be near the floor; propping on a chair or step goes past this line.',
       holdPrime: 'The timer only starts after the pose has been steady this long (avoids momentary misreads).',

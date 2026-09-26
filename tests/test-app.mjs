@@ -884,6 +884,35 @@ console.log('\n[6] 火柴人开关');
       ok('坐姿体前屈：标出「躯干 xx°」（门控要的就是躯干倾角 ≥40°，折多深一眼能看到）',
         texts.some((x) => /^躯干\s+\d+°$/.test(x)), texts.join(' | '));
     }
+    // 平板支撑：用户反馈「没有计时」+「主要是判断关节角度（肘 90、肩 90、髋膝 180、躯干 80）」
+    // → 画面上标出「肩」（髋-肩-肘）和「肘」，那正是现在决定计时跑不跑的两个角
+    {
+      const { pronePose: plankPose } = await import('./synthetic-pose.mjs');
+      const smPlank = new LS();
+      const plank = plankPose({ hip: { x: 0.95, y: 0.75 }, bodyTilt: 78, elbow: 90, armDown: 0 });
+      let plankFrame = { ok: false };
+      for (let i = 0; i < 20; i++) plankFrame = cf(tm(smPlank.apply(plank.map((q) => ({ ...q, v: q.visibility })), i / 30), A), null, i * 33, false, null);
+      texts.length = 0;
+      api.renderer.draw({ landmarks: plank, frame: plankFrame, exerciseId: 'plank', status: 'ok' });
+      ok('平板支撑：画面上标出「肩 xx°」（肩关节角 = 髋-肩-肘，决定计时跑不跑的那个角）',
+        texts.some((x) => x.startsWith('肩')), texts.join(' | '));
+      ok('平板支撑：标出「肘 xx°」（小臂撑 ≈90° / 直臂撑 ≈175°）',
+        texts.some((x) => x.startsWith('肘')), texts.join(' | '));
+      ok('平板支撑：标出「髋 xx°」和「躯干 xx°」（用户说的髋 180 / 躯干 80）',
+        texts.some((x) => x.startsWith('髋')) && texts.some((x) => /^躯干\s+\d+°$/.test(x)),
+        texts.join(' | '));
+      // 运动设定：必须项写的是「躯干 + 肩关节角」，替代路径（旧的肩离地/手离地）写在说明里
+      api.openExercise('plank');
+      api.renderExerciseSettings();
+      const plankHtml = elements.get('exerciseSpecs').innerHTML;
+      ok('平板支撑：弹窗里必须项写成「躯干倾角 + 肩关节角 45°–135°」',
+        plankHtml.includes('躯干倾角') && plankHtml.includes('肩关节角') && plankHtml.includes('45') && plankHtml.includes('135'),
+        plankHtml.slice(0, 400));
+      ok('平板支撑：说明里给出替代路径（肩离地 / 手离地）的数值',
+        plankHtml.includes('0.1') && plankHtml.includes('0.55'), plankHtml.slice(0, 700));
+      api.openExercise('pushup');
+      api.renderExerciseSettings();
+    }
     // 别的动作一样叫「髋」——全应用只有一种叫法，不做特例
     texts.length = 0;
     api.renderer.draw({ landmarks, frame, exerciseId: 'squat', status: 'ok' });

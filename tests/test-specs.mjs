@@ -195,11 +195,19 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
     kneeRange.value === BRIDGE.kneeMin && kneeRange.value2 === BRIDGE.kneeMax,
     JSON.stringify([kneeRange.value, kneeRange.value2]));
 
-  ok('平板支撑：必须项阈值 = PLANK 常量',
-    findItem('plank', 'spec.plankHard')
-    && itemsOf('plank').some((it) => it.metricKey === 'metric.trunk' && it.value === PLANK.torsoIncl)
-    && itemsOf('plank').some((it) => it.metricKey === 'metric.shoulderClear' && it.value === PLANK.shoulderClearMin)
-    && itemsOf('plank').some((it) => it.metricKey === 'metric.wristClear' && it.value === PLANK.handOnFloorMax));
+  // 用户反馈「平板支撑没有计时，可能是『手离地高度 ≤0.55×躯干长』太严了」→
+  // 主判据换成**肩关节角**（不看地面线），老的地面线判据写进说明里当替代路径。
+  ok('平板支撑：必须项 = 躯干倾角 ≥PLANK.torsoIncl + 肩关节角落在 PLANK 的区间',
+    itemsOf('plank').some((it) => it.metricKey === 'metric.trunk' && it.value === PLANK.torsoIncl)
+    && itemsOf('plank').some((it) => it.metricKey === 'metric.shoulderAngle'
+      && it.op === 'range' && it.value === PLANK.shoulderAngleMin && it.value2 === PLANK.shoulderAngleMax));
+  ok('平板支撑：替代路径（旧的肩离地 / 手离地）写在说明里，数值直接取 PLANK 常量',
+    (() => {
+      const it = itemsOf('plank').find((x) => x.metricKey === 'metric.shoulderAngle');
+      return it && Number(it.noteParams.clear) === PLANK.shoulderClearMin
+        && Number(it.noteParams.hand) === PLANK.handOnFloorMax
+        && Number(it.noteParams.elbow) === PLANK.elbowBentMax;
+    })(), JSON.stringify(itemsOf('plank').find((x) => x.metricKey === 'metric.shoulderAngle')?.noteParams));
   ok('平板支撑：计时宽容 = HOLD_PRIME_MS / HOLD_GRACE_MS',
     near(findItem('plank', 'spec.holdPrime').value, HOLD_PRIME_MS / 1000, 0.001)
     && near(findItem('plank', 'spec.holdGrace').value, HOLD_GRACE_MS / 1000, 0.001));

@@ -107,6 +107,42 @@ function makeRunner(det, { smooth = true } = {}) {
 
 function fresh(id, opts) { return createDetector(id, opts); }
 
+/**
+ * 手搓帧的 runner（指标直接给，不走合成骨架）。
+ *
+ * 用途：验证**依赖校准地面线**的那类判据 —— 合成骨架是按脚踝推地面的，
+ * 造不出「校准地面线比身体低」这种情形（床上/机位偏时就是这样，见平板支撑那段）。
+ */
+function makeFrameRunner(det) {
+  let now = 0;
+  const cues = [];
+  const holds = [];
+  function feed(obj) {
+    const f = { ok: true, t: now, points: [], ...obj };
+    for (const e of det.update(f, now)) {
+      if (e.type === 'cue') cues.push(e);
+      if (e.type === 'hold') holds.push(e);
+    }
+    now += DT;
+  }
+  return {
+    det,
+    cues,
+    holds,
+    /** segments: [{ f: frame | fn(p)=>frame, ms }] */
+    run(segments) {
+      for (const seg of segments) {
+        const n = Math.max(1, Math.round(seg.ms / DT));
+        for (let i = 0; i < n; i++) {
+          const p = n === 1 ? 1 : i / (n - 1);
+          feed(typeof seg.f === 'function' ? seg.f(p) : seg.f);
+        }
+      }
+      return this;
+    },
+  };
+}
+
 /** 把一个“一次循环”的姿势函数展开成 count 次重复的帧序列 */
 function repeat(poseFn, cycleMs, count) {
   return Array.from({ length: count }, () => ({ pose: poseFn, ms: cycleMs }));
@@ -1062,6 +1098,49 @@ console.log('\n[5] 平板支撑计时');
   r.run([{ pose: plankPose({ sag: 0.16 }), ms: 300 }]);
   r.run([{ pose: plankPose(), ms: 2000 }]);
   near('短暂识别抖动不中断计时', det.holdMs / 1000, 4, 0.5);
+}
+{
+  // ===== 用户反馈「平板支撑没有计时，可能是规则『手离地高度 ≤0.55×躯干长』太严了」 =====
+  // 复现：地面线比身体低（床上/沙发上做、或机位偏一点）时，标准小臂平板也会把手离地量成 0.68 → 一秒都不计时，
+  // 屏幕上一直提示「手掌/小臂要贴在地面上」。现在「撑住了」的主判据是**肩关节角**（不看地面线），
+  // 老的地面线判据只作为替代路径保留。
+  const lowGround = (groundY) => ({
+    ok: true, view: 'side', torsoIncl: 78, shoulderAngle: 78, shoulderClear: 1.24, wristClear: 0.68,
+    elbowAngle: 90, hipAngle: 180, kneeAngle: 180, bodyStraight: 180, hipLineDev: 0, kneeClear: 0.2,
+    groundRef: groundY, torsoLen: 0.3, perSide: { L: {}, R: {} },
+  });
+  const det = fresh('plank');
+  const r = makeFrameRunner(det);
+  r.run([{ f: lowGround(1.08), ms: 5000 }]);
+  ok('平板支撑：地面线偏低（手离地 0.68 > 0.55）时，靠「肩关节角 78°」照样计时',
+    det.holdMs / 1000 > 4.4, `实际 ${(det.holdMs / 1000).toFixed(2)} 秒`);
+  ok('平板支撑：不再因为「手离地高度」停表', !r.cues.some((c) => c.code === 'hands'),
+    r.cues.map((c) => c.code).join(','));
+
+  // 反例：趴在地上休息（手臂贴在身侧，肩关节角只有 10°）→ 不算撑起来
+  // 这里把两条证据都设成不成立（肩关节角太小 + 肩膀没离地），确认「肩角」这条真的在拦人
+  const resting = {
+    ok: true, view: 'side', torsoIncl: 90, shoulderAngle: 10, shoulderClear: 0.05, wristClear: 0.10,
+    elbowAngle: 178, hipAngle: 180, kneeAngle: 180, bodyStraight: 180, hipLineDev: 0, kneeClear: 0.2,
+    groundRef: 0.96, torsoLen: 0.3, perSide: { L: {}, R: {} },
+  };
+  const rest = fresh('plank');
+  const rRest = makeFrameRunner(rest);
+  rRest.run([{ f: resting, ms: 5000 }]);
+  ok('平板支撑：趴在地上休息（肩关节角 10°、手臂贴身）不计时', rest.holdMs === 0, `实际 ${rest.holdMs}`);
+  ok('平板支撑：会提示「把身体撑起来」', rRest.cues.some((c) => c.code === 'lift'),
+    rRest.cues.map((c) => c.code).join(','));
+
+  // 老路径仍然是替代证据：肩离地 + 手离地都满足时，就算肩关节角读数不在区间里也照样计时
+  const oldPath = {
+    ok: true, view: 'side', torsoIncl: 78, shoulderAngle: 30, shoulderClear: 0.86, wristClear: 0.30,
+    elbowAngle: 90, hipAngle: 180, kneeAngle: 180, bodyStraight: 180, hipLineDev: 0, kneeClear: 0.2,
+    groundRef: 0.96, torsoLen: 0.3, perSide: { L: {}, R: {} },
+  };
+  const legacy = fresh('plank');
+  makeFrameRunner(legacy).run([{ f: oldPath, ms: 5000 }]);
+  ok('平板支撑：老的「肩离地 + 手离地」判据仍然算撑住（替代路径保留）',
+    legacy.holdMs / 1000 > 4.4, `实际 ${(legacy.holdMs / 1000).toFixed(2)} 秒`);
 }
 
 /* ------------------------------------------------------------------ *

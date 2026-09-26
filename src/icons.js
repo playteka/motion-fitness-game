@@ -505,6 +505,16 @@ export function poseFor(stage, ctx = {}) {
     return { builder: 'lie', params: { tilt: 90, hip: 178, knee: 172, elbow: 178, face: 'down', support: true, bodyLift: 1.2, handMark: true }, criterion: { wristClear: value } };
   }
 
+  if (metric === 'shoulderAngle') {
+    // 平板支撑「肩撑住」那一格：**小臂撑地**的姿势（肘 ≈90°、上臂往下撑）。
+    // 不特判的话会落到 gatePose 画成直臂撑（两种图标几乎一样），
+    // 而这一格判的正是「上臂有没有往下撑住」。
+    return {
+      builder: 'lie',
+      params: { tilt: 90, hip: 178, knee: 172, elbow: 90, face: 'down', support: true },
+      criterion: { shoulderAngle: value },
+    };
+  }
   if (metric === 'progress') {
     // 「回到起始位」这类用**识别器自己的比例线**（progress ≤ 0.16）判定的格子：
     // 判定照旧用比例（跟着用户自己的幅度走，和引擎同一条线），但**图标按判据里的真实数值画**

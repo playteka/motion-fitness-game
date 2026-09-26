@@ -303,11 +303,18 @@ export const STEP_PLANS = {
         id: 'setup',
         labelKey: 'steps.plank.setup.label',
         points: 8,
-        // 与识别器同一套「放宽」口径：撑起来了就给分（手撑地 + 肩离地）
-        check: (f) => f.shoulderClear > 0.16 && f.wristClear < 0.42
-          && (f.elbowAngle < 132 || f.elbowAngle > 140),
+        // 与识别器同一套「放宽」口径：撑起来了就给分 —— **角度优先**（肩关节角，不看地面线），
+        // 老的地面线判据（肩离地 + 手离地）保留成替代路径。用户反馈「手离地 ≤0.55 太严、
+        // 结果一秒都不计时」之后，这条判据跟识别器一起改了。
+        check: (f) => {
+          const byAngle = Number.isFinite(f.shoulderAngle)
+            && f.shoulderAngle >= 45 && f.shoulderAngle <= 135;
+          const byGround = f.shoulderClear > 0.16 && f.wristClear < 0.42;
+          return (byAngle || byGround) && (f.elbowAngle < 132 || f.elbowAngle > 140);
+        },
         hint: (f) => {
           if (f.torsoIncl <= 38) return H('steps.plank.setup.pose');
+          if (Number.isFinite(f.shoulderAngle) && f.shoulderAngle < 45) return H('steps.plank.setup.lift');
           if (f.shoulderClear <= 0.16) return H('steps.plank.setup.lift');
           if (f.wristClear >= 0.42) return H('steps.plank.setup.hands');
           return H('steps.plank.setup.elbow');

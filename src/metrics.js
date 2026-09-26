@@ -128,6 +128,17 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
        */
       legOut: Math.min(knee, hip),
       elbow: angleAt(I.shoulder, I.elbow, I.wrist),
+      /**
+       * 肩关节角（**髋-肩-肘**）：判定平板支撑「上臂是不是往下撑住了」。
+       *
+       * 用户对平板支撑的描述是「主要是判断关节角度，肘 90° 左右、**肩 90° 左右**、
+       * 髋膝都在 180 左右、躯干倾角 80° 左右」—— 这里的「肩 90°」就是它：
+       * 躯干水平、上臂朝下撑地时，髋-肩-肘 正好接近 **90°**；
+       * 而「趴在地上、手臂放在身体两侧」时这个角接近 **180°**，一眼就能区分开。
+       * 关键好处：**它不依赖地面线**，所以在床上/机位偏的时候也判得准
+       * （原来的「手离地高度 ≤0.55×躯干长」一遇到校准地面线偏低就会误判成「手没撑地」）。
+       */
+      shoulderAngle: angleAt(I.hip, I.shoulder, I.elbow),
       // 踝角（膝-踝-脚背）：平地站立 ≈ 110，踮脚 ≈ 150 —— 提踵类动作靠它判定
       ankle: angleAt(I.knee, I.ankle, I.foot),
       body: angleAt(I.shoulder, I.hip, I.ankle),
@@ -162,6 +173,9 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const hipAngle = perSide[best.s].hip;
   const bodyStraight = perSide[best.s].body;
   const elbowAngle = perSide[best.s].elbow;
+  // 肩关节角（髋-肩-肘）：平板支撑判定「上臂撑住了没有」，同样取看得最清的那一侧
+  const shoulderAngle = Number.isFinite(perSide[best.s].shoulderAngle)
+    ? perSide[best.s].shoulderAngle : val('shoulderAngle');
 
   const torsoIncl = tiltFromVertical(hipMid, shoulderMid);          // 0=直立, 90=水平
 
@@ -326,6 +340,8 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     kneeFar: kneeExtended,
     hipAngle,
     elbowAngle,
+    // 肩关节角（髋-肩-肘）：平板支撑用它判「上臂有没有撑住」（不依赖地面线）
+    shoulderAngle,
     bodyStraight,
     // 比例量
     torsoLen,

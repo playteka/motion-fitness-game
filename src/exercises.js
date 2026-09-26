@@ -1023,17 +1023,30 @@ class GluteBridgeDetector extends DetectorBase {
 /**
  * 平板支撑的判定（**整体放宽**：大体撑对了就开始计时）。
  *
- * 分两档：
- *   HARD（必须满足，否则暂停计时）：身体基本放平、肩离地、手/小臂在地面附近
- *   SOFT（只是语音纠正，不打断计时）：身体不够直、塌腰/撅臀、膝盖偏低、肘角读数模糊
- * 这样「撑得不太标准」也能一直计时（分数照常按性价比打折），
- * 而「根本没撑起来」（站着、趴在地上）才不计时。
+ * 用户反馈「平板支撑没有计时，可能是规则『手离地高度 ≤ 0.55×躯干长』太严了」，
+ * 并且给出了他心里的判据：「**主要是判断关节角度**：肘 90° 左右、肩 90° 左右、
+ * 髋膝都在 180 左右、躯干倾角 80° 左右，手离地高度不要太严」。
+ * 复现下来完全对得上：**躺得再标准的平板，只要校准地面线比身体低**（床上/沙发上做、
+ * 机位偏一点），`wristClear` 就量成 0.68 > 0.55 → 一直提示「手掌/小臂要贴在地面上」、**一秒都不计时**。
+ *
+ * 所以「撑住了没有」现在改成**两路证据取「或」**，其中主路是**角度**（不依赖地面线）：
+ *   ① `shoulderAngle`（髋-肩-肘）落在 [45°, 135°]：上臂明显朝下撑住 ——
+ *      实测小臂平板 ≈90°、直臂平板 ≈90°、趴着休息（手臂贴身）≈10°、站着 ≈25°，
+ *      所以这一条既放行真正的平板，又能把「趴在地上休息」挡在外面；
+ *   ② 老的地面线判据：肩膀离地 ≥0.10 且手离地 ≤0.55（两条同时成立）—— 保留成替代路径，
+ *      原来能过的情形现在照样过。
+ *
+ * 其余仍然是 SOFT（只语音纠正 + 质量分打折，**不打断计时**）：
+ * 身体不够直、塌腰/撅臀、膝盖偏低、肘角读数模糊。
  */
 export const PLANK = {
-  // ---- HARD：撑起来了才开始计时 ----
-  torsoIncl: 38,          // 身体接近水平（原来 42）
-  shoulderClearMin: 0.10, // 肩离地（原来 0.14）
-  handOnFloorMax: 0.55,   // 手/小臂在地面附近（原来 0.45）
+  // ---- HARD：撑起来了才开始计时（都是角度判据，不看地面线）----
+  torsoIncl: 38,            // 身体接近水平（原来 42）
+  shoulderAngleMin: 45,     // 肩关节角下限：上臂要明显离开身体往下撑
+  shoulderAngleMax: 135,    // 上限：超过它就变成「手臂贴在身侧」（趴着休息 ≈10°）
+  // ---- HARD 的替代路径（老的地面线判据，两条同时成立也算撑住）----
+  shoulderClearMin: 0.10,   // 肩离地（原来 0.14）
+  handOnFloorMax: 0.55,     // 手/小臂在地面附近（原来 0.45）—— 用户反馈太严，现在只是替代路径
   // ---- SOFT：只提示不打断 ----
   bodyStraight: 132,      // 身体成线（原来 142）
   hipDevMax: 0.20,        // 塌腰 / 撅臀的容忍度（原来 0.14）
@@ -1045,14 +1058,16 @@ export const PLANK = {
 class PlankDetector extends HoldDetector {
   checkHold(f) {
     // ---- 必须项：没撑起来就不计时 ----
-    if (f.shoulderClear < PLANK.shoulderClearMin) {
-      return { valid: false, reason: 'lift' };
-    }
     if (f.torsoIncl < PLANK.torsoIncl) {
       return { valid: false, reason: 'pose' };
     }
-    if (f.wristClear > PLANK.handOnFloorMax) {
-      return { valid: false, reason: 'hands' };
+    // 「撑住了」两路证据取「或」：角度（主路，见 PLANK 的说明）或 老的地面线判据
+    const proppedByAngle = Number.isFinite(f.shoulderAngle)
+      && f.shoulderAngle >= PLANK.shoulderAngleMin && f.shoulderAngle <= PLANK.shoulderAngleMax;
+    const proppedByGround = f.shoulderClear >= PLANK.shoulderClearMin && f.wristClear <= PLANK.handOnFloorMax;
+    if (!proppedByAngle && !proppedByGround) {
+      // 提示沿用「撑起来」那一句（两条证据都不成立时，最可能的原因就是人还趴在地上）
+      return { valid: false, reason: 'lift' };
     }
     // ---- 建议项：出声纠正，但计时继续 ----
     if (f.hipLineDev > PLANK.hipDevMax) {

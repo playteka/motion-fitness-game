@@ -40,7 +40,7 @@ export const FOCUS = {
   // 俯卧撑：判据是肘角（+ 髋角用来看身体有没有成一条线）
   pushup: ['elbow', 'hip'],
   bridge: ['hip', 'knee'],
-  plank: ['hip', 'shoulder'],
+  plank: ['hip', 'elbow', 'shoulderJoint'],
   sidePlank: ['hip', 'shoulder'],
   deadBug: ['knee', 'hip'],
   crunch: ['hip', 'shoulder'],
@@ -294,6 +294,11 @@ export class PoseRenderer {
     }
     if (focus.includes('shoulder') && Number.isFinite(frame.bodyStraight)) {
       items.push({ at: P(S[side]), text: `${t('debug.bodyStraight')} ${Math.round(frame.bodyStraight)}°` });
+    }
+    // 肩关节角（髋-肩-肘）：平板支撑用它判「上臂有没有往下撑住」（用户说的「肩 90° 左右」）。
+    // 和「髋 / 膝」同一套胶囊，标在肩关节上。
+    if (focus.includes('shoulderJoint') && Number.isFinite(frame.shoulderAngle)) {
+      items.push({ at: P(S[side]), text: `${t('debug.shoulderJoint')} ${Math.round(frame.shoulderAngle)}°` });
     }
     // 躯干倾角：和「髋」「膝」一模一样的画法（深色胶囊 + 度数），只是要不要标由下面的规则决定。
     // 锚点取躯干中段（肩中点 ↔ 髋中点的中点），并**垂直于躯干方向往外让开一段**：
