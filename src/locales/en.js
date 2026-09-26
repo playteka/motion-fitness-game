@@ -290,6 +290,10 @@ export default {
     outRing: 'outside',
     // Which part entered the ring ("any part counts": fingertip / heel / toe tip / ankle / wrist)
     inPoints: 'points inside',
+    // The toe tip used here was **estimated** because the real one could not be measured
+    estTip: '(estimated)',
+    // The trigger came from the whole foot (its connecting segment) touching the ring
+    byFoot: 'whole foot touching',
     part: {
       wrist: 'wrist',
       index: 'finger',

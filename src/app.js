@@ -794,6 +794,42 @@ const RING_HIT_RATIO = 0.5;
  */
 const TOUCH_VIS_MIN = 0.3;
 /**
+ * **脚**（脚跟 / 脚尖）的最低可见度：比手更宽松（0.15）。
+ *
+ * 为什么单独给脚一档（用户反馈「**只要脚尖进入圆环就要开始沙漏计时，现在感觉要脚踝进入才开始计时**」）：
+ * 圆环贴在画面**左下角**，而脚要够到那儿通常是抬起来斜着伸过去 —— 此时 MediaPipe 对
+ * 脚跟 / 脚尖这两个点的可见度经常只有 0.2 上下（脚在画面边缘、鞋尖被裁掉、脚背朝镜头都会被压低），
+ * 用 0.3 的门槛**整只脚的脚尖点全被丢掉**，只剩一个脚踝点可用 —— 于是「必须把脚踝塞进圆环」
+ * 才开始计时，正是用户感觉到的那个现象。手指尖没有这个问题（手举到角上仍然清晰）。
+ *
+ * 放宽的代价：偶尔会把「其实看不清的脚」也算进来。所以三条保险都在：判定点必须落在**圆环里面**
+ * （半径 0.5×直径，比画出来的圆圈还大 15%）、要**连续停满 3 秒**、而且离开后进度是**慢慢退**的
+ * （GESTURE_DRAIN_MS，手抖出去一下不会清零）。
+ */
+const FOOT_VIS_MIN = 0.15;
+/**
+ * 脚尖点**量不到时自己估一个**（用户要求「脚尖进入就开始计时」）。
+ *
+ * 两个方向都估一遍，谁落在圆环里算谁的（这些点只用于圆环判定：画面上不画、也不参与动作识别，
+ * 有真实脚尖点时永远不会用到它们）：
+ *   ① **顺着小腿**：脚尖 ≈ 脚踝 + (脚踝 − 膝) × `FOOT_TIP_FROM_SHIN`
+ *      —— 正面看（人朝镜头）时脚是朝下 / 朝镜头的，脚尖就落在脚踝下面；
+ *   ② **朝脚跟的反方向**：脚尖 ≈ 脚踝 + (脚踝 − 脚跟) × `FOOT_TIP_FROM_HEEL`
+ *      —— 侧面看时脚跟在后、脚尖在前，两者在脚踝的两侧。
+ *
+ * ⚠️ 不能写成「脚跟 + (脚跟 − 脚踝)」：那是**继续往脚跟后面伸**，方向正好反了 ——
+ * 脚尖和脚跟是在脚踝的**两侧**，不是同侧（这个坑写在注释里，免得以后又写成那样）。
+ */
+const FOOT_TIP_FROM_SHIN = 0.55;
+const FOOT_TIP_FROM_HEEL = 1.6;
+/**
+ * 估算的脚尖**最多能离脚踝多远**（按小腿长的倍数）：正常人脚尖离脚踝约 0.6 倍小腿长，
+ * 这里放宽到 0.8 倍。为什么要这一条：万一 MediaPipe 把脚跟误检到很远的地方，
+ * 上面第 ② 条延长线就会「凭空」穿过整个画面落进圆环里 —— 误触 = 直接把这一组退掉，代价很大。
+ * 小腿量不到时（膝也丢了）不做这个限制 —— 那种情况本来就该退回真实点。
+ */
+const FOOT_TIP_MAX_SHIN = 0.8;
+/**
  * 手/脚离开圆环之后进度退回去的速度：满圈约 1.5 秒退完。
  *
  * 以前是「离开超过 0.3 秒直接把 `since` 清零」→ 辛辛苦苦停了两秒多，手抖出去 0.4 秒就全没了。
@@ -859,26 +895,29 @@ function ringHitRadius(key, size) {
  *
  * 手 = 手腕 + 食指 + 小指 + 拇指（每只手 4 个点）；脚 = 踝 + 脚跟 + 脚趾尖（每只脚 3 个点）。
  *
- * 用户最新口径：「**手掌或脚的一部分进入**我认为就要开始沙漏计时，保持 3 秒后退出。
+ * 用户口径：「**手掌或脚的一部分进入**我认为就要开始沙漏计时，保持 3 秒后退出。
  *   **一部分进入即可触发**。」 —— 所以左下角那个退出圆环**逐点**判定：
  * 只要手/脚上的**任意一个点**落进圆环里就开始计时（指尖、脚跟、脚趾尖、脚踝都算）。
- * 以前只取「手掌中心 / 整只脚的中心」一个点，等于要求把中心对准圆环 —— 用户伸进去的是手指尖，
- * 中心还在环外，计时就永远不开始（这正是「还是不灵敏」的原因）。
  *
- * 用户反馈「十分不灵敏」后放宽过的两处仍然保留：**可见度门槛 0.3**、**只要有点可用就算数**
- * （手/脚伸到画面边角时，指节/脚跟这些点的可见度常掉到 0.4 以下，旧写法会把整只手丢掉）。
+ * 用户后来又补了一条：「**只要脚尖进入圆环就要开始沙漏计时**，现在感觉要脚踝进入才开始计时」——
+ * 这就是上面两处修改的来源：
+ *   1. **脚的两个点单独用更宽松的可见度门槛**（`FOOT_VIS_MIN` = 0.15，手仍然是 0.3）：
+ *      脚伸到画面左下角时，脚跟 / 脚尖的可见度经常只有 0.2 上下，旧门槛会把它们整个丢掉；
+ *   2. **脚尖点量不到时自己估一个**（`ghost: true`，见 FOOT_TIP_FROM_HEEL / FOOT_TIP_FROM_SHIN）：
+ *      脚尖是用户指过去的那个部位，不能因为 MediaPipe 没给点就当作不存在。
+ * 加上 `anyTouchInRing` 里的**线段判定**（整只脚连成一片），「脚尖/脚掌进环」就真的能触发计时了。
  */
 function touchSamples(landmarks, stageW, stageH, mirror) {
   if (!landmarks || !landmarks.length) return [];
   const out = [];
-  const add = (p, kind, side, part) => {
-    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
-    if (p.visibility !== undefined && p.visibility < TOUCH_VIS_MIN) return;
-    out.push({
-      x: (mirror ? 1 - p.x : p.x) * stageW,
-      y: p.y * stageH,
-      kind, side, part,
-    });
+  const toStage = (p) => ({ x: (mirror ? 1 - p.x : p.x) * stageW, y: p.y * stageH });
+  const add = (p, kind, side, part, visMin = TOUCH_VIS_MIN) => {
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
+    const vis = p.visibility === undefined ? 1 : p.visibility;
+    if (vis < visMin) return null;
+    const q = { ...toStage(p), kind, side, part, vis };
+    out.push(q);
+    return q;
   };
   for (const side of ['L', 'R']) {
     const isL = side === 'L';
@@ -886,27 +925,104 @@ function touchSamples(landmarks, stageW, stageH, mirror) {
     add(landmarks[isL ? LM.L_INDEX : LM.R_INDEX], 'hand', side, 'index');
     add(landmarks[isL ? LM.L_PINKY : LM.R_PINKY], 'hand', side, 'pinky');
     add(landmarks[isL ? LM.L_THUMB : LM.R_THUMB], 'hand', side, 'thumb');
-    add(landmarks[isL ? LM.L_ANKLE : LM.R_ANKLE], 'foot', side, 'ankle');
-    add(landmarks[isL ? LM.L_HEEL : LM.R_HEEL], 'foot', side, 'heel');
-    add(landmarks[isL ? LM.L_FOOT : LM.R_FOOT], 'foot', side, 'toe');
+    const ankle = add(landmarks[isL ? LM.L_ANKLE : LM.R_ANKLE], 'foot', side, 'ankle');
+    const heel = add(landmarks[isL ? LM.L_HEEL : LM.R_HEEL], 'foot', side, 'heel', FOOT_VIS_MIN);
+    const toe = add(landmarks[isL ? LM.L_FOOT : LM.R_FOOT], 'foot', side, 'toe', FOOT_VIS_MIN);
+    // 真实的脚尖点量不到 → 估一个（只在量不到时用，见 FOOT_TIP_FROM_SHIN / FOOT_TIP_FROM_HEEL）
+    if (!toe && ankle) {
+      const kneeP = landmarks[isL ? LM.L_KNEE : LM.R_KNEE];
+      const kp = kneeP && Number.isFinite(kneeP.x) && Number.isFinite(kneeP.y) ? toStage(kneeP) : null;
+      // 小腿长（脚踝→膝）：只用来卡「估算点别伸太远」（见 FOOT_TIP_MAX_SHIN）
+      const shin = kp ? Math.hypot(ankle.x - kp.x, ankle.y - kp.y) : 0;
+      const cands = [];
+      if (kp) {
+        cands.push({
+          dir: { x: ankle.x - kp.x, y: ankle.y - kp.y }, k: FOOT_TIP_FROM_SHIN, vis: ankle.vis,
+        });
+      }
+      if (heel) {
+        cands.push({
+          dir: { x: ankle.x - heel.x, y: ankle.y - heel.y },
+          k: FOOT_TIP_FROM_HEEL,
+          vis: Math.min(ankle.vis, heel.vis),
+        });
+      }
+      for (const cand of cands) {
+        const len = Math.hypot(cand.dir.x, cand.dir.y);
+        if (!(len > 1)) continue;
+        const tip = { x: ankle.x + cand.dir.x * cand.k, y: ankle.y + cand.dir.y * cand.k };
+        // 估算点离脚踝太远（比如脚跟被误检到画面外）→ 宁可不估，避免凭空落进圆环
+        const reach = shin > 1 ? Math.hypot(tip.x - ankle.x, tip.y - ankle.y) / shin : 0;
+        if (reach <= FOOT_TIP_MAX_SHIN) {
+          out.push({
+            x: tip.x, y: tip.y, kind: 'foot', side, part: 'toe', vis: cand.vis, ghost: true,
+          });
+        }
+      }
+    }
   }
   return out;
 }
 
-/**
- * 手 / 脚有**任意一个采样点**落进圆环里就算「进去了」（用户要求「一部分进入即可触发」）。
- * 返回 `{ inside, best, minDist }`：`best` 是离圆心最近的那个采样点（诊断面板要显示它）。
- */
-function anyTouchInRing(samples, key, size) {
-  if (!samples || !samples.length) return { inside: false, best: null, minDist: Infinity };
+/** 点 (px,py) 到线段 ab 的最短距离（用来判断「整只脚」有没有一部分进圆环） */
+function distToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1) : 0;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/** 有几个采样点落在圆环里（🐞 面板显示用：「环内点 2」说明结论更稳） */
+function pointsInRing(samples, key, size) {
   const c = ringCenter(key, size.w, size.h);
   const hit = ringHitRadius(key, size);
+  return samples.filter((p) => Math.hypot(p.x - c.x, p.y - c.y) <= hit).length;
+}
+
+/**
+ * 手 / 脚有**任意一个采样点**落进圆环里就算「进去了」（用户要求「一部分进入即可触发」）。
+ *
+ * 另外还判**线段**：同一条手/脚上的采样点两两连成线段，圆环只要和其中任意一条相交也算进去了。
+ * 为什么必须有这一条（用户反馈「感觉要脚踝进入才开始计时」）：
+ * 脚伸过来的时候，**脚尖在环里、脚踝和脚跟都在环外**是完全可能的 —— 逐点判定这时一个点都不在环内，
+ * 于是「脚尖明明已经进去了」却不计时，人只好继续往里塞，直到脚踝也进环。线段判定把整只脚看成一整片，
+ * 「脚尖/脚掌搭在圆环上」立刻就算进去了。
+ *
+ * 返回 `{ inside, pointIn, spanIn, best, bestSeg, minDist, hit }`：
+ * `best` 是离圆心最近的采样点、`bestSeg` 是最近的那条线段（🐞 面板要显示它们）。
+ */
+function anyTouchInRing(samples, key, size) {
+  const c = ringCenter(key, size.w, size.h);
+  const hit = ringHitRadius(key, size);
+  if (!samples || !samples.length) {
+    return { inside: false, pointIn: false, spanIn: false, best: null, bestSeg: null, minDist: Infinity, hit };
+  }
   let best = null;
   for (const p of samples) {
     const d = Math.hypot(p.x - c.x, p.y - c.y);
     if (!best || d < best.d) best = { d, p };
   }
-  return { inside: !!best && best.d <= hit, best, minDist: best ? best.d : Infinity };
+  // 整只脚 / 整只手连成的线段（同一条肢体内部的点两两相连）
+  const groups = new Map();
+  for (const p of samples) {
+    const g = `${p.kind}:${p.side}`;
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(p);
+  }
+  let bestSeg = null;
+  for (const pts of groups.values()) {
+    for (let i = 0; i < pts.length; i += 1) {
+      for (let j = i + 1; j < pts.length; j += 1) {
+        const d = distToSegment(c.x, c.y, pts[i].x, pts[i].y, pts[j].x, pts[j].y);
+        if (!bestSeg || d < bestSeg.d) bestSeg = { d, a: pts[i], b: pts[j] };
+      }
+    }
+  }
+  const pointIn = !!best && best.d <= hit;
+  const spanIn = !!bestSeg && bestSeg.d <= hit;
+  const minDist = Math.min(best ? best.d : Infinity, bestSeg ? bestSeg.d : Infinity);
+  return { inside: pointIn || spanIn, pointIn, spanIn, best, bestSeg, minDist, hit };
 }
 
 /**
@@ -1140,12 +1256,15 @@ function syncCornerExit() {
  * 每帧更新左下角退出圆环：**手或脚的任意一部分**进到圆环里、保持满 GESTURE_HOLD_MS 就退出。
  * 进度与动画完全复用中间那两个圆环的那一套（paintRing / 同一组常量）。
  *
- * 判定口径（用户最新要求）：「手掌或脚的一部分进入就要开始沙漏计时，保持 3 秒后退出，
- * **一部分进入即可触发**」→ 逐点判定（touchSamples × anyTouchInRing）：
- * 指尖 / 脚跟 / 脚趾尖 / 脚踝 / 手腕，**任意一个点落进圆圈里**就开始计时。
+ * 判定口径（用户要求）：「手掌或脚的一部分进入就要开始沙漏计时，保持 3 秒后退出，
+ * **一部分进入即可触发**」，后来又补了「**只要脚尖进入圆环就要开始沙漏计时**，现在感觉要脚踝进入才开始计时」。
+ * 所以现在是三层一起判（见 touchSamples / anyTouchInRing）：
+ *   1. 逐点 —— 指尖 / 脚跟 / 脚趾尖 / 脚踝 / 手腕，任意一个点落在圆环里；
+ *   2. 逐段 —— 同一条手/脚上的点连成线段，圆环和线段相交也算（**脚尖在环里、脚踝在环外**就是这样被抓住的）；
+ *   3. 脚尖点量不到时用**估算的脚尖**（`ghost`），脚伸到画面左下角时这一步很关键。
  *
- * 之前两次放宽的历史见 RING_HIT_RATIO / TOUCH_VIS_MIN / GESTURE_DRAIN_MS 的注释。
- * 「手/脚现在在哪、离圆心多远」记进 `state.touchInfo`，🐞 面板会显示（排查「到底有没有识别到手/脚」）。
+ * 之前几次放宽的历史见 RING_HIT_RATIO / TOUCH_VIS_MIN / FOOT_VIS_MIN / GESTURE_DRAIN_MS 的注释。
+ * 「手/脚现在在哪、离圆心多远、是哪个部位进的环」记进 `state.touchInfo`，🐞 面板会显示。
  */
 function updateCornerExit(landmarks, now) {
   const size = stageSize();
@@ -1153,28 +1272,29 @@ function updateCornerExit(landmarks, now) {
   if (!gestureState.cornerVisible) { state.touchInfo = null; return false; }
   const st = gestureState.corner;
   if (st.done) { state.touchInfo = null; return false; }
-  // 逐点判定：任意一个采样点进了圆圈就算「手/脚进去了」；同时记下最近的那个点（诊断 & 靠近提示）
-  const hit = ringHitRadius('corner', size);
-  const { inside, best, minDist } = anyTouchInRing(samples, 'corner', size);
+  // 逐点 + 逐段判定：任意一个采样点、或者整只脚/手连成的线段碰到圆环，就算「手/脚进去了」
+  const res = anyTouchInRing(samples, 'corner', size);
+  const { inside, best, bestSeg, minDist, pointIn, spanIn } = res;
+  const hit = res.hit;
   const near = Number.isFinite(minDist) && minDist <= hit * RING_NEAR_FACTOR;
-  const inCount = samples.filter((p) => {
-    const c = ringCenter('corner', size.w, size.h);
-    return Math.hypot(p.x - c.x, p.y - c.y) <= hit;
-  }).length;
+  const inCount = pointsInRing(samples, 'corner', size);
   state.touchInfo = best
     ? {
       has: true,
       kind: best.p.kind,
       part: best.p.part,
       side: best.p.side,
+      ghost: !!best.p.ghost,         // 这个点是**估算**的脚尖（真实的没量到）
       x: best.p.x / size.w,
       y: best.p.y / size.h,
       rel: minDist / (hit || 1),     // 离圆心几个「判定半径」（<1 = 在环里）
       inCount,                       // 有几个采样点进环了（>1 = 结论更稳）
       inside,
       near,
+      via: pointIn ? 'point' : (spanIn ? 'span' : 'none'),   // 靠点还是靠「整只脚那一段」进的环
+      span: spanIn && bestSeg ? { d: bestSeg.d, from: bestSeg.a.part, to: bestSeg.b.part } : null,
     }
-    : { has: false, inside: false, near: false };
+    : { has: false, inside: false, near: false, via: 'none' };
 
   const dt = clamp(now - (st.at || now), 0, 250);
   st.at = now;
@@ -1699,10 +1819,14 @@ function touchDiagLine(n) {
   // 进环的是哪个部位（指尖 / 脚跟 / 脚趾尖 …）—— 「一部分进入即可触发」，看一眼就知道是哪个点进去了
   const partKey = `debug.part.${info.part}`;
   const part = info.part ? t(partKey) : '';
-  const where = part && part !== partKey ? `${kind}·${part}` : kind;
+  // 估算出来的脚尖单独标出来（真实的脚尖点没量到，用的是「脚跟 + 一个脚掌」那条延长线上的点）
+  const est = info.ghost ? t('debug.estTip') : '';
+  const where = part && part !== partKey ? `${kind}·${part}${est}` : kind;
   return `${t('debug.touch')} ${where}(${n(info.x, 2)},${n(info.y, 2)})`
     + ` ${t('debug.ringDist')} ${n(info.rel, 2)}`
     + ` ${info.inside ? t('debug.inRing') : (info.near ? t('debug.nearRing') : t('debug.outRing'))}`
+    // 靠「整只脚那一段」碰到圆环进的环（脚尖在环里、脚踝还在环外）—— 这一行说明白它是怎么触发的
+    + (info.via === 'span' ? ` ${t('debug.byFoot')}` : '')
     + (info.inCount > 0 ? ` ${t('debug.inPoints')} ${info.inCount}` : '');
 }
 
@@ -3304,7 +3428,8 @@ window.__mfg = {
   showCornerExit, hideCornerExit, updateCornerExit, triggerCornerExit, syncCornerExit,
   layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, touchSamples, anyTouchInRing, stageSize,
   CORNER_RING_INSET_PX, CORNER_RING_BOTTOM_PX, RING_PX_FALLBACK, RING_HIT_RATIO,
-  TOUCH_VIS_MIN, GESTURE_DRAIN_MS, RING_NEAR_FACTOR, touchDiagLine,
+  TOUCH_VIS_MIN, FOOT_VIS_MIN, FOOT_TIP_FROM_HEEL, FOOT_TIP_FROM_SHIN, distToSegment, pointsInRing,
+  GESTURE_DRAIN_MS, RING_NEAR_FACTOR, touchDiagLine,
   announceHoldCount, HOLD_COUNT_EVERY,
   announceTimeLeft, TIME_CALL_AT, targetPresetsFor, targetStepFor,
   buildMusicTracks, selectMusicTrack,

@@ -2253,6 +2253,108 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     ok('只有踝探进圆环也算（踝是脚的一部分）', api.gestureState.corner.p > 0.25,
       String(api.gestureState.corner.p));
 
+    /* ---- 用户第四轮反馈：「**只要脚尖进入圆环就要开始沙漏计时**，现在感觉要脚踝进入才开始计时」----
+       查出来是两个原因（都不是「判定半径太小」）：
+         ① 脚伸到画面左下角时，MediaPipe 对脚跟 / 脚尖的可见度常掉到 0.2 上下，
+            旧门槛 0.3 把整只脚的脚尖点全丢掉 → 只剩一个脚踝点，于是「必须把踝塞进环」；
+         ② 脚是**一片**不是一个点：脚尖搭在圆环上时，脚尖 / 脚跟 / 脚踝可能都在环外（连线穿过圆环）。
+       修法：脚单独用更宽松的可见度门槛（FOOT_VIS_MIN）、脚尖点量不到时**估一个**（ghost）、
+       并且加了**线段判定**（整只脚连成一片）。下面三条分别钉住这三层。 */
+    {
+      const hit2 = api.ringHitRadius('corner', { w: SW, h: SH });
+      /**
+       * 骨架：把两条腿的踝 / 脚跟 / 脚尖分别放到指定点（**像素偏移**，相对圆环圆心）——
+       * 只动这三个点，用来构造「只有脚那一段穿过圆环」这种几何。
+       */
+      const footSpan = ({ ankle, heel, toe, vis = {} }) => {
+        const lm = sp2({ knee: 175, ankleX: 1.0 }).map((p) => ({ ...p, visibility: 1 }));
+        const put = (indices, off, v) => {
+          if (!off) return;
+          for (const i of indices) {
+            lm[i] = { x: (c.x + off[0] * hit2) / SW, y: (c.y + off[1] * hit2) / SH, z: 0, visibility: v ?? 1 };
+          }
+        };
+        put([LM.L_ANKLE, LM.R_ANKLE], ankle, vis.ankle);
+        put([LM.L_HEEL, LM.R_HEEL], heel, vis.heel);
+        put([LM.L_FOOT, LM.R_FOOT], toe, vis.toe);
+        return lm;
+      };
+      /**
+       * 骨架：站着的人，**整条左腿一起平移**，让**脚尖**正好落在 toeAt / 环心附近 ——
+       * 这条腿的几何关系仍然真实（小腿长、脚掌长都还是原来的），用来验证估算出来的脚尖是否靠谱。
+       */
+      const leftToeAt = (toeAt, vis = {}) => {
+        const lm = sp2({ knee: 175, ankleX: 1.0 }).map((p) => ({ ...p, visibility: 1 }));
+        const f = lm[LM.L_FOOT];
+        const dx = toeAt.x / SW - f.x;
+        const dy = toeAt.y / SH - f.y;
+        for (const i of [LM.L_KNEE, LM.L_ANKLE, LM.L_HEEL, LM.L_FOOT]) {
+          lm[i] = { x: lm[i].x + dx, y: lm[i].y + dy, z: 0, visibility: 1 };
+        }
+        const byPart = { knee: LM.L_KNEE, ankle: LM.L_ANKLE, heel: LM.L_HEEL, toe: LM.L_FOOT };
+        for (const [part, v] of Object.entries(vis)) {
+          lm[byPart[part]] = { ...lm[byPart[part]], visibility: v };
+        }
+        return lm;
+      };
+
+      // ★ ① 整只脚**跨在圆环上**：三个关键点全在环外，只有「脚」那一段穿过圆环
+      //    改之前一个点都不在环内 → 不计时；改之后线段判定立刻开始计时。
+      resetCorner();
+      holdFrames(footSpan({
+        ankle: [0, -1.8], heel: [-0.5, -0.9], toe: [0.8, 2.2],
+      }), 64000, 1000);
+      ok('**整只脚跨在圆环上**（脚尖 / 脚跟 / 脚踝三个点都在环外）也开始计时（线段判定）',
+        api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
+      ok('🐞 面板说明白是靠「整只脚碰到」进的环',
+        api.state.touchInfo?.via === 'span' && api.state.touchInfo?.inside === true,
+        JSON.stringify(api.state.touchInfo));
+
+      // ★ ② 整条腿真的抬到圆环边（几何真实）：脚尖落在环内，但它的可见度只有 0.2
+      resetCorner();
+      holdFrames(leftToeAt({ x: c.x, y: c.y }, { toe: 0.2 }), 66000, 1000);
+      ok('脚的关键点可见度只有 0.2 时照样算（脚下的门槛比手宽松：0.15 vs 0.3）',
+        api.FOOT_VIS_MIN <= 0.2 && api.TOUCH_VIS_MIN > 0.2 && api.gestureState.corner.p > 0.25,
+        `footVisMin=${api.FOOT_VIS_MIN} touchVisMin=${api.TOUCH_VIS_MIN} p=${api.gestureState.corner.p}`);
+
+      // ★ ③ 同一条腿，但**脚尖点完全量不到**（可见度 0.05）：用估算出来的脚尖照样开始计时
+      //    （估算规则见 FOOT_TIP_FROM_HEEL：脚尖 ≈ 脚跟 + (脚跟 − 脚踝)，正好落在真实脚尖附近）
+      resetCorner();
+      holdFrames(leftToeAt({ x: c.x, y: c.y }, { toe: 0.05 }), 68000, 1000);
+      ok('脚尖点量不到（可见度 0.05）时用**估算的脚尖**照样开始计时（不然就只剩脚踝能触发）',
+        api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
+      ok('🐞 面板标明这个脚尖是估算出来的',
+        api.state.touchInfo?.ghost === true && api.state.touchInfo?.part === 'toe',
+        JSON.stringify(api.state.touchInfo));
+
+      // 反例①：脚在画面另一头（离圆环很远）时，线段判定与估算都不会误触
+      resetCorner();
+      holdFrames(sp2({ knee: 175, ankleX: 1.0 }).map((p) => ({ ...p, visibility: 1 })), 70000, 1500);
+      ok('站着的默认姿势（双脚在画面另一头）不会误触（线段与估算都没有把远处算进来）',
+        api.gestureState.corner.p === 0, String(api.gestureState.corner.p));
+
+      // 反例②：**脚跟被误检到很远**时不许估算出落在圆环里的脚尖 ——
+      // 否则那条延长线会「凭空」穿过整个画面落进圆环，把一组训练直接退掉（见 FOOT_TIP_MAX_SHIN）。
+      // 桩：脚踝留在默认站位（画面另一头），脚尖点丢失，脚跟摆到「不加限制正好把估算点送进环心」处。
+      {
+        const junk = sp2({ knee: 175, ankleX: 1.0 }).map((p) => ({ ...p, visibility: 1 }));
+        const a = junk[LM.L_ANKLE];
+        const cx = c.x / SW;
+        const cy = c.y / SH;
+        const k = api.FOOT_TIP_FROM_HEEL;
+        for (const i of [LM.L_HEEL, LM.R_HEEL]) {
+          junk[i] = { x: a.x + (a.x - cx) / k, y: a.y + (a.y - cy) / k, z: 0, visibility: 1 };
+        }
+        for (const i of [LM.L_FOOT, LM.R_FOOT]) junk[i] = { x: 0.9, y: 0.9, z: 0, visibility: 0.05 };
+        const res = api.anyTouchInRing(api.touchSamples(junk, SW, SH, false), 'corner', { w: SW, h: SH });
+        const heelPx = Math.hypot(junk[LM.L_HEEL].x * SW - c.x, junk[LM.L_HEEL].y * SH - c.y);
+        ok('脚跟被误检到很远时估算的脚尖**不会**凭空落进圆环（FOOT_TIP_MAX_SHIN 卡住它）',
+          res.inside === false && heelPx > hit2 * 4,
+          `inside=${res.inside} 脚跟离环心=${Math.round(heelPx)}px`);
+      }
+    }
+
+
     // 短暂滑出去（宽限期内）不扣进度；滑久了只慢慢退，不会一秒清零
     resetCorner();
     holdFrames(handAt(p0.x, p0.y), 70000, 2400);          // 先蓄到 0.8
