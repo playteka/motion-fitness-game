@@ -125,9 +125,6 @@ export const EXERCISES = [
       looseP: 0.70, bottomP: 0.92, minRepMs: 520,
     }),
   }),
-  e('bridge', '🌉', 'lower', {
-    engine: 'builtin', plan: 'bridge', posture: 'supine', judge: 'rise', target: 15,
-  }),
   e('squatJump', '🚀', 'full', {
     // 用户要求：深蹲跳从「下肢」移到「全身」（全身现在 5 个：深蹲跳 / 波比跳 / 登山者 / 开合跳 / 跳箱）
     plan: 'jump', view: 'front', posture: 'stand', judge: 'flight', target: 12,
@@ -177,6 +174,11 @@ export const EXERCISES = [
   }),
 
   /* ================= 核心 ================= */
+  e('bridge', '🌉', 'core', {
+    // 用户要求：臀桥从「下肢」移到「核心」（它练的是臀部与后链，但判定方式是仰卧顶髋，
+    // 和核心区那几个仰卧动作摆在一起更好找）。
+    engine: 'builtin', plan: 'bridge', posture: 'supine', judge: 'rise', target: 15,
+  }),
   e('plank', '🧘', 'core', {
     engine: 'builtin', kind: 'hold', plan: 'plank', posture: 'prone', judge: 'time', target: 45,
   }),

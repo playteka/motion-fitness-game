@@ -460,13 +460,14 @@ console.log('\n[4] 动作库与界面一致性');
   // 动作库就是约定的动作清单（用户明确给定清单，多一个少一个都算回归）
   const EXPECT = {
     upper: ['pushup'],
-    lower: ['squat', 'squatSumo', 'lunge', 'lungeBack', 'bridge', 'buttKick'],
-    core: ['plank', 'deadBug', 'crunch', 'reverseCrunch', 'lyingLegRaise'],
+    // 用户要求：臀桥从「下肢」移到「核心」（下肢 5 个、核心 6 个）
+    lower: ['squat', 'squatSumo', 'lunge', 'lungeBack', 'buttKick'],
+    core: ['bridge', 'plank', 'deadBug', 'crunch', 'reverseCrunch', 'lyingLegRaise'],
     full: ['squatJump', 'burpee', 'mountainClimber', 'jumpingJack', 'boxJump'],
     stretch: ['standingForwardFold', 'seatedForwardFold'],
   };
   const expectIds = [...new Set(Object.values(EXPECT).flat())];
-  ok('动作库就是约定的 19 个动作（弓步跳、宽距/窄距俯卧撑、侧平板支撑已删除；新增勾腿跳；深蹲跳移到全身）',
+  ok('动作库就是约定的 19 个动作（弓步跳、宽距/窄距俯卧撑、侧平板支撑已删除；新增勾腿跳；深蹲跳移到全身；臀桥移到核心）',
     EXERCISES.map((x) => x.id).sort().join(',') === expectIds.sort().join(','),
     `实际 ${EXERCISES.length} 个：${EXERCISES.map((x) => x.id).join(',')}`);
   for (const [cat, ids] of Object.entries(EXPECT)) {
