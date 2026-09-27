@@ -698,6 +698,9 @@ function renderExerciseSettings() {
     timedEl.hidden = !ex.timed;
   }
   renderExerciseSpecs();
+  // 「调试数据记录」默认藏着（用户要求按 Ctrl+H 才显示）；这里只把当前状态同步上，
+  // 保证弹窗重新打开时和上次一致（刷新页面回到隐藏）。
+  setPoseLogUi(poseLogUiVisible);
   renderPoseLogStatus();
 }
 
@@ -945,6 +948,23 @@ const poseLogger = new PoseLogger({
   // 连续写失败就在状态条上提示一次（用户要能看见「没记上」，而不是以为记好了）
   onError: (err) => setCueLine(t('status.poseLogFailed', { err }), 'warn'),
 });
+
+/**
+ * 「调试数据记录」那一组在运动设定弹窗里是不是**临时显示出来了**。
+ *
+ * 用户要求：「改为隐藏，只有用户在弹窗中按下 Ctrl+H 时，才会显示出来。」
+ * 所以默认藏起来（连整个分组一起藏），只在弹窗里按 Ctrl+H 才显出来；
+ * 这个状态**不写进设置**（刷新页面就回到隐藏），免得哪天忘了关、弹窗又变长。
+ */
+let poseLogUiVisible = false;
+
+/** 显示 / 隐藏「调试数据记录」那一组（Ctrl+H 调用；弹窗重新打开时也用它保持状态） */
+function setPoseLogUi(on) {
+  poseLogUiVisible = !!on;
+  const group = $('poseLogGroup');
+  if (group) group.hidden = !poseLogUiVisible;
+  if (poseLogUiVisible) renderPoseLogStatus();
+}
 
 /**
  * 圆环的直径（像素）。
@@ -3441,6 +3461,26 @@ function bindUI() {
   });
 
   document.addEventListener('keydown', (e) => {
+    /**
+     * **Ctrl+H（macOS 上是 Cmd+H）**：在「运动设定」弹窗里显 / 隐「调试数据记录」那一组。
+     *
+     * 用户要求：「运动设定弹窗里的『调试数据记录』改为隐藏，只有用户在弹窗中按下 Ctrl+H 时，
+     * 才会显示出来。」所以它默认是藏的（连整个分组一起 hidden），这个快捷键把它唤出来 / 收回去。
+     *
+     * ⚠️ Ctrl+H 在 Chrome 里是「打开历史记录」——**有些浏览器版本会自己吃掉这个键、页面拦不住**。
+     * 所以带上修饰键的变体（Ctrl+Shift+H / Ctrl+Alt+H / Cmd+*+H）**一律都算**：
+     * 哪个没被浏览器抢走就用哪个，用户按 Ctrl+H 不行时换 Ctrl+Alt+H 一定能用。
+     * 放在最前面判断（在「输入框优先」那道守卫之前）：它是组合键、不会和打字冲突。
+     * 弹窗没开时**不拦**这个键（交给浏览器，别把系统快捷键吞掉）。
+     */
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'h' || e.key === 'H')) {
+      if (exerciseSettingsOpen()) {
+        e.preventDefault();
+        setPoseLogUi(!poseLogUiVisible);
+        setCueLine(t(poseLogUiVisible ? 'status.poseLogUiOn' : 'status.poseLogUiOff'), 'info');
+      }
+      return;
+    }
     if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) {
       // 搜索框里按 Esc 先退出搜索，而不是结束整组
       if (e.key === 'Escape' && e.target.id === 'exSearch') {

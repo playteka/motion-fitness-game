@@ -3687,6 +3687,50 @@ console.log(`\n[16] 调试数据记录（运动设定里的开关，写进 logs/
   const statusOff = elements.get('poseLogStatus').textContent;
   ok('没打开时状态行写「未开始记录」', /未开始记录/.test(statusOff), statusOff);
 
+  // ===== ⓪ 用户要求：这一组**默认藏着**，在弹窗里按 Ctrl+H 才显示出来 =====
+  {
+    const group = elements.get('poseLogGroup');
+    api.openExercise('buttKick');
+    api.openExerciseSettings();
+    ok('「调试数据记录」那一组默认是藏着的（弹窗里看不到，弹窗更短）',
+      group.hidden === true && elements.get('exerciseModal').hidden === false,
+      `group.hidden=${group.hidden} modal.hidden=${elements.get('exerciseModal').hidden}`);
+    // 在弹窗里按 Ctrl+H → 显出来
+    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() {} });
+    ok('在运动设定弹窗里按 Ctrl+H → 「调试数据记录」显示出来',
+      group.hidden === false, `group.hidden=${group.hidden}`);
+    // 再按一次 → 又藏起来
+    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() {} });
+    ok('再按一次 Ctrl+H → 又藏起来（不会把弹窗越撑越长）', group.hidden === true);
+    // 弹窗关着的时候按 Ctrl+H：不动这一组，也不吞掉这个键（交给浏览器）
+    api.closeExerciseSettings();
+    let prevented = false;
+    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() { prevented = true; } });
+    ok('弹窗没开时按 Ctrl+H 不拦这个键（不跟浏览器的快捷键抢）',
+      group.hidden === true && prevented === false, `prevented=${prevented}`);
+    // 重新打开弹窗：仍然是藏着的
+    api.openExerciseSettings();
+    ok('重新打开弹窗仍然是藏着的（默认隐藏，刷新页面也是隐藏）', group.hidden === true);
+    // 不带 Ctrl 的 h 仍然是「回主页」，不该顺手把这一组翻出来
+    documentStub.dispatch('keydown', { key: 'h' });
+    ok('不带 Ctrl 的 h 仍然是回主页（不会误触发调试开关）',
+      api.state.homeMode === true && group.hidden === true,
+      `home=${api.state.homeMode} group.hidden=${group.hidden}`);
+    // 带修饰键的变体一律都算（Chrome 里 Ctrl+H 有时会被浏览器自己吃掉，留一条退路）
+    // 注意：上一句的 h 把人带回主页了，这里要先回动作页（否则后面的用例不在训练状态里）
+    api.openExercise('buttKick');
+    api.closeExerciseSettings();
+    api.openExerciseSettings();
+    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, altKey: true, preventDefault() {} });
+    ok('Ctrl+Alt+H 也能显出来（浏览器把 Ctrl+H 抢走时的退路）', group.hidden === false);
+    documentStub.dispatch('keydown', { key: 'H', ctrlKey: true, altKey: true, preventDefault() {} });
+    ok('再按一次 Ctrl+Alt+H 收起', group.hidden === true);
+    // 后面那些用例要按开关：按 Ctrl+H 显出来
+    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() {} });
+    ok('要调试时按一下 Ctrl+H 就能用（开关、保存按钮都在）',
+      group.hidden === false && !!elements.get('btnPoseLog') && !!elements.get('btnPoseLogSave'));
+  }
+
   // 打桩：接住「攒批 → POST」那一批数据
   const savedFetch = globalThis.fetch;
   const posts = [];

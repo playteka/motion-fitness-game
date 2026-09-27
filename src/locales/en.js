@@ -163,6 +163,8 @@ export default {
     poseLogOff: 'Debug logging stopped — file: {file}',
     poseLogSaved: 'Debug data saved: {file}',
     poseLogEmpty: 'No data logged yet (turn the switch on and do a rep first)',
+    poseLogUiOn: 'Debug logging panel shown (press Ctrl+H to hide it again)',
+    poseLogUiOff: 'Debug logging panel hidden (press Ctrl+H inside the exercise settings to reopen it)',
     poseLogFailed: 'Debug data cannot be written: {err} (is the preview server still running? You can also use “Save / download file”)',
     needCamera: 'Start the camera first',
     countdownGo: 'Go! Follow the cues — partial reps don’t count.',
@@ -771,6 +773,8 @@ export default {
       + 'Leave it off normally (it is tens of MB per minute).',
     logToggle: 'Log debug data',
     logSave: 'Save / download file',
+    // This group is hidden by default (press Ctrl+H to reveal it)
+    logHide: '(press Ctrl+H again to hide it)',
     logOff: 'Not recording',
     logOn: 'Recording: {file} · {frames} frames · {mb} MB',
     logError: ' (writing failed: {err}; use “Save / download file” to grab the data)',

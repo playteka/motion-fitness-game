@@ -362,8 +362,8 @@
           <p class="modal-hint" id="exerciseCamera"></p>
         </div>
 
-        <!-- 调试数据记录（用户要求）：打开后把每一帧的关节数据写进 logs/ 里的文件，供事后分析 -->
-        <div class="modal-group">
+        <!-- 调试数据记录（用户要求）：默认**藏起来**，在弹窗里按 Ctrl+H 才显示出来 -->
+        <div class="modal-group" id="poseLogGroup" hidden>
           <h3 class="modal-group-title" data-i18n="exercise.logGroup"></h3>
           <p class="modal-hint" data-i18n="exercise.logLead"></p>
           <div class="toggle-grid">
@@ -373,6 +373,7 @@
                     data-i18n="exercise.logSave"></button>
           </div>
           <p class="modal-hint" id="poseLogStatus"></p>
+          <p class="modal-hint" data-i18n="exercise.logHide"></p>
         </div>
       </div>
     </div>

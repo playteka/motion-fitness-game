@@ -163,6 +163,8 @@ export default {
     poseLogOff: '已停止记录，文件：{file}',
     poseLogSaved: '已保存调试数据：{file}',
     poseLogEmpty: '还没有记录到数据（先打开开关，再做一个动作）',
+    poseLogUiOn: '调试数据记录已显示（再按 Ctrl+H 收起）',
+    poseLogUiOff: '调试数据记录已收起（在运动设定里按 Ctrl+H 可以再打开）',
     poseLogFailed: '调试数据写不进去：{err}（预览服务器还在跑吗？也可以点「保存/下载文件」把数据下载下来）',
     needCamera: '请先开启摄像头',
     countdownGo: '开始！跟着提示做动作，半程动作不会计入次数。',
@@ -769,6 +771,8 @@ export default {
       + '平时不用打开（一分钟大约几十兆）。',
     logToggle: '记录调试数据',
     logSave: '保存/下载文件',
+    // 这一组默认藏着（用户要求按 Ctrl+H 才显示）
+    logHide: '（再按一次 Ctrl+H 就把它藏起来）',
     logOff: '未开始记录',
     logOn: '记录中：{file} · 已记 {frames} 帧 · {mb} MB',
     logError: '（写文件失败：{err}；可以点「保存/下载文件」拿到数据）',
