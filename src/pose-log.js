@@ -18,9 +18,24 @@
 import { LM } from './geometry.js';
 import { SIDE_METRICS } from './engines.js';
 
-/** 采样打包发给服务端的节奏 */
-const FLUSH_MS = 1500;
-const FLUSH_ROWS = 400;
+/** 采样打包发给服务端的节奏（块小一点更稳：一块失败只重发一块） */
+const FLUSH_MS = 1000;
+const FLUSH_ROWS = 200;
+/**
+ * 单次 POST 的**最大字节数**。
+ *
+ * ⚠️ 这里踩过一个坑（真实数据全丢）：原来给 fetch 加了 `keepalive: true`，
+ * 而浏览器对 keepalive 请求（以及 sendBeacon）的请求体有 **64 KiB 上限**，超了直接
+ * reject（`TypeError: Failed to fetch`）。一帧记录约 2.5KB、1.5 秒一批就是 100KB 上下 ——
+ * 于是**每一批都发不出去**，重试也是同样的超大体，最后文件里只剩下那一行 765 字节的 meta
+ *（用户实测「勾腿跳第 17 次前后几次没计上」时打开记录，拿到的只有一个文件头）。
+ *
+ * 现在：普通 POST **不带 keepalive**（没有这个限制），并且按 48KB 切块发送 ——
+ * 万一某一块失败，重发的也只是这一块；关页面时改用 sendBeacon（一样有 64KB 上限，所以先切块）。
+ */
+const CHUNK_BYTES = 48 * 1024;
+/** 待发队列最多攒这么多块（服务端一直连不上时保护内存） */
+const MAX_QUEUE = 40;
 /** 内存里最多留多少行（防止长时间测试把页面撑爆） */
 const MAX_BUFFER = 60_000;
 /**
@@ -127,19 +142,35 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
+/**
+ * 把一批行按字节切成若干块（每块 ≤ CHUNK_BYTES，且不切断任何一行）
+ */
+function chunkify(lines, maxBytes = CHUNK_BYTES) {
+  const out = [];
+  let cur = '';
+  for (const line of lines) {
+    if (cur && cur.length + line.length > maxBytes) { out.push(cur); cur = ''; }
+    cur += line;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 export class PoseLogger {
   /**
    * @param {object} o
-   *   post  发一批数据的函数（默认 POST 到本地预览服务器）
-   *   now   取当前时间（测试里可注入）
+   *   post     发一批数据的函数（默认 POST 到本地预览服务器）
+   *   now      取当前时间（测试里可注入）
+   *   onError  连续写失败时的回调（界面拿它提示一次「写文件失败」）
    */
-  constructor({ post = null, now = () => Date.now() } = {}) {
+  constructor({ post = null, now = () => Date.now(), onError = null } = {}) {
     this.now = now;
+    this.onError = onError;
     this.post = post || (async (file, body) => {
       if (typeof fetch !== 'function') throw new Error('no fetch');
+      // 注意：**不加 keepalive** —— 浏览器对 keepalive 请求体有 64KiB 上限（见 CHUNK_BYTES 的说明）
       const r = await fetch(`/__debug/log?file=${encodeURIComponent(file)}`, {
         method: 'POST', headers: { 'Content-Type': 'application/x-ndjson' }, body,
-        keepalive: true,
       });
       if (!r || !r.ok) throw new Error(`http ${r && r.status}`);
       return r;
@@ -150,13 +181,17 @@ export class PoseLogger {
   reset() {
     this.active = false;
     this.file = '';
-    this.rows = [];          // 还没发出去的批次
+    this.rows = [];          // 还没切块的原始行
+    this.queue = [];         // 切好块、等着发送的批次
     this.all = [];           // 已经记下来的全部（给「下载」兜底用）
     this.frames = 0;
     this.bytes = 0;
+    this.dropped = 0;        // 因为服务端一直写不进去而丢掉的块数
     this.error = '';
     this._lastFlush = 0;
     this._inflight = false;
+    this._fails = 0;
+    this._retryAt = 0;
   }
 
   /** 打开记录（用户刚勾上开关，或者页面带着开关启动）：开一个新文件 */
@@ -220,34 +255,61 @@ export class PoseLogger {
     if (due) this.flush();
   }
 
-  /** 把攒下来的行发给本地服务器（失败就留着，下次再发） */
+  /** 把攒下来的行按 48KB 切块、逐块发给本地服务器（失败就退回队列，下次再发） */
   flush({ force = false } = {}) {
-    if (!this.rows.length || this._inflight) {
-      // 正在发：记一笔「发完再补一次」，否则这次要发的东西会一直留在缓冲里
-      //（关掉开关、点「保存/下载」时都要求数据立刻落盘）
-      if (this.rows.length && this._inflight) this._again = true;
-      return;
+    const now = this.now();
+    // ① 原始行 → 切块入队
+    if (this.rows.length && (force || now - this._lastFlush >= FLUSH_MS)) {
+      this._lastFlush = now;
+      for (const body of chunkify(this.rows)) this.queue.push(body);
+      this.rows = [];
+      while (this.queue.length > MAX_QUEUE) { this.queue.shift(); this.dropped += 1; }
     }
-    if (!force && this.now() - this._lastFlush < FLUSH_MS) return;
-    const body = this.rows.join('');
-    this.rows = [];
-    this._lastFlush = this.now();
+    // ② 发队首那一块
+    if (this._inflight || !this.queue.length) return;
+    if (now < this._retryAt) return;         // 连续失败后退避，别把页面刷爆
+    const body = this.queue.shift();
     this._inflight = true;
-    this._again = false;
     Promise.resolve(this.post(this.file, body))
-      .then(() => { this.error = ''; })
+      .then(() => { this.error = ''; this._fails = 0; })
       .catch((err) => {
-        // 发不出去就退回去重试（同时记下原因，界面上会显示）
-        this.error = String(err && err.message || err);
-        this.rows = [body, ...this.rows];
+        // 发不出去就退回队首重试（同时记下原因，界面上会显示）
+        this.error = String((err && err.message) || err);
+        this.queue.unshift(body);
+        this._fails += 1;
+        if (this._fails >= 3) {
+          this._retryAt = this.now() + 5000;
+          if (this._fails === 3 && this.onError) this.onError(this.error);
+        }
       })
       .finally(() => {
         this._inflight = false;
-        if (this._again || (this.rows.length && this.now() - this._lastFlush >= FLUSH_MS)) {
-          this._again = false;
-          this.flush({ force: true });
-        }
+        if (this.queue.length) this.flush({ force: true });
       });
+  }
+
+  /**
+   * 关页面 / 切后台时用：优先 `sendBeacon`（页面卸载后仍会发出去），
+   * 它在浏览器里同样有 64KiB 上限，所以先切块（一次只发一块，剩下的交给普通 fetch 尽力而为）。
+   */
+  flushOnUnload() {
+    if (this.rows.length) {
+      for (const body of chunkify(this.rows)) this.queue.push(body);
+      this.rows = [];
+    }
+    if (!this.queue.length) return;
+    const body = this.queue[0];
+    const beacon = typeof navigator !== 'undefined' && navigator.sendBeacon;
+    if (beacon && body.length < 60_000) {
+      try {
+        const blob = new Blob([body], { type: 'application/x-ndjson' });
+        if (navigator.sendBeacon(`/__debug/log?file=${encodeURIComponent(this.file)}`, blob)) {
+          this.queue.shift();
+        }
+      } catch { /* 退回普通 fetch */ }
+    }
+    this._retryAt = 0;
+    this.flush({ force: true });
   }
 
   /** 兜底：把已经记下的内容做成文件让浏览器下载（没有预览服务器时也能拿到数据） */
@@ -277,6 +339,8 @@ export class PoseLogger {
       frames: this.frames,
       bytes: this.bytes,
       pending: this.all.length,
+      queued: this.queue.length + this.rows.length,
+      dropped: this.dropped,
       error: this.error,
     };
   }

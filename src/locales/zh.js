@@ -163,6 +163,7 @@ export default {
     poseLogOff: '已停止记录，文件：{file}',
     poseLogSaved: '已保存调试数据：{file}',
     poseLogEmpty: '还没有记录到数据（先打开开关，再做一个动作）',
+    poseLogFailed: '调试数据写不进去：{err}（预览服务器还在跑吗？也可以点「保存/下载文件」把数据下载下来）',
     needCamera: '请先开启摄像头',
     countdownGo: '开始！跟着提示做动作，半程动作不会计入次数。',
     paused: '已暂停，点“继续”接着练。',
@@ -767,6 +768,8 @@ export default {
     logOff: '未开始记录',
     logOn: '记录中：{file} · 已记 {frames} 帧 · {mb} MB',
     logError: '（写文件失败：{err}；可以点「保存/下载文件」拿到数据）',
+    logQueued: '还有 {n} 行没发出去（服务器没起来？）',
+    logDropped: '有 {n} 批数据因为一直发不出去被丢掉',
     targetGroup: '🎯 目标设定',
     target: '本组目标',
     // 限时计数（开合跳）：目标是时长，成绩是这段时间里完成的次数

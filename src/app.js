@@ -769,7 +769,9 @@ function renderPoseLogStatus() {
     file: s.file,
     frames: String(s.frames),
     mb: (s.bytes / 1048576).toFixed(2),
-  }) + (s.error ? ` · ${t('exercise.logError', { err: s.error })}` : '');
+  }) + (s.queued > 20 ? ` · ${t('exercise.logQueued', { n: String(s.queued) })}` : '')
+    + (s.dropped ? ` · ${t('exercise.logDropped', { n: String(s.dropped) })}` : '')
+    + (s.error ? ` · ${t('exercise.logError', { err: s.error })}` : '');
 }
 
 function openExerciseSettings() {
@@ -939,7 +941,10 @@ const gestureState = {
  *
  * 放在模块级：主循环每帧都要用它；开关的状态存在 `state.settings.poseLog`（跟着设置持久化）。
  */
-const poseLogger = new PoseLogger();
+const poseLogger = new PoseLogger({
+  // 连续写失败就在状态条上提示一次（用户要能看见「没记上」，而不是以为记好了）
+  onError: (err) => setCueLine(t('status.poseLogFailed', { err }), 'warn'),
+});
 
 /**
  * 圆环的直径（像素）。
@@ -3354,9 +3359,9 @@ function bindUI() {
     // 打开时如果本来就在记录（比如刷新页面后开关还是开的），也把状态补上
     if (state.settings.poseLog) setPoseLog(true, { silent: true });
     renderPoseLogStatus();
-    // 关页面 / 切后台时把最后一批数据发出去（否则最后 1.5 秒的采样会丢）
-    window.addEventListener('pagehide', () => poseLogger.flush({ force: true }));
-    window.addEventListener('beforeunload', () => poseLogger.flush({ force: true }));
+    // 关页面 / 切后台时把最后一批数据发出去（否则最后 1 秒的采样会丢）：优先 sendBeacon
+    window.addEventListener('pagehide', () => poseLogger.flushOnUnload());
+    window.addEventListener('beforeunload', () => poseLogger.flushOnUnload());
   }
 
   // 鼠标移到某一格关键帧上 → 在进度条上方显示这一格的判定标准

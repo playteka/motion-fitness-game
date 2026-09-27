@@ -3784,7 +3784,47 @@ console.log(`\n[16] 调试数据记录（运动设定里的开关，写进 logs/
   ok('关掉后状态行回到「未开始记录」', /未开始记录/.test(elements.get('poseLogStatus').textContent),
     elements.get('poseLogStatus').textContent);
 
-  // ===== ⑤ 兜底：没有服务器时也能把数据下载下来 =====
+  // ===== ⑤ 回归：一批数据必须切成 ≤48KB 的块，而且**不许带 keepalive** =====
+  // 真机上踩过：加了 keepalive 之后，浏览器对请求体有 64KiB 上限，每批 100KB 全部被拒，
+  // 结果用户测完一组，文件里只剩那一行 765 字节的 meta（帧数据一行都没有）。
+  {
+    const captured = [];
+    const savedPost = logger.post;
+    logger.post = async (file, body) => { captured.push(body); return { ok: true }; };
+    api.setPoseLog(true, { silent: true });     // 重新开一个文件（前面刚关掉过开关）
+    logger._lastFlush = 0;
+    // 造 200 帧数据（每帧带 33 个关节点 + 一大堆指标），总量远超 48KB
+    for (let i = 0; i < 200; i += 1) {
+      logger.frame({
+        t: 1000 + i,
+        exerciseId: 'buttKick',
+        session: 'running',
+        landmarks: Array.from({ length: 33 }, (_, k) => ({ x: 0.1 + k / 1000, y: 0.2 + k / 1000, z: 0, visibility: 0.9 })),
+        smoothed: Array.from({ length: 33 }, (_, k) => ({ x: 0.1 + k / 1000, y: 0.2 + k / 1000, z: 0, visibility: 0.9 })),
+        frame: { ok: true, kneeAngle: 100 + i, torsoIncl: 5, hipAngle: 170, bodyStraight: 175, shoulderClear: 1.1, hipLineDev: 0.01, torsoLen: 0.3, kneeClear: 0.9 },
+        det: { gateOk: true, metricName: 'knee', progress: 0.4, peak: 0.6, validReps: i },
+        barIndex: 1,
+        barTotal: 3,
+      });
+    }
+    logger.flush({ force: true });
+    await new Promise((r) => setTimeout(r, 60));
+    const total = logger.status().bytes;
+    ok('一帧记录只有几 KB，一整组必须切块发送',
+      total > 48 * 1024 && captured.length >= 2,
+      `共 ${(total / 1024).toFixed(0)}KB / ${captured.length} 批`);
+    ok('每一批都 ≤48KB（浏览器对 keepalive / sendBeacon 的 64KiB 上限就绕开了）',
+      captured.every((b) => b.length <= 48 * 1024),
+      captured.map((b) => `${(b.length / 1024).toFixed(0)}KB`).join(' '));
+    ok('切块是按行切的（每一行都还是完整的 JSON，不会把一帧记录切成两半）',
+      captured.every((b) => b.trim().split('\n').every((l) => { try { JSON.parse(l); return true; } catch { return false; } })),
+      String(captured[0]?.length));
+    logger.post = savedPost;
+    logger.rows = [];
+    logger.queue = [];
+  }
+
+  // ===== ⑥ 兜底：没有服务器时也能把数据下载下来 =====
   {
     const savedURL = globalThis.URL;
     const clicks = [];

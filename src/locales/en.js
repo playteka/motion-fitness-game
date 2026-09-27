@@ -163,6 +163,7 @@ export default {
     poseLogOff: 'Debug logging stopped — file: {file}',
     poseLogSaved: 'Debug data saved: {file}',
     poseLogEmpty: 'No data logged yet (turn the switch on and do a rep first)',
+    poseLogFailed: 'Debug data cannot be written: {err} (is the preview server still running? You can also use “Save / download file”)',
     needCamera: 'Start the camera first',
     countdownGo: 'Go! Follow the cues — partial reps don’t count.',
     paused: 'Paused. Tap “Resume” to keep going.',
@@ -767,6 +768,8 @@ export default {
     logOff: 'Not recording',
     logOn: 'Recording: {file} · {frames} frames · {mb} MB',
     logError: ' (writing failed: {err}; use “Save / download file” to grab the data)',
+    logQueued: '{n} rows still unsent (is the server running?)',
+    logDropped: '{n} batches were dropped because they could never be sent',
     targetGroup: '🎯 Target',
     target: 'Set target',
     // Timed counting (Jumping Jack): the target is a duration, the result is the reps done inside it
