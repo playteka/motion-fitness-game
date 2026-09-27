@@ -3751,6 +3751,11 @@ console.log(`\n[16] 调试数据记录（运动设定里的开关，写进 logs/
     frames.every((f) => typeof f.s === 'string' && typeof f.m.ok === 'boolean')
     && frames.every((f) => typeof f.ex === 'string' && f.ex === 'buttKick'),
     JSON.stringify(frames[0]?.s));
+  ok('左右交替类额外记「两条腿各自的读数 + 基线」（勾腿跳查『计不上』靠的就是这几个数）',
+    frames.every((f) => f.sides && f.sides.L && f.sides.R
+      && Number.isFinite(f.sides.L.v) && Number.isFinite(f.sides.L.alt)
+      && Number.isFinite(f.sides.R.v) && 'base' in f.sides.R),
+    JSON.stringify(frames[0]?.sides || null));
 
   // ===== ③ 计次 / 提示这些事件也各占一行 =====
   logger.event('rep', { ex: 'buttKick', valid: true, index: 3, quality: 72, duration: 640 });

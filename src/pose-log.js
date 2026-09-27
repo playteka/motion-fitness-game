@@ -16,6 +16,7 @@
  *   - `bar`：进度条当前点亮到第几格（「链走完」与「计上」是不是同一帧，看它最快）。
  */
 import { LM } from './geometry.js';
+import { SIDE_METRICS } from './engines.js';
 
 /** 采样打包发给服务端的节奏 */
 const FLUSH_MS = 1500;
@@ -32,22 +33,46 @@ const DET_FIELDS = [
   // 通用引擎
   'stage', 'phase', 'progress', 'peak', 'depthPct', 'active', 'gateOk', 'metricName',
   'up', 'down', 'enterP', 'bottomP', 'backP', 'looseP', 'ignoreP', 'minRepMs', 'effUp',
-  'flightSeen', 'lift', 'anyKicked', 'switched', 'lands',
+  'flightSeen', 'lift',
+  // 左右交替类（勾腿跳 / 登山者 / 死虫式）：两条腿的判定线与第二路证据的基线
+  'anyKicked', 'switched', 'cmp', 'onValue', 'offValue', 'leadMin',
+  'altMetric', 'altDip', 'altKneeDip', 'altLeadMin', 'altBase', 'sideOn', 'wasDeep', 'tiePair',
   // 深蹲 / 箭步蹲
-  'standLine', 'exitLine', 'bothLine', 'enterLine', 'minRatio',
+  'standLine', 'exitLine', 'bothLine', 'enterLine', 'minRatio', 'repMin',
   // 俯卧撑（旧手写识别器已删，这里留着兼容历史日志）
   'countElbow', 'backLine', 'topLine', 'drop', 'minElbow',
   // 臀桥 / 平板
-  'topLine2', 'atBottom',
+  'atBottom', 'topLine2',
   // 卷腹
-  'torsoShrink', 'headUp', 'curlLine', 'shrinkLine', 'lieLine', 'lying',
+  'torsoShrink', 'headUp', 'curlLine', 'shrinkLine', 'lying',
   // 跳箱
-  'boxLine', 'boxCleared', 'landed', 'crouchPct', 'peakLift', 'lastJump',
+  'boxLine', 'boxCleared', 'landed', 'crouchPct', 'peakLift', 'lastJump', 'box',
   // 计时类
   'holdMs', 'holding', 'okMs',
   // 次数
   'validReps', 'partialReps', 'cycle', 'score',
 ];
+
+/**
+ * 左右交替类的「两条腿各自的读数」：日志里必须把这两个数记下来 ——
+ * 勾腿跳「计不上」时，光看判定线是查不出来的，得看**两条腿当时各是多少**。
+ */
+const SIDE_FIELDS = (det, frame) => {
+  if (!det || !det.altMetric) return null;
+  const read = SIDE_METRICS[det.metricName] || SIDE_METRICS.knee;
+  const readAlt = SIDE_METRICS[det.altMetric];
+  const out = {};
+  for (const s of ['L', 'R']) {
+    const m = read(frame, s);
+    const a = readAlt ? readAlt(frame, s) : NaN;
+    out[s] = {
+      v: num(m, 2),
+      alt: num(a, 3),
+      base: num(det.altBase ? det.altBase[s] : NaN, 3),
+    };
+  }
+  return out;
+};
 
 /** 帧上要记下来的指标字段（全部：诊断时最怕「当时没记下来」） */
 const SKIP_FRAME_KEYS = new Set(['points', 'perSide', 't']);
@@ -69,7 +94,16 @@ function detState(det) {
     if (typeof v === 'number') out[k] = num(v, 3);
     else if (typeof v === 'boolean') out[k] = v;
     else if (typeof v === 'string') out[k] = v.slice(0, 24);
-    else if (typeof v === 'object' && Number.isFinite(v.lift)) out[k] = { lift: num(v.lift, 3), boxH: num(v.boxH, 3), ok: !!v.ok };
+    else if (typeof v === 'object') {
+      // 小对象（跳箱的箱子几何 / 上一次跳跃的结果 / 挂起的那一对腿）：只抄几个关键字段
+      const small = {};
+      for (const [kk, vv] of Object.entries(v)) {
+        if (typeof vv === 'number') small[kk] = num(vv, 3);
+        else if (typeof vv === 'boolean' || typeof vv === 'string') small[kk] = typeof vv === 'string' ? vv.slice(0, 16) : vv;
+        if (Object.keys(small).length >= 6) break;
+      }
+      if (Object.keys(small).length) out[k] = small;
+    }
   }
   if (det.lastReject) out.reject = `${det.lastReject.code}${det.lastReject.value ? ':' + det.lastReject.value : ''}`;
   return out;
@@ -143,7 +177,7 @@ export class PoseLogger {
     return this.file;
   }
 
-  /** 记一帧（原始关键点 + 平滑后的指标 + 识别器状态 + 进度条进度） */
+  /** 记一帧（原始关键点 + 平滑后的指标 + 识别器状态 + 进度条进度 + 左右两条腿各自的读数） */
   frame({ t, exerciseId, session, landmarks, smoothed, frame, det, barIndex, barTotal }) {
     if (!this.active) return;
     this.frames += 1;
@@ -156,6 +190,7 @@ export class PoseLogger {
       sm: smoothed ? smoothed.map(roundPoint) : null,
       m: frameMetrics(frame),
       d: detState(det),
+      sides: frame ? SIDE_FIELDS(det, frame) : null,
       bar: Number.isFinite(barIndex) ? [barIndex, barTotal] : null,
     });
   }

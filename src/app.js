@@ -3053,6 +3053,11 @@ function loop() {
 
   // 管线状态（摄像头 / 模型 / 是否找到人）
   if (state.loopCount % 15 === 0) updatePipelineStatus();
+  // 记录中：运动设定弹窗开着时，每秒刷新一次状态行（用户能看见帧数在涨，确认真的在记）
+  if (poseLogger.active && state.loopCount % 30 === 0) {
+    const modal = $('exerciseModal');
+    if (modal && !modal.hidden) renderPoseLogStatus();
+  }
 
   if (state.celebrateUntil && now > state.celebrateUntil) {
     state.celebrateUntil = 0;
