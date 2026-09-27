@@ -568,21 +568,31 @@ export const BRIDGE = {
   // 实测常见成因是这个门控判得比进度条更严 —— 人都躺好了却被判成「没躺下」）
   shoulderClearMax: 0.7,
   kneeClearMin: 0.12,
-  downRise: 0.12,     // 参考的「落回地面」高度（实际判定跟着用户自己的最低点走，见 bottomLine）
-  upRise: 0.22,       // 顶起幅度要求（原来 0.35，要顶很高才算）—— 高度法
   /**
-   * **角度法**（用户实测后要求补上的判据）：
-   * 「我实测髋部抬高到 170° 左右的时候其实就已经到最高点了，可能用这个作为关键帧更为合适。
-   *  目前的标准其实无法计数。」
+   * **顶点判据（只看关节角，不再看「髋部抬起高度」）**
    *
-   * 画面上那个「髋」标的就是这个角（肩-髋-膝）：躺平屈膝时约 135°~145°，
-   * 顶到「肩-髋-膝 接近一条直线」时约 170°~180°。
-   * 只用高度（hipRise）判有两个坑：肩跟着一起抬、或者躯干长的人，明明顶到位了读数也上不去，
-   * 于是**永远过不了顶点线、一次都计不上**。所以现在两条路取「或」：
-   * **顶得够高** 或 **身体线够直**，都算顶到位。
+   * 用户原话：「臀桥的标准我觉得不要使用『髋部抬起高度』，这个似乎不准，
+   * 动作做到位的关键帧标准改为**髋角度 180 左右**，而**膝盖是弯曲的，90 度左右**，但可以放更宽一些。」
+   *
+   * 于是顶点的两个条件变成：
+   *   - **髋角（肩-髋-膝）≈ 180°**：躯干与大腿连成一条直线，这就是「顶到位」的姿势本身；
+   *   - **膝角 ≈ 90°**（窗口放得很宽）：必须是**屈着膝**顶起来的 ——
+   *     不然「躺着把腿伸直、靠腰把身体翘起来」也会读到 180°，那就不是臀桥了。
+   *
+   * 为什么要去掉高度：`hipRise`（髋相对肩的高度，以**校准地面线**为基准）对「肩也跟着抬」
+   * 或者躯干长的人读数偏低，明明顶到位了也过不了线 —— 用户实测「髋抬到 170° 就已经是最高点，
+   * 目前的标准其实无法计数」。角度是**身体自己跟自己比**，与地面线、机位距离都无关。
    */
-  liftAngle: 150,     // 「开始顶起来」这一步（动态进度、第二格）
-  topAngle: 165,      // 「顶到肩-髋-膝接近一条直线」= 计次那一步（用户实测顶点 ≈170°）
+  topAngle: 170,      // 顶点线：髋角 ≥ 170°（用户要的 180 留 10° 余量：2D 投影 + 平滑 + 抖动）
+  liftAngle: 155,     // 「开始顶起来」（进度条第二格）
+  downAngle: 150,     // 参考的「躺平」髋角（实际判定跟着用户自己躺平的读数走，见 bottomLine）
+  floorDrop: 12,      // 「落回躺平」= 回到自己躺平读数 +12° 以内
+  liftFrom: 26,       // 「顶起来」= 至少比自己躺平读数高 26°
+  topCap: 176,        // 顶点线不超过这里（躺平读数本来就高的人也要够得到）
+  kneeTopMin: 55,     // 顶点时的膝角窗口（用户：「90 度左右，但可以放更宽一些」）
+  kneeTopMax: 130,
+  kneeFullMin: 75,    // 拿满分的膝角范围（≈90°）
+  kneeFullMax: 110,
   // 一整轮的时长下限（离开地面 → 落回地面）：只用来滤掉「快速上下抖」，
   // 比人体能做出的最快一次臀桥还短（1 秒 2 次以上一定是抖）。第一次不参与这个判断。
   minRepMs: 420,
@@ -591,26 +601,29 @@ export const BRIDGE = {
 /**
  * 臀桥的判定（用户指定的三个关键帧：**屈腿仰卧 → 曲腿腰臀顶起 → 落回屈腿仰卧**）。
  *
- * 计次发生在**从顶点落回地面**那一刻 —— 也就是进度条最后一格「落回屈腿仰卧」点亮的同一刻。
- * 这样「三个关键帧都做完」和「记上一个数」永远是同一件事（用户两次反馈的正是这件事：
- * 之前要么在顶点计次、要么固定要求落到 0.12 以下，结果都出现「关键帧都做对了却不计次」）。
+ * 计次发生在**从顶点落回躺平**那一刻 —— 也就是进度条最后一格「落回屈腿仰卧」点亮的同一刻。
+ * 这样「三个关键帧都做完」和「记上一个数」永远是同一件事（用户两次反馈的正是这件事）。
  *
- * 两条判定线都**跟着用户自己的幅度走**：
- *   `bottomLine`（落回地面）= 自己这一组的最低点 + 0.08，`topLine`（顶起来）= 最低点 + 0.16（且不低于 0.22）。
- * 每个人躺平时肩-髋高度差并不正好是 0，写死的 0.12 会让「最低点本来就高」的人永远回不到线下。
+ * 判据**全部是关节角**（用户要求去掉「髋部抬起高度」）：
+ *   顶点 = **髋角 ≥ 顶点线（≈180°，见 BRIDGE.topAngle）** 且 **膝角在 55°~130°（≈90°）**；
+ *   落回 = 髋角回到**自己躺平读数 +12°** 以内。
+ * 顶点线跟着用户自己躺平的读数走（`floorAngle + 26°`，夹在 170°~176° 之间）：
+ * 每个人躺平时肩-髋的读数并不一样，写死一条线会让一部分人永远顶不到。
  */
 class GluteBridgeDetector extends DetectorBase {
   onReset() {
     this.stage = 'down';
-    this.maxRise = -9;
+    this.maxAngle = 0;                    // 这一轮到过的最大髋角
     this.wasAtTop = false;
     this.prevAtTop = false;
     this.atTop = false;
     this.atBottom = false;
-    this.lastRise = 0;
-    this.floorLine = null;                // 「自己这一组的最低点」（见 rememberRise）
-    this._recent = [];                    // 最近 2.5 秒「没在顶点上」的抬起高度样本
+    this.lastAngle = NaN;                 // 当前髋角
+    this.lastKnee = NaN;                  // 当前膝角
+    this.floorAngle = null;               // 「自己躺平时」的髋角（见 rememberFloor）
+    this._recent = [];                    // 最近 2.5 秒「没在顶点上」的髋角样本
     this.cycleStartAt = 0;                // 这一轮「离开地面」的时刻（算整轮时长用）
+    this.topBy = '';                      // 顶点是靠哪一条认下来的（诊断用）
   }
 
   onLost() {
@@ -622,14 +635,13 @@ class GluteBridgeDetector extends DetectorBase {
 
   onNewCycle() { this.wasAtTop = false; this.cycleStartAt = 0; }
 
-  /** 计数诊断（🐞 面板）：把「顶起线 / 落回线 / 自己这一组的最低点」都摊出来 */
+  /** 计数诊断（🐞 面板）：把「髋角 / 顶点线 / 膝角窗口 / 自己躺平的读数」都摊出来 */
   diag() {
     return [
       { key: 'debug.diag.stage', value: this.stage },
-      { key: 'debug.diag.ridgeRise', value: `${this.lastRise.toFixed(2)}/${this.topLine.toFixed(2)}/${this.bottomLine.toFixed(2)}` },
-      // 角度法那条线（用户实测顶点 ≈170°）：画面上标的「髋」就是这个数
-      { key: 'debug.diag.bridgeAngle', value: `${Number.isFinite(this.lastAngle) ? Math.round(this.lastAngle) : '—'}/${BRIDGE.topAngle}` },
-      { key: 'debug.diag.floorLine', value: this.floorLine === null ? '—' : this.floorLine.toFixed(2) },
+      { key: 'debug.diag.bridgeAngle', value: `${Number.isFinite(this.lastAngle) ? Math.round(this.lastAngle) : '—'}/${Math.round(this.topLine)}` },
+      { key: 'debug.diag.bridgeKnee', value: `${Number.isFinite(this.lastKnee) ? Math.round(this.lastKnee) : '—'}/${BRIDGE.kneeTopMin}~${BRIDGE.kneeTopMax}` },
+      { key: 'debug.diag.floorLine', value: this.floorAngle === null ? '—' : String(Math.round(this.floorAngle)) },
       { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
       ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
     ];
@@ -644,58 +656,56 @@ class GluteBridgeDetector extends DetectorBase {
   }
 
   /**
-   * 「自己这一组的最低点」= 最近 2.5 秒里、**没在顶点上**的那些帧的最低值。
+   * 「自己躺平时」的髋角：最近 2.5 秒里、**没在顶点上**的那些帧的最低值。
    *
-   * 为什么需要：原来用固定的 downRise(0.12) 判断「落回地面」，但每个人躺平时
-   * 肩-髋高度差并不正好是 0（体态、机位都会带一点偏移）。最低点偏高的人永远回不到
-   * 0.12 以下，于是第一次顶点之后再也不计次 —— 正是用户反馈的
-   * 「三个关键帧都做对了却不计次」。
+   * 为什么需要：每个人躺平屈膝时肩-髋-膝的读数并不一样（体态、机位都会带一点偏移），
+   * 写死一条「落回 150° 以下」会让躺平读数本来就高的人永远回不到线下、第一次顶点之后再也不计次。
    *
-   * 为什么把「顶点上的样本」直接丢掉：一直顶在最上面时，最近样本全是高位，
-   * 用它们算最低点会把人**在高处判成「落回地面」**，白送一次；而且人从高处开始
-   * （进画面时就已经顶起来了）也不会被当成基准。低位的样本过期了就保留上一次的值。
+   * 为什么把「顶点上的样本」直接丢掉：一直顶在最上面时最近样本全是高值，
+   * 用它们算「躺平」会把人**在高处判成已经落回**，白送一次。
    */
-  rememberRise(v, now) {
+  rememberFloor(v, now) {
     if (!Number.isFinite(v)) return;
-    if (v > this.topLine) return;      // 顶点附近不算「地面」，不参与基准
+    if (v > this.topLine - 6) return;     // 顶点附近不算「躺平」，不参与基准
     this._recent.push({ t: now, v });
     while (this._recent.length > 3 && now - this._recent[0].t > 2500) this._recent.shift();
     if (!this._recent.length) return;
-    this.floorLine = Math.min(...this._recent.map((r) => r.v));
+    this.floorAngle = Math.min(...this._recent.map((r) => r.v));
   }
 
-  /** 自己这一组的最低点（还没测到时用参考值） */
-  get floorValue() { return this.floorLine === null ? BRIDGE.downRise : this.floorLine; }
+  /** 自己躺平时的髋角（还没测到时用参考值） */
+  get floorValue() { return this.floorAngle === null ? BRIDGE.downAngle : this.floorAngle; }
 
-  /** 「落回地面」的判定线：回到自己最低点往上 0.08 以内（识别有平滑延迟，贴合太紧会漏计次） */
-  get bottomLine() { return this.floorValue + 0.08; }
+  /** 「落回躺平」的判定线：回到自己躺平读数 +12° 以内（识别有平滑延迟，贴合太紧会漏计次） */
+  get bottomLine() { return clamp(this.floorValue + BRIDGE.floorDrop, 120, BRIDGE.downAngle + 20); }
 
   /**
-   * 「顶起来」的判定线：至少比自己最低点高 0.16（最低点本来就高的人不能一躺下就算顶起）。
-   * 因为 topLine 至少比 bottomLine 高 0.08，「已经落回地面」和「还在顶点」不可能同时成立。
+   * 「顶到位」的判定线：至少比自己躺平读数高 26°，且不低于 170°、不高于 176°。
+   * 因为 `topLine` 至少比 `bottomLine` 高 14°，「已经落回躺平」和「还在顶点」不可能同时成立。
    */
-  get topLine() { return Math.max(BRIDGE.upRise, this.floorValue + 0.16); }
+  get topLine() { return clamp(this.floorValue + BRIDGE.liftFrom, BRIDGE.topAngle, BRIDGE.topCap); }
 
-  /** 这一帧算不算「回到地面」 */
-  atBottomNow(rise) { return rise <= this.bottomLine; }
+  /** 这一帧的膝角在不在「顶点时的屈膝窗口」里（用户要求膝盖 ≈90°，放得更宽） */
+  kneeInWindow(f) {
+    const k = f?.kneeAngle;
+    return !Number.isFinite(k) || (k >= BRIDGE.kneeTopMin && k <= BRIDGE.kneeTopMax);
+  }
+
+  /** 这一帧算不算「回到躺平」 */
+  atBottomNow(f) { return Number.isFinite(f?.hipAngle) && f.hipAngle <= this.bottomLine; }
 
   /**
-   * 这一帧算不算「顶到位」：**高度法**（比自己的最低点高 0.16 以上）**或**
-   * **角度法**（肩-髋-膝 ≥ `topAngle`，也就是画面上标的那个「髋」）。
+   * 这一帧算不算「顶到位」：**髋角 ≥ 顶点线**（≈180°）**且 膝角在窗口内**（≈90°，两条都要）。
    *
-   * 为什么要有角度法：用户实测「髋抬到 170° 就已经是最高点了，用它当关键帧更合适，
-   * 目前的标准其实无法计数」—— 高度法对「肩也跟着抬」或躯干较长的人读数偏低，
-   * 明明顶到位了也永远过不了线。两条路取「或」，谁先到算谁的（宽松模式）。
-   * 角度法额外要求「已经稍微离开地面」，免得平躺（肩-髋-膝本来就接近 180°）被算成顶起。
+   * 两个条件都是用户点名要的：只看髋角的话，「躺着把腿伸直、靠腰把身体翘起来」也会读到 180°；
+   * 只看膝角的话，屈着膝躺在垫子上不动就满足不了髋角那条。合起来才是**屈着膝把髋顶到一条直线**。
    */
-  atTopNow(rise, f) {
-    if (rise > this.topLine) { this.topBy = 'rise'; return true; }
+  atTopNow(f) {
     const ang = f?.hipAngle;
-    if (Number.isFinite(ang) && ang >= BRIDGE.topAngle && rise > this.bottomLine + 0.02) {
-      this.topBy = 'angle';
-      return true;
-    }
-    return false;
+    if (!Number.isFinite(ang) || ang < this.topLine) return false;
+    if (!this.kneeInWindow(f)) { this.topBy = 'knee'; return false; }
+    this.topBy = 'angle';
+    return true;
   }
 
   step(f, now) {
@@ -712,19 +722,17 @@ class GluteBridgeDetector extends DetectorBase {
     }
     this.active = true;
     this.standby = '';
-    const rise = f.hipRise;
-    this.lastRise = Number.isFinite(rise) ? rise : 0;
-    this.lastAngle = Number.isFinite(f.hipAngle) ? f.hipAngle : NaN;
-    // 深度条：高度法与角度法各算一个百分比，取大的（哪条路先到 100% 就显示 100%）
-    const risePct = clamp((rise / 0.6) * 100, 0, 100);
-    const anglePct = Number.isFinite(f.hipAngle)
-      ? clamp(((f.hipAngle - BRIDGE.liftAngle) / (BRIDGE.topAngle - BRIDGE.liftAngle)) * 100, 0, 100)
+    const ang = f.hipAngle;
+    this.lastAngle = Number.isFinite(ang) ? ang : NaN;
+    this.lastKnee = Number.isFinite(f.kneeAngle) ? f.kneeAngle : NaN;
+    // 深度条：离顶点线还有多远（只看髋角 —— 高度不再参与任何判定）
+    this.depthPct = Number.isFinite(ang)
+      ? clamp(((ang - BRIDGE.liftAngle) / (this.topLine - BRIDGE.liftAngle)) * 100, 0, 100)
       : 0;
-    this.depthPct = Math.max(risePct, anglePct);
-    this.rememberRise(rise, now);
+    this.rememberFloor(ang, now);
 
-    const atTop = this.atTopNow(rise, f);
-    const atBottom = this.atBottomNow(rise);
+    const atTop = this.atTopNow(f);
+    const atBottom = this.atBottomNow(f);
     this.atTop = atTop;
     this.atBottom = atBottom;
     this.stage = atTop ? 'up' : 'down';
@@ -734,19 +742,20 @@ class GluteBridgeDetector extends DetectorBase {
 
     if (atTop && !this.prevAtTop) {
       this.wasAtTop = true;
-      this.maxRise = Math.max(this.maxRise, rise);
-    } else if (!atTop && !this.wasAtTop && rise > this.bottomLine + 0.03) {
-      // 想顶但没顶起来：提示再高一点
-      this.cue('riseMore', null, 'warn', now, 3500);
+      this.maxAngle = Math.max(this.maxAngle, ang);
+    } else if (!atTop && !this.wasAtTop && Number.isFinite(ang) && ang > this.bottomLine + 6) {
+      // 想顶但没顶起来：区分「顶得不够高」和「膝盖没弯」（用户要的第二个条件）
+      if (!this.kneeInWindow(f)) this.cue('kneeBend', null, 'warn', now, 3500);
+      else this.cue('riseMore', null, 'warn', now, 3500);
     }
     this.prevAtTop = atTop;
 
-    // 计次 = **从顶点落回地面**那一刻（进度条最后一格「落回屈腿仰卧」点亮的同一刻）
+    // 计次 = **从顶点落回躺平**那一刻（进度条最后一格「落回屈腿仰卧」点亮的同一刻）
     if (this.wasAtTop && atBottom) {
-      const peak = this.maxRise;
+      const peak = this.maxAngle;
       const dur = this.cycleStartAt ? now - this.cycleStartAt : 0;
       this.wasAtTop = false;
-      this.maxRise = -9;
+      this.maxAngle = 0;
       this.cycleStartAt = 0;
       this.phase = 'down';
       if (dur > 0 && dur < BRIDGE.minRepMs) {
@@ -759,7 +768,12 @@ class GluteBridgeDetector extends DetectorBase {
         this.reps = this.validReps;
         this.cycleHadValidRep = true;
         this.phase = 'up';
-        const quality = clamp(Math.round(60 + (peak > 0.5 ? 30 : 18) + (f.kneeAngle > 80 && f.kneeAngle < 120 ? 10 : 5)), 0, 100);
+        // 质量分：顶得越接近一条直线越高；膝角在 75°~110°（≈90°）再加一点
+        const kneeOk = Number.isFinite(this.lastKnee)
+          && this.lastKnee >= BRIDGE.kneeFullMin && this.lastKnee <= BRIDGE.kneeFullMax;
+        const quality = clamp(Math.round(58
+          + (peak >= BRIDGE.topCap ? 26 : peak >= this.topLine + 6 ? 20 : 12)
+          + (kneeOk ? 12 : 6)), 0, 100);
         this.emit({ type: 'rep', valid: true, index: this.validReps, quality, duration: dur });
       }
       this.nextCycle(now);

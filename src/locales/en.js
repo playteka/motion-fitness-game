@@ -140,7 +140,7 @@ export default {
     moveUp: 'Move a little higher in the frame (you’re too low right now)',
     moveDown: 'Move a little lower in the frame (you’re too high right now)',
     viewFront: 'Face the camera: squats need a front-on view to measure depth accurately',
-    viewSide: 'Turn sideways to the camera: this move needs a side view to measure angles accurately',
+      viewSide: 'Turn sideways to the camera: this move needs a side view to measure angles accurately',
     steady: 'Nice — hold still…',
     check: {
       visible: 'Body detected',
@@ -329,8 +329,8 @@ export default {
       standLine: 'Standing line',
       startSeen: 'Starting pose',
       bothMin: 'Both knees (back/line)',
-      ridgeRise: 'Hip lift (top/floor line)',
-      bridgeAngle: 'Hip angle (angle-path line)',
+      bridgeKnee: 'Knee angle (window)',
+      bridgeAngle: 'Hip angle (top line)',
       floorLine: 'Baseline lowest point',
       startValue: 'Start (yours/ref)',
       peak: 'This rep peak',
@@ -523,7 +523,9 @@ export default {
         tune: 'Lie back with your knees bent to earn this step',
       },
       lift: { label: 'Squeeze your glutes and drive your hips up', hint: 'Squeeze your glutes and drive your hips up' },
-      top: { label: 'Lift until shoulders, hips and knees are almost in a straight line (top-scoring step)', hint: 'Keep pushing up until your shoulders, hips and knees are almost in one line' },
+      top: {
+        knee: 'Hip angle is there, but the knees are too straight (or too bent): bring them to ≈90° and lift again',
+        knee: 'Hip angle is there, but the knees are too straight (or too bent): bring them back to ≈90° and lift again', label: 'Lift until shoulders, hips and knees are almost in a straight line (top-scoring step)', hint: 'Keep pushing up until your shoulders, hips and knees are almost in one line' },
       lower: { label: 'Lower your hips back to the floor under control', hint: 'Set your hips back down to the floor under control (don’t just drop)' },
     },
     plank: {
@@ -590,6 +592,8 @@ export default {
         hint: 'Drive from your abs and start lifting',
       },
       top: {
+        knee: 'Hip angle is there, but the knees are too straight (or too bent): bring them to ≈90° and lift again',
+        knee: 'Hip angle is there, but the knees are too straight (or too bent): bring them back to ≈90° and lift again',
         label: 'Lift to the target position (top-scoring step)',
         hint: 'Lift a little higher — take it all the way',
       },
@@ -920,9 +924,10 @@ export default {
     lungeEnter: 'Starts the rep',
     bothKnees: 'Both knees must bend (the straighter leg)',
     squatEnter: 'Starts the rep',
-    bridgeDown: 'Back down on the floor (start position)',
+    bridgeDown: 'Back down to lying (near your own flat angle)',
     // The glute bridge's angle path (an “or” with the height line); the bar still labels it “Lift”
-    bridgeCountAngle: 'Shoulders–hips–knees in one line (angle path)',
+    // Bridge top: angles only (the user asked to drop the hip-lift height)
+    bridgeKneeTop: 'The top also needs bent knees (≈90°)',
     bridgeSupine: 'Supine bent-knee position',
     plankHard: 'Held up (required)',
     plankSoft: 'Body in one line (recommended)',
@@ -1043,9 +1048,13 @@ export default {
       squatLean: 'With a front-facing camera, leaning past this angle does not count as the standing stance.',
       startStand: 'Each rep starts from standing: come back up before the next one.',
       lean: 'Leaning past this angle triggers a spoken reminder.',
-      bridgeDown: 'The hips must come back down to the floor (within a little of your own lowest point) to finish a rep — **the moment this keyframe lights up is the moment the rep is counted**.',
-      bridgeCount: 'Lifting the hips past this line is what makes it “up” (the line follows your own lowest point); lifting higher scores higher, and the rep itself is counted when you come back down.',
-      bridgeAngle: '**Angle path** (an “or” with the height line above): the on-screen “Hip” readout *is* the shoulders–hips–knees angle — about 135°–145° lying flat with bent knees, about 170°–180° when lifted into one line. The user measured that “the hips hit their highest point at about 170°”, so reaching that angle counts as “up” — you no longer have to hit a specific height (which also covers people whose shoulders lift with them, or who have a long torso).',
+      bridgeDown: 'The hips must settle back to lying (**hip angle within {drop}° of your own flat reading**) to finish a rep —'
+        + ' **the moment this keyframe lights up is the moment the rep is counted**. The line follows your own flat reading, so body shape and camera position do not matter.',
+      bridgeKneeTop: 'The top also requires **bent knees** (knee angle {min}°~{max}°, ≈90°, a very wide window):'
+        + ' with the hip angle alone, “lying with straight legs and arching your back up” also reads 180° — that is not a glute bridge.'
+        + ' A knee angle of {full}° scores the best form (≈90°).',
+      bridgeAngle: '**Top = hip angle (shoulders–hips–knees) ≥ {top}°** (about 180°, with margin): the on-screen “Hip” readout *is* this angle —'
+        + ' about 135°–145° lying flat with bent knees, and it reaches one straight line when you are up. The line is your own flat reading +{lift}°, capped at {cap}°, so everybody can reach it.',
       bridgeKnee: 'The knee angle must stay inside this range: too small means no knee bend, too large means the leg is straight.',
       // Crunch (the user's model, see CRUNCH in exercises.js)
       crunchLying: '**The starting pose is “lie down with knees bent”**: lie on your back sideways to the camera — trunk close to horizontal (tilt ≥ {tilt}°, flat is about 90°), knees bent (knee angle around 90°).',
@@ -1122,6 +1131,8 @@ export default {
     text: {
       viewFront: 'Face the camera (these rules are measured from the front)',
       viewSide: 'Stand sideways to the camera (these rules are measured from the side)',
+      // Bridge “settle back to lying”: the line follows your own flat reading, so it is a text row
+      bridgeDown: 'Hip angle back near your own lying-flat reading (within 12°)',
       lungeBack: 'Rise {pct}% of the way back from this rep’s deepest point, or {deg}° above it',
       lungeWobble: 'Less than {deg}° below how straight you stand: not counted and nothing is spoken',
       crunchTilt: 'More than {drop}° less than your own lying pose (flat is about 90°, curled into place about 70°)',
@@ -1236,6 +1247,7 @@ export default {
     bridge: {
       notSupine: 'Glute bridges are done lying down — lie on your back and bend your knees',
       riseMore: 'Drive your hips higher — until your thighs and torso form one line',
+      kneeBend: 'Keep the knees bent (about 90°) — do not straighten the legs and arch your back up',
       tempo: 'Lift and lower slowly — no momentum',
     },
     plank: {

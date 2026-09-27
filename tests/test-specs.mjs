@@ -181,25 +181,35 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
   ok('俯卧撑：弹窗里的画幅/晃动/最短一轮这些辅助项也只剩必要的几条',
     itemsOf('pushup').length <= 12, String(itemsOf('pushup').length));
 
-  ok('臀桥：抬髋线 = BRIDGE.upRise', findItem('bridge', 'spec.countLine').value === BRIDGE.upRise);
-  ok('臀桥：落回线 = BRIDGE.downRise', findItem('bridge', 'spec.bridgeDown').value === BRIDGE.downRise);
-  // 用户实测「髋抬到 170° 就是最高点，用这个当关键帧更合适；目前的标准无法计数」→ 加了角度法
-  ok('臀桥：角度法那一格 = 肩-髋-膝 ≥ BRIDGE.topAngle（画面上标的「髋」）',
-    findItem('bridge', 'spec.bridgeCountAngle')
-    && findItem('bridge', 'spec.bridgeCountAngle').metricKey === 'metric.hip'
-    && findItem('bridge', 'spec.bridgeCountAngle').value === BRIDGE.topAngle,
-    JSON.stringify(findItem('bridge', 'spec.bridgeCountAngle')));
-  ok('臀桥：关键帧「顶起来」那一格是「高度线 或 角度线」（两条路任一条到线就算顶到位）',
+  // 用户要求：**不再使用「髋部抬起高度」**，顶点改成「髋角 ≈180° + 膝角 ≈90°」
+  ok('臀桥：顶点线 = BRIDGE.topAngle（髋角，≈180°）',
+    findItem('bridge', 'spec.countLine').metricKey === 'metric.hip'
+    && findItem('bridge', 'spec.countLine').value === BRIDGE.topAngle,
+    JSON.stringify(findItem('bridge', 'spec.countLine')));
+  ok('臀桥：弹窗里再也没有「髋部抬起高度」这一条',
+    !itemsOf('bridge').some((it) => it.metricKey === 'metric.hipRise'),
+    JSON.stringify(itemsOf('bridge').map((it) => it.metricKey)));
+  ok('臀桥：顶点还要屈膝（膝角 window = BRIDGE.kneeTopMin~kneeTopMax）',
+    findItem('bridge', 'spec.bridgeKneeTop').value === BRIDGE.kneeTopMin
+    && findItem('bridge', 'spec.bridgeKneeTop').value2 === BRIDGE.kneeTopMax,
+    JSON.stringify(findItem('bridge', 'spec.bridgeKneeTop')));
+  // 用户要求去掉高度法：顶点只看「髋角 ≈180°」，落回是相对判据（跟着自己躺平的读数走）
+  ok('臀桥：落回是一条**相对**判据（跟着自己躺平的读数走）：文字条 + 识别器的 bottomLine',
+    !!findItem('bridge', 'spec.bridgeDown').textKey
+    && !!specStages('bridge').find((s) => s.detFlag === 'atBottom')?.valueFrom,
+    JSON.stringify([findItem('bridge', 'spec.bridgeDown').textKey,
+      specStages('bridge').map((s) => s.valueFrom)]));
+  ok('臀桥：关键帧「顶起来」那一格是**两个角度的「且」**（髋角 ≈180° 且 膝角 ≈90°）',
     (() => {
-      const st = specStages('bridge');
-      const count = st.find((s) => s.kind === 'count');
-      return !!count && count.metric === 'hipRise' && count.valueFrom === 'topLine'
-        && !!count.alt && count.alt.metric === 'hip'
-        && count.alt.value === BRIDGE.topAngle;
+      const count = specStages('bridge').find((s) => s.kind === 'count');
+      return !!count && count.metric === 'hip' && count.valueFrom === 'topLine' && count.detFlag === 'atTop'
+        && !!count.also && count.also.metric === 'knee'
+        && count.also.value === BRIDGE.kneeTopMin && count.also.value2 === BRIDGE.kneeTopMax;
     })(),
-    JSON.stringify(specStages('bridge').map((s) => `${s.kind}:${s.metric}${s.op}${s.value}${s.alt ? ` 或 ${s.alt.metric}${s.alt.op}${s.alt.value}` : ''}`)));
-  const kneeRange = itemsOf('bridge').find((it) => it.metricKey === 'metric.knee' && it.op === 'range');
-  ok('臀桥：膝角区间 = BRIDGE.kneeMin~kneeMax',
+    JSON.stringify(specStages('bridge').map((s) => `${s.kind}:${s.metric}${s.op}${s.value}${s.also ? ` 且 ${s.also.metric}${s.also.op}${s.also.value}~${s.also.value2}` : ''}`)));
+  const kneeRange = itemsOf('bridge').find((it) => it.metricKey === 'metric.knee' && it.op === 'range'
+    && it.labelKey === 'spec.bridgeSupine');
+  ok('臀桥：仰卧门控的膝角区间仍是 BRIDGE.kneeMin~kneeMax（顶点那个更窄的窗口是另一条）',
     kneeRange.value === BRIDGE.kneeMin && kneeRange.value2 === BRIDGE.kneeMax,
     JSON.stringify([kneeRange.value, kneeRange.value2]));
 

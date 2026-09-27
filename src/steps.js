@@ -254,7 +254,9 @@ export const STEP_PLANS = {
     ],
   },
 
-  /* ---------------- 臀桥（计数） ---------------- */
+  /* ---------------- 臀桥（计数） ----------------
+     判据只有**关节角**（用户要求去掉「髋部抬起高度」）：顶点 = 髋角 ≈180°（≥170°）且 膝角 ≈90°（55°~130°），
+     落回 = 髋角回到自己躺平读数 +12° 以内。这里的每一步都问同一个髋角，和识别器同一套。 */
   bridge: {
     perCycle: true,
     repBonus: 6,
@@ -263,7 +265,8 @@ export const STEP_PLANS = {
         id: 'setup',
         labelKey: 'steps.bridge.setup.label',
         points: 5,
-        check: (f) => supine(f) && f.hipRise < 0.2,
+        // 躺平：仰卧门控 + 髋角还没顶起来（不再看高度）
+        check: (f) => supine(f) && !(Number.isFinite(f.hipAngle) && f.hipAngle >= 160),
         hint: (f) => {
           if (f.torsoIncl <= 40) return H('steps.bridge.setup.pose');
           if (f.kneeAngle >= 142 || f.kneeAngle <= 30) return H('steps.bridge.setup.knee');
@@ -275,27 +278,31 @@ export const STEP_PLANS = {
         id: 'lift',
         labelKey: 'steps.bridge.lift.label',
         points: 6,
-        // 高度法 或 **角度法**（肩-髋-膝 ≥150°）：用户实测「髋到 170° 就是顶点」，
-        // 只用高度会让「肩也跟着抬」的人永远拿不到这一步的分
-        check: (f) => f.hipRise > 0.15 || f.hipAngle >= 150,
-        hint: (f) => ((f.hipRise <= 0.15 && !(f.hipAngle >= 150)) ? H('steps.bridge.lift.hint') : null),
+        // 「开始顶起来」：髋角离开躺平（≥ 识别器的 liftAngle 参考值 155°）
+        check: (f) => Number.isFinite(f.hipAngle) && f.hipAngle >= 155,
+        hint: (f) => (f.hipAngle >= 155 ? null : H('steps.bridge.lift.hint')),
       },
       {
         id: 'top',
         labelKey: 'steps.bridge.top.label',
         points: 14,
-        check: (f) => f.hipRise > 0.35 || f.hipAngle >= 165,
-        hint: (f) => ((f.hipRise <= 0.35 && !(f.hipAngle >= 165)) ? H('steps.bridge.top.hint') : null),
+        // 顶到位：髋角 ≥ 170° **且** 膝角在 55°~130°（用户点名的两个条件）
+        check: (f, d) => Number.isFinite(f.hipAngle)
+          && f.hipAngle >= (Number.isFinite(d?.topLine) ? d.topLine : 170)
+          && (typeof d?.kneeInWindow === 'function' ? d.kneeInWindow(f) : (f.kneeAngle >= 55 && f.kneeAngle <= 130)),
+        hint: (f, d) => {
+          if (!(Number.isFinite(f.hipAngle) && f.hipAngle >= (Number.isFinite(d?.topLine) ? d.topLine : 170))) {
+            return H('steps.bridge.top.hint');
+          }
+          return H('steps.bridge.top.knee');
+        },
       },
       {
         id: 'lower',
         labelKey: 'steps.bridge.lower.label',
         points: 8,
-        // 用识别器自己的「落回地面」判定（跟着用户自己的最低点走），而不是写死 0.15 ——
-        // 否则最低点偏高的人「第三个关键帧」永远拿不到分。
-        // 这里直接看**当前这一帧**的高度：它和识别器计次用的是同一个条件，
-        // 所以「落回」这一步能和计次、和整轮满分奖励落在同一帧（否则奖励会晚一帧、拿不到）
-        check: (f, d) => d.wasAtTop === true && f.hipRise <= (d.bottomLine ?? 0.15),
+        // 落回躺平：用识别器自己的判定线（跟着自己躺平的读数走），和计次是同一帧
+        check: (f, d) => d.wasAtTop === true && f.hipAngle <= (d.bottomLine ?? 155),
         hint: () => H('steps.bridge.lower.hint'),
       },
     ],

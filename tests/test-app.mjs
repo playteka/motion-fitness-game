@@ -435,13 +435,22 @@ console.log('\n[1b] 运动设定弹窗');
   ok('指标行带上了单位（×躯干长 / °）',
     specHtml().includes('躯干长') && specHtml().includes('°'), specHtml().slice(0, 200));
 
-  // 臀桥：用户实测「髋到 170° 就是最高点、目前的标准无法计数」→ 关键帧写成「高度 或 角度」
+  // 臀桥（用户要求改判据）：「不要使用髋部抬起高度……关键帧标准改为髋角度 180 左右，
+  //   而膝盖是弯曲的，90 度左右，但可以放更宽一些」→ 弹窗里必须是「髋角 ≥170° 且 膝角 55°~130°」，
+  //   而且**不许**再出现「髋部抬起高度」那一路。
   {
     api.openExercise('bridge');
     api.renderExerciseSettings();
     const bridgeHtml = elements.get('exerciseSpecs').innerHTML;
-    ok('臀桥：关键帧「顶起来」写成「高度线 或 角度线」（弹窗里出现「或」和 165）',
-      bridgeHtml.includes('或') && bridgeHtml.includes('165'), bridgeHtml.slice(0, 260));
+    ok('臀桥：顶点写成「髋角 ≥170° 且 膝角 55°~130°」（弹窗里出现「且」和这三个数）',
+      bridgeHtml.includes('且') && bridgeHtml.includes('170')
+      && bridgeHtml.includes('55') && bridgeHtml.includes('130'),
+      bridgeHtml.slice(0, 400));
+    ok('臀桥：弹窗里再也没有「髋部抬起高度」这条判据（数据层由 test-specs 断言 metric.hipRise 不再出现）',
+      !bridgeHtml.includes('髋部抬起') && !bridgeHtml.includes('抬起高度'),
+      bridgeHtml.slice(0, 400));
+    ok('臀桥：落回那一条写的是「跟着你自己躺平的读数走」（相对判据）',
+      bridgeHtml.includes('躺平'), bridgeHtml.slice(-500));
     api.openExercise('pushup');
     api.renderExerciseSettings();
   }

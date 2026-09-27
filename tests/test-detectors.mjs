@@ -919,20 +919,18 @@ console.log('\n[4] 臀桥计数');
   ok('提示需要躺下', r.cues.some((c) => c.code === 'notSupine'));
 }
 {
-  // 顶到一半就落下：**角度法也不会把它算成顶点**（半程的髋角只到 ~160°，够不到 165°），
-  // 而高度法仍然按「宽松模式」认它 —— 这一条是「高度法 或 角度法」里
-  // 「别把半程当顶点」那半边保险。
+  // 顶到一半就落下：**不许算顶点**（用户要求顶点看髋角 ≈180°，半程只到 ~160°）。
   // 注意：峰值要**单独**用真实管线算（不能借 r.peek —— 那个会把 45 帧喂给识别器、打乱状态机）
   const half = angleStats((p) => bridgePose(p, true, BRIDGE_TOP, 0.5), 1800);
-  ok('半程臀桥：髋角只到 ~160°，角度法不认它是顶点',
+  ok('半程臀桥：髋角只到 ~160°，够不到顶点线（≈180°）',
     half.angle > 140 && half.angle < BRIDGE.topAngle,
-    `最高髋角 ${half.angle.toFixed(0)}°（角度线 ${BRIDGE.topAngle}°）· 最高 rise=${half.rise.toFixed(3)}`);
+    `最高髋角 ${half.angle.toFixed(0)}°（顶点线 ${BRIDGE.topAngle}°）· 最高 rise=${half.rise.toFixed(3)}`);
   const det = fresh('bridge');
   const r = makeRunner(det);
   r.run(repeat((p) => bridgePose(p, true, BRIDGE_TOP, 0.5), 1800, 4));
-  ok('半程臀桥仍然计次（宽松模式：高度法认它 ≈0.31 > 0.22），并提示顶高一点',
-    det.validReps >= 1 && r.cues.some((c) => c.code === 'riseMore'),
-    `reps=${det.validReps}`);
+  ok('半程臀桥一次都不计（高度不再是判据，够不到髋角线就是没顶到位），并提示再顶高一点',
+    det.validReps === 0 && det.partialReps === 0 && r.cues.some((c) => c.code === 'riseMore'),
+    `reps=${det.validReps} partial=${det.partialReps}`);
 }
 {
   // ===== 用户反馈（这一次改动的由来）=====
@@ -940,25 +938,25 @@ console.log('\n[4] 臀桥计数');
   //   目前的标准其实无法计数。」
   // 这条通路：升幅只有 ~0.17（过不了高度线 0.22），但肩-髋-膝 到了 ~170°。
   const stats = angleStats((p) => bridgePose(p, true, BRIDGE_TOP_LOWRISE), 1800);
-  ok('用户实测的顶点：升幅确实过不了高度线（这就是「无法计数」的原因）',
-    stats.rise > 0.1 && stats.rise < BRIDGE.upRise, `最高 rise=${stats.rise.toFixed(3)}（高度线 ${BRIDGE.upRise}）`);
-  ok('同一个顶点：肩-髋-膝 到了 170° 左右（画面上那个「髋」）',
+  ok('用户实测的顶点：**升幅很小**（旧的高度判据正是卡在这里，用户说它「似乎不准」）',
+    stats.rise > 0.1 && stats.rise < 0.25, `最高 rise=${stats.rise.toFixed(3)}`);
+  ok('同一个顶点：肩-髋-膝 到了 170° 以上（画面上那个「髋」）',
     stats.angle >= BRIDGE.topAngle && stats.angle <= 185,
-    `最高髋角 ${stats.angle.toFixed(0)}°（角度线 ${BRIDGE.topAngle}°）`);
+    `最高髋角 ${stats.angle.toFixed(0)}°（顶点线 ${BRIDGE.topAngle}°）`);
   const det = fresh('bridge');
   makeRunner(det).run(repeat((p) => bridgePose(p, true, BRIDGE_TOP_LOWRISE), 1800, 6));
   atLeast('「髋到 170° 就算顶到位」：用户这种情况现在能计上', det.validReps, 4);
   ok('而且不会多计（6 轮 ≈ 5~6 次）', det.validReps <= 7, `实际 ${det.validReps}`);
 }
 {
-  // 安全绳：把角度法关掉（线设成不可能达到的值），用户那种顶点就又计不上了 ——
-  // 证明「能计上」确实是这条新判据带来的，而不是别的巧合
+  // 安全绳：把顶点线设成够不到的值，这种「顶得不高但成一条线」的臀桥就又计不上了 ——
+  // 证明「能计上」确实是髋角这条判据带来的，而不是别的巧合
   const savedTop = BRIDGE.topAngle;
   BRIDGE.topAngle = 999;
   const det = fresh('bridge');
   makeRunner(det).run(repeat((p) => bridgePose(p, true, BRIDGE_TOP_LOWRISE), 1800, 6));
   BRIDGE.topAngle = savedTop;
-  ok('（安全绳）关掉角度法后，这种「顶得不高但成一条线」的臀桥一次都计不上',
+  ok('（安全绳）把顶点线设成够不到的值之后，这种臀桥一次都计不上',
     det.validReps === 0, `实际 ${det.validReps}`);
 }
 {
@@ -980,14 +978,37 @@ console.log('\n[4] 臀桥计数');
   ok('臀桥快速抖动提示太快', r.cues.some((c) => c.code === 'tempo'));
 }
 {
-  // 幅度不够的抖动（真机识别平滑后的常见情况）：根本不构成一轮，提示「顶高一点」也不计数
+  // 快速抖动（真机识别 + 平滑后的常见情况）：**一次有效次数都不能刷出来**，
+  // 要么被「太快」拦下（峰值真的到过顶点），要么只提示「再顶高一点」。
   const det = fresh('bridge');
   const r = makeRunner(det);
   r.run(repeat((p) => bridgePose(p), 300, 8));
-  ok('幅度不够的抖动完全不计次', det.validReps === 0 && det.partialReps === 0,
+  ok('快速抖动一次有效次数都不刷', det.validReps === 0, `有效 ${det.validReps}`);
+  ok('快速抖动有反馈（「太快」或「再顶高一点」），不会闷着',
+    r.cues.some((c) => c.code === 'tempo' || c.code === 'riseMore'),
+    r.cues.map((c) => c.code).join(','));
+}
+
+{
+  /**
+   * 用户新加的第二个顶点条件：**膝盖必须是弯的**（≈90°）。
+   * 桩：髋角顶到 ≈180°（肩-髋-膝 一条直线），但**膝盖几乎伸直**（膝角 145°，
+   * 还没到门控的上限 160° 所以姿势门控放行）—— 这是「把腿伸直、靠腰把身体翘起来」，不是臀桥。
+   */
+  const straightKnee = { hipY: 0.68, thighUp: 53.5, knee: 145, torsoUp: 233.5 };
+  const det = fresh('bridge');
+  const r = makeRunner(det);
+  r.run(repeat((p) => bridgePose(p, true, straightKnee), 1800, 4));
+  ok('腿伸直顶到一条直线：髋角够 180° 但膝盖不弯 → 一次都不计（用户点名的第二个条件）',
+    det.validReps === 0 && det.partialReps === 0,
     `有效 ${det.validReps} / 半程 ${det.partialReps}`);
-  ok('幅度不够的抖动只提示「再顶高一点」', r.cues.every((c) => c.code !== 'tempo')
-    && r.cues.some((c) => c.code === 'riseMore'));
+  ok('这种情况提示「膝盖要保持弯曲」', r.cues.some((c) => c.code === 'kneeBend'),
+    r.cues.map((c) => c.code).join(','));
+
+  // 反过来：膝角在窗口内（≈90°）时照常计次（上面 10 次的用例已经覆盖，这里再钉一次窗口边界）
+  const det2 = fresh('bridge');
+  makeRunner(det2).run(repeat((p) => bridgePose(p, true, { ...BRIDGE_TOP, knee: 125 }), 1800, 3));
+  ok('膝角 125°（窗口上限 130° 之内）照样计次', det2.validReps >= 2, `实际 ${det2.validReps}`);
 }
 
 /* ------------------------------------------------------------------ *

@@ -479,14 +479,28 @@ function lungeSpecs() {
   };
 }
 
+/**
+ * 臀桥（**判据按用户要求改成只看关节角**）。
+ *
+ * > 「臀桥的标准我觉得不要使用『髋部抬起高度』，这个似乎不准，动作做到位的关键帧标准改为
+ * >  髋角度 180 左右，而膝盖是弯曲的，90 度左右，但可以放更宽一些。」
+ *
+ * 所以弹窗里列的是（数值全部取自 `BRIDGE` 常量，与识别器同一份）：
+ *   ① 顶点：**髋角（肩-髋-膝）≥170°**（≈180°，留 10° 余量）；
+ *   ② 顶点还要**屈膝**：膝角在 55°~130°（≈90°，放得很宽）；
+ *   ③ 落回：髋角回到**自己躺平读数 +12°** 以内（自校准，所以写成文字条）。
+ * 高度（`hipRise`）彻底退出了判定，只在 🐞 面板里留个参考。
+ */
 function bridgeSpecs() {
   const B = BRIDGE;
   return {
     count: [
-      item({ labelKey: 'spec.bridgeDown', metricKey: 'metric.hipRise', op: 'lte', value: roundFor(B.downRise, TORSO), unit: TORSO, noteKey: 'spec.note.bridgeDown' }),
-      item({ labelKey: 'spec.countLine', metricKey: 'metric.hipRise', op: 'gte', value: roundFor(B.upRise, TORSO), unit: TORSO, noteKey: 'spec.note.bridgeCount' }),
-      // 角度法（用户实测顶点 ≈170°）：高度法「或」角度法，任一条到线就算顶到位
-      item({ labelKey: 'spec.bridgeCountAngle', metricKey: 'metric.hip', op: 'gte', value: roundFor(B.topAngle, DEG), unit: DEG, noteKey: 'spec.note.bridgeAngle' }),
+      // ① 顶点 = 髋角 ≈180°（用户点名的那条线）
+      item({ labelKey: 'spec.countLine', metricKey: 'metric.hip', op: 'gte', value: roundFor(B.topAngle, DEG), unit: DEG, noteKey: 'spec.note.bridgeAngle', noteParams: { top: B.topAngle, cap: B.topCap, lift: B.liftFrom } }),
+      // ② 顶点还要屈膝（≈90°，窗口放得很宽）
+      item({ labelKey: 'spec.bridgeKneeTop', metricKey: 'metric.knee', op: 'range', value: roundFor(B.kneeTopMin, DEG), value2: roundFor(B.kneeTopMax, DEG), unit: DEG, noteKey: 'spec.note.bridgeKneeTop', noteParams: { full: `${B.kneeFullMin}~${B.kneeFullMax}` } }),
+      // ③ 落回躺平：跟着自己躺平的读数走（相对判定线，所以是文字条）
+      item({ labelKey: 'spec.bridgeDown', textKey: 'spec.text.bridgeDown', noteKey: 'spec.note.bridgeDown', noteParams: { drop: B.floorDrop } }),
       item({ labelKey: 'spec.minRep', op: 'gte', value: roundFor(B.minRepMs / 1000, S), unit: S, noteKey: 'spec.note.bridgeTempo' }),
     ],
     posture: [
@@ -1006,20 +1020,59 @@ export function specStages(id) {
   const pushItem = (it, extra) => { if (it && isStageItem(it)) stages.push(toStage(it, extra)); };
 
   if (id === 'bridge') {
-    // 臀桥（用户指定的三个关键帧）：**屈腿仰卧 → 曲腿腰臀顶起 → 恢复屈腿仰卧**
-    //   「顶起」有两路证据（**高度法 或 角度法**）：高度用识别器自己的动态顶点线
-    //   （topLine，跟着用户自己的最低点走），角度用「肩-髋-膝 ≥165°」——
-    //   用户实测「髋到 170° 就是最高点，用它当关键帧更合适，目前的标准其实无法计数」，
-    //   所以两条路取「或」，谁先到算谁的（弹窗里就写成「A 或 B」）。
-    //   「落回」用识别器自己的 atBottom —— 最后一格点亮的那一刻就是计次那一刻。
+    /**
+     * 臀桥（用户指定的三个关键帧）：**屈腿仰卧 → 曲腿腰臀顶起 → 落回屈腿仰卧**。
+     *
+     * 用户要求「不要使用髋部抬起高度，动作做到位的关键帧标准改为**髋角度 180 左右**，
+     * 而**膝盖是弯曲的，90 度左右**」，所以「顶起」这一格现在是**两个角度的「且」**：
+     *   - 髋角 ≥ 顶点线（识别器的 `topLine`：自己躺平读数 +26°，夹在 170°~176°）—— 弹窗里写 170°；
+     *   - 膝角在 55°~130°（≈90°，放得很宽）。
+     * 高度法整个删掉了（它依赖校准地面线，读数不准）。
+     * 「落回」用识别器自己的 `atBottom` —— **最后一格点亮的那一刻就是计次那一刻**。
+     */
     const topItem = pick('spec.countLine');
-    const angleItem = pick('spec.bridgeCountAngle');
-    if (topItem && angleItem) {
-      const stage = toStage(topItem, { kind: 'count', valueFrom: 'topLine' });
-      stage.alt = toStage(angleItem);
+    const kneeItem = pick('spec.bridgeKneeTop');
+    if (topItem) {
+      const stage = toStage(topItem, { kind: 'count', valueFrom: 'topLine', detFlag: 'atTop' });
+      // 「且」：顶点还要求屈膝（挂成 also，界面写成「… 且 …」）
+      if (kneeItem) stage.also = toStage(kneeItem);
       stages.push(stage);
-    } else pushItem(topItem, { kind: 'count', valueFrom: 'topLine' });
-    pushItem(pick('spec.bridgeDown'), { kind: 'finish', detFlag: 'atBottom' });
+    }
+    /**
+     * 最后一格「落回躺平」= **计次那一刻**（识别器的 `atBottom`）。
+     *
+     * 这一格的判据是**相对量**（髋角回到「你自己躺平的读数 +12°」以内），所以它在弹窗里是一条文字条
+     * （`spec.bridgeDown` 只有 textKey，没有固定数值），`isStageItem` 会把它过滤掉 ——
+     * 所以这里**手工构造这一格**：静态值只作为兜底（真正的线走 `valueFrom: 'bottomLine'`），
+     * 判据文字用同一条 `textKey`，和弹窗里显示的一模一样。
+     */
+    {
+      const downItem = pick('spec.bridgeDown');
+      stages.push({
+        // 短标签用「落回」（`STEP_STAGE.bridge.lower = 'down'` 就是靠它找到这一格的 ——
+        // 用 'back' 的话那 8 分会凭空消失）
+        shortKey: 'spec.short.down',
+        metric: 'hip',
+        op: 'lte',
+        value: roundFor(BRIDGE.downAngle, DEG),
+        valueFrom: 'bottomLine',
+        unit: DEG,
+        k: STAGE_TOLERANCE.deg,
+        kind: 'finish',
+        detFlag: 'atBottom',
+        textKey: downItem?.textKey,
+        noteKey: downItem?.noteKey,
+        noteParams: downItem?.noteParams,
+        item: downItem || {
+          labelKey: 'spec.bridgeDown',
+          metricKey: 'metric.hip',
+          op: 'lte',
+          value: roundFor(BRIDGE.downAngle, DEG),
+          unit: DEG,
+          noteKey: 'spec.note.bridgeDown',
+        },
+      });
+    }
   } else if (id === 'crunch') {
     /**
      * 卷腹（**用户给的两格关键帧**）：① 屈膝躺下 → ② **卷起来 = 计次那一刻**。
