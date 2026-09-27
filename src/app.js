@@ -754,7 +754,31 @@ function setPoseLog(on, { silent = false } = {}) {
     if (!silent) setCueLine(t('status.poseLogOff', { file: file || '' }), 'info');
   }
   renderPoseLogStatus();
+  renderRecBadge();
   return poseLogger.status();
+}
+
+/**
+ * 画面**右下角**的「正在记录」角标（用户要求）。
+ *
+ * 用户原话：「一旦这个开关打开，则在视频屏幕的右下角要出现一个图标，显示其正在记录帧数据，
+ * 同时用数字显示已经记录了多少帧了。」
+ *
+ * 显示条件就是**开关打开着并且在记录**（`poseLog` + `poseLogger.active`）：关掉开关角标立刻消失，
+ * 这样「我到底还在不在记」一眼就能看出来，不用再去弹窗里确认。
+ * 数字取 `poseLogger.status().frames`（真正写出去的行数），不是循环帧号 —— 队列满了会丢帧，
+ * 屏幕上必须是**实际记下来的**数量。
+ */
+function renderRecBadge() {
+  const badge = $('recBadge');
+  if (!badge) return;
+  const on = !!state.settings.poseLog && poseLogger.active;
+  badge.hidden = !on;
+  if (!on) return;
+  const num = $('recFrames');
+  if (!num) return;
+  const txt = String(poseLogger.status().frames);
+  if (num.textContent !== txt) num.textContent = txt;
 }
 
 /** 运动设定弹窗里那一行状态（记了多少帧、文件叫什么、有没有写失败） */
@@ -870,6 +894,15 @@ const RING_PX_FALLBACK = { min: 104, vw: 0.105, max: 140 };
  *     用手指尖 / 脚趾尖去够的时候中心还在环外，计时就是不开始 —— 用户再次反馈。
  */
 const RING_HIT_RATIO = 0.5;
+/**
+ * 「一部分进入即可触发」额外给的**宽容度**（乘在判定半径上）。
+ *
+ * 圆环画出来的那个圆圈半径是 0.5×直径，但描边本身有 3~4px、外面还有一圈光晕，
+ * 而且 MediaPipe 的点在画面边角会有几个像素的误差 —— 所以判定半径再放宽 **12%**：
+ * 「手的边缘搭上圆圈」就算进去了。用户第二次反馈「依然不够灵敏，感觉必须脚踝/手腕进入」，
+ * 这 12% 配合下面 `touchSamples` 里补出来的**手掌 / 脚尖外延点**一起解决。
+ */
+const RING_TOUCH_TOL = 1.12;
 /**
  * 手势落点的最低可见度：低于这个值的点整帧不参与（被身体挡住的看不见的手/脚不会误触）。
  * 原来写死 0.4 —— 但手/脚伸到**画面边角**（左下角圆环正好在角上）时，MediaPipe 给的可见度
@@ -1005,21 +1038,36 @@ function ringHitRadius(key, size) {
 }
 
 /**
+ * 手 / 脚的**外延采样点**：MediaPipe 的 Pose 模型里，食指 / 小指 / 拇指（17~22）和脚跟 / 脚尖（29~32）
+ * 都是**估出来的**，手/脚伸到画面边角（正好是左下角圆环所在的位置）时它们常常落在**手腕 / 脚踝附近**、
+ * 或者干脆被可见度门槛丢掉 —— 于是「手感上只有手腕和脚踝能触发」（用户第二次反馈的原话：
+ * 「感觉目前必须是脚踝和手腕进入才开始 3 秒计时」）。
+ *
+ * 所以按**肢体的方向**自己把外延补出来（用可靠得多的肘 / 膝当参考点）：
+ *   - 手：`手腕 + k × (手腕 − 肘)`，k 取 0.45 / 0.9 —— 手掌与指尖真正所在的位置；
+ *   - 脚：`脚踝 + k × (脚踝 − 膝)`（顺着小腿方向，正面视角脚尖就在脚踝下方）以及
+ *     `脚踝 + k × (脚踝 − 脚跟)`（侧视角脚尖在脚跟的反方向），各取 0.5 / 1.0。
+ * 这些点只用于**圆环判定**（画面上不画、不参与动作识别），而且都做「别伸太远」的上限保护。
+ */
+const HAND_EXT_K = [0.45, 0.9];
+const HAND_EXT_MAX_ARM = 1.2;      // 手掌外延点最多离手腕这么远（按「肩→肘→腕」的长度算）
+const FOOT_EXT_K = [0.5, 1.0];
+
+/**
  * 画面里的「手 / 脚」落点（舞台像素坐标，已经考虑镜像）——**每个关键点各算一个采样点**。
  *
- * 手 = 手腕 + 食指 + 小指 + 拇指（每只手 4 个点）；脚 = 踝 + 脚跟 + 脚趾尖（每只脚 3 个点）。
+ * 手 = 手腕 + 食指 + 小指 + 拇指（每只手 4 个点）+ **沿小臂补出来的手掌点**；
+ * 脚 = 踝 + 脚跟 + 脚趾尖（每只脚 3 个点）+ **沿小腿 / 脚跟方向补出来的脚尖点**。
  *
  * 用户口径：「**手掌或脚的一部分进入**我认为就要开始沙漏计时，保持 3 秒后退出。
  *   **一部分进入即可触发**。」 —— 所以左下角那个退出圆环**逐点**判定：
  * 只要手/脚上的**任意一个点**落进圆环里就开始计时（指尖、脚跟、脚趾尖、脚踝都算）。
  *
- * 用户后来又补了一条：「**只要脚尖进入圆环就要开始沙漏计时**，现在感觉要脚踝进入才开始计时」——
- * 这就是上面两处修改的来源：
- *   1. **脚的两个点单独用更宽松的可见度门槛**（`FOOT_VIS_MIN` = 0.15，手仍然是 0.3）：
- *      脚伸到画面左下角时，脚跟 / 脚尖的可见度经常只有 0.2 上下，旧门槛会把它们整个丢掉；
- *   2. **脚尖点量不到时自己估一个**（`ghost: true`，见 FOOT_TIP_FROM_HEEL / FOOT_TIP_FROM_SHIN）：
- *      脚尖是用户指过去的那个部位，不能因为 MediaPipe 没给点就当作不存在。
- * 加上 `anyTouchInRing` 里的**线段判定**（整只脚连成一片），「脚尖/脚掌进环」就真的能触发计时了。
+ * 三次放宽的历史（都保留在注释里）：
+ *   ① 可见度门槛 0.4 → 0.3、且「只要有一个点可用就算」；
+ *   ② 脚的两个点单独用更宽松的门槛（`FOOT_VIS_MIN` = 0.15）+ 脚尖量不到时估一个；
+ *   ③ **手/脚的外延点**（本次）：因为 Pose 模型的指尖 / 脚跟 / 脚尖本来就不可靠，
+ *      改用肘 / 膝当参考自己算出手掌与脚尖的位置 —— 这样「脚尖（而不是脚踝）进环」就能触发。
  */
 function touchSamples(landmarks, stageW, stageH, mirror) {
   if (!landmarks || !landmarks.length) return [];
@@ -1033,44 +1081,63 @@ function touchSamples(landmarks, stageW, stageH, mirror) {
     out.push(q);
     return q;
   };
+  /** 从 from 出发、沿 dir 方向补一串点（dir 已是舞台像素方向） */
+  const extend = (from, dir, ks, maxLen, kind, side, part, vis) => {
+    const len = Math.hypot(dir.x, dir.y);
+    if (!(len > 1)) return;
+    for (const k of ks) {
+      const reach = len * k;
+      if (Number.isFinite(maxLen) && reach > maxLen) continue;
+      out.push({
+        x: from.x + dir.x * k, y: from.y + dir.y * k, kind, side, part, vis, ghost: true,
+      });
+    }
+  };
   for (const side of ['L', 'R']) {
     const isL = side === 'L';
-    add(landmarks[isL ? LM.L_WRIST : LM.R_WRIST], 'hand', side, 'wrist');
+    const wrist = add(landmarks[isL ? LM.L_WRIST : LM.R_WRIST], 'hand', side, 'wrist');
     add(landmarks[isL ? LM.L_INDEX : LM.R_INDEX], 'hand', side, 'index');
     add(landmarks[isL ? LM.L_PINKY : LM.R_PINKY], 'hand', side, 'pinky');
     add(landmarks[isL ? LM.L_THUMB : LM.R_THUMB], 'hand', side, 'thumb');
+    // 手掌 / 指尖的外延（用肘当参考：手腕 − 肘 就是小臂方向）
+    if (wrist) {
+      const elbowP = landmarks[isL ? LM.L_ELBOW : LM.R_ELBOW];
+      const shoulderP = landmarks[isL ? LM.L_SHOULDER : LM.R_SHOULDER];
+      if (elbowP && Number.isFinite(elbowP.x) && Number.isFinite(elbowP.y)) {
+        const ep = toStage(elbowP);
+        // 「别伸太远」的上限：一整条手臂（肩→肘→腕）的长度，正常人手掌远小于它
+        const sp = shoulderP && Number.isFinite(shoulderP.x) && Number.isFinite(shoulderP.y)
+          ? toStage(shoulderP) : null;
+        const armLen = sp ? Math.hypot(wrist.x - sp.x, wrist.y - sp.y) : 0;
+        const maxLen = armLen > 1 ? armLen * HAND_EXT_MAX_ARM : Infinity;
+        extend(wrist, { x: wrist.x - ep.x, y: wrist.y - ep.y }, HAND_EXT_K, maxLen, 'hand', side, 'palm', wrist.vis);
+      }
+    }
     const ankle = add(landmarks[isL ? LM.L_ANKLE : LM.R_ANKLE], 'foot', side, 'ankle');
     const heel = add(landmarks[isL ? LM.L_HEEL : LM.R_HEEL], 'foot', side, 'heel', FOOT_VIS_MIN);
     const toe = add(landmarks[isL ? LM.L_FOOT : LM.R_FOOT], 'foot', side, 'toe', FOOT_VIS_MIN);
-    // 真实的脚尖点量不到 → 估一个（只在量不到时用，见 FOOT_TIP_FROM_SHIN / FOOT_TIP_FROM_HEEL）
-    if (!toe && ankle) {
+    // 脚的外延点：真实的脚尖点太小 / 太不准，所以**无论它在不在**都按肢体方向补一串
+    //（它在的话内层多一个更准的点，只在量不到时才靠这些外延点，见 FOOT_TIP_MAX_SHIN 的上限）
+    if (ankle) {
       const kneeP = landmarks[isL ? LM.L_KNEE : LM.R_KNEE];
       const kp = kneeP && Number.isFinite(kneeP.x) && Number.isFinite(kneeP.y) ? toStage(kneeP) : null;
-      // 小腿长（脚踝→膝）：只用来卡「估算点别伸太远」（见 FOOT_TIP_MAX_SHIN）
+      // 小腿长（脚踝→膝）：用来卡「外延点别伸太远」
       const shin = kp ? Math.hypot(ankle.x - kp.x, ankle.y - kp.y) : 0;
-      const cands = [];
+      const maxLen = shin > 1 ? shin * FOOT_TIP_MAX_SHIN : Infinity;
       if (kp) {
-        cands.push({
-          dir: { x: ankle.x - kp.x, y: ankle.y - kp.y }, k: FOOT_TIP_FROM_SHIN, vis: ankle.vis,
-        });
+        extend(ankle, { x: ankle.x - kp.x, y: ankle.y - kp.y }, FOOT_EXT_K, maxLen, 'foot', side, 'toe', ankle.vis);
       }
       if (heel) {
-        cands.push({
-          dir: { x: ankle.x - heel.x, y: ankle.y - heel.y },
-          k: FOOT_TIP_FROM_HEEL,
-          vis: Math.min(ankle.vis, heel.vis),
-        });
+        extend(ankle, { x: ankle.x - heel.x, y: ankle.y - heel.y }, FOOT_EXT_K, maxLen, 'foot', side, 'toe',
+          Math.min(ankle.vis, heel.vis));
       }
-      for (const cand of cands) {
-        const len = Math.hypot(cand.dir.x, cand.dir.y);
-        if (!(len > 1)) continue;
-        const tip = { x: ankle.x + cand.dir.x * cand.k, y: ankle.y + cand.dir.y * cand.k };
-        // 估算点离脚踝太远（比如脚跟被误检到画面外）→ 宁可不估，避免凭空落进圆环
-        const reach = shin > 1 ? Math.hypot(tip.x - ankle.x, tip.y - ankle.y) / shin : 0;
-        if (reach <= FOOT_TIP_MAX_SHIN) {
-          out.push({
-            x: tip.x, y: tip.y, kind: 'foot', side, part: 'toe', vis: cand.vis, ghost: true,
-          });
+      // 真实的脚尖点量不到时，额外按「脚跟 + 一个脚掌」估一个（和上面那串取并集，谁在环里算谁）
+      if (!toe) {
+        if (heel) {
+          extend(heel, { x: heel.x - ankle.x, y: heel.y - ankle.y }, [1.0], maxLen, 'foot', side, 'toe',
+            Math.min(ankle.vis, heel.vis));
+        } else if (kp) {
+          extend(ankle, { x: ankle.x - kp.x, y: ankle.y - kp.y }, [FOOT_TIP_FROM_SHIN], maxLen, 'foot', side, 'toe', ankle.vis);
         }
       }
     }
@@ -1090,7 +1157,7 @@ function distToSegment(px, py, ax, ay, bx, by) {
 /** 有几个采样点落在圆环里（🐞 面板显示用：「环内点 2」说明结论更稳） */
 function pointsInRing(samples, key, size) {
   const c = ringCenter(key, size.w, size.h);
-  const hit = ringHitRadius(key, size);
+  const hit = ringHitRadius(key, size) * (key === 'corner' ? RING_TOUCH_TOL : 1);
   return samples.filter((p) => Math.hypot(p.x - c.x, p.y - c.y) <= hit).length;
 }
 
@@ -1108,7 +1175,8 @@ function pointsInRing(samples, key, size) {
  */
 function anyTouchInRing(samples, key, size) {
   const c = ringCenter(key, size.w, size.h);
-  const hit = ringHitRadius(key, size);
+  // 左下角那个退出圆环多给一点宽容度（见 RING_TOUCH_TOL）；中间两个大圆环仍然严格按判定半径
+  const hit = ringHitRadius(key, size) * (key === 'corner' ? RING_TOUCH_TOL : 1);
   if (!samples || !samples.length) {
     return { inside: false, pointIn: false, spanIn: false, best: null, bestSeg: null, minDist: Infinity, hit };
   }
@@ -1142,9 +1210,13 @@ function anyTouchInRing(samples, key, size) {
 /**
  * 手 / 脚各自的**中心**（手掌中心 / 整只脚的中心）—— 只用于「一组结束」那两个圆环
  * （它们的设计是「把手掌放进圆环中央」）和 🐞 面板的读数；左下角退出圆环改用 touchSamples 逐点判。
+ *
+ * ⚠️ 只平均**真实量到的关键点**，不算 touchSamples 里补出来的外延点（`ghost`）：
+ * 那两个大圆环的设计是「把手掌放进圆环中央」，中心要是被外延点往指尖方向拽，手感就变了。
+ * 外延点只服务于左下角退出圆环的「一部分进入即触发」。
  */
 function touchPoints(landmarks, stageW, stageH, mirror) {
-  const samples = touchSamples(landmarks, stageW, stageH, mirror);
+  const samples = touchSamples(landmarks, stageW, stageH, mirror).filter((p) => !p.ghost);
   const centreOf = (kind, side) => {
     const pts = samples.filter((p) => p.kind === kind && p.side === side);
     if (!pts.length) return null;
@@ -3083,6 +3155,8 @@ function loop() {
     const modal = $('exerciseModal');
     if (modal && !modal.hidden) renderPoseLogStatus();
   }
+  // 右下角角标的帧数：每 15 帧（约半秒）刷一次就够跳得动了，不必每帧写 DOM
+  if (state.loopCount % 15 === 0) renderRecBadge();
 
   if (state.celebrateUntil && now > state.celebrateUntil) {
     state.celebrateUntil = 0;
@@ -3662,10 +3736,14 @@ window.__mfg = {
   layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, touchSamples, anyTouchInRing, stageSize,
   CORNER_RING_INSET_PX, CORNER_RING_BOTTOM_PX, RING_PX_FALLBACK, RING_HIT_RATIO,
   TOUCH_VIS_MIN, FOOT_VIS_MIN, FOOT_TIP_FROM_HEEL, FOOT_TIP_FROM_SHIN, distToSegment, pointsInRing,
+  // 手/脚「一部分进入即触发」用的外延点参数与退出圆环的宽容度（测试要按它们构造真实肢体）
+  RING_TOUCH_TOL, HAND_EXT_K, HAND_EXT_MAX_ARM, FOOT_EXT_K,
   GESTURE_DRAIN_MS, RING_NEAR_FACTOR, touchDiagLine,
   announceHoldCount, HOLD_COUNT_EVERY,
   announceTimeLeft, TIME_CALL_AT, targetPresetsFor, targetStepFor,
   buildMusicTracks, selectMusicTrack,
   // 调试数据记录（运动设定里的开关）：记录器本体 + 开关函数，测试直接用它们驱动
   poseLogger, setPoseLog, poseLogMeta, renderPoseLogStatus,
+  // 画面右下角的「正在记录 x 帧」角标
+  renderRecBadge,
 };

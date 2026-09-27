@@ -914,6 +914,55 @@ kbd {
   pointer-events: none;
 }
 .corner-ring[hidden] { display: none; }
+
+/* 记录调试数据时的角标：贴在画面右下角、全屏按钮的上方。
+   用户要求：「一旦这个开关打开，则在视频屏幕的右下角要出现一个图标，显示其正在记录帧数据，
+   同时用数字显示已经记录了多少帧了。」
+   - 红点做呼吸动画（一眼看出「在录」）；
+   - 数字用等宽字体（帧数一直跳，等宽才不会左右抖）；
+   - pointer-events: none —— 它只是提示，不该挡住右下角的按钮； */
+.rec-badge {
+  position: absolute;
+  right: 12px;
+  bottom: 58px;          /* 全屏按钮（38px + 12px 边距）上方 */
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  background: rgba(8, 15, 26, 0.66);
+  color: #ffe4e6;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.rec-badge[hidden] { display: none; }
+.rec-badge .rec-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #f87171;
+  box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7);
+  animation: rec-pulse 1.4s ease-out infinite;
+}
+.rec-badge .rec-num {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+}
+.rec-badge .rec-unit {
+  font-size: 11px;
+  opacity: 0.8;
+}
+@keyframes rec-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7); }
+  70% { box-shadow: 0 0 0 8px rgba(248, 113, 113, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-badge .rec-dot { animation: none; }
+}
 .corner-ring .ring-btn {
   /* 直径与右上角的 HUD 进度圆环**同一个变量**（用户要求「各个圆环大小一样」）；
      圆心位置由 JS 按舞台尺寸设（**左下角**，与右上角那个严格成对角：

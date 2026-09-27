@@ -39,6 +39,9 @@ export default {
     angles: '📐 Angles',
     debug: '🐞 Metrics',
     fullscreen: 'Fullscreen video frame',
+    // Recording badge in the bottom-right of the stage: number + unit, hover shows this line
+    recUnit: 'frames logged',
+    recTitle: 'Logging debug data (frame count updates live)',
 
     startCam: 'Start camera',
     retry: 'Retry',

@@ -113,6 +113,15 @@
             <div class="calib-prompt-sub" id="calibPromptSub"></div>
           </div>
 
+          <!-- 记录调试数据时的角标（用户要求）：贴在画面**右下角**，显示「正在记录」+ 已记帧数。
+               默认藏着；打开「记录调试数据」开关时出现，关掉就消失。 -->
+          <div class="rec-badge" id="recBadge" hidden
+               data-i18n-title="ui.recTitle" data-i18n-aria="ui.recTitle">
+            <span class="rec-dot" aria-hidden="true"></span>
+            <span class="rec-num" id="recFrames">0</span>
+            <span class="rec-unit" data-i18n="ui.recUnit"></span>
+          </div>
+
           <!-- 全屏按钮贴在视频框右下角：点它放大的是「视频框」本身，而不是整个 HTML 页面 -->
           <button class="stage-btn" id="btnFullscreen" type="button" aria-pressed="false"
                   data-i18n-title="ui.fullscreen" data-i18n-aria="ui.fullscreen">

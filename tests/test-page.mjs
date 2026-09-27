@@ -187,6 +187,21 @@ console.log('\n[3] 静态资源与模型文件');
     // 小屏也必须还是「两个一起收」：.hud-ring 不许再写死尺寸（以前写过 84px，会和左下角那个不一样大）
     ok('小屏时右上角 HUD 圆环不再写死尺寸（改用同一个 --ring-px，两个圆环仍然等大）',
       !/@media[^{]*720px[^{]*\{[^@]*\.hud-ring\s*\{[^}]*width:\s*\d+px/.test(css), 'hud-ring 有写死的宽高');
+
+    /* ---- 用户反馈：「感觉目前必须是脚踝和手腕进入才开始 3 秒计时，这个不好」----
+       根因（见 app.js 里 touchSamples 的注释）：Pose 模型对手指（17~22）与脚跟 / 脚尖（29~32）
+       这些点本来就是**估出来的**，手/脚伸到画面左下角时常落在手腕 / 脚踝附近或被可见度门槛丢掉 ——
+       于是只剩「手腕 / 脚踝」两个点能触发。修法分两层，这里把两层都钉住。 */
+    const ringSrc = read('src/app.js');
+    ok('手/脚按**肢体方向补出外延点**再判（用肘推手掌、用膝 / 脚跟推脚尖）',
+      /HAND_EXT_K\s*=\s*\[/.test(ringSrc) && /FOOT_EXT_K\s*=\s*\[/.test(ringSrc)
+      && /wrist\.x\s*-\s*ep\.x/.test(ringSrc) && /ankle\.x\s*-\s*kp\.x/.test(ringSrc)
+      && /const extend = \(/.test(ringSrc));
+    ok('外延点有「别伸太远」的上限（按手臂 / 小腿长度卡住，误检的脚跟不会把脚尖送进圆环）',
+      /HAND_EXT_MAX_ARM/.test(ringSrc) && /FOOT_TIP_MAX_SHIN/.test(ringSrc));
+    ok('只有左下角退出圆环的判定半径放宽 12%（中间两个大圆环仍然严格按画出来的半径判）',
+      /RING_TOUCH_TOL\s*=\s*1\.12/.test(ringSrc)
+      && (ringSrc.match(/key === 'corner' \? RING_TOUCH_TOL : 1/g) || []).length >= 2);
   }
 
   // 判定进度条：**用户要求「缩短一点、高度也变小一些」** ——
@@ -451,6 +466,44 @@ console.log('\n[3] 静态资源与模型文件');
   ok('两个视图的切换写的是 hidden 属性',
     /homeView'\)\.hidden = false/.test(app) && /workoutView'\)\.hidden = true/.test(app)
     && /homeView'\)\.hidden = true/.test(app) && /workoutView'\)\.hidden = false/.test(app));
+
+  /* ---- 用户要求：「一旦『记录调试数据』这个开关打开，则在**视频屏幕的右下角**要出现一个图标，
+     显示其正在记录帧数据，同时用数字显示已经记录了多少帧了。」---- */
+  {
+    const badgeAt = html.indexOf('id="recBadge"');
+    const fsAt = html.indexOf('id="btnFullscreen"');
+    ok('画面右下角有「正在记录」角标（在视频框 #stage 内部、右键全屏按钮的上方）',
+      badgeAt > stageAt && badgeAt > headerEnd && badgeAt < fsAt && badgeAt < toolbarAt,
+      `stage=${stageAt} badge=${badgeAt} fullscreen=${fsAt}`);
+    ok('角标默认藏着（没开记录时屏幕上什么都没有）',
+      /<div class="rec-badge" id="recBadge" hidden/.test(html));
+    ok('角标 = 红点 + 帧数数字 + 单位文案（文案走 i18n，中英都有词条）',
+      /<span class="rec-dot"/.test(html) && /id="recFrames"/.test(html)
+      && /data-i18n="ui\.recUnit"/.test(html) && /data-i18n-title="ui\.recTitle"/.test(html)
+      && typeof LOCALES.zh.ui.recUnit === 'string' && typeof LOCALES.en.ui.recUnit === 'string'
+      && typeof LOCALES.zh.ui.recTitle === 'string' && typeof LOCALES.en.ui.recTitle === 'string');
+    const badgeBlock = /(?:^|\n)\.rec-badge\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+    ok('角标贴在右下角（position:absolute + right/bottom 定位）',
+      /position:\s*absolute/.test(badgeBlock) && /right:\s*\d+px/.test(badgeBlock)
+      && /bottom:\s*\d+px/.test(badgeBlock), badgeBlock.trim().slice(0, 80));
+    ok('角标不吃鼠标事件（pointer-events:none，不挡住底下的按钮）',
+      /pointer-events:\s*none/.test(badgeBlock));
+    ok('角标藏着的时候不占位（.rec-badge[hidden] → display:none）',
+      /\.rec-badge\[hidden\]\s*\{\s*display:\s*none/.test(css));
+    ok('红点在呼吸（一眼看出「正在录」）；动效敏感用户会关掉它',
+      /\.rec-badge \.rec-dot\s*\{[^}]*animation:/.test(css)
+      && /prefers-reduced-motion[\s\S]*?\.rec-badge \.rec-dot\s*\{\s*animation:\s*none/.test(css));
+    ok('帧数用等宽数字（数字一直跳也不会左右抖）',
+      /font-variant-numeric:\s*tabular-nums/.test(badgeBlock));
+    // 接线：显示 / 隐藏跟着开关走，数字取记录器真正写出去的行数，主循环里定时刷新
+    ok('角标的显隐跟着开关走（renderRecBadge 读 state.settings.poseLog 与 poseLogger.active）',
+      /function renderRecBadge\(\)/.test(app) && /badge\.hidden = !on/.test(app)
+      && /state\.settings\.poseLog && poseLogger\.active/.test(app));
+    ok('数字取的是记录器**真正记下来的**帧数（不是循环帧号：队列满了会丢帧）',
+      /String\(poseLogger\.status\(\)\.frames\)/.test(app));
+    ok('主循环里定时刷新角标（每 15 帧一次，不必每帧写 DOM）',
+      /state\.loopCount % 15 === 0\) renderRecBadge\(\)/.test(app));
+  }
 }
 
 /* ---------- 4. 动作与界面按钮一一对应 ---------- */

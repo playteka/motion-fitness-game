@@ -2335,15 +2335,17 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
       };
 
       // ★ ① 整只脚**跨在圆环上**：三个关键点全在环外，只有「脚」那一段穿过圆环
-      //    改之前一个点都不在环内 → 不计时；改之后线段判定立刻开始计时。
+      //    改之前一个点都不在环内 → 不计时；改之后线段判定（以及后来补的脚尖外延点）立刻开始计时。
       resetCorner();
       holdFrames(footSpan({
         ankle: [0, -1.8], heel: [-0.5, -0.9], toe: [0.8, 2.2],
       }), 64000, 1000);
-      ok('**整只脚跨在圆环上**（脚尖 / 脚跟 / 脚踝三个点都在环外）也开始计时（线段判定）',
+      ok('**整只脚跨在圆环上**（脚尖 / 脚跟 / 脚踝三个点都在环外）也开始计时（线段判定 + 脚尖外延点）',
         api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
-      ok('🐞 面板说明白是靠「整只脚碰到」进的环',
-        api.state.touchInfo?.via === 'span' && api.state.touchInfo?.inside === true,
+      // 这一条钉的是**线段判定**那一层本身：整只脚连成的线段确实压进了判定半径
+      //（后来补的「脚尖外延点」常常先一步进环，所以不能再断言 via === 'span'）
+      ok('🐞 面板显示整只脚确实压在圆环上（脚那一段离环心 7px，在判定半径内）',
+        api.state.touchInfo?.inside === true && api.state.touchInfo?.span?.d <= hit2,
         JSON.stringify(api.state.touchInfo));
 
       // ★ ② 整条腿真的抬到圆环边（几何真实）：脚尖落在环内，但它的可见度只有 0.2
@@ -2390,6 +2392,111 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
       }
     }
 
+
+    /* ---- 用户第三轮反馈：「感觉目前必须是**脚踝和手腕**进入才开始 3 秒计时，这个不好，请优化。
+       改为只要手和脚有一部分进入就可以开始 3 秒计时了。」
+       这一轮改的不是「判定半径太小」，而是「手腕 / 脚踝**以外的点根本产生不出来**」——
+       两层修法（见 app.js 里 touchSamples / RING_TOUCH_TOL）：
+         ① 按肢体方向补出**手掌 / 脚尖的外延点**（Pose 模型的指尖 / 脚跟本来就不可靠）；
+         ② 左下角这个退出圆环的判定半径再放宽 12%（手/脚搭在圆环边缘外一点也算），
+            **中间那两个大圆环不跟着放宽**（它们是「把手掌放进圆环中央」的设计）。
+       下面几条分别钉住这两层，以及「宽容度只给退出圆环」。 */
+    {
+      const hit4 = api.ringHitRadius('corner', { w: SW, h: SH });
+      ok('左下角退出圆环的宽容度常量就写在 app.js 里（12%），其余圆环仍是画出来的半径',
+        api.RING_TOUCH_TOL === 1.12 && api.RING_HIT_RATIO === 0.5,
+        `TOL=${api.RING_TOUCH_TOL}`);
+
+      /** 从环心指向「右上」的**单位**方向：手臂 / 腿就是从那个方向伸进圆环的 */
+      const dir = { x: Math.SQRT1_2, y: -Math.SQRT1_2 };
+      /** 距环心 rel 倍判定半径（沿上面的方向）的舞台像素点 */
+      const atRel = (rel) => ({ x: c.x + dir.x * rel * hit4, y: c.y + dir.y * rel * hit4 });
+      /** 环心到某个舞台像素点的距离（像素） */
+      const distPx = (q) => Math.hypot(q.x - c.x, q.y - c.y);
+
+      /**
+       * 骨架：一条**真的朝圆环伸过去**的手臂（肩 → 肘 → 腕 共线，方向真实）。
+       * 手腕停在离环心 wristRel 倍判定半径处（默认 1.3 —— 在环外），
+       * 手指三个点的可见度给 fingerVis（默认 0.05 = 量不到，模拟画面边角上的真实情况）。
+       */
+      const reachArm = ({ wristRel = 1.3, forearmRel = 0.55, fingerVis = 0.05, armVis = 1 } = {}) => {
+        const lm = sp2({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility: 1 }));
+        const put = (i, q, vis) => { lm[i] = { x: q.x / SW, y: q.y / SH, z: 0, visibility: vis }; };
+        const w = atRel(wristRel);
+        // 肘在环的**另一侧**（更远）：于是 (腕 − 肘) 正好指向圆环 → 手掌外延点朝环内
+        const e = { x: w.x + dir.x * forearmRel * hit4, y: w.y + dir.y * forearmRel * hit4 };
+        const s = { x: e.x + dir.x * 1.2 * hit4, y: e.y + dir.y * 1.2 * hit4 };
+        put(LM.L_WRIST, w, armVis);
+        put(LM.L_ELBOW, e, 1);
+        put(LM.L_SHOULDER, s, 1);
+        for (const i of [LM.L_INDEX, LM.L_PINKY, LM.L_THUMB]) put(i, w, fingerVis);
+        return lm;
+      };
+      /**
+       * 骨架：一条**真的朝圆环伸过去**的腿（膝 → 踝 共线）。
+       * 踝停在 ankleRel 倍判定半径处（默认 1.3 —— 在环外），脚跟 / 脚尖两个点的可见度给 footVis
+       * （默认 0.05 = 量不到：真实画面里脚伸到左边角时这两个点就是这么不可靠）。
+       */
+      const reachLeg = ({ ankleRel = 1.3, shinRel = 1.1, footVis = 0.05, ankleVis = 1 } = {}) => {
+        const lm = sp2({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility: 1 }));
+        const put = (i, q, vis) => { lm[i] = { x: q.x / SW, y: q.y / SH, z: 0, visibility: vis }; };
+        const a = atRel(ankleRel);
+        const k = { x: a.x + dir.x * shinRel * hit4, y: a.y + dir.y * shinRel * hit4 };
+        put(LM.L_ANKLE, a, ankleVis);
+        put(LM.L_KNEE, k, 1);
+        put(LM.L_HEEL, a, footVis);
+        put(LM.L_FOOT, a, footVis);
+        return lm;
+      };
+
+      // ★ ① 手：**手腕还在环外**（1.3 倍），指尖三个点全都量不到 —— 只有手掌外延点进环
+      {
+        const wire = reachArm();
+        const res = api.anyTouchInRing(api.touchSamples(wire, SW, SH, false), 'corner', { w: SW, h: SH });
+        ok('手腕在环外、指尖三个点量不到时，**沿小臂补出的手掌点**照样把圆环点亮',
+          res.inside === true && res.best?.p?.part === 'palm' && res.best?.p?.ghost === true,
+          `inside=${res.inside} 最近点=${res.best?.p?.part} 距环心=${Math.round(res.best?.d ?? -1)}px`);
+        ok('（对照）这个手腕本身确实在**画出来的**判定半径之外——放宽前这个姿势一点反应都没有',
+          distPx(atRel(1.3)) > hit4, `${Math.round(distPx(atRel(1.3)))}px > ${Math.round(hit4)}px`);
+        // 端到端：这个姿势连续喂 1 秒 → 沙漏真的开始走（用户口径：手/脚有一部分进入就开始）
+        resetCorner();
+        holdFrames(reachArm(), 300000, 1000);
+        ok('端到端：手腕在环外、指尖量不到，只靠手掌外延点也能开始 3 秒计时',
+          api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
+      }
+
+      // ★ ② 脚：**脚踝还在环外**（1.3 倍），脚跟 / 脚尖两个点全都量不到 —— 只有沿小腿补出的脚尖点进环
+      {
+        const res = api.anyTouchInRing(api.touchSamples(reachLeg(), SW, SH, false), 'corner', { w: SW, h: SH });
+        ok('脚踝在环外、脚跟和脚尖量不到时，**沿小腿补出的脚尖点**照样把圆环点亮',
+          res.inside === true && res.best?.p?.kind === 'foot' && res.best?.p?.part === 'toe',
+          `inside=${res.inside} 最近点=${res.best?.p?.part} 距环心=${Math.round(res.best?.d ?? -1)}px`);
+        ok('（对照）这个脚踝本身也在画出来的判定半径之外（不然还是「必须踝进环」）',
+          distPx(atRel(1.3)) > hit4);
+        resetCorner();
+        holdFrames(reachLeg(), 320000, 1000);
+        ok('端到端：只靠脚尖的外延点也能开始 3 秒计时（不必把脚踝塞进圆环）',
+          api.gestureState.corner.p > 0.25, String(api.gestureState.corner.p));
+      }
+
+      // ★ ③ 宽容度这一层：正好落在「画出来的半径」外一点点（1.06 倍）的点也算进环
+      {
+        const pIn = { x: c.x + hit4 * 1.06, y: c.y, kind: 'foot', side: 'L', part: 'ankle', vis: 1 };
+        const r = api.anyTouchInRing([pIn], 'corner', { w: SW, h: SH });
+        ok('脚踝落在判定半径外一点点（1.06 倍）照样算进环（判定用的是 1.12 倍）',
+          r.inside === true && r.pointIn === true && r.best.d > hit4,
+          `inside=${r.inside} 距离=${(r.best?.d / hit4).toFixed(2)} 倍`);
+        const pOut = { x: c.x + hit4 * 1.2, y: c.y, kind: 'foot', side: 'L', part: 'ankle', vis: 1 };
+        ok('宽容度不是无限大：明显在环外（1.2 倍）仍然不算，不会凭空退出训练',
+          api.anyTouchInRing([pOut], 'corner', { w: SW, h: SH }).inside === false);
+        // 同一个点放到「一组结束后」的圆环里：**不**享受这 12%（那两个圆环仍是严格判定）
+        const cR = api.ringCenter('retry', SW, SH);
+        const hR = api.ringHitRadius('retry', { w: SW, h: SH });
+        const pRetry = { x: cR.x + hR * 1.06, y: cR.y, kind: 'hand', side: 'L', part: 'wrist', vis: 1 };
+        ok('宽容度只给左下角退出圆环：「再做一次」圆环在 1.06 倍处仍然不算',
+          api.anyTouchInRing([pRetry], 'retry', { w: SW, h: SH }).inside === false);
+      }
+    }
 
     // 短暂滑出去（宽限期内）不扣进度；滑久了只慢慢退，不会一秒清零
     resetCorner();
@@ -3749,6 +3856,19 @@ console.log(`\n[16] 调试数据记录（运动设定里的开关，写进 logs/
   const saved = JSON.parse(store.get('mfg.settings.v1') || '{}');
   ok('开关状态写进了 localStorage（刷新后还在）', saved.poseLog === true, JSON.stringify(saved.poseLog));
 
+  /* ---- 用户要求：「一旦这个开关打开，则在视频屏幕的**右下角**要出现一个图标，显示其正在记录
+     帧数据，同时用数字显示已经记录了多少帧了。」 ---- */
+  {
+    const badge = elements.get('recBadge');
+    const num = elements.get('recFrames');
+    ok('开关打开 → 画面右下角出现「正在记录」角标（起点 0 帧）',
+      badge.hidden === false && num.textContent === '0',
+      `hidden=${badge.hidden} 帧数=${num.textContent}`);
+    ok('角标是「谁在记」的独立提示，和弹窗里那一行状态各管各的',
+      elements.get('poseLogStatus').textContent !== num.textContent,
+      `${elements.get('poseLogStatus').textContent} / ${num.textContent}`);
+  }
+
   // ===== ② 真实主循环跑几帧 → 数据被攒起来并 POST 给本地服务器 =====
   const savedStream = api.camera.stream;
   const savedDetect = api.engine.detect;
@@ -3810,6 +3930,24 @@ console.log(`\n[16] 调试数据记录（运动设定里的开关，写进 logs/
       && Number.isFinite(f.sides.R.v) && 'base' in f.sides.R),
     JSON.stringify(frames[0]?.sides || null));
 
+  /* ---- 右下角角标上的帧数（用户要求「用数字显示已经记录了多少帧了」）---- */
+  {
+    const num = elements.get('recFrames');
+    api.renderRecBadge();
+    ok('角标上的数字 = 记录器**真正记下来的**帧数（不是循环帧号：队列满了会丢帧）',
+      Number(num.textContent) === logger.status().frames && logger.status().frames > 0,
+      `角标=${num.textContent} 记录器=${logger.status().frames}`);
+    const before = logger.status().frames;
+    pump(20);                       // 主循环里每 15 帧刷一次角标，跑一会儿应该自己跳
+    ok('主循环自己刷新角标（帧数会跟着涨，不需要手动调；最多落后 15 帧）',
+      Number(num.textContent) > before && Number(num.textContent) <= logger.status().frames,
+      `${before} → 角标=${num.textContent} 记录器=${logger.status().frames}`);
+    api.renderRecBadge();
+    ok('下一次刷新时角标就追平记录器（落后只是刷新频率，不是记错）',
+      Number(num.textContent) === logger.status().frames,
+      `角标=${num.textContent} 记录器=${logger.status().frames}`);
+  }
+
   // ===== ③ 计次 / 提示这些事件也各占一行 =====
   logger.event('rep', { ex: 'buttKick', valid: true, index: 3, quality: 72, duration: 640 });
   logger.flush({ force: true });
@@ -3836,6 +3974,8 @@ console.log(`\n[16] 调试数据记录（运动设定里的开关，写进 logs/
     `关掉时 ${frozen} → 之后 ${logger.status().frames}`);
   ok('关掉后状态行回到「未开始记录」', /未开始记录/.test(elements.get('poseLogStatus').textContent),
     elements.get('poseLogStatus').textContent);
+  ok('关掉开关 → 右下角「正在记录」角标跟着消失（不会让人以为还在记）',
+    elements.get('recBadge').hidden === true, String(elements.get('recBadge').hidden));
 
   // ===== ⑤ 回归：一批数据必须切成 ≤48KB 的块，而且**不许带 keepalive** =====
   // 真机上踩过：加了 keepalive 之后，浏览器对请求体有 64KiB 上限，每批 100KB 全部被拒，

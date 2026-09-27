@@ -39,6 +39,9 @@ export default {
     angles: '📐 角度',
     debug: '🐞 识别指标',
     fullscreen: '全屏显示视频框',
+    // 画面右下角「正在记录调试数据」的角标：数字 + 单位，鼠标移上去看这句话
+    recUnit: '帧已记录',
+    recTitle: '正在记录调试数据（帧数实时更新）',
 
     startCam: '开启摄像头',
     retry: '重试',
