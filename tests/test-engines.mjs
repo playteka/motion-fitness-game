@@ -280,9 +280,12 @@ const LOST = lostFrame();
  * 手搓帧夹具（只覆盖纯阈值 / 纯门控的用例）
  * ------------------------------------------------------------------ */
 
-/** 俯撑帧：门控 prone（躯干接近水平 + 肩离地 + 手撑地） */
+/**
+ * 俯撑帧：门控 `proneUpright`（**不看地面线**：躯干接近水平 + 手没有举到肩上方）。
+ * 登山者 / 俯卧撑都用它；`shoulderClear` / `wristClearMin` 只是留着给别的门控看的。
+ */
 const proneFrame = (over = {}) => ({
-  ok: true, torsoIncl: 70, shoulderClear: 0.9, wristClearMin: 0.05,
+  ok: true, torsoIncl: 70, shoulderClear: 0.9, wristClearMin: 0.05, armRaised: -0.8,
   bodyStraight: 175, hipLineDev: 0, torsoLen: 0.3, ...over,
 });
 
@@ -796,6 +799,71 @@ console.log('\n[4] bend 引擎：姿势门控');
 }
 
 /* ------------------------------------------------------------------ *
+ * [5a] 俯卧撑的门控**不许依赖校准地面线**（用户实测的 bug）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[5a] 俯卧撑：门控不看地面线（「还没进入姿势」之后再也不计数的 bug）');
+{
+  /**
+   * 用户反馈：「俯卧撑运动中，一旦出现『还没进入这个动作的姿势』的提示，后续无论怎样做都不计数了」。
+   *
+   * 查下来：旧的俯撑门控 `prone` 里有两条**以校准地面线为基准**的条件
+   * （肩离地 ≥0.10、手离地 ≤0.95）。地面线一旦偏掉（校准时站的位置和做动作时不一样、
+   * 摄像头被碰过），「手离地」就读到 1.0 以上 —— 姿势完全标准也**永远过不了门控**，
+   * 识别器恒 `active=false`，一次都不计数（探针实测：地面线偏 0.3 时读到 1.07 > 0.95）。
+   * 现在俯卧撑 / 登山者改用 `proneUpright`：只看**躯干倾角**与「**手有没有举到肩上方**」，
+   * 两个量都是身体自己跟自己比，与地面线、机位距离都无关。
+   */
+  const PUSH_BASE = computeFrame(
+    toMetric(standingPose({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'side' })
+      .map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT),
+    null, 0, false, null,
+  );
+  /** 一次标准俯卧撑：肘 170° → 95° → 170° */
+  const pushupPose = (p) => {
+    const s = Math.sin(Math.PI * p);
+    return pronePose({
+      hip: { x: 1.0, y: 0.68 + 0.12 * s },
+      bodyTilt: 63 + 17 * s,
+      elbow: 170 - 75 * s,
+      armDown: -30 * s,
+      sag: 0,
+    });
+  };
+  const pushupFrame = (p, groundShift) => computeFrame(
+    toMetric(pushupPose(p).map((q) => ({ ...q, v: q.visibility ?? 1 })), ASPECT),
+    { groundY: PUSH_BASE.groundY + groundShift }, 0, false, null,
+  );
+  const runPushups = (groundShift, count = 5) => {
+    const det = createDetector('pushup');
+    const r = makeFrameRunner(det);
+    const n = Math.round(1400 / DT);
+    for (let c = 0; c < count; c += 1) {
+      for (let i = 0; i < n; i += 1) r.run([{ f: pushupFrame(i / (n - 1), groundShift), ms: DT }]);
+    }
+    return { det, r };
+  };
+  for (const shift of [0, 0.3, -0.3, 0.5, -0.5]) {
+    const { det } = runPushups(shift);
+    atLeast(`俯卧撑：校准地面线偏 ${shift >= 0 ? '+' : ''}${shift} 时照样计次（旧门控在这里会永远卡死）`,
+      det.validReps, 4);
+  }
+  // 反例：站着 / 手举过头顶 —— 都不能算俯撑
+  {
+    const det = createDetector('pushup');
+    const r = makeFrameRunner(det);
+    const standFrame = computeFrame(toMetric(standingPose({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'side' })
+      .map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT), { groundY: PUSH_BASE.groundY }, 0, false, null);
+    r.run([{ f: standFrame, ms: 900 }]);
+    ok('俯卧撑：站着时门控拦住（不计次，并给出「还没进入姿势」的提示）',
+      det.active === false && det.validReps === 0 && det.standby.length > 0,
+      `active=${det.active} standby=${det.standby}`);
+    r.run([{ f: { ok: true, torsoIncl: 60, armRaised: 1.1, elbowAngle: 170, torsoLen: 0.3, perSide: { L: {}, R: {} } }, ms: 600 }]);
+    ok('俯卧撑：手举过肩（开合跳那类动作）不算俯撑', det.active === false, `active=${det.active}`);
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * [5] bend 引擎：跳跃（离地）
  * ------------------------------------------------------------------ */
 
@@ -1275,11 +1343,14 @@ console.log('\n[6] alt 引擎：左右交替');
     det.switched === false || det.lastSide === 'L', `switched=${det.switched} lastSide=${det.lastSide} reps=${det.validReps}`);
 }
 {
-  // 门控：站着做登山者
+  // 门控：站着做登山者（站姿：躯干竖直 + 手在肩下方也要被拦住）
   const det = createDetector('mountainClimber');
   const r = makeFrameRunner(det);
-  r.run([{ f: { torsoIncl: 6, kneeClear: 0.8, hipClear: 1.6, shoulderClear: 2.6, wristClearMin: 1.6 }, ms: 1200 }]);
+  r.run([{ f: { torsoIncl: 6, kneeClear: 0.8, hipClear: 1.6, shoulderClear: 2.6, wristClearMin: 1.6, armRaised: -0.5 }, ms: 1200 }]);
   ok('站着做登山者：被门控拦住', det.active === false && det.standby.length > 0, `active=${det.active}`);
+  // 手举过头顶（开合跳那类动作）：同样不算俯撑
+  r.run([{ f: { torsoIncl: 40, armRaised: 1.2, perSide: { L: { knee: 85 }, R: { knee: 178 } } }, ms: 600 }]);
+  ok('手举过头顶不算俯撑（门控看的是「手没有举到肩上方」）', det.active === false, `active=${det.active}`);
   r.run([{ f: climberFrame('L'), ms: 600 }]);
   ok('撑下去之后：门控放行', det.active === true && det.standby === '', `active=${det.active}`);
 }

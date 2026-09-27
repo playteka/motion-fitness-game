@@ -275,13 +275,27 @@ console.log('\n[5] 姿势要求用的就是 GATES 的那张表');
     && specStages('deadBug')[0].alt?.metric === 'shoulderClear',
     String(itemsOf('deadBug').filter((it) => it.labelKey === 'spec.pose.supineLow').length));
 
-  // 俯卧撑改回通用引擎之后，它的俯撑门控就是**通用 prone 门控**（同一张 GATE_LIMITS 表）
-  const pronePoseItems = itemsOf('pushup').filter((it) => it.labelKey === 'spec.pose.prone');
-  ok('俯卧撑：俯撑门控用的是通用 prone 表（躯干 ≥32° / 肩离地 ≥0.10 / 手在地面 ≤0.95）',
-    pronePoseItems.some((it) => it.metricKey === 'metric.torsoIncl' && it.value === GATE_LIMITS.prone.torsoIncl[0])
-    && pronePoseItems.some((it) => it.metricKey === 'metric.shoulderClear' && it.value === GATE_LIMITS.prone.shoulderClear[0])
-    && pronePoseItems.some((it) => it.metricKey === 'metric.wristClearMin' && it.value === GATE_LIMITS.prone.wristClearMin[1]),
-    JSON.stringify(pronePoseItems.map((it) => `${it.metricKey}${it.op}${it.value}`)));
+  /**
+   * 俯卧撑 / 登山者的俯撑门控是 **proneUpright**（不看地面线的那一版）：
+   * 用户实测「俯卧撑做着做着提示『还没进入这个动作的姿势』，之后再怎么做都不计数」——
+   * 原因是旧门控里的「手离地 ≤0.95」以**校准地面线**为基准，地面线偏掉之后永远过不了门控。
+   * 现在门控只看躯干倾角与「手有没有举到肩上方」，弹窗里也必须照实写这两条。
+   */
+  {
+    const gateItems = itemsOf('pushup').filter((it) => it.labelKey === 'spec.pose.proneUpright');
+    ok('俯卧撑：俯撑门控是「不看地面线」的那一版（躯干 ≥32° + 手没有举过肩 ≤0.45）',
+      gateItems.length === 2
+      && gateItems.some((it) => it.metricKey === 'metric.torsoIncl' && it.value === GATE_LIMITS.proneUpright.torsoIncl[0])
+      && gateItems.some((it) => it.metricKey === 'metric.armRaised' && it.value === GATE_LIMITS.proneUpright.armRaised[1]),
+      JSON.stringify(gateItems.map((it) => `${it.metricKey}${it.op}${it.value}`)));
+    ok('俯卧撑：弹窗里**不再**出现依赖地面线的「肩离地 / 手离地」门控',
+      !itemsOf('pushup').some((it) => it.metricKey === 'metric.wristClearMin')
+      && !itemsOf('pushup').some((it) => it.metricKey === 'metric.shoulderClear'),
+      JSON.stringify(itemsOf('pushup').map((it) => it.metricKey)));
+    ok('登山者：用的是同一个不看地面线的门控',
+      itemsOf('mountainClimber').filter((it) => it.labelKey === 'spec.pose.proneUpright').length === 2,
+      JSON.stringify(itemsOf('mountainClimber').map((it) => it.labelKey)));
+  }
   ok('臀桥：躺姿判据 = BRIDGE 的常量',
     itemsOf('bridge').some((it) => it.metricKey === 'metric.trunk' && it.value === BRIDGE.supineTorso)
     && itemsOf('bridge').some((it) => it.metricKey === 'metric.shoulderClear' && it.value === BRIDGE.shoulderClearMax)

@@ -887,6 +887,10 @@ const SHORT_LABEL = {
   'spec.pose.standUpright': 'spec.short.stand',
   'spec.pose.standWide': 'spec.short.stand',
   'spec.pose.prone': 'spec.short.prone',
+  // 俯卧撑 / 登山者用的是**不看地面线**的俯撑门控（见 engines.js 的 proneUpright）：
+  // 短标签仍写「俯撑」——否则得分步骤（`STEP_STAGE.pushup.setup: 'prone'`）找不到这一格，
+  // 那 5 分会凭空消失。
+  'spec.pose.proneUpright': 'spec.short.prone',
   'spec.pose.supine': 'spec.short.supine',
   'spec.pose.supineLow': 'spec.short.supine',
   'spec.pose.supineFlat': 'spec.short.supine',

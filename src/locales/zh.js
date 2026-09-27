@@ -321,6 +321,8 @@ export default {
       stage: '阶段',
       steps: '要领',
       counts: '有效/半程',
+      // 门控那一行：把门控真正在看的每个量摆出来（排查「总说我没进入姿势」）
+      gate: '姿势门控',
       backLine: '结算线',
       countLine: '计次线',
       repMin: '本轮最小',
@@ -858,6 +860,8 @@ export default {
     // 「躯干倾角 + 髋角」之和：坐姿体前屈的恒等式 ≈90°（用户给的运动学描述）
     foldSum: '躯干角+髋角',
     wristClear: '手离地高度',
+    // 俯卧撑 / 登山者的门控用它判「手有没有举到肩上方」（负值 = 手在肩下方，撑着地）
+    armRaised: '手举过肩的高度',
     wristClearMin: '手离地高度',
     backKneeDrop: '后膝离地高度',
     hipLineDevAbs: '偏差',
@@ -939,6 +943,8 @@ export default {
     pose: {
       stand: '站立姿势',
       standUpright: '站直（不依赖地面线）',
+      // 俯卧撑 / 登山者的门控：和「站直（不依赖地面线）」同一个思路，避开校准地面线
+      proneUpright: '俯撑姿势（不依赖地面线）',
       standWide: '站立、两腿分开',
       prone: '俯撑姿势',
       supine: '仰卧屈膝',

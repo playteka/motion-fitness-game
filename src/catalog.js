@@ -120,7 +120,10 @@ export const EXERCISES = [
     plan: 'pushup', posture: 'prone', judge: 'elbow', target: 12,
     params: bend({
       metric: 'elbow',
-      gate: 'prone',
+      // 门控用**不看地面线**的那一版（proneUpright）：原来用的 prone 里有两条以校准地面线为
+      // 基准的条件，地面线一偏（校准时站的位置和做动作时不一样、摄像头被碰过）就会
+      // 「永远进不了姿势 → 一次都不计数」（用户实测：弹出「还没进入这个动作的姿势」之后再怎么做都没用）
+      gate: 'proneUpright',
       up: 170,          // 参考顶位（手臂撑得最直的角度上限）
       down: 95,         // 参考底位（压到最深的肘角）
       enterP: 0.15,     // 开始下沉 ≈ 159°
@@ -308,7 +311,9 @@ export const EXERCISES = [
     // 退出线 140 → 125：和勾腿跳同一个道理（见那边的注释）—— 快节奏时腿收回去不会每次都绷直，
     // 退出线太高会让两侧的迟滞状态互相锁死、后面都计不上。
     // 「进入在做」的线（膝角 ≤105°）没动，所以「只是撑住不动」不会被算进来。
-    params: { gate: 'prone', metric: 'knee', cmp: 'lt', onValue: 112, offValue: 124, minRepMs: 200 },
+    // 门控同俯卧撑：用**不看地面线**的那一版（proneUpright）——
+    // 原来那版只要校准地面线偏一点，就会「永远进不了姿势、一次都不计数」。
+    params: { gate: 'proneUpright', metric: 'knee', cmp: 'lt', onValue: 112, offValue: 124, minRepMs: 200 },
   }),
   e('jumpingJack', '🙌', 'full', {
     plan: 'jumpingJack', view: 'front', posture: 'stand', judge: 'spread',

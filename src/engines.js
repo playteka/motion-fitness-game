@@ -65,11 +65,31 @@ export const GATE_LIMITS = {
     torsoIncl: [null, 52],
     shoulderAboveHip: [0.5, null],
   },
-  /** 俯撑（俯卧撑 / 平板 / 登山者）：躯干接近水平 + 肩离地 + 手在地面 */
+  /** 俯撑（平板 / 熊爬这类）：躯干接近水平 + 肩离地 + 手在地面 */
   prone: {
     torsoIncl: [32, null],
     shoulderClear: [0.10, null],
     wristClearMin: [null, 0.95],
+  },
+  /**
+   * 俯撑（**不看地面线**的版本：俯卧撑 / 登山者）。
+   *
+   * 为什么要另开一个：`prone` 里有两条**以校准地面线为基准**的条件（肩离地 ≥0.10、手离地 ≤0.95）。
+   * 地面线一旦偏掉（校准时人站得比做动作时更远/更近，或者摄像头被碰过，甚至只是换了个位置躺下），
+   * 这两条读数就会整体平移 —— 用户实测「俯卧撑做着做着弹出『还没进入这个动作的姿势』，
+   * 之后再怎么做都不计数了」：地面线偏低 0.3 时「手离地」读到 **1.07 > 0.95**，
+   * **只要姿势不变就永远过不了门控**，识别器一直 active=false，于是一次都不计数（探针复现过：
+   * 地面线偏 0.3 / 0.5 时旧门控全程「没过」，姿势本身完全标准）。
+   *
+   * 和当初「站立门控」踩的是同一个坑（见 `standUpright` 的说明），修法也一样：
+   * 换成**身体自己跟自己比**的量，与地面线无关：
+   *   - `torsoIncl ≥ 32°`：躯干在画面里明显接近水平 → 站着的人进不来；
+   *   - `armRaised ≤ 0.45`：手没有举到肩上方（撑地/趴着的姿态）——「手举过头顶」是开合跳那类动作。
+   * 两条都不依赖地面线、也不依赖机位距离，姿势对了就一定进得来。
+   */
+  proneUpright: {
+    torsoIncl: [32, null],
+    armRaised: [null, 0.45],
   },
   /** 仰卧屈膝（臀桥 / 卷腹）：肩离地高度放宽到 0.95，卷腹卷高了也算 */
   supine: {
@@ -194,10 +214,13 @@ export const GATES = {
   /** 站立体前屈：站着但躯干往前折 */
   standFold: (f) => inLimit(f.torsoIncl, GATE_LIMITS.standFold.torsoIncl)
     && inLimit(f.hipClear, GATE_LIMITS.standFold.hipClear),
-  /** 俯撑（俯卧撑 / 平板 / 登山者）：躯干接近水平 + 手在地面 */
+  /** 俯撑（平板 / 熊爬这类）：躯干接近水平 + 手在地面 */
   prone: (f) => inLimit(f.torsoIncl, GATE_LIMITS.prone.torsoIncl)
     && inLimit(f.shoulderClear, GATE_LIMITS.prone.shoulderClear)
     && inLimit(f.wristClearMin, GATE_LIMITS.prone.wristClearMin),
+  /** 俯撑（**不看地面线**：俯卧撑 / 登山者）—— 见 GATE_LIMITS.proneUpright 的说明 */
+  proneUpright: (f) => inLimit(f.torsoIncl, GATE_LIMITS.proneUpright.torsoIncl)
+    && inLimit(f.armRaised, GATE_LIMITS.proneUpright.armRaised),
   /** 手撑在椅子/台阶上的俯撑（上斜俯卧撑） */
   proneHigh: (f) => f.torsoIncl > 20 && f.shoulderClear > 0.10 && f.wristClearMin < 1.5,
   /** 俯卧在地面（超人式 / 青蛙趴 / 婴儿式） */
@@ -267,7 +290,7 @@ export const GATES = {
 export const GATE_HINT = {
   stand: 'stand', standWide: 'stand', standUpright: 'stand', standOneLeg: 'stand', standWall: 'stand',
   standHeelUp: 'stand', standArmCross: 'stand', standFold: 'stand',
-  prone: 'prone', proneHigh: 'prone', proneFloor: 'prone', proneLift: 'prone',
+  prone: 'prone', proneHigh: 'prone', proneFloor: 'prone', proneLift: 'prone', proneUpright: 'prone',
   supine: 'supine', supineLow: 'supine', supineFlat: 'supine', hollow: 'supine', crab: 'supine',
   quadruped: 'quadruped', bearCrawl: 'quadruped',
   kneel: 'kneel', kneelFold: 'kneel', childPose: 'kneel', wristStretch: 'kneel',
@@ -341,11 +364,18 @@ export const SIDE_METRICS = {
  * 拿「离地多少」去判断姿势只会误报（实测卷腹卷得标准反而被念「肋骨不要外翻」）。
  */
 /**
+ * 俯撑的姿势提醒阈值（`prone` 与不看地面线的 `proneUpright` **共用同一份**）。
+ */
+const PRONE_ADVISORY = { bodyStraight: 138, hipLineDev: 0.16 };
+
+/**
  * 实时提醒的阈值（一处定义：ADVISORY 用它出声纠正，specs.js 用它显示技术指标）。
  * 这些提醒**不拦计数**，只出声 + 打折质量分。
  */
 export const ADVISORY_LIMITS = {
-  prone: { bodyStraight: 138, hipLineDev: 0.16 },
+  prone: PRONE_ADVISORY,
+  /** 俯撑（不看地面线的那一版）：提醒内容与 prone 完全一样 */
+  proneUpright: PRONE_ADVISORY,
   stand: { valgus: 0.45, trunkLean: 35 },
 };
 
@@ -362,6 +392,11 @@ const ADVISORY = {
     return null;
   },
 };
+/**
+ * 俯撑的**不看地面线**那一版门控用**同一套**姿势提醒（塌腰 / 撅臀 / 身体不成一条线）：
+ * 门控只是换了「看哪些量来判断在不在姿势」，提醒内容完全一样。
+ */
+ADVISORY.proneUpright = ADVISORY.prone;
 
 /**
  * 离地高度（正数 = 身体整体离开地面）。
@@ -457,8 +492,31 @@ class BendRepDetector extends DetectorBase {
       { key: 'debug.diag.startValue', value: `${fmt(this.effUp)}/${fmt(this.up)}` },
       { key: 'debug.diag.peak', value: `${Math.round(this.peak * 100)}%` },
       { key: 'debug.diag.counts', value: `${this.validReps}/${this.partialReps}` },
+      ...this.gateDiag(),
       ...(this.lastReject ? [{ key: 'debug.diag.reject', reject: this.lastReject }] : []),
     ];
+  }
+
+  /**
+   * 门控那一行：把门控**真正在看的每个量**连同它的线和过没过一起摆出来。
+   *
+   * 为什么要有它：用户反馈「俯卧撑做着做着就提示『还没进入这个动作的姿势』，之后再怎么做都不计数」——
+   * 这类问题以前只能靠猜（到底是躯干不够平？手太高？还是地面线偏了？）。现在看一眼这一行就知道：
+   * 比如 `torsoIncl 63(≥32)✓ armRaised -1.09(≤0.45)✓` 说明姿势没问题，是别的地方卡住；
+   * 而 `armRaised 0.9(≤0.45)✗` 就直接指出「手举得太高了」。
+   */
+  gateDiag() {
+    const limits = GATE_LIMITS[this.gateName];
+    const f = this._lastFrame;
+    if (!limits || !f) return [];
+    const parts = [];
+    for (const [metric, [min, max]] of Object.entries(limits)) {
+      const v = f[metric];
+      const ok = inLimit(v, [min, max]);
+      const want = `${min !== null ? `>=${fmt(min)}` : ''}${max !== null ? `<=${fmt(max)}` : ''}`;
+      parts.push(`${metric} ${Number.isFinite(v) ? fmt(v) : '—'}(${want})${ok ? '✓' : '✗'}`);
+    }
+    return [{ key: 'debug.diag.gate', value: `${this.gateOk ? '✓' : '✗'} ${parts.join(' ')}` }];
   }
 
   /** 0 = 起始位置，1 = 到位（起始位置用「用户自己的」极值，见 effUp） */

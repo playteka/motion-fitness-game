@@ -319,6 +319,8 @@ export default {
       stage: 'Stage',
       steps: 'Steps',
       counts: 'Valid/partial',
+      // The gate row: every quantity the posture gate actually reads
+      gate: 'Posture gate',
       backLine: 'Return line',
       countLine: 'Counting line',
       repMin: 'This rep min',
@@ -858,6 +860,8 @@ export default {
     // "Trunk tilt + hip angle" sum: the seated forward fold identity (~90 deg)
     foldSum: 'Trunk + hip angle',
     wristClear: 'Hand height off the floor',
+    // Push-up / mountain climber gate: how far the hands are above the shoulders (negative = hands low)
+    armRaised: 'Hands above the shoulders',
     wristClearMin: 'Hand height off the floor',
     backKneeDrop: 'Back knee height off the floor',
     hipLineDevAbs: 'Deviation',
@@ -941,6 +945,8 @@ export default {
     pose: {
       stand: 'Standing position',
       standUpright: 'Standing upright (no floor line needed)',
+      // Push-up / mountain climber gate: same idea as the upright stance, avoiding the floor line
+      proneUpright: 'Push-up position (no floor line needed)',
       standWide: 'Standing, legs apart',
       prone: 'Push-up position',
       supine: 'Lying on your back, knees bent',

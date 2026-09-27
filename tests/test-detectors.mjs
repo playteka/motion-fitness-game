@@ -723,6 +723,8 @@ console.log('\n[3] 俯卧撑计数（只判肘角）');
   const r = makeFrameRunner(det);
   const top = {
     ok: true, view: 'side', torsoIncl: 78, shoulderClear: 0.95, wristClear: 0.05, wristClearMin: 0.05,
+    // 门控 proneUpright 看的是「手有没有举到肩上方」（armRaised）：撑地时是负的
+    armRaised: -0.8,
     elbowAngle: 168, hipAngle: 178, kneeAngle: 178, bodyStraight: 178, hipLineDev: 0, torsoLen: 0.3,
     perSide: { L: {}, R: {} },
   };
