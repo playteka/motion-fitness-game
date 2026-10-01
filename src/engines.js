@@ -30,6 +30,17 @@ import { DetectorBase, HoldDetector } from './detector-base.js';
  *
  * 只收录动作库里真的用到的门控（其余门控仍是就地写死的判定）。
  */
+/**
+ * 门控「掉了一下」的宽限（毫秒）：门控在这么短的时间内恢复，就**不清空**正在进行的那一轮。
+ *
+ * 为什么需要它（用户反馈「向后箭步蹲时右腿向后不计数」的第二个原因）：
+ * 引擎原来是一帧不过门控就把 `peak / repStartAt` 全部清零 —— 读数抖一下，
+ * 一整轮深度就作废了，人站起来时还被当成新一轮（用时只有几百毫秒）判成「太快了」。
+ * 现在只在这段时间内保持本轮状态（不推进、不清空）；超过它就认为真的不在这个姿势里，
+ * 按老规矩清干净。取值 400ms ≈ 10 帧，足够盖住跟踪跳变，又不至于把「离开姿势」当成还在做。
+ */
+export const GATE_GRACE_MS = 400;
+
 export const GATE_LIMITS = {
   /** 站立（膝盖离地、髋在膝上方） */
   stand: {
@@ -453,6 +464,7 @@ class BendRepDetector extends DetectorBase {
     this.backSince = 0;
     this.baseBottom = 0;
     this._badFrames = 0;
+    this._badSince = 0;
     this._baseAt = undefined;
     // 最近 1.5 秒里「起始侧」的极值（见 effUp 的说明）
     this._recent = [];
@@ -543,15 +555,32 @@ class BendRepDetector extends DetectorBase {
       this.active = false;
       this.standby = hintKey;
       this._badFrames += 1;
+      if (!this._badSince) this._badSince = now;
       if (this._badFrames > 25) this.cue('notReady', null, 'info', now, 9000);
-      this.stage = 'up';
-      this.repStartAt = 0;
-      this.peak = 0;
-      this.progress = 0;
-      this.depthPct = 0;
+      /*
+       * 门控掉了一下**不等于**「这一轮不要了」。
+       *
+       * 用户反馈「向后箭步蹲做到底时右腿向后就不计数」，日志里看到的是：
+       * 门控在最深的那几帧连掉 6 帧（后膝贴地 → 膝离地读数 0.02），
+       * 而这里原来是**一帧不过就把 stage / repStartAt / peak 全部清零** ——
+       * 一整轮深度白白作废；人站起来时被当成新一轮，用时只剩几百毫秒，
+       * 于是又判成「太快了」，屏幕上什么都不加。
+       *
+       * 所以加一个宽限：门控掉不超过 `GATE_GRACE_MS` 时**保持本轮状态**（peak 不清、计时不清），
+       * 只是这几帧不推进；只有持续掉出门控（真的不在这个姿势里了）才清干净。
+       * 这也顺带挡住了 MediaPipe 单帧跳变造成的假「离开姿势」。
+       */
+      if (now - this._badSince > GATE_GRACE_MS) {
+        this.stage = 'up';
+        this.repStartAt = 0;
+        this.peak = 0;
+        this.progress = 0;
+        this.depthPct = 0;
+      }
       return;
     }
     this._badFrames = 0;
+    this._badSince = 0;
     this.active = true;
     this.standby = '';
 

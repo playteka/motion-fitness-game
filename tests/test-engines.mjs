@@ -25,11 +25,14 @@ import { EXERCISES } from '../src/catalog.js';
 import { t, setLang } from '../src/i18n.js';
 import {
   GATES,
+  GATE_LIMITS,
+  GATE_GRACE_MS,
   BendRepDetector, AltRepDetector, TwistRepDetector, SequenceRepDetector, PoseHoldDetector,
 } from '../src/engines.js';
 import {
   ASPECT, SEG, standingPose, pronePose, supinePose, lostFrame, up, add,
 } from './synthetic-pose.mjs';
+import fs from 'node:fs';
 
 const DT = 1000 / 30;
 setLang('zh', { persist: false });
@@ -659,6 +662,73 @@ console.log('\n[2] bend 引擎：只有宽松档');
   ok('卷得更深的那一次质量分更高（深度分照旧区分质量）',
     rDeep.reps[0].quality > rShallow.reps[0].quality,
     `${rDeep.reps[0].quality} vs ${rShallow.reps[0].quality}`);
+}
+
+/* ------------------------------------------------------------------ *
+ * [2b] 门控掉帧：不能把正在做的那一轮直接作废
+ *
+ * 用户反馈：「向后箭步蹲……如果我右腿向后弯曲箭步的时候是没有计数的」。
+ * 真因（用他本人的日志复现，见 tests/fixtures/lungeBack-right-leg-back.json）：
+ *   ① 门控 `stand` 要求「膝离地 ≥0.28 倍躯干长」，而**向后箭步蹲做到底时后膝就是贴地的**
+ *      （这一轮实测膝离地 0.004），最深的那 6 帧连续不过门控；
+ *   ② 引擎原来**一帧不过门控就把 peak / repStartAt 清零** —— 一整轮深度作废，
+ *      站起来时被当成新一轮、用时只剩几百毫秒，于是判成「太快了」，屏幕上什么都不加。
+ * 修法：门控换成不依赖地面线的 `standUpright`（①），并且给门控掉帧加宽限（②）。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[2b] 门控掉帧不该把正在做的一轮作废（向后箭步蹲右腿向后不计数）');
+{
+  const fix = JSON.parse(fs.readFileSync(
+    new URL('./fixtures/lungeBack-right-leg-back.json', import.meta.url), 'utf8'));
+  const frames = fix.frames.map((f) => computeFrame(
+    toMetric(f.lm.map(([x, y, v]) => ({ x, y, v })), fix.aspect),
+    { groundY: fix.groundRef }, f.t, false, null));
+  const minKneeClear = Math.min(...frames.map((f) => f.kneeClear));
+  const oldFails = frames.filter((f) => !GATES.stand(f)).length;
+  const newFails = frames.filter((f) => !GATES.standUpright(f)).length;
+
+  ok('真实一轮里旧门控 stand 在最深那几帧确实「不在姿势里」（后膝贴地 → 膝离地 ≈0 远低于 0.28）',
+    oldFails >= 5 && minKneeClear < GATE_LIMITS.stand.kneeClear[0],
+    `不过门控 ${oldFails} 帧 / 最小膝离地 ${minKneeClear.toFixed(3)}`);
+  ok('换成不依赖地面线的 standUpright 后，这一轮一帧都没掉出门控',
+    newFails === 0, `不过门控 ${newFails} 帧`);
+
+  const det = createDetector('lungeBack');
+  for (const f of frames) det.update(f, f.t);
+  ok('真实日志这一轮（右腿向后、后膝贴地的标准箭步蹲）现在计 1 次',
+    det.validReps === 1, `实际 ${det.validReps}`);
+  ok('……而且不再冤枉地记一次半程', det.partialReps === 0, `实际 ${det.partialReps}`);
+  ok('向后箭步蹲的门控不再依赖地面线（standUpright）',
+    EXERCISE_MAP.lungeBack.params.gate === 'standUpright',
+    String(EXERCISE_MAP.lungeBack.params.gate));
+
+  /* ---- 门控宽限：掉几帧保住这一轮，掉太久才清空 ---- */
+  const badParams = {
+    metric: 'kneeBent', gate: 'stand', up: 165, down: 105,
+    looseP: 0.70, bottomP: 0.92, minRepMs: 520, enterP: 0.32, ignoreP: 0.45, backP: 0.16,
+  };
+  /** 一次「站直 → 蹲到底 → 站起来」，中间插 badMs 毫秒的门控掉帧（后膝贴地） */
+  const repWithDropout = (badMs) => {
+    const d = new BendRepDetector({ id: 'demo', name: 'demo', engine: 'bend', params: badParams });
+    const r = makeFrameRunner(d);
+    const good = (bent) => ({ kneeBent: bent, torsoIncl: 5, kneeClear: 0.9, hipClear: 1.2 });
+    const dropped = { kneeBent: 70, torsoIncl: 5, kneeClear: 0.02, hipClear: 1.1 };
+    r.run([{ f: good(170), ms: 300 }, { f: good(70), ms: 400 }]);
+    if (badMs > 0) r.run([{ f: dropped, ms: badMs }]);
+    r.run([{ f: good(70), ms: 100 }, { f: good(170), ms: 500 }]);
+    return d;
+  };
+  const short = repWithDropout(5 * DT);
+  const long = repWithDropout(600);
+  ok('门控只掉 5 帧（≈165ms）：这一轮保住，照样计 1 次',
+    short.validReps === 1 && short.partialReps === 0,
+    `有效 ${short.validReps} / 半程 ${short.partialReps}`);
+  ok('门控掉太久（600ms > 宽限）：按老规矩作废，并且不会被算成「计次」',
+    long.validReps === 0, `有效 ${long.validReps}`);
+  ok('……只是记一次半程（就是用户日志里那条「太快了」）',
+    long.partialReps === 1, `半程 ${long.partialReps}`);
+  ok('宽限常量写在 engines.js 里（400ms ≈ 10 帧）',
+    GATE_GRACE_MS === 400, `${GATE_GRACE_MS}ms`);
 }
 
 /* ------------------------------------------------------------------ *
