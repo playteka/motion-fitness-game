@@ -466,6 +466,22 @@ function handleRouteChange() {
 
 function settingsOpen() { return !$('settingsModal').hidden; }
 
+/** 有没有任何一个弹窗开着（快捷键要先让给弹窗里的交互） */
+function anyModalOpen() {
+  return settingsOpen() || exerciseSettingsOpen() || recordsModalOpen();
+}
+
+/**
+ * 现在是不是「视频画面状态」：在动作页（不是动作主页）、而且没有任何弹窗挡着。
+ *
+ * 用户要求：「在视频状态下，按下 Ctrl+H 可以开启或者停止记录调试数据。」
+ * 主页（挑动作的那一屏）不算 —— 那时摄像头都还没开，按 Ctrl+H 不该悄悄开始记录。
+ */
+function videoStateActive() {
+  const view = $('workoutView');
+  return !state.homeMode && !!view && !view.hidden && !anyModalOpen();
+}
+
 function openSettings() {
   const modal = $('settingsModal');
   if (!modal) return;
@@ -473,6 +489,10 @@ function openSettings() {
   // 让读屏软件念出弹窗标题（标题文案走 i18n，这里只做无障碍关联）
   const title = $('settingsTitle');
   if (title) title.textContent = t('settings.title');
+  // 「调试数据记录」这一组默认藏着（用户要求按 Ctrl+H 才显示）：弹窗每次打开都按上次的
+  // 临时状态对齐（刷新页面回到隐藏），顺便刷一遍状态行上的帧数。
+  setPoseLogUi(poseLogUiVisible);
+  renderPoseLogStatus();
   const first = modal.querySelector('select, button');
   if (first) first.focus({ preventScroll: true });
 }
@@ -698,10 +718,6 @@ function renderExerciseSettings() {
     timedEl.hidden = !ex.timed;
   }
   renderExerciseSpecs();
-  // 「调试数据记录」默认藏着（用户要求按 Ctrl+H 才显示）；这里只把当前状态同步上，
-  // 保证弹窗重新打开时和上次一致（刷新页面回到隐藏）。
-  setPoseLogUi(poseLogUiVisible);
-  renderPoseLogStatus();
 }
 
 /* ------------------------------------------------------------------ *
@@ -759,6 +775,35 @@ function setPoseLog(on, { silent = false } = {}) {
 }
 
 /**
+ * 切换「记录调试数据」（用户要求：**视频画面下按 Ctrl+H** 直接开始 / 停止）。
+ *
+ * 为什么要这个快捷方式：这一组设置藏在全局配置里、平时不显示，而调试记录恰恰是
+ * 「练到一半发现没计上」时才想起来开的东西 —— 打开弹窗再找开关太绕。
+ * 现在视频画面里按一下 Ctrl+H 就开始记，再按一下停，屏幕上还会用状态条告诉你
+ * 文件名和共记了多少帧（右下角的角标同时在跳帧数）。
+ *
+ * 开关状态照旧写进设置（`state.settings.poseLog`），并按「运动设定/设置」里那个开关
+ * 的按钮状态同步（`renderPoseLogStatus` 会写 `aria-pressed`）。
+ */
+function togglePoseLog({ silent = false } = {}) {
+  const on = !state.settings.poseLog;
+  state.settings.poseLog = on;
+  saveSettings();
+  const btn = $('btnPoseLog');
+  if (btn) btn.setAttribute('aria-pressed', String(on));
+  const st = setPoseLog(on, { silent: true });
+  if (!silent) {
+    setCueLine(
+      on
+        ? t('status.poseLogKeyOn', { file: st.file || '' })
+        : t('status.poseLogKeyOff', { file: st.file || '', frames: String(st.frames) }),
+      on ? 'info' : 'warn',
+    );
+  }
+  return st;
+}
+
+/**
  * 画面**右下角**的「正在记录」角标（用户要求）。
  *
  * 用户原话：「一旦这个开关打开，则在视频屏幕的右下角要出现一个图标，显示其正在记录帧数据，
@@ -781,7 +826,7 @@ function renderRecBadge() {
   if (num.textContent !== txt) num.textContent = txt;
 }
 
-/** 运动设定弹窗里那一行状态（记了多少帧、文件叫什么、有没有写失败） */
+/** 设置弹窗（全局配置）里那一行状态（记了多少帧、文件叫什么、有没有写失败） */
 function renderPoseLogStatus() {
   const el = $('poseLogStatus');
   if (!el) return;
@@ -789,16 +834,16 @@ function renderPoseLogStatus() {
   const btn = $('btnPoseLog');
   if (btn) btn.setAttribute('aria-pressed', String(!!state.settings.poseLog));
   if (!s.active) {
-    el.textContent = t('exercise.logOff');
+    el.textContent = t('settings.logOff');
     return;
   }
-  el.textContent = t('exercise.logOn', {
+  el.textContent = t('settings.logOn', {
     file: s.file,
     frames: String(s.frames),
     mb: (s.bytes / 1048576).toFixed(2),
-  }) + (s.queued > 20 ? ` · ${t('exercise.logQueued', { n: String(s.queued) })}` : '')
-    + (s.dropped ? ` · ${t('exercise.logDropped', { n: String(s.dropped) })}` : '')
-    + (s.error ? ` · ${t('exercise.logError', { err: s.error })}` : '');
+  }) + (s.queued > 20 ? ` · ${t('settings.logQueued', { n: String(s.queued) })}` : '')
+    + (s.dropped ? ` · ${t('settings.logDropped', { n: String(s.dropped) })}` : '')
+    + (s.error ? ` · ${t('settings.logError', { err: s.error })}` : '');
 }
 
 function openExerciseSettings() {
@@ -3150,9 +3195,9 @@ function loop() {
 
   // 管线状态（摄像头 / 模型 / 是否找到人）
   if (state.loopCount % 15 === 0) updatePipelineStatus();
-  // 记录中：运动设定弹窗开着时，每秒刷新一次状态行（用户能看见帧数在涨，确认真的在记）
+  // 记录中：设置弹窗开着时，每秒刷新一次状态行（用户能看见帧数在涨，确认真的在记）
   if (poseLogger.active && state.loopCount % 30 === 0) {
-    const modal = $('exerciseModal');
+    const modal = $('settingsModal');
     if (modal && !modal.hidden) renderPoseLogStatus();
   }
   // 右下角角标的帧数：每 15 帧（约半秒）刷一次就够跳得动了，不必每帧写 DOM
@@ -3538,20 +3583,30 @@ function bindUI() {
     /**
      * **Ctrl+H（macOS 上是 Cmd+H）**：在「运动设定」弹窗里显 / 隐「调试数据记录」那一组。
      *
-     * 用户要求：「运动设定弹窗里的『调试数据记录』改为隐藏，只有用户在弹窗中按下 Ctrl+H 时，
-     * 才会显示出来。」所以它默认是藏的（连整个分组一起 hidden），这个快捷键把它唤出来 / 收回去。
+     * 用户要求两轮：
+     *   ① 「运动设定弹窗里的『调试数据记录』改为隐藏，只有用户在弹窗中按下 Ctrl+H 时，才会显示出来。」
+     *   ② 「关于调试数据记录这部分，请从运动设置放到全局配置里面，还是维持 Ctrl+H 隐藏这样的模式，
+     *      正常情况下不显示。此外，在视频状态下，按下 Ctrl+H 可以开启或者停止记录调试数据。」
+     *
+     * 所以现在是两条互不冲突的分工：
+     *   - **设置弹窗（全局配置）打开时**：Ctrl+H = 把那一组显示 / 收起（它默认藏着）；
+     *   - **视频画面状态下**（动作页、没有弹窗）：Ctrl+H = 直接**开始 / 停止记录**，不用打开弹窗 ——
+     *     调试记录本来就是「练到一半发现没计上」才想起来开的东西，绕进弹窗太慢。
+     *   其余情况（其它弹窗、主页）**不拦**这个键，交给浏览器（别把系统快捷键吞掉）。
      *
      * ⚠️ Ctrl+H 在 Chrome 里是「打开历史记录」——**有些浏览器版本会自己吃掉这个键、页面拦不住**。
      * 所以带上修饰键的变体（Ctrl+Shift+H / Ctrl+Alt+H / Cmd+*+H）**一律都算**：
      * 哪个没被浏览器抢走就用哪个，用户按 Ctrl+H 不行时换 Ctrl+Alt+H 一定能用。
      * 放在最前面判断（在「输入框优先」那道守卫之前）：它是组合键、不会和打字冲突。
-     * 弹窗没开时**不拦**这个键（交给浏览器，别把系统快捷键吞掉）。
      */
     if ((e.ctrlKey || e.metaKey) && (e.key === 'h' || e.key === 'H')) {
-      if (exerciseSettingsOpen()) {
+      if (settingsOpen()) {
         e.preventDefault();
         setPoseLogUi(!poseLogUiVisible);
         setCueLine(t(poseLogUiVisible ? 'status.poseLogUiOn' : 'status.poseLogUiOff'), 'info');
+      } else if (videoStateActive()) {
+        e.preventDefault();
+        togglePoseLog();
       }
       return;
     }
@@ -3742,8 +3797,9 @@ window.__mfg = {
   announceHoldCount, HOLD_COUNT_EVERY,
   announceTimeLeft, TIME_CALL_AT, targetPresetsFor, targetStepFor,
   buildMusicTracks, selectMusicTrack,
-  // 调试数据记录（运动设定里的开关）：记录器本体 + 开关函数，测试直接用它们驱动
-  poseLogger, setPoseLog, poseLogMeta, renderPoseLogStatus,
+  // 调试数据记录（全局配置里的隐藏分组）：记录器本体 + 开关函数，测试直接用它们驱动
+  poseLogger, setPoseLog, togglePoseLog, poseLogMeta, renderPoseLogStatus,
+  setPoseLogUi, anyModalOpen, videoStateActive,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
 };

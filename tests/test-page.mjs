@@ -504,6 +504,48 @@ console.log('\n[3] 静态资源与模型文件');
     ok('主循环里定时刷新角标（每 15 帧一次，不必每帧写 DOM）',
       /state\.loopCount % 15 === 0\) renderRecBadge\(\)/.test(app));
   }
+
+  /* ---- 用户要求：「关于调试数据记录这部分，请从运动设置放到全局配置里面，还是维持 Ctrl+H
+     隐藏这样的模式，正常情况下不显示。此外，在视频状态下，按下 Ctrl+H 可以开启或者停止记录调试数据。」---- */
+  {
+    const groupAt = html.indexOf('id="poseLogGroup"');
+    const exStart = html.indexOf('id="exerciseModal"');
+    const exEnd = html.indexOf('id="recordsArea"') >= 0
+      ? html.indexOf('id="recordsArea"') : html.length;
+    const setStart = html.indexOf('id="settingsModal"');
+    const setEnd = exStart;
+    ok('「调试数据记录」那一组在**设置（全局配置）**里，不再挂在运动设定弹窗下面',
+      groupAt > setStart && groupAt < setEnd && !(groupAt > exStart && groupAt < exEnd),
+      `settings=${setStart} group=${groupAt} exercise=${exStart}`);
+    ok('它默认是藏着的（整个分组 hidden，正常情况下看不到）',
+      /<div class="modal-group" id="poseLogGroup" hidden>/.test(html));
+    ok('开关 / 保存按钮 / 状态行 / 说明文字都在（文案走 settings.log* 词条，中英都有）',
+      /id="btnPoseLog"/.test(html) && /id="btnPoseLogSave"/.test(html) && /id="poseLogStatus"/.test(html)
+      && /data-i18n="settings\.logGroup"/.test(html) && /data-i18n="settings\.logLead"/.test(html)
+      && /data-i18n="settings\.logHide"/.test(html)
+      && typeof LOCALES.zh.settings.logGroup === 'string' && typeof LOCALES.en.settings.logGroup === 'string'
+      && typeof LOCALES.zh.settings.logToggle === 'string' && typeof LOCALES.en.settings.logToggle === 'string');
+    ok('运动设定弹窗里已经没有这一组了（旧键 exercise.log* 一并清掉）',
+      !/data-i18n="exercise\.log/.test(html) && !/exercise\.log[A-Z]/.test(app)
+      && LOCALES.zh.exercise.logGroup === undefined && LOCALES.en.exercise.logGroup === undefined);
+    // 快捷键：设置弹窗里 Ctrl+H = 显示 / 收起；视频状态下 Ctrl+H = 直接开始 / 停止记录
+    ok('Ctrl+H 在设置弹窗里显示 / 收起这一组（还认得 Ctrl+Alt+H / Ctrl+Shift+H 这些变体）',
+      /\(e\.ctrlKey \|\| e\.metaKey\) && \(e\.key === 'h' \|\| e\.key === 'H'\)/.test(app)
+      && /if \(settingsOpen\(\)\) \{[\s\S]{0,160}setPoseLogUi\(!poseLogUiVisible\)/.test(app));
+    ok('Ctrl+H 在视频状态下直接开始 / 停止记录（不必打开弹窗）',
+      /else if \(videoStateActive\(\)\) \{[\s\S]{0,120}togglePoseLog\(\)/.test(app));
+    ok('「视频状态」= 动作页 + 没有弹窗 + 不在动作主页（主页按 Ctrl+H 不偷偷开始记录）',
+      /function videoStateActive\(\)/.test(app) && /!state\.homeMode && !!view && !view\.hidden && !anyModalOpen\(\)/.test(app));
+    ok('切换开关会写进设置、同步按钮状态，并且提示条说清开始 / 停止与帧数',
+      /function togglePoseLog\(/.test(app) && /state\.settings\.poseLog = on;/.test(app)
+      && /saveSettings\(\);/.test(app)
+      && /status\.poseLogKeyOn/.test(app) && /status\.poseLogKeyOff/.test(app)
+      && typeof LOCALES.zh.status.poseLogKeyOn === 'string'
+      && typeof LOCALES.en.status.poseLogKeyOff === 'string');
+    ok('设置弹窗打开时按上次的临时状态对齐这一组的显隐（刷新页面回到隐藏）',
+      /function openSettings\(\)/.test(app)
+      && /setPoseLogUi\(poseLogUiVisible\);\s*\n\s*renderPoseLogStatus\(\);/.test(app));
+  }
 }
 
 /* ---------- 4. 动作与界面按钮一一对应 ---------- */

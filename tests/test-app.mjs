@@ -3776,67 +3776,108 @@ console.log(`\n[15] 跳箱的箱子：画面上真的画出来，而且箱顶就
   api.state.session = 'idle';
 }
 
-console.log(`\n[16] 调试数据记录（运动设定里的开关，写进 logs/ 的 jsonl）`);
+console.log(`\n[16] 调试数据记录（全局配置里的隐藏分组 + 视频状态下 Ctrl+H 直接开关）`);
 {
   const { LM: LMK } = await import('../src/geometry.js');
   const { standingPose: sp4 } = await import('./synthetic-pose.mjs');
   const api = windowStub.__mfg;
 
-  // ===== ① 开关在「运动设定」弹窗里，默认关着，点一下打开并记进设置 =====
+  // ===== ① 开关搬到了「设置（全局配置）」弹窗里，默认关着 =====
   api.openExercise('buttKick');
   api.renderExerciseSettings();
   const btn = elements.get('btnPoseLog');
-  ok('运动设定弹窗里有「记录调试数据」开关',
+  ok('「记录调试数据」开关在**设置（全局配置）**里，不再是运动设定弹窗的内容',
     !!btn && !!elements.get('btnPoseLogSave') && !!elements.get('poseLogStatus')
-    && /记录调试数据/.test(btn.attributes['data-i18n'] || '') === false
-    && api.state.settings.poseLog === false,
-    JSON.stringify({ btn: !!btn, pressed: btn?.attributes['aria-pressed'] }));
+    && api.state.settings.poseLog === false
+    && /^settings\./.test(btn.attributes['data-i18n'] || ''),
+    JSON.stringify({ btn: !!btn, key: btn?.attributes['data-i18n'] }));
   const statusOff = elements.get('poseLogStatus').textContent;
   ok('没打开时状态行写「未开始记录」', /未开始记录/.test(statusOff), statusOff);
 
-  // ===== ⓪ 用户要求：这一组**默认藏着**，在弹窗里按 Ctrl+H 才显示出来 =====
+  // ===== ⓪ 用户要求：这一组**默认藏着**，在**设置弹窗**里按 Ctrl+H 才显示出来 =====
   {
     const group = elements.get('poseLogGroup');
     api.openExercise('buttKick');
-    api.openExerciseSettings();
-    ok('「调试数据记录」那一组默认是藏着的（弹窗里看不到，弹窗更短）',
-      group.hidden === true && elements.get('exerciseModal').hidden === false,
-      `group.hidden=${group.hidden} modal.hidden=${elements.get('exerciseModal').hidden}`);
-    // 在弹窗里按 Ctrl+H → 显出来
+    api.openSettings();
+    ok('「调试数据记录」那一组默认是藏着的（设置弹窗里看不到，弹窗更短）',
+      group.hidden === true && elements.get('settingsModal').hidden === false,
+      `group.hidden=${group.hidden} modal.hidden=${elements.get('settingsModal').hidden}`);
+    // 在设置弹窗里按 Ctrl+H → 显出来
     documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() {} });
-    ok('在运动设定弹窗里按 Ctrl+H → 「调试数据记录」显示出来',
+    ok('在**设置弹窗**里按 Ctrl+H → 「调试数据记录」显示出来',
       group.hidden === false, `group.hidden=${group.hidden}`);
+    ok('这时候只是「显示出来」，不会顺手开始记录（记录由开关说了算）',
+      api.state.settings.poseLog === false && api.poseLogger.active === false,
+      `poseLog=${api.state.settings.poseLog} active=${api.poseLogger.active}`);
     // 再按一次 → 又藏起来
     documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() {} });
     ok('再按一次 Ctrl+H → 又藏起来（不会把弹窗越撑越长）', group.hidden === true);
-    // 弹窗关着的时候按 Ctrl+H：不动这一组，也不吞掉这个键（交给浏览器）
-    api.closeExerciseSettings();
-    let prevented = false;
-    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() { prevented = true; } });
-    ok('弹窗没开时按 Ctrl+H 不拦这个键（不跟浏览器的快捷键抢）',
-      group.hidden === true && prevented === false, `prevented=${prevented}`);
-    // 重新打开弹窗：仍然是藏着的
-    api.openExerciseSettings();
-    ok('重新打开弹窗仍然是藏着的（默认隐藏，刷新页面也是隐藏）', group.hidden === true);
-    // 不带 Ctrl 的 h 仍然是「回主页」，不该顺手把这一组翻出来
-    documentStub.dispatch('keydown', { key: 'h' });
-    ok('不带 Ctrl 的 h 仍然是回主页（不会误触发调试开关）',
-      api.state.homeMode === true && group.hidden === true,
-      `home=${api.state.homeMode} group.hidden=${group.hidden}`);
     // 带修饰键的变体一律都算（Chrome 里 Ctrl+H 有时会被浏览器自己吃掉，留一条退路）
-    // 注意：上一句的 h 把人带回主页了，这里要先回动作页（否则后面的用例不在训练状态里）
-    api.openExercise('buttKick');
-    api.closeExerciseSettings();
-    api.openExerciseSettings();
     documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, altKey: true, preventDefault() {} });
     ok('Ctrl+Alt+H 也能显出来（浏览器把 Ctrl+H 抢走时的退路）', group.hidden === false);
     documentStub.dispatch('keydown', { key: 'H', ctrlKey: true, altKey: true, preventDefault() {} });
     ok('再按一次 Ctrl+Alt+H 收起', group.hidden === true);
-    // 后面那些用例要按开关：按 Ctrl+H 显出来
-    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() {} });
-    ok('要调试时按一下 Ctrl+H 就能用（开关、保存按钮都在）',
-      group.hidden === false && !!elements.get('btnPoseLog') && !!elements.get('btnPoseLogSave'));
+    // 关掉设置弹窗、打开运动设定弹窗：Ctrl+H 已经不该再管这一组了，也不吞这个键
+    api.closeSettings();
+    api.openExerciseSettings();
+    let prevented = false;
+    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() { prevented = true; } });
+    ok('运动设定弹窗里按 Ctrl+H 不再翻出这一组（它搬去全局配置了），也不跟浏览器抢键',
+      group.hidden === true && prevented === false && api.state.settings.poseLog === false,
+      `group.hidden=${group.hidden} prevented=${prevented}`);
+    api.closeExerciseSettings();
   }
+
+  // ===== ⓪′ 用户要求：**视频状态下**按 Ctrl+H 直接开始 / 停止记录（不用打开弹窗） =====
+  {
+    const group = elements.get('poseLogGroup');
+    api.closeSettings();
+    api.openExercise('buttKick');
+    // 桩 DOM 不读 HTML 里的 hidden 属性：按真实页面的初始状态把两个「记录类」弹窗关上
+    elements.get('bestModal').hidden = true;
+    elements.get('historyModal').hidden = true;
+    ok('现在处于视频状态（动作页、没有弹窗）',
+      api.videoStateActive() === true && api.state.homeMode === false,
+      `video=${api.videoStateActive()} home=${api.state.homeMode} workout=${elements.get('workoutView').hidden}`);
+    let prevented = false;
+    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() { prevented = true; } });
+    ok('视频状态下按 Ctrl+H → 开始记录（并拦下这个键，不让浏览器开历史记录）',
+      api.state.settings.poseLog === true && api.poseLogger.active === true && prevented === true,
+      `poseLog=${api.state.settings.poseLog} active=${api.poseLogger.active} prevented=${prevented}`);
+    ok('提示条告诉用户文件名、并说明再按一次就停',
+      /开始记录调试数据/.test(elements.get('cueLine').textContent)
+      && new RegExp(api.poseLogger.status().file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .test(elements.get('cueLine').textContent),
+      elements.get('cueLine').textContent);
+    ok('右下角「正在记录」角标同时出现', elements.get('recBadge').hidden === false);
+    ok('这一组仍然是藏着的（快捷键记录 ≠ 把它显示出来）', group.hidden === true);
+    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() {} });
+    ok('再按一次 Ctrl+H → 停止记录（补一行 end，角标收起）',
+      api.state.settings.poseLog === false && api.poseLogger.active === false
+      && elements.get('recBadge').hidden === true,
+      `poseLog=${api.state.settings.poseLog} active=${api.poseLogger.active}`);
+    ok('停止时提示条说明「已停止 / 共多少帧」',
+      /已停止记录调试数据/.test(elements.get('cueLine').textContent),
+      elements.get('cueLine').textContent);
+    const savedNow = JSON.parse(store.get('mfg.settings.v1') || '{}');
+    ok('快捷方式切换的开关状态同样写进 localStorage（刷新后仍然生效）',
+      savedNow.poseLog === false, JSON.stringify(savedNow.poseLog));
+    // 主页（还没进动作页）不拦 Ctrl+H：那时摄像头都没开，不该悄悄开始记录
+    api.showHome();
+    let preventedHome = false;
+    documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() { preventedHome = true; } });
+    ok('动作主页（还没进动作页）按 Ctrl+H 不开始记录、也不拦这个键',
+      api.state.settings.poseLog === false && preventedHome === false && api.state.homeMode === true,
+      `poseLog=${api.state.settings.poseLog} prevented=${preventedHome}`);
+    api.openExercise('buttKick');
+  }
+
+  // 后面那些用例要按开关：打开设置弹窗 + 按 Ctrl+H 显出来
+  api.openSettings();
+  documentStub.dispatch('keydown', { key: 'h', ctrlKey: true, preventDefault() {} });
+  ok('要调试时：设置弹窗里按一下 Ctrl+H 就能看到开关与保存按钮',
+    elements.get('poseLogGroup').hidden === false
+    && !!elements.get('btnPoseLog') && !!elements.get('btnPoseLogSave'));
 
   // 打桩：接住「攒批 → POST」那一批数据
   const savedFetch = globalThis.fetch;

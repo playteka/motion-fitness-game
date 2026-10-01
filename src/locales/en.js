@@ -167,7 +167,10 @@ export default {
     poseLogSaved: 'Debug data saved: {file}',
     poseLogEmpty: 'No data logged yet (turn the switch on and do a rep first)',
     poseLogUiOn: 'Debug logging panel shown (press Ctrl+H to hide it again)',
-    poseLogUiOff: 'Debug logging panel hidden (press Ctrl+H inside the exercise settings to reopen it)',
+    poseLogUiOff: 'Debug logging panel hidden (press Ctrl+H inside the settings to reopen it)',
+    // Ctrl+H on the video screen starts / stops logging directly (no modal needed)
+    poseLogKeyOn: '⌨️ Debug logging started: {file} (press Ctrl+H again to stop)',
+    poseLogKeyOff: '⌨️ Debug logging stopped: {file} · {frames} frames',
     poseLogFailed: 'Debug data cannot be written: {err} (is the preview server still running? You can also use “Save / download file”)',
     needCamera: 'Start the camera first',
     countdownGo: 'Go! Follow the cues — partial reps don’t count.',
@@ -769,20 +772,6 @@ export default {
     title: 'Exercise settings',
     close: 'Close',
     lead: 'These settings apply to the current exercise only',
-    // Debug data logging (the user asked for joint data written to a log file)
-    logGroup: '🐞 Debug data logging (for “it won’t count”)',
-    logLead: 'With this on, every frame’s joint data is written to the logs/ folder in the project (JSONL: one frame per line). '
-      + 'Send me the file name after testing and I can see the real joint angles and thresholds and work out why reps did not count. '
-      + 'Leave it off normally (it is tens of MB per minute).',
-    logToggle: 'Log debug data',
-    logSave: 'Save / download file',
-    // This group is hidden by default (press Ctrl+H to reveal it)
-    logHide: '(press Ctrl+H again to hide it)',
-    logOff: 'Not recording',
-    logOn: 'Recording: {file} · {frames} frames · {mb} MB',
-    logError: ' (writing failed: {err}; use “Save / download file” to grab the data)',
-    logQueued: '{n} rows still unsent (is the server running?)',
-    logDropped: '{n} batches were dropped because they could never be sent',
     targetGroup: '🎯 Target',
     target: 'Set target',
     // Timed counting (Jumping Jack): the target is a duration, the result is the reps done inside it
@@ -817,6 +806,22 @@ export default {
     musicTrack: '🎵 Background track',
     cameraGroup: 'Video & tracking',
     view: 'Interface',
+    // Debug data logging (the user asked for joint data written to a log file).
+    // It lives in the global settings, hidden by default: Ctrl+H reveals it here,
+    // and on the video screen Ctrl+H starts / stops logging directly.
+    logGroup: '🐞 Debug data logging (for “it won’t count”)',
+    logLead: 'With this on, every frame’s joint data is written to the logs/ folder in the project (JSONL: one frame per line). '
+      + 'Send me the file name after testing and I can see the real joint angles and thresholds and work out why reps did not count. '
+      + 'Leave it off normally (it is tens of MB per minute). '
+      + '💡 On the video screen, Ctrl+H starts / stops logging without opening this modal.',
+    logToggle: 'Log debug data',
+    logSave: 'Save / download file',
+    logHide: '(hidden by default: Ctrl+H inside this modal shows / hides it, and Ctrl+H on the video screen starts / stops logging)',
+    logOff: 'Not recording',
+    logOn: 'Recording: {file} · {frames} frames · {mb} MB',
+    logError: ' (writing failed: {err}; use “Save / download file” to grab the data)',
+    logQueued: '{n} rows still unsent (is the server running?)',
+    logDropped: '{n} batches were dropped because they could never be sent',
   },
 
   /* ---------------- What each exercise is scored by ---------------- */

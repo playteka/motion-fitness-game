@@ -167,7 +167,10 @@ export default {
     poseLogSaved: '已保存调试数据：{file}',
     poseLogEmpty: '还没有记录到数据（先打开开关，再做一个动作）',
     poseLogUiOn: '调试数据记录已显示（再按 Ctrl+H 收起）',
-    poseLogUiOff: '调试数据记录已收起（在运动设定里按 Ctrl+H 可以再打开）',
+    poseLogUiOff: '调试数据记录已收起（在设置弹窗里按 Ctrl+H 可以再打开）',
+    // 视频画面下按 Ctrl+H 直接开始 / 停止记录（不用打开弹窗）
+    poseLogKeyOn: '⌨️ 开始记录调试数据：{file}（再按一次 Ctrl+H 停止）',
+    poseLogKeyOff: '⌨️ 已停止记录调试数据：{file} · 共 {frames} 帧',
     poseLogFailed: '调试数据写不进去：{err}（预览服务器还在跑吗？也可以点「保存/下载文件」把数据下载下来）',
     needCamera: '请先开启摄像头',
     countdownGo: '开始！跟着提示做动作，半程动作不会计入次数。',
@@ -767,20 +770,6 @@ export default {
     title: '运动设定',
     close: '关闭',
     lead: '这些设定只对当前这个动作生效',
-    // 调试数据记录（用户要求：「记录下关节点和一些关键数据……写在 log 文件里」）
-    logGroup: '🐞 调试数据记录（排查「计不上」用）',
-    logLead: '打开开关后，会把每一帧的关节数据写进项目里的 logs/ 文件夹（JSONL：一行一帧）。'
-      + '测完把文件名发我，我就能看到真实的关节角度和判定线，直接分析为什么没计上。'
-      + '平时不用打开（一分钟大约几十兆）。',
-    logToggle: '记录调试数据',
-    logSave: '保存/下载文件',
-    // 这一组默认藏着（用户要求按 Ctrl+H 才显示）
-    logHide: '（再按一次 Ctrl+H 就把它藏起来）',
-    logOff: '未开始记录',
-    logOn: '记录中：{file} · 已记 {frames} 帧 · {mb} MB',
-    logError: '（写文件失败：{err}；可以点「保存/下载文件」拿到数据）',
-    logQueued: '还有 {n} 行没发出去（服务器没起来？）',
-    logDropped: '有 {n} 批数据因为一直发不出去被丢掉',
     targetGroup: '🎯 目标设定',
     target: '本组目标',
     // 限时计数（开合跳）：目标是时长，成绩是这段时间里完成的次数
@@ -813,6 +802,21 @@ export default {
     musicTrack: '🎵 背景音乐曲目',
     cameraGroup: '画面与识别',
     view: '界面',
+    // 调试数据记录（用户要求）：这一组放在**全局配置**里，默认藏着；
+    // 在设置弹窗里按 Ctrl+H 显示 / 收起，视频画面状态下按 Ctrl+H 直接开始 / 停止记录。
+    logGroup: '🐞 调试数据记录（排查「计不上」用）',
+    logLead: '打开开关后，会把每一帧的关节数据写进项目里的 logs/ 文件夹（JSONL：一行一帧）。'
+      + '测完把文件名发我，我就能看到真实的关节角度和判定线，直接分析为什么没计上。'
+      + '平时不用打开（一分钟大约几十兆）。'
+      + '💡 视频画面下按 Ctrl+H 可以直接开始 / 停止记录，不必打开这个弹窗。',
+    logToggle: '记录调试数据',
+    logSave: '保存/下载文件',
+    logHide: '（这一组默认藏着：在设置弹窗里按 Ctrl+H 显示 / 收起；视频画面下按 Ctrl+H 开始 / 停止记录）',
+    logOff: '未开始记录',
+    logOn: '记录中：{file} · 已记 {frames} 帧 · {mb} MB',
+    logError: '（写文件失败：{err}；可以点「保存/下载文件」拿到数据）',
+    logQueued: '还有 {n} 行没发出去（服务器没起来？）',
+    logDropped: '有 {n} 批数据因为一直发不出去被丢掉',
   },
 
   judge: {

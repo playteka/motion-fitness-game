@@ -320,6 +320,22 @@
             <button class="toggle" id="btnDebug" type="button" aria-pressed="false" data-i18n="ui.debug"></button>
           </div>
         </div>
+
+        <!-- 调试数据记录（用户要求）：**全局配置**里的隐藏分组 ——
+             默认连整个分组一起藏起来，在**这个弹窗里**按 Ctrl+H 才显示；
+             视频画面状态下按 Ctrl+H 可以直接开始 / 停止记录，不必打开弹窗。 -->
+        <div class="modal-group" id="poseLogGroup" hidden>
+          <h3 class="modal-group-title" data-i18n="settings.logGroup"></h3>
+          <p class="modal-hint" data-i18n="settings.logLead"></p>
+          <div class="toggle-grid">
+            <button class="toggle" id="btnPoseLog" type="button" aria-pressed="false"
+                    data-i18n="settings.logToggle"></button>
+            <button class="toggle" id="btnPoseLogSave" type="button"
+                    data-i18n="settings.logSave"></button>
+          </div>
+          <p class="modal-hint" id="poseLogStatus"></p>
+          <p class="modal-hint" data-i18n="settings.logHide"></p>
+        </div>
       </div>
     </div>
   </div>
@@ -369,20 +385,6 @@
         <div class="modal-group">
           <h3 class="modal-group-title" data-i18n="exercise.cameraGroup"></h3>
           <p class="modal-hint" id="exerciseCamera"></p>
-        </div>
-
-        <!-- 调试数据记录（用户要求）：默认**藏起来**，在弹窗里按 Ctrl+H 才显示出来 -->
-        <div class="modal-group" id="poseLogGroup" hidden>
-          <h3 class="modal-group-title" data-i18n="exercise.logGroup"></h3>
-          <p class="modal-hint" data-i18n="exercise.logLead"></p>
-          <div class="toggle-grid">
-            <button class="toggle" id="btnPoseLog" type="button" aria-pressed="false"
-                    data-i18n="exercise.logToggle"></button>
-            <button class="toggle" id="btnPoseLogSave" type="button"
-                    data-i18n="exercise.logSave"></button>
-          </div>
-          <p class="modal-hint" id="poseLogStatus"></p>
-          <p class="modal-hint" data-i18n="exercise.logHide"></p>
         </div>
       </div>
     </div>
