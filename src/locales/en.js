@@ -759,9 +759,11 @@ export default {
     leadIn: 'Pick an exercise from “{name}” — the last ring is “Back”, which switches category',
     catCount: '{n} exercises',
     back: 'Back',
-    // Page indicator + swipe paging (the user asked for pages and up/down hand swipes)
+    // Paging: the “previous / next page” rings on the left and right (palm in, 1 s per page; hold to keep paging)
+    prev: 'Previous',
+    next: 'Next',
     page: 'Page {n} / {total} · {count} items',
-    hint: 'Hold 3 s to select · swipe up = next page, swipe down = previous page · the bottom-left ring returns to the web page · clicking also works',
+    hint: 'Hold 3 s to select · when a page is full, put your palm into the “Previous / Next” rings on the left and right · the bottom-left ring returns to the web page',
     item: '{name} (hold 3 s)',
     picked: 'Starting: {name}',
     // In the menu the bottom-left ring means “back to the web page” (during an exercise it means “back to the menu”)

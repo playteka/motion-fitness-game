@@ -602,22 +602,33 @@ console.log('\n[3] 静态资源与模型文件');
       /state\.menuLevel = 0;/.test(app) && /function menuItems\(\)/.test(app)
       && /if \(state\.menuLevel === 0\)/.test(app) && /kind: 'category'/.test(app)
       && /kind: 'back'/.test(app));
-    ok('一页一行 4 个 + 分页（每行 4 个、一页不够就多一页）',
-      /const MENU_COLS = 4;/.test(app) && /const MENU_PER_PAGE = 4;/.test(app)
-      && /function menuPageInfo\(\)/.test(app) && /state\.menuPage = 0;/.test(app)
+    ok('一页 4 列 × 2 行 = 8 个（用户要求「一页可以放 2 行，8 个」），放不下才分页',
+      /const MENU_COLS = 4;/.test(app) && /const MENU_ROWS = 2;/.test(app)
+      && /function menuPageInfo\(/.test(app) && /function menuPerPage\(/.test(app)
+      && /function menuCols\(/.test(app) && /state\.menuPage = 0;/.test(app)
       && /id="menuPage"/.test(html) && typeof LOCALES.zh.menu.page === 'string'
       && typeof LOCALES.en.menu.page === 'string');
+    ok('翻页改成左右两个圆环（用户反馈「挥手换页的方式似乎也不太好」→ 垂直挥手那套删掉了）',
+      /function menuNavLayout\(/.test(app) && /kind: 'prev'/.test(app) && /kind: 'next'/.test(app)
+      && /MENU_NAV_HOLD_MS/.test(app) && !/updateMenuSwipe/.test(app) && !/MENU_SWIPE_/.test(app)
+      && typeof LOCALES.zh.menu.prev === 'string' && typeof LOCALES.en.menu.next === 'string');
+    ok('翻页圆环用的是和选动作同一个动作（手掌放进去），只是按住时间短（1 秒）且按住不放连续翻',
+      /const holdMs = item && \(item\.kind === 'prev' \|\| item\.kind === 'next'\) \? MENU_NAV_HOLD_MS : GESTURE_HOLD_MS;/.test(app)
+      && /st\.p = 0;\s*\n\s*st\.since = now;\s*\n\s*return \{ kind: 'page', dir: fired\.dir \};/.test(app));
+    ok('主循环按返回的动作分流：翻页 / 选中',
+      /const act = updateMenu\(res \? res\.landmarks : null, now\)/.test(app)
+      && /if \(act\.kind === 'page'\) flipMenuPage\(act\.dir\);/.test(app)
+      && /else selectFromMenu\(act\.id\);/.test(app));
+    ok('指着某一格一会儿先把它念出来（确认瞄对了再停满 3 秒）',
+      /MENU_ANNOUNCE_P/.test(app) && /st\.announced !== st\.id/.test(app)
+      && /audio\.say\(item\.name, \{ rate: 1\.25, minGapMs: 400 \}\)/.test(app));
     ok('翻页只建当前这一页的圆环（其它页的不会留在画面角落上）',
       /menuItems\(\)\.slice\(info\.from, info\.to\)/.test(app));
-    ok('向上 / 向下挥手翻页：方向、冷却、以及「手在圆环里不算挥手」的保护',
-      /function updateMenuSwipe\(/.test(app) && /MENU_SWIPE_TRAVEL/.test(app)
-      && /MENU_SWIPE_COOLDOWN_MS/.test(app)
-      && /dir = dy < 0 \? 1 : -1;/.test(app)
-      && /const inRing = layout\.some/.test(app));
-    ok('键盘 / 鼠标也能翻页（方向键、点页码按钮）',
-      /flipMenuPage\(\(e\.key === 'ArrowUp'/.test(app)
-      && /\$\('menuPage'\)\?\.addEventListener\('click', \(\) => flipMenuPage\(1\)\)/.test(app));
-    ok('两级菜单的圆环直径上限 ≥300px（不再是 19 个挤一屏的小圆环）',
+    ok('键盘 / 鼠标也能翻页（← / → 方向键、点页码那一行、点翻页圆环）',
+      /flipMenuPage\(\(e\.key === 'ArrowRight'/.test(app)
+      && /\$\('menuPage'\)\?\.addEventListener\('click', \(\) => flipMenuPage\(1\)\)/.test(app)
+      && /if \(it\.kind === 'prev' \|\| it\.kind === 'next'\) flipMenuPage\(it\.dir\)/.test(app));
+    ok('圆环直径上限 ≥300px（不再是 19 个挤一屏的小圆环）',
       /const MENU_RING_MAX = (\d+)/.test(app)
       && Number(/const MENU_RING_MAX = (\d+)/.exec(app)[1]) >= 300,
       String(/const MENU_RING_MAX = (\d+)/.exec(app)?.[1]));
@@ -632,9 +643,9 @@ console.log('\n[3] 静态资源与模型文件');
       && typeof LOCALES.zh.menu.back === 'string' && typeof LOCALES.en.menu.back === 'string'
       && typeof LOCALES.zh.menu.leadIn === 'string' && typeof LOCALES.en.menu.leadIn === 'string'
       && typeof LOCALES.zh.menu.catCount === 'string' && typeof LOCALES.en.menu.catCount === 'string');
-    ok('主循环里跑菜单判定，选中就进那个动作',
+    ok('主循环里跑菜单判定，选中 / 翻页各有各的出口',
       /if \(state\.menuMode\) \{/.test(app) && /updateMenu\(res \? res\.landmarks : null, now\)/.test(app)
-      && /selectFromMenu\(picked\)/.test(app));
+      && /selectFromMenu\(act\.id\)/.test(app) && /flipMenuPage\(act\.dir\)/.test(app));
     ok('退出分流：运动中退出回菜单、菜单里退出回网页首页',
       /const toHome = state\.menuMode;/.test(app)
       && /if \(toHome\) showHome\(\);\s*\n\s*else openMenu\(\{ silent: true \}\);/.test(app)

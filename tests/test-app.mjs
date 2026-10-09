@@ -4138,6 +4138,8 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   const savedReady = api.camera.video.readyState;
   const savedStream6 = api.camera.stream;
   const savedMirror = api.state.settings.mirror;
+  const savedClientW = stageEl.clientWidth;      // 桩里的舞台尺寸（默认 undefined = 用 1280×720 兜底）
+  const savedClientH = stageEl.clientHeight;
 
   api.state.settings.mirror = false;      // 判定与「屏幕上看到的那一边」一致，测试里关掉镜像更好算坐标
   api.state.engineReady = true;
@@ -4183,19 +4185,22 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && /#stage\.menu-mode \.hud/.test(fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8')),
     '样式里没有 menu-mode 收起规则');
 
-  // ===== ② 第一级菜单：每行 4 个大圆环（用户要求「每行放 4 个就够了」，一页不够就分页） =====
+  // ===== ② 第一级菜单：一页 4 列 × 2 行 = 8 个（用户要求「一页可以放 2 行，8 个」） =====
   const layout = api.menuRingLayout(api.stageSize());
   const info0 = api.menuPageInfo();
-  ok('第一级是**分类**，而且**一页只放一行 4 个**（不是把 19 个动作挤一屏）',
-    api.state.menuLevel === 0 && layout.length === 4 && grid.children.length === 4
+  ok('一页 8 个（4 列 × 2 行），第一级 5 个分类**一页就放完**（平时根本不用翻页）',
+    api.state.menuLevel === 0 && layout.length === 5 && grid.children.length === 5
     && layout.every((it) => it.kind === 'category')
-    && info0.total === 5 && info0.pages === 2 && api.MENU_PER_PAGE === 4 && api.MENU_COLS === 4,
-    `${layout.length} / ${grid.children.length} pages=${info0.pages}`);
-  ok('圆环再放大（1280×720 上直径 ≥240px，之前 19 个挤一屏只有 ~97px、上一版 192px）',
-    layout.every((it) => it.r * 2 >= 240), `${Math.round(layout[0].r * 2)}px`);
-  ok('名字字号跟着圆环走（≥20px）',
-    layout.every((it) => it.nameSize >= 20 || it.r * 2 * 0.17 >= 20),
+    && api.MENU_COLS === 4 && api.MENU_ROWS === 2 && api.menuPerPage(api.stageSize()) === 8
+    && info0.total === 5 && info0.pages === 1,
+    `${layout.length} / ${grid.children.length} per=${api.menuPerPage(api.stageSize())} pages=${info0.pages}`);
+  ok('圆环仍然够大（1280×720 上直径 ≥180px；最早 19 个挤一屏只有 ~97px）',
+    layout.every((it) => it.r * 2 >= 180), `${Math.round(layout[0].r * 2)}px`);
+  ok('名字字号跟着圆环走（≥24px，最早只有 12px）',
+    layout.every((it) => it.nameSize >= 24),
     `name=${layout[0].nameSize.toFixed(1)} dia=${Math.round(layout[0].r * 2)}`);
+  ok('只有一页时不显示翻页圆环、也不显示页码',
+    api.menuNavLayout(api.stageSize()).length === 0 && elements.get('menuPage').hidden === true);
   ok('每一格都写好了位置 / 直径 / 字号（和判定用的是同一份圆心、半径）',
     layout.every((it) => {
       const el = grid.children.find((c) => c.dataset.ex === it.id);
@@ -4220,92 +4225,89 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       bad.length === 0, bad.slice(0, 3).join(', '));
   }
 
-  // ===== ②′ 翻页：一页不够就多一页（第一级 5 个分类 → 2 页） =====
-  ok('页码那一行写着「第 1 / 2 页 · 共 5 项」，而且能点（鼠标用户的翻页办法）',
-    elements.get('menuPage').hidden === false
-    && /第 1 \/ 2 页/.test(elements.get('menuPage').textContent)
-    && /5 项/.test(elements.get('menuPage').textContent),
-    elements.get('menuPage').textContent);
-  elements.get('menuPage').dispatch('click');
-  const layoutP1 = api.menuRingLayout(api.stageSize());
-  ok('点页码 → 翻到第 2 页（只剩最后一个分类，仍然居中、一样大）',
-    api.state.menuPage === 1 && layoutP1.length === 1
-    && Math.abs(layoutP1[0].r * 2 - layout[0].r * 2) < 0.01
-    && /第 2 \/ 2 页/.test(elements.get('menuPage').textContent),
-    `page=${api.state.menuPage} n=${layoutP1.length} ${elements.get('menuPage').textContent}`);
+  // ===== ②′ 分页与翻页圆环 =====
+  /* 用户反馈：「一页可以放 2 行，8 个。但是挥手换页的方式似乎也不太好。」
+     → 翻页改成**和选动作完全一样的交互**：左右两侧各一个「上一页 / 下一页」圆环，
+       手掌放进去 1 秒翻一页，按住不放连续翻（垂直挥手那套删掉了：它和「伸手够上面那排圆环」同方向，容易打架）。
+     宽屏一页 8 个已经把 5 个分类 + 7 个动作都装下了，所以这里**把舞台改成竖屏手机的尺寸**
+     （列数掉到 2 → 一页 4 个）来验证翻页本身。 */
   {
-    const bad = [];
-    for (let i = 0; i < layoutP1.length; i += 1) {
-      const a = layoutP1[i];
-      if (a.cx - a.r < 0 || a.cx + a.r > SW || a.cy - a.r < 0 || a.cy + a.r > SH) bad.push(`${a.id}:出画`);
-    }
-    ok('最后一页的圆环也完整落在画面里', bad.length === 0, bad.join(', '));
-  }
-  // 向上 / 向下挥手翻页（用户要求）
-  {
-    const sw = (dyPx, t0, side = 'L') => {
-      // 手掌从「圆环之外」的位置开始，垂直挥 dyPx（负 = 向上）
-      const x = 20;                                   // 画面最左边，离所有圆环都很远
-      return {
-        from: palmsAt6(x, 300),
-        to: palmsAt6(x, 300 + dyPx),
-      };
-    };
+    const stageStub = stageEl;
+    stageStub.clientWidth = 400;
+    stageStub.clientHeight = 700;
+    const sizeN = api.stageSize();
     api.state.menuPage = 0;
     api.renderMenu();
-    api.gestureState.menu.swipe.until = 0;
-    api.gestureState.menu.swipe.L = { y0: 0, t0: 0 };
-    api.updateMenu(sw(0).from, 10000);                       // 记起点
-    api.updateMenu(sw(-Math.round(SH * 0.2)).to, 10400);     // 向上挥 20% 屏高
-    ok('向上挥手 → 下一页', api.state.menuPage === 1, `page=${api.state.menuPage}`);
-    // 冷却：紧接着再挥一下不会连跳
-    api.updateMenu(sw(0).from, 10500);
-    api.updateMenu(sw(-Math.round(SH * 0.2)).to, 10900);
-    ok('刚翻过页的 1.1 秒内再挥不会连跳（冷却）', api.state.menuPage === 1,
+    const nav = api.menuNavLayout(sizeN);
+    const infoN = api.menuPageInfo(sizeN);
+    ok('窄屏（竖屏手机 400×700）：列数自动掉到 2 → 一页 4 个，于是 5 个分类分 2 页',
+      api.menuCols(sizeN.w) === 2 && api.menuPerPage(sizeN) === 4 && infoN.pages === 2
+      && api.menuRingLayout(sizeN).length === 4,
+      `cols=${api.menuCols(sizeN.w)} per=${api.menuPerPage(sizeN)} pages=${infoN.pages}`);
+    ok('有第二页时才出现左右两个翻页圆环（上一页 / 下一页），并且在画面两侧正中',
+      nav.length === 2 && nav[0].kind === 'prev' && nav[1].kind === 'next'
+      && nav[0].cx < sizeN.w * 0.25 && nav[1].cx > sizeN.w * 0.75
+      && Math.abs(nav[0].cy - sizeN.h / 2) < 1,
+      JSON.stringify(nav.map((it) => [it.kind, Math.round(it.cx), Math.round(it.cy)])));
+    ok('翻页圆环和动作圆环的判定圈互不重叠（不会抢格）',
+      api.menuRingLayout(sizeN).every((a) => nav.every((b) => (
+        Math.hypot(a.cx - b.cx, a.cy - b.cy) >= a.hit + b.hit))),
+      '重叠了');
+    ok('页码那一行写着「第 1 / 2 页 · 共 5 项」，而且能点',
+      elements.get('menuPage').hidden === false
+      && /第 1 \/ 2 页/.test(elements.get('menuPage').textContent)
+      && /5 项/.test(elements.get('menuPage').textContent),
+      elements.get('menuPage').textContent);
+    // 手掌放进「下一页」圆环，停 1 秒 → 翻页（和选动作同一个动作，只是更快）
+    // ⚠️ palmsAt6 收的是「宽屏舞台像素」，这里舞台换成窄屏了，所以要按比例换算一下
+    const palmsAt = (x, y) => palmsAt6(x * (SW / sizeN.w), y * (SH / sizeN.h));
+    const next = nav.find((it) => it.kind === 'next');
+    ok('手掌放进「下一页」0.6 秒还没到（选动作要 3 秒、翻页只要 1 秒）',
+      api.updateMenu(palmsAt(next.cx, next.cy), 20000) === null
+      && api.updateMenu(palmsAt(next.cx, next.cy), 20600) === null,
+      String(api.gestureState.menu.p));
+    const act = api.updateMenu(palmsAt(next.cx, next.cy), 21001);
+    ok('停满 1 秒 → 判定翻页（返回 {kind:page, dir:+1}）',
+      act && act.kind === 'page' && act.dir === 1, JSON.stringify(act));
+    api.flipMenuPage(act.dir);
+    ok('翻到第 2 页（只剩最后一个分类，仍然一样大、居中）',
+      api.state.menuPage === 1 && api.menuRingLayout(sizeN).length === 1
+      && /第 2 \/ 2 页/.test(elements.get('menuPage').textContent),
       `page=${api.state.menuPage}`);
-    api.gestureState.menu.swipe.until = 0;
-    api.gestureState.menu.swipe.L = { y0: 0, t0: 0 };
-    api.updateMenu(sw(0).from, 12000);
-    api.updateMenu(sw(Math.round(SH * 0.2)).to, 12400);
-    ok('向下挥手 → 上一页', api.state.menuPage === 0, `page=${api.state.menuPage}`);
-    // 慢慢飘过去不算（每帧都把起点往后挪，600ms 窗口内攒不够距离）
-    api.gestureState.menu.swipe.until = 0;
-    api.gestureState.menu.swipe.L = { y0: 0, t0: 0 };
-    for (let i = 0; i <= 24; i += 1) {
-      api.updateMenu(palmsAt6(20, 200 + i * 8), 13000 + i * 60);    // 1.44 秒飘 192px（≈133px/s）
-    }
-    ok('慢慢飘过去不算挥手（不会误翻页）', api.state.menuPage === 0, `page=${api.state.menuPage}`);
-    // 手在圆环里 → 那次移动不算挥手（那是「选它」）
-    api.gestureState.menu.swipe.until = 0;
-    api.gestureState.menu.swipe.L = { y0: 0, t0: 0 };
-    const inRing = api.menuRingLayout(api.stageSize())[0];
-    api.updateMenu(palmsAt6(inRing.cx, inRing.cy), 15000);
-    api.updateMenu(palmsAt6(inRing.cx, inRing.cy - SH * 0.2), 15400);
-    ok('手从圆环里往上抬：不算挥手（那是在选它，不是翻页）', api.state.menuPage === 0,
-      `page=${api.state.menuPage}`);
-    // 恢复第 1 页
+    // 按住不放 → 一页一页连续翻（不会卡住）
+    const act2 = api.updateMenu(palmsAt(next.cx, next.cy), 22002);
+    ok('手掌**一直按着**：再过 1 秒又翻一页（按住不放连续翻）',
+      act2 && act2.kind === 'page' && act2.dir === 1, JSON.stringify(act2));
+    api.flipMenuPage(act2.dir);
+    ok('翻回第 1 页（循环翻页）', api.state.menuPage === 0, `page=${api.state.menuPage}`);
+    // 手离开 → 进度慢慢退回去，不会连翻
+    api.updateMenu(palmsAt(200, 60), 23000);
+    const act3 = api.updateMenu(palmsAt(200, 60), 23400);
+    ok('手掌移开之后就不再翻了', act3 === null && api.state.menuPage === 0);
+    // 鼠标点翻页圆环同样有效
+    const prev = nav.find((it) => it.kind === 'prev');
+    grid.children.find((c) => c.dataset.ex === prev.id).dispatch('click');
+    ok('鼠标点一下翻页圆环也能翻（第 1 页往前翻 = 循环到最后一页）',
+      api.state.menuPage === 1, `page=${api.state.menuPage}`);
+    // 恢复宽屏舞台
     api.state.menuPage = 0;
+    stageStub.clientWidth = savedClientW;
+    stageStub.clientHeight = savedClientH;
     api.renderMenu();
-    api.gestureState.menu.swipe.until = 0;
   }
 
-  // ===== ②″ 第二级菜单：分类里的动作 + 「返回」（同样一页 4 个、一样大） =====
+  // ===== ②″ 第二级菜单：分类里的动作 + 「返回」（同样一页 8 个、一样大） =====
   const at6 = (it) => palmsAt6(it.cx, it.cy);
   const catLower = layout.find((it) => it.catId === 'lower');
   api.selectFromMenu(catLower.id);
   const layout2 = api.menuRingLayout(api.stageSize());
-  ok('选了分类 → 进第二级：一页 4 个（这个分类有 5 个动作 → 2 页）',
+  ok('选了分类 → 进第二级：动作 + 返回也都在**一页**里（6 ≤ 8）',
     api.state.menuLevel === 1 && api.state.menuCategory === 'lower'
-    && api.state.menuPage === 0 && layout2.length === 4
-    && layout2.every((it) => it.kind === 'exercise')
-    && api.menuPageInfo().total === 6 && api.menuPageInfo().pages === 2,
+    && api.state.menuPage === 0 && layout2.length === 6
+    && layout2.slice(0, 5).every((it) => it.kind === 'exercise')
+    && layout2[5].kind === 'back' && layout2[5].name === '返回'
+    && api.menuPageInfo().pages === 1,
     `${api.state.menuLevel}/${api.state.menuCategory} n=${layout2.length} pages=${api.menuPageInfo().pages}`);
-  api.flipMenuPage(1);
-  const layout2b = api.menuRingLayout(api.stageSize());
-  ok('翻到第二级第 2 页：最后一个动作 + 一格「返回」',
-    layout2b.length === 2 && layout2b[0].kind === 'exercise'
-    && layout2b[1].kind === 'back' && layout2b[1].name === '返回',
-    JSON.stringify(layout2b.map((it) => it.kind)));
   ok('第二级标题写着分类名（一眼知道自己在哪一层）',
     elements.get('menuTitle').textContent === catLower.name
     && elements.get('menuLead').textContent.includes(catLower.name),
@@ -4317,15 +4319,15 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     String(grid.children[grid.children.length - 1].className).includes('menu-ring--back'));
   {
     const bad = [];
-    for (let i = 0; i < layout2b.length; i += 1) {
-      const a = layout2b[i];
+    for (let i = 0; i < layout2.length; i += 1) {
+      const a = layout2[i];
       if (a.cx - a.r < 0 || a.cx + a.r > SW || a.cy - a.r < 0 || a.cy + a.r > SH) bad.push(`${a.id}:出画`);
-      for (let j = i + 1; j < layout2b.length; j += 1) {
-        const b = layout2b[j];
+      for (let j = i + 1; j < layout2.length; j += 1) {
+        const b = layout2[j];
         if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < a.hit + b.hit) bad.push(`${a.id}↔${b.id}:判定圈重叠`);
       }
     }
-    ok('第二级每页的圆环也都落在画面里、判定圈互不重叠', bad.length === 0, bad.slice(0, 3).join(', '));
+    ok('第二级这一页的圆环也都落在画面里、判定圈互不重叠', bad.length === 0, bad.slice(0, 3).join(', '));
   }
 
   // ===== ③ 手掌停进某一格 3 秒 → 选中它（在第一级试：选分类不会离开菜单） =====
@@ -4346,10 +4348,15 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && api.gestureState.menu.p < 0.05,
     `${api.gestureState.menu.id} p=${api.gestureState.menu.p}`);
   api.updateMenu(at6(layout[1]), 3000);
+  ok('指着某一格一会儿就会把它念出来（先确认指的是哪一个，再决定要不要停满 3 秒）',
+    api.gestureState.menu.announced === layout[1].id && api.gestureState.menu.id === layout[1].id,
+    `${api.gestureState.menu.announced} / ${api.gestureState.menu.id}`);
   const picked = api.updateMenu(at6(layout[1]), 5201);
-  ok('手掌停满 3 秒 → 判定选中这一格', picked === layout[1].id, String(picked));
+  ok('手掌停满 3 秒 → 判定选中这一格（返回 {kind:select, id}）',
+    picked && picked.kind === 'select' && picked.id === layout[1].id, JSON.stringify(picked));
   ok('选中之后这一格的进度清干净（不会连着再选一次）',
-    api.gestureState.menu.p === 0 && api.gestureState.menu.id === '');
+    api.gestureState.menu.p === 0 && api.gestureState.menu.id === ''
+    && api.gestureState.menu.announced === '');
 
   // 手离开：宽限期内先不动，之后慢慢退回去（看得出「手离开了」）
   api.updateMenu(at6(target), 6000);
@@ -4382,7 +4389,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   api.openMenu({ silent: true });
   ok('重新进菜单总是从第一级第 1 页开始（不会停在上一次的分类 / 页码里）',
     api.state.menuLevel === 0 && api.state.menuCategory === '' && api.state.menuPage === 0
-    && grid.children.length === 4 && api.menuPageInfo().total === 5);
+    && grid.children.length === 5 && api.menuPageInfo().total === 5);
   const before6 = api.state.exerciseId;
   const clickCat = api.menuRingLayout(api.stageSize()).find((it) => it.catId === 'core');
   grid.children.find((c) => c.dataset.ex === clickCat.id).dispatch('click');
@@ -4405,7 +4412,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     api.state.menuMode === true && api.state.homeMode === false
     && api.state.menuLevel === 0 && api.state.menuCategory === '' && api.state.menuPage === 0
     && menuEl.hidden === false && documentStub.exitFullscreenCalls === 0
-    && api.menuRingLayout(api.stageSize()).length === 4 && api.menuPageInfo().total === 5,
+    && api.menuRingLayout(api.stageSize()).length === 5 && api.menuPageInfo().total === 5,
     `menu=${api.state.menuMode} level=${api.state.menuLevel} exit=${documentStub.exitFullscreenCalls}`);
   api.triggerCornerExit();                  // 菜单里退出
   ok('菜单里退出 → 回网页首页（主页可见 + 退出全屏 + 菜单收起来）',
@@ -4458,11 +4465,11 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       && api.gestureState.menu.p > 0.2 && api.gestureState.menu.p < 1,
       `menu=${api.state.menuMode} p=${api.gestureState.menu.p}`);
     pump(palmsAt6(cat17.cx, cat17.cy), 90);
-    ok('真实主循环里：手掌停满 3 秒 → 进第二级（列出这个分类的动作）',
+    ok('真实主循环里：手掌停满 3 秒 → 进第二级（列出这个分类的动作 + 「返回」）',
       api.state.menuMode === true && api.state.menuLevel === 1
       && api.state.menuCategory === cat17.catId && api.state.menuPage === 0
-      && api.menuRingLayout(api.stageSize()).every((it) => it.kind === 'exercise')
-      && api.menuPageInfo().total >= api.menuRingLayout(api.stageSize()).length + 1,
+      && api.menuRingLayout(api.stageSize()).some((it) => it.kind === 'back')
+      && api.menuPageInfo().pages === 1,
       `level=${api.state.menuLevel} cat=${api.state.menuCategory}`);
 
     const ex17 = api.menuRingLayout(api.stageSize()).find((it) => it.kind === 'exercise');

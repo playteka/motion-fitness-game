@@ -1500,6 +1500,13 @@ kbd {
 /* 「返回」那一格：低调一点，一眼分得出它不是动作 */
 .menu-ring--back { background: rgba(6, 12, 20, 0.3); }
 .menu-ring--back .ring-track { stroke: rgba(148, 163, 184, 0.28); }
+/* 翻页圆环（上一页 / 下一页）：同样是「导航」而不是动作，做得比动作圆环低调一点 */
+.menu-ring--prev,
+.menu-ring--next { background: rgba(6, 12, 20, 0.3); }
+.menu-ring--prev .ring-track,
+.menu-ring--next .ring-track { stroke: rgba(148, 163, 184, 0.3); }
+.menu-ring--prev .menu-name,
+.menu-ring--next .menu-name { color: #cfe6ff; font-weight: 700; }
 
 /* ---------- 手势菜单模式：只留视频画面 + 菜单，其余面板全部收起 ---------- */
 #workoutView.menu-mode { display: block; }
