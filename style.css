@@ -1412,27 +1412,39 @@ kbd {
   position: absolute;
   inset: 0;
   z-index: 4;                 /* 在左下角退出圆环（z-index 5）下面：两者都要能看见 */
-  display: flex;
-  flex-direction: column;
-  padding: 10px 14px 12px;
   pointer-events: none;       /* 空白处不挡鼠标，只有菜单圆环本身可点 */
   background: radial-gradient(ellipse at 50% 8%, rgba(4, 10, 18, 0.72), rgba(4, 10, 18, 0.35) 62%, rgba(4, 10, 18, 0.55));
 }
 .gesture-menu[hidden] { display: none; }
-.menu-head { text-align: center; margin-bottom: 4px; }
+/*
+ * ⚠️ 圆环容器必须**铺满整个视频框**（inset: 0）：app.js 里 menuRingLayout() 算的圆心是**舞台坐标**
+ * （头部 15% / 底部 12% 的留白已经算在里面了），容器一旦有偏移，算出来的位置就会被整体推下去。
+ * 所以标题与底部提示改成绝对定位的浮层（不吃鼠标），网格仍然从 (0,0) 开始。
+ */
+.menu-grid { position: absolute; inset: 0; }
+.menu-head {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  text-align: center;
+}
 .menu-title {
-  font-size: clamp(15px, 1.5vw, 21px);
+  font-size: clamp(17px, 1.7vw, 26px);
   font-weight: 800;
   color: #eaf4ff;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
-.menu-lead { font-size: clamp(11px, 1.1vw, 14px); color: #cfe6ff; opacity: 0.92; }
-.menu-grid { position: relative; flex: 1; min-height: 0; }
+.menu-lead { font-size: clamp(12px, 1.15vw, 16px); color: #cfe6ff; opacity: 0.92; }
 .menu-foot {
+  position: absolute;
+  bottom: 8px;
+  left: 0;
+  right: 0;
   text-align: center;
-  font-size: clamp(10px, 0.95vw, 13px);
+  font-size: clamp(11px, 1.05vw, 14px);
   color: #cfe6ff;
-  opacity: 0.8;
+  opacity: 0.82;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
 }
 /* 菜单里的每一个圆环：内联 left/top/width/height 由 app.js 写（见 layoutMenu） */
@@ -1445,16 +1457,33 @@ kbd {
 .menu-icon { position: relative; font-size: clamp(16px, 2vw, 28px); line-height: 1; pointer-events: none; }
 .menu-name {
   position: absolute;
-  top: calc(100% + 3px);
+  top: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
   white-space: nowrap;
-  font-size: clamp(9px, 0.92vw, 13px);
-  font-weight: 700;
-  color: #e6f1ff;
+  font-size: clamp(14px, 1.6vw, 24px);   /* 真实字号由 app.js 按圆环直径写进行内样式 */
+  font-weight: 800;
+  color: #f2f8ff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+}
+/* 分类圆环上的「N 个动作」小字（第二级没有） */
+.menu-sub {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 1.5em;
+  white-space: nowrap;
+  font-size: clamp(11px, 1.1vw, 17px);
+  color: #a9c7e8;
   text-shadow: 0 1px 5px rgba(0, 0, 0, 0.8);
   pointer-events: none;
 }
+.menu-sub:empty { display: none; }
+/* 「返回」那一格：低调一点，一眼分得出它不是动作 */
+.menu-ring--back { background: rgba(6, 12, 20, 0.3); }
+.menu-ring--back .ring-track { stroke: rgba(148, 163, 184, 0.28); }
 
 /* ---------- 手势菜单模式：只留视频画面 + 菜单，其余面板全部收起 ---------- */
 #workoutView.menu-mode { display: block; }

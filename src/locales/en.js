@@ -753,9 +753,12 @@ export default {
     // The big button on the home screen
     start: 'Start gesture workout',
     startSub: 'Opens the camera → fullscreen video → put your palm in a ring to pick an exercise',
-    // The gesture menu itself
+    // The gesture menu itself (two levels: pick a category, then an exercise — so the rings can be big)
     title: 'Pick an exercise',
     lead: 'Put your palm into one of the rings and hold it for 3 seconds to select it',
+    leadIn: 'Pick an exercise from “{name}” — the last ring is “Back”, which switches category',
+    catCount: '{n} exercises',
+    back: 'Back',
     hint: 'Hold 3 s to select · the bottom-left ring returns to the web page · clicking also works',
     item: '{name} (hold 3 s)',
     picked: 'Starting: {name}',

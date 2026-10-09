@@ -569,8 +569,8 @@ console.log('\n[3] 静态资源与模型文件');
     ok('菜单默认藏着（没点「开始」之前不显示）',
       /<div class="gesture-menu" id="gestureMenu" hidden>/.test(html));
     ok('菜单有标题 / 说明 / 圆环容器 / 底部提示四块（文案走 menu.*，中英都有）',
-      /id="menuGrid"/.test(html) && /class="menu-title" data-i18n="menu\.title"/.test(html)
-      && /class="menu-lead" data-i18n="menu\.lead"/.test(html)
+      /id="menuGrid"/.test(html) && /class="menu-title" id="menuTitle" data-i18n="menu\.title"/.test(html)
+      && /class="menu-lead" id="menuLead" data-i18n="menu\.lead"/.test(html)
       && /class="menu-foot" data-i18n="menu\.hint"/.test(html)
       && typeof LOCALES.zh.menu.lead === 'string' && typeof LOCALES.en.menu.lead === 'string'
       && typeof LOCALES.zh.menu.hint === 'string' && typeof LOCALES.en.menu.hint === 'string');
@@ -580,8 +580,8 @@ console.log('\n[3] 静态资源与模型文件');
       && /pointer-events:\s*none/.test(menuBlock), menuBlock.trim().slice(0, 80));
     ok('菜单圆环复用 .ring-btn 那一套（同一种圆环动画与 3 秒手感）',
       /\.menu-ring\s*\{/.test(css) && /\.ring-btn/.test(css)
-      && /btn\.className = 'menu-ring ring-btn'/.test(app) && /menu-name/.test(css)
-      && /\.menu-ring\s*\{[^}]*min-width:\s*0/.test(css));
+      && /btn\.className = `menu-ring ring-btn menu-ring--\$\{it\.kind\}`/.test(app)
+      && /menu-name/.test(css) && /\.menu-ring\s*\{[^}]*min-width:\s*0/.test(css));
     ok('菜单模式把运动相关面板收起来（侧栏 / 工具栏 / HUD / 进度条）',
       /#workoutView\.menu-mode \.panel/.test(css) && /#stage\.menu-mode \.hud/.test(css)
       && /#stage\.menu-mode \.criteria-bar/.test(css));
@@ -596,10 +596,27 @@ console.log('\n[3] 静态资源与模型文件');
       /function requestStageFullscreen\(\)/.test(app) && /stage\.requestFullscreen\(\)/.test(app));
     ok('菜单判定用「手掌中心 + 3 秒」，和别的圆环同一套常量',
       /function updateMenu\(/.test(app) && /palmPoints\(landmarks/.test(app)
-      && /GESTURE_HOLD_MS/.test(app) && /MENU_HIT_RATIO/.test(app)
-      && /MENU_COLS/.test(app));
-    ok('菜单项就是动作库（一处定义：不会再抄一份动作清单）',
-      /function menuList\(\)/.test(app) && /EXERCISES\.map\(\(e\) => localizedExercise\(e\.id\)\)/.test(app));
+      && /GESTURE_HOLD_MS/.test(app) && /MENU_HIT_RATIO/.test(app));
+    // 两级菜单（用户反馈「主界面的圆环太小了，字也太小了，建议考虑二级菜单」）
+    ok('菜单是**两级**：第一级分类、第二级动作 + 返回（圆环才做得大）',
+      /state\.menuLevel = 0;/.test(app) && /function menuItems\(\)/.test(app)
+      && /if \(state\.menuLevel === 0\)/.test(app) && /kind: 'category'/.test(app)
+      && /kind: 'back'/.test(app) && /MENU_COLS_L1/.test(app) && /MENU_COLS_L2/.test(app));
+    ok('两级菜单的圆环直径上限 ≥200px（不再是 19 个挤一屏的小圆环）',
+      /const MENU_RING_MAX = (\d+)/.test(app)
+      && Number(/const MENU_RING_MAX = (\d+)/.exec(app)[1]) >= 200,
+      String(/const MENU_RING_MAX = (\d+)/.exec(app)?.[1]));
+    ok('字号跟着圆环直径算（一处定义，圆环大字号就大）',
+      /const nameSize = clamp\(dia \* 0\.17/.test(app)
+      && /name\.style\.fontSize = `\$\{it\.nameSize/.test(app));
+    ok('菜单项就是动作库（一处定义：分类与动作都从目录取，不会再抄一份清单）',
+      /function menuItems\(\)/.test(app) && /localizedCategories\(\)\.map/.test(app)
+      && /localizedByCategory\(state\.menuCategory\)\.map/.test(app));
+    ok('「返回」那一格有单独样式（一眼分得出它不是动作）',
+      /menu-ring--\$\{it\.kind\}/.test(app) && /\.menu-ring--back/.test(css)
+      && typeof LOCALES.zh.menu.back === 'string' && typeof LOCALES.en.menu.back === 'string'
+      && typeof LOCALES.zh.menu.leadIn === 'string' && typeof LOCALES.en.menu.leadIn === 'string'
+      && typeof LOCALES.zh.menu.catCount === 'string' && typeof LOCALES.en.menu.catCount === 'string');
     ok('主循环里跑菜单判定，选中就进那个动作',
       /if \(state\.menuMode\) \{/.test(app) && /updateMenu\(res \? res\.landmarks : null, now\)/.test(app)
       && /selectFromMenu\(picked\)/.test(app));

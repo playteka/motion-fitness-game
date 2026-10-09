@@ -92,7 +92,9 @@ const state = {
   target: 15,
   session: 'calibrating',   // calibrating | ready | countdown | running | paused | idle
   homeMode: false,          // 停在动作主页：不校准、不计数（避免浏览动作时偷偷开始一组）
-  menuMode: false,          // 停在**手势菜单**：全屏视频画面上摆一圈动作圆环，手掌停 3 秒选中
+  menuMode: false,          // 停在**手势菜单**：全屏视频画面上摆一圈圆环，手掌停 3 秒选中
+  menuLevel: 0,             // 手势菜单的层级：0 = 分类（5 个大圆环）、1 = 该分类下的动作 +「返回」
+  menuCategory: '',         // 第二级当前是哪个分类
   autoStart: false,         // 校准识别完成后是否自动进入运动状态（选好动作后为 true）
   afterSet: false,          // 刚结束一组：先让用户休息，不自动开始；离开轮廓后自动恢复
   detector: null,
@@ -1634,17 +1636,51 @@ function retrySet() {
  * 之前那一格的进度立刻归零（不然会在两格之间攒进度）。
  * ------------------------------------------------------------------ */
 
-/** 菜单的列数：19 个动作排成 5 列 4 行（最后一行不满就整行居中） */
-const MENU_COLS = 5;
+/**
+ * 菜单的**列数**（两级菜单，圆环要够大够好瞄）：
+ *   第一级 = 5 个分类 → 一行 5 个；第二级 = 某个分类里的动作 + 「返回」 → 一行 4 个（最多两行）。
+ * 窄屏自动减列（见 menuRingLayout），否则圆环会挤成一团。
+ */
+const MENU_COLS_L1 = 5;
+const MENU_COLS_L2 = 4;
 /** 手掌落在「圆心 × 画出来的半径 × 这个比例」以内就算指着这一格（比圆圈稍大一点，好瞄准） */
 const MENU_HIT_RATIO = 1.15;
-/** 圆环直径的上下限（按舞台尺寸算出来的格子自己缩） */
-const MENU_RING_MIN = 44;
-const MENU_RING_MAX = 132;
+/** 圆环直径的上限；下限只防「小得没法瞄」（真摆不下时会自动减列，见 MENU_CELL_MIN_PX） */
+const MENU_RING_MAX = 240;
+/** 一格至少要有的宽度：大圆环 + 一行名字才摆得下（不够就自动减列） */
+const MENU_CELL_MIN_PX = 170;
 
-/** 菜单里要列的动作（跟动作库同一个顺序；换语言时重建） */
-function menuList() {
-  return EXERCISES.map((e) => localizedExercise(e.id));
+/**
+ * 菜单项：**两级**。
+ *   第一级 `menuLevel === 0`：5 个分类（上肢 / 下肢 / 核心 / 全身 / 拉伸）；
+ *   第二级 `menuLevel === 1`：当前分类下的动作，末尾再加一个「↩ 返回」。
+ *
+ * 为什么要两级（用户反馈）：「主界面的圆环太小了，字也太小了，建议考虑二级菜单。」
+ * 19 个圆环挤在一屏里，直径只有 ~97px、名字只有 12px；分成两级之后第一级 5 个大圆环（~190px）、
+ * 第二级最多 7 个（~178px），名字跟着圆环一起放大（见 layoutMenu 里的字号计算）。
+ */
+function menuItems() {
+  if (state.menuLevel === 0) {
+    return localizedCategories().map((c) => ({
+      id: `cat:${c.id}`,
+      kind: 'category',
+      catId: c.id,
+      name: c.name,
+      icon: c.icon,
+      sub: t('menu.catCount', { n: localizedByCategory(c.id).length }),
+    }));
+  }
+  const list = localizedByCategory(state.menuCategory).map((ex) => ({
+    id: ex.id, kind: 'exercise', name: ex.name, icon: ex.icon, sub: '',
+  }));
+  list.push({ id: 'back', kind: 'back', name: t('menu.back'), icon: '↩', sub: '' });
+  return list;
+}
+
+/** 菜单里要列的分类名（第二级的标题用） */
+function menuCategoryName() {
+  const c = localizedCategories().find((x) => x.id === state.menuCategory);
+  return c ? c.name : t('menu.title');
 }
 
 /**
@@ -1652,35 +1688,40 @@ function menuList() {
  *
  * 和左下角退出圆环是同一个做法：判定用的圆心 / 半径与写进元素的行内 `left/top` 永远来自同一份数，
  * 所以「看到哪一格」和「程序判哪一格」不会各说一套（测试也能在没有真实布局的桩里跑）。
+ * 直径与字号一起算：字号按直径走，圆环一大字就跟着大（用户反馈「圆环太小、字也太小」）。
  */
 function menuRingLayout(size) {
-  const list = menuList();
+  const list = menuItems();
   const n = list.length;
   if (!n) return [];
-  const cols = Math.min(MENU_COLS, n);
+  const wantCols = state.menuLevel === 0 ? MENU_COLS_L1 : MENU_COLS_L2;
+  // 窄屏自动减列：一列至少要有 MENU_CELL_MIN_PX 才摆得下「大圆环 + 名字」
+  const cols = Math.max(1, Math.min(wantCols, n, Math.floor(size.w / MENU_CELL_MIN_PX)));
   const rows = Math.ceil(n / cols);
-  const padX = Math.max(12, size.w * 0.02);
+  const padX = Math.max(10, size.w * 0.02);
   // 顶部让开标题、底部让开提示（窄屏 / 竖屏手机多让一点）
   const narrow = size.w < 620;
-  const top = size.h * (narrow ? 0.17 : 0.13);
-  const bottom = size.h * (narrow ? 0.15 : 0.12);
+  const top = size.h * (narrow ? 0.18 : 0.15);
+  const bottom = size.h * (narrow ? 0.14 : 0.12);
   const cellW = Math.max(1, (size.w - padX * 2) / cols);
   const cellH = Math.max(1, (size.h - top - bottom) / rows);
-  // 直径：横向留出间隙，纵向还要给名字留一行（所以纵向按 0.72 收）
-  const d = clamp(Math.min(cellW * 0.8, cellH * 0.72), MENU_RING_MIN, MENU_RING_MAX);
-  return list.map((ex, i) => {
+  // 直径：横向留出间隙，纵向还要给名字留一行（所以纵向按 0.62 收）
+  const dia = Math.max(24, Math.min(cellW * 0.78, cellH * 0.62, MENU_RING_MAX));
+  const nameSize = clamp(dia * 0.17, 11, 30);
+  const iconSize = clamp(dia * 0.32, 15, 56);
+  return list.map((it, i) => {
     const col = i % cols;
     const row = Math.floor(i / cols);
     const inRow = Math.min(cols, n - row * cols);          // 最后一行可能不满
     const offset = ((cols - inRow) * cellW) / 2;           // 不满就整行居中
     return {
-      id: ex.id,
-      name: ex.name,
-      icon: ex.icon,
+      ...it,
       cx: padX + offset + cellW * (col + 0.5),
       cy: top + cellH * (row + 0.5),
-      r: d / 2,
-      hit: (d / 2) * MENU_HIT_RATIO,
+      r: dia / 2,
+      hit: (dia / 2) * MENU_HIT_RATIO,
+      nameSize,
+      iconSize,
     };
   });
 }
@@ -1692,32 +1733,34 @@ function menuRingEl(id) {
   return [...grid.children].find((el) => el?.dataset?.ex === id) || null;
 }
 
-/** 建菜单项（只在换语言 / 重进菜单时重建；圆环位置由 layoutMenu 单独写） */
+/** 建菜单项（换层 / 换语言 / 重进菜单时重建；圆环位置与字号由 layoutMenu 单独写） */
 function buildMenu() {
   const grid = $('menuGrid');
   if (!grid) return;
   grid.innerHTML = '';
-  for (const ex of menuList()) {
+  for (const it of menuItems()) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'menu-ring ring-btn';     // 复用其它圆环的全部样式与动画
-    btn.dataset.ex = ex.id;
-    const label = t('menu.item', { name: ex.name });
+    btn.className = `menu-ring ring-btn menu-ring--${it.kind}`;   // 复用其它圆环的全部样式与动画
+    btn.dataset.ex = it.id;
+    btn.dataset.kind = it.kind;
+    const label = it.kind === 'exercise' ? t('menu.item', { name: it.name }) : it.name;
     btn.setAttribute('aria-label', label);
     btn.setAttribute('title', label);
     btn.innerHTML = '<svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">'
       + '<circle class="ring-track" cx="60" cy="60" r="52"></circle>'
       + '<circle class="ring-fill" cx="60" cy="60" r="52"></circle>'
       + '</svg>'
-      + `<span class="menu-icon" aria-hidden="true">${ex.icon}</span>`
-      + `<span class="menu-name">${ex.name}</span>`
+      + `<span class="menu-icon" aria-hidden="true">${it.icon}</span>`
+      + `<span class="menu-name">${it.name}</span>`
+      + `<span class="menu-sub">${it.sub || ''}</span>`
       + '<span class="ring-timer"></span>';
-    btn.addEventListener('click', () => selectFromMenu(ex.id));   // 鼠标 / 触屏也能选
+    btn.addEventListener('click', () => selectFromMenu(it.id));   // 鼠标 / 触屏也能选
     grid.appendChild(btn);
   }
 }
 
-/** 把菜单圆环按当前舞台尺寸摆好（写行内 left/top/width/height） */
+/** 把菜单圆环按当前舞台尺寸摆好（位置、直径、**字号**都写进行内样式，和判定同一份数） */
 function layoutMenu() {
   const size = stageSize();
   for (const it of menuRingLayout(size)) {
@@ -1727,11 +1770,26 @@ function layoutMenu() {
     el.style.top = `${it.cy}px`;
     el.style.width = `${it.r * 2}px`;
     el.style.height = `${it.r * 2}px`;
+    // 字号跟着直径走：圆环大，字就大（用户反馈「圆环太小了，字也太小了」）
+    const name = el.querySelector?.('.menu-name');
+    if (name) name.style.fontSize = `${it.nameSize.toFixed(1)}px`;
+    const icon = el.querySelector?.('.menu-icon');
+    if (icon) icon.style.fontSize = `${it.iconSize.toFixed(1)}px`;
+    const sub = el.querySelector?.('.menu-sub');
+    if (sub) sub.style.fontSize = `${clamp(it.nameSize * 0.72, 10, 20).toFixed(1)}px`;
   }
 }
 
-/** 重建菜单（换语言 / 进菜单时）：文案与位置一起刷新 */
+/** 重建菜单（换层 / 换语言 / 进菜单时）：标题、文案与位置一起刷新 */
 function renderMenu() {
+  const title = $('menuTitle');
+  if (title) title.textContent = state.menuLevel === 0 ? t('menu.title') : menuCategoryName();
+  const lead = $('menuLead');
+  if (lead) {
+    lead.textContent = state.menuLevel === 0
+      ? t('menu.lead')
+      : t('menu.leadIn', { name: menuCategoryName() });
+  }
   buildMenu();
   layoutMenu();
   resetMenuProgress();
@@ -1827,6 +1885,8 @@ function openMenu({ silent = false } = {}) {
   $('celebrate').hidden = true;
   state.celebrateUntil = 0;
   state.menuMode = true;
+  state.menuLevel = 0;       // 每次都从第一级（分类）开始
+  state.menuCategory = '';
   state.homeMode = false;    // 菜单不算主页：摄像头要开着、识别要跑
   state.session = 'idle';
   state.calib = null;
@@ -1856,9 +1916,31 @@ function closeMenu() {
   syncCornerLabel();
 }
 
-/** 菜单里选中某个动作（手掌停满 3 秒，或者鼠标点一下那一格） */
+/**
+ * 菜单里选中一格（手掌停满 3 秒，或者鼠标点一下那一格）。
+ *
+ * 两级菜单：分类 → 进第二级；「返回」→ 回第一级；动作 → 进训练界面（全屏留着，校准通过自动开练）。
+ */
 function selectFromMenu(id) {
-  if (!state.menuMode || !EXERCISE_MAP[id]) return;
+  if (!state.menuMode) return;
+  const item = menuItems().find((it) => it.id === id);
+  if (!item) return;
+  if (item.kind === 'category') {
+    audio.milestone();
+    state.menuLevel = 1;
+    state.menuCategory = item.catId;
+    renderMenu();
+    audio.say(item.name, { rate: 1.1, force: true });
+    return;
+  }
+  if (item.kind === 'back') {
+    audio.milestone();
+    state.menuLevel = 0;
+    state.menuCategory = '';
+    renderMenu();
+    audio.say(t('menu.title'), { rate: 1.05 });
+    return;
+  }
   const ex = localizedExercise(id);
   audio.milestone();
   audio.say(t('menu.picked', { name: ex.name }), { rate: 1.1, force: true });
@@ -4118,10 +4200,10 @@ window.__mfg = {
   // 调试数据记录（全局配置里的隐藏分组）：记录器本体 + 开关函数，测试直接用它们驱动
   poseLogger, setPoseLog, togglePoseLog, poseLogMeta, renderPoseLogStatus,
   setPoseLogUi, anyModalOpen, videoStateActive,
-  // 全手势操作：首页「开始」按钮 + 视频界面里的手势菜单
+  // 全手势操作：首页「开始」按钮 + 视频界面里的手势菜单（两级：分类 → 动作）
   startGestureMode, openMenu, closeMenu, selectFromMenu, renderMenu, layoutMenu,
-  updateMenu, menuRingLayout, menuList, paintMenuRing, requestStageFullscreen,
-  tickCornerExit, syncCornerLabel, MENU_COLS, MENU_HIT_RATIO,
+  updateMenu, menuRingLayout, menuItems, menuCategoryName, paintMenuRing, requestStageFullscreen,
+  tickCornerExit, syncCornerLabel, MENU_COLS_L1, MENU_COLS_L2, MENU_HIT_RATIO, MENU_RING_MAX,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
 };

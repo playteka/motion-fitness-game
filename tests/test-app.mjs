@@ -4183,22 +4183,27 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && /#stage\.menu-mode \.hud/.test(fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8')),
     '样式里没有 menu-mode 收起规则');
 
-  // ===== ② 菜单项 =====
+  // ===== ② 第一级菜单：5 个分类大圆环（用户反馈「圆环太小、字太小」→ 改成两级菜单） =====
   const layout = api.menuRingLayout(api.stageSize());
-  ok('菜单项就是动作库里的每一个动作（19 个圆环，一格一个）',
-    layout.length === 19 && grid.children.length === 19
-    && layout.every((it, i) => it.id === api.menuList()[i].id),
+  ok('第一级是**分类**（5 个大圆环），不是把 19 个动作挤一屏',
+    api.state.menuLevel === 0 && layout.length === 5 && grid.children.length === 5
+    && layout.every((it) => it.kind === 'category'),
     `${layout.length} / ${grid.children.length}`);
-  ok('每一格都写好了位置与大小（和判定用的是同一份圆心/半径）',
+  ok('圆环明显变大（1280×720 上直径 ≥150px，之前 19 个挤一屏只有 ~97px）',
+    layout.every((it) => it.r * 2 >= 150), `${Math.round(layout[0].r * 2)}px`);
+  ok('名字字号跟着圆环走（≥15px，之前是 12px）',
+    layout.every((it) => it.nameSize >= 15) && layout.every((it) => it.iconSize >= 24),
+    `name=${layout[0].nameSize.toFixed(1)} icon=${layout[0].iconSize.toFixed(1)}`);
+  ok('每一格都写好了位置 / 直径 / 字号（和判定用的是同一份圆心、半径）',
     layout.every((it) => {
       const el = grid.children.find((c) => c.dataset.ex === it.id);
+      const name = el.querySelector?.('.menu-name');
       return el.style.left === `${it.cx}px` && el.style.top === `${it.cy}px`
-        && el.style.width === `${it.r * 2}px`;
-    }), JSON.stringify(layout[0]));
-  ok('菜单里每一格都写着动作名（两种语言都跟着切）',
-    grid.children[0].innerHTML.includes(api.menuList()[0].name)
-    && grid.children[0].attributes['aria-label'].includes(api.menuList()[0].name),
-    grid.children[0].innerHTML.slice(0, 120));
+        && el.style.width === `${it.r * 2}px` && !!name;
+    }), JSON.stringify({ left: layout[0].cx, r: layout[0].r }));
+  ok('分类那一格还写着「N 个动作」（第二级的动作格没有）',
+    /个动作/.test(grid.children[0].innerHTML) && layout.every((it) => it.sub.includes('个动作')),
+    grid.children[0].innerHTML.slice(0, 140));
   {
     const bad = [];
     for (let i = 0; i < layout.length; i += 1) {
@@ -4209,26 +4214,62 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
         if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < a.hit + b.hit) bad.push(`${a.id}↔${b.id}:判定圈重叠`);
       }
     }
-    ok('19 个圆环都完整落在画面里、判定圈互不重叠（「最近的那一格」不会有歧义）',
+    ok('第一级的圆环都完整落在画面里、判定圈互不重叠（「最近的那一格」不会有歧义）',
       bad.length === 0, bad.slice(0, 3).join(', '));
   }
 
-  // ===== ③ 手掌停进某一格 3 秒 → 选中它 =====
-  const target = layout[6];                 // 随便挑一格（第 7 个动作）
+  // ===== ②′ 第二级菜单：分类里的动作 + 「返回」（圆环一样大） =====
   const at6 = (it) => palmsAt6(it.cx, it.cy);
+  const catLower = layout.find((it) => it.catId === 'lower');
+  api.selectFromMenu(catLower.id);
+  const layout2 = api.menuRingLayout(api.stageSize());
+  ok('选了分类 → 进第二级：列出这个分类里的动作（5 个）+ 一个「返回」',
+    api.state.menuLevel === 1 && api.state.menuCategory === 'lower'
+    && layout2.length === 6 && layout2[5].kind === 'back' && layout2[5].name === '返回'
+    && layout2.slice(0, 5).every((it) => it.kind === 'exercise'),
+    `${api.state.menuLevel}/${api.state.menuCategory} n=${layout2.length}`);
+  ok('第二级标题写着分类名（一眼知道自己在哪一层）',
+    elements.get('menuTitle').textContent === catLower.name
+    && elements.get('menuLead').textContent.includes(catLower.name),
+    `${elements.get('menuTitle').textContent} / ${elements.get('menuLead').textContent}`);
+  ok('第二级的圆环同样够大（≥150px，字 ≥15px）',
+    layout2.every((it) => it.r * 2 >= 150 && it.nameSize >= 15),
+    `${Math.round(layout2[0].r * 2)}px / ${layout2[0].nameSize.toFixed(1)}px`);
+  ok('「返回」那一格看得出来不是动作（单独的 menu-ring--back 类）',
+    String(grid.children[grid.children.length - 1].className).includes('menu-ring--back'));
+  {
+    const bad = [];
+    for (let i = 0; i < layout2.length; i += 1) {
+      const a = layout2[i];
+      if (a.cx - a.r < 0 || a.cx + a.r > SW || a.cy - a.r < 0 || a.cy + a.r > SH) bad.push(`${a.id}:出画`);
+      for (let j = i + 1; j < layout2.length; j += 1) {
+        const b = layout2[j];
+        if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < a.hit + b.hit) bad.push(`${a.id}↔${b.id}:判定圈重叠`);
+      }
+    }
+    ok('第二级的圆环也都落在画面里、判定圈互不重叠', bad.length === 0, bad.slice(0, 3).join(', '));
+  }
+
+  // ===== ③ 手掌停进某一格 3 秒 → 选中它（在第一级试：选分类不会离开菜单） =====
+  api.selectFromMenu('back');               // 回第一级
+  ok('「返回」→ 回第一级（层级与分类都清干净）',
+    api.state.menuLevel === 0 && api.state.menuCategory === ''
+    && elements.get('menuTitle').textContent === '选择运动',
+    `${api.state.menuLevel}/${api.state.menuCategory}`);
+  const target = layout[0];
   ok('手掌停在圆环里 2 秒：进度攒到 2/3，还没选中',
     api.updateMenu(at6(target), 1000) === null
     && api.updateMenu(at6(target), 2000) === null
     && Math.abs(api.gestureState.menu.p - 1 / 3) < 0.05,
     `p=${api.gestureState.menu.p}`);
   ok('手掌移到**另一格**：进度从头开始（不会在两格之间攒进度）',
-    api.updateMenu(at6(layout[7]), 2100) === null
-    && api.gestureState.menu.id === layout[7].id
+    api.updateMenu(at6(layout[1]), 2100) === null
+    && api.gestureState.menu.id === layout[1].id
     && api.gestureState.menu.p < 0.05,
     `${api.gestureState.menu.id} p=${api.gestureState.menu.p}`);
-  api.updateMenu(at6(layout[7]), 3000);
-  const picked = api.updateMenu(at6(layout[7]), 5201);
-  ok('手掌停满 3 秒 → 判定选中这一格', picked === layout[7].id, String(picked));
+  api.updateMenu(at6(layout[1]), 3000);
+  const picked = api.updateMenu(at6(layout[1]), 5201);
+  ok('手掌停满 3 秒 → 判定选中这一格', picked === layout[1].id, String(picked));
   ok('选中之后这一格的进度清干净（不会连着再选一次）',
     api.gestureState.menu.p === 0 && api.gestureState.menu.id === '');
 
@@ -4245,10 +4286,12 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     api.gestureState.menu.p > 0 && api.gestureState.menu.p < kept6,
     `${kept6} → ${api.gestureState.menu.p}`);
 
-  // 选中之后落到那个动作的训练界面（这里调的就是主循环里那一句）
-  api.selectFromMenu(layout[7].id);
-  ok('选中后直接进入该动作的全屏训练界面（菜单收起来）',
-    api.state.menuMode === false && api.state.exerciseId === layout[7].id
+  // 选中一个动作 → 落到那个动作的训练界面（这里调的就是主循环里那一句）
+  api.selectFromMenu(layout.find((it) => it.catId === 'full').id);      // 先随便进一个分类
+  const layout3 = api.menuRingLayout(api.stageSize()).filter((it) => it.kind === 'exercise');
+  api.selectFromMenu(layout3[2].id);
+  ok('选中动作后直接进入该动作的全屏训练界面（菜单收起来）',
+    api.state.menuMode === false && api.state.exerciseId === layout3[2].id
     && menuEl.hidden === true && elements.get('workoutView').hidden === false
     && !String(elements.get('workoutView').className).includes('menu-mode'),
     `menu=${api.state.menuMode} ex=${api.state.exerciseId}`);
@@ -4259,11 +4302,20 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
 
   // ===== ④ 鼠标点菜单项同样能选（全手势之外的兜底） =====
   api.openMenu({ silent: true });
+  ok('重新进菜单总是从第一级开始（不会停在上一次的分类里）',
+    api.state.menuLevel === 0 && api.state.menuCategory === ''
+    && grid.children.length === 5);
   const before6 = api.state.exerciseId;
-  const clickTarget = layout[11];
-  grid.children.find((c) => c.dataset.ex === clickTarget.id).dispatch('click');
-  ok('鼠标点一下菜单圆环也能选（不用非得用手势）',
-    api.state.menuMode === false && api.state.exerciseId === clickTarget.id
+  const clickCat = api.menuRingLayout(api.stageSize()).find((it) => it.catId === 'core');
+  grid.children.find((c) => c.dataset.ex === clickCat.id).dispatch('click');
+  ok('鼠标点一下分类圆环 → 进第二级',
+    api.state.menuLevel === 1 && api.state.menuCategory === 'core'
+    && api.state.menuMode === true,
+    `${api.state.menuLevel}/${api.state.menuCategory}`);
+  const clickEx = api.menuRingLayout(api.stageSize()).find((it) => it.kind === 'exercise');
+  grid.children.find((c) => c.dataset.ex === clickEx.id).dispatch('click');
+  ok('再点一下动作圆环 → 进那个动作（不用非得用手势）',
+    api.state.menuMode === false && api.state.exerciseId === clickEx.id
     && api.state.exerciseId !== before6,
     `${before6} → ${api.state.exerciseId}`);
 
@@ -4271,11 +4323,12 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   documentStub.fullscreenElement = stageEl;
   documentStub.exitFullscreenCalls = 0;
   api.triggerCornerExit();                  // 训练界面里退出
-  ok('运动中退出 → 回手势菜单（全屏留着，菜单项重新摆好）',
+  ok('运动中退出 → 回手势菜单（全屏留着，而且总是回到第一级分类）',
     api.state.menuMode === true && api.state.homeMode === false
+    && api.state.menuLevel === 0 && api.state.menuCategory === ''
     && menuEl.hidden === false && documentStub.exitFullscreenCalls === 0
-    && api.menuRingLayout(api.stageSize()).length === 19,
-    `menu=${api.state.menuMode} exit=${documentStub.exitFullscreenCalls}`);
+    && api.menuRingLayout(api.stageSize()).length === 5,
+    `menu=${api.state.menuMode} level=${api.state.menuLevel} exit=${documentStub.exitFullscreenCalls}`);
   api.triggerCornerExit();                  // 菜单里退出
   ok('菜单里退出 → 回网页首页（主页可见 + 退出全屏 + 菜单收起来）',
     api.state.homeMode === true && api.state.menuMode === false
@@ -4289,7 +4342,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       return api.state.homeMode === true && api.state.menuMode === false;
     })());
 
-  // ===== ⑥ 走一遍**真实主循环**：摄像头 → 识别 → 菜单判定 → 自动进入那个动作 =====
+  // ===== ⑥ 走一遍**真实主循环**：摄像头 → 识别 → 两层菜单判定 → 自动进入那个动作 =====
   {
     const savedDetect = api.engine.detect;
     const savedDraw = api.renderer.draw;
@@ -4320,14 +4373,23 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     };
     api.state.homeMode = false;
     api.openMenu({ silent: true });
-    const t17 = api.menuRingLayout(api.stageSize())[3];
-    pump(palmsAt6(t17.cx, t17.cy), 40);
-    ok('真实主循环里：手掌停在某一格上还没满 3 秒，先不选（进度在攒）',
-      api.state.menuMode === true && api.gestureState.menu.p > 0.2 && api.gestureState.menu.p < 1,
+    const cat17 = api.menuRingLayout(api.stageSize())[2];      // 第一级：某一格分类
+    pump(palmsAt6(cat17.cx, cat17.cy), 40);
+    ok('真实主循环里：手掌停在分类圆环上还没满 3 秒，先不选（进度在攒）',
+      api.state.menuMode === true && api.state.menuLevel === 0
+      && api.gestureState.menu.p > 0.2 && api.gestureState.menu.p < 1,
       `menu=${api.state.menuMode} p=${api.gestureState.menu.p}`);
-    pump(palmsAt6(t17.cx, t17.cy), 90);
-    ok('真实主循环里：手掌停满 3 秒 → 自动进入那个动作（菜单关掉、界面切过去）',
-      api.state.menuMode === false && api.state.exerciseId === t17.id
+    pump(palmsAt6(cat17.cx, cat17.cy), 90);
+    ok('真实主循环里：手掌停满 3 秒 → 进第二级（列出这个分类的动作 + 返回）',
+      api.state.menuMode === true && api.state.menuLevel === 1
+      && api.state.menuCategory === cat17.catId
+      && api.menuRingLayout(api.stageSize()).some((it) => it.kind === 'back'),
+      `level=${api.state.menuLevel} cat=${api.state.menuCategory}`);
+
+    const ex17 = api.menuRingLayout(api.stageSize()).find((it) => it.kind === 'exercise');
+    pump(palmsAt6(ex17.cx, ex17.cy), 100);
+    ok('真实主循环里：再停满 3 秒 → 进入那个动作（菜单关掉、界面切过去）',
+      api.state.menuMode === false && api.state.exerciseId === ex17.id
       && menuEl.hidden === true && elements.get('workoutView').hidden === false,
       `menu=${api.state.menuMode} ex=${api.state.exerciseId}`);
 
