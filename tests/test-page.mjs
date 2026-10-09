@@ -18,6 +18,7 @@ import { EXERCISES, createDetector, localizedExercise } from '../src/exercises.j
 import { isTimedReps, targetUnitKey } from '../src/catalog.js';
 import { getStepPlan } from '../src/steps.js';
 import { setLang, t, LOCALES, LANG_ORDER } from '../src/i18n.js';
+import { exercisePoseSVG } from '../src/icons.js';
 
 setLang('zh', { persist: false });
 
@@ -658,6 +659,122 @@ console.log('\n[3] 静态资源与模型文件');
       /if \(state\.homeMode \|\| state\.menuMode \|\| !state\.detector\) return;/.test(app));
     ok('菜单里按 Esc = 回网页首页（键盘用户的退路）',
       /if \(state\.menuMode\) \{ showHome\(\); return; \}/.test(app));
+  }
+
+  /* ---- 用户要求：「返回图标的颜色要改为白色，和文字的颜色一样，让人可以清晰的辨识。」
+     以及「臀桥的图标要改为人体做臀桥的姿势，就是躺下，腿部弯曲，身体绷直的姿势。
+     平板支撑的图标也要改为双肘撑地，身体绷直的样子。」---- */
+  {
+    const bridgeSVG = exercisePoseSVG('bridge');
+    const plankSVG = exercisePoseSVG('plank');
+    ok('臀桥 / 平板支撑有专门画的「人体姿势」线条图标（其余动作仍然用 emoji）',
+      /class="ex-pose"/.test(bridgeSVG) && /class="ex-pose"/.test(plankSVG)
+      && exercisePoseSVG('squat') === '' && bridgeSVG !== plankSVG,
+      `bridge=${bridgeSVG.length}B plank=${plankSVG.length}B squat=${exercisePoseSVG('squat').length}B`);
+
+    /**
+     * 把图标解析成「关节图」。
+     *
+     * 图标的骨架是一条**链**：踝－膝－髋－肩－肘－手（其余动作同理），
+     * 所以沿链走一遍就能认出每个关节；「哪一头是手」用**臂比腿短**来判断
+     * （上臂+小臂 ≈ 6 段长，大腿+小腿 ≈ 10 段长），不靠猜。
+     */
+    const jointsOf = (svg) => {
+      const segs = [...svg.matchAll(/<line x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)"/g)]
+        .map((m) => [{ x: +m[1], y: +m[2] }, { x: +m[3], y: +m[4] }]);
+      const head = (svg.match(/<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)"/) || [])
+        .slice(1).map(Number);
+      const key = (p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+      const V = new Map();
+      segs.forEach((s, i) => {
+        for (const p of s) {
+          const k = key(p);
+          if (!V.has(k)) V.set(k, { p, segs: [] });
+          V.get(k).segs.push(i);
+        }
+      });
+      const end = [...V.values()].find((v) => v.segs.length === 1);
+      const chain = [];                       // 顶点序列
+      const lens = [];                        // 每段的长度
+      let cur = end;
+      let prev = -1;
+      while (cur) {
+        chain.push(cur.p);
+        const si = cur.segs.find((i) => i !== prev);
+        if (si === undefined) break;
+        const s = segs[si];
+        const other = key(s[0]) === key(cur.p) ? s[1] : s[0];
+        lens.push(Math.hypot(other.x - cur.p.x, other.y - cur.p.y));
+        prev = si;
+        cur = V.get(key(other));
+      }
+      // 臂（两段更短的）在哪一头：决定链的方向，从而定出肩 / 肘 / 手 / 髋 / 膝 / 踝
+      const headFirst = lens[0] + lens[1] < lens[lens.length - 1] + lens[lens.length - 2];
+      const P = headFirst ? [...chain].reverse() : chain;
+      const [ankle, knee, hip, shoulder, elbow, hand] = P;
+      const ang = (a, b, c) => {
+        const v1 = { x: a.x - b.x, y: a.y - b.y };
+        const v2 = { x: c.x - b.x, y: c.y - b.y };
+        const cos = (v1.x * v2.x + v1.y * v2.y) / (Math.hypot(v1.x, v1.y) * Math.hypot(v2.x, v2.y));
+        return (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
+      };
+      const xs = segs.flat().map((p) => p.x);
+      const ys = segs.flat().map((p) => p.y);
+      return {
+        ankle, knee, hip, shoulder, elbow, hand,
+        head: { x: head[0], y: head[1], r: head[2] },
+        hipAngle: ang(shoulder, hip, knee),
+        kneeAngle: ang(hip, knee, ankle),
+        elbowAngle: ang(shoulder, elbow, hand),
+        w: Math.max(...xs) - Math.min(...xs),
+        h: Math.max(...ys) - Math.min(...ys),
+        minY: Math.min(...ys), maxY: Math.max(...ys),
+        segments: segs.length,
+      };
+    };
+
+    const b = jointsOf(bridgeSVG);
+    ok('臀桥图标 = 躺下（横着比竖着长）+ 髋部抬起来（明显高于肩）',
+      b.w > b.h && (b.shoulder.y - b.hip.y) >= 2,
+      JSON.stringify({ w: +b.w.toFixed(1), h: +b.h.toFixed(1), 髋高于肩: +(b.shoulder.y - b.hip.y).toFixed(1) }));
+    ok('臀桥图标 = 腿部弯曲（膝角 60°~120°）+ 身体绷直（髋角不折，≥130°）',
+      b.kneeAngle >= 60 && b.kneeAngle <= 120 && b.hipAngle >= 130,
+      `膝角=${Math.round(b.kneeAngle)}° 髋角=${Math.round(b.hipAngle)}°`);
+    ok('臀桥图标 = 脚踩在地面线上、双臂平放在地面附近（不是朝天举）',
+      Math.abs(b.ankle.y - b.maxY) <= 4 && Math.abs(b.hand.y - b.shoulder.y) <= 3.5,
+      `踝=${b.ankle.y.toFixed(1)} 地面=${b.maxY.toFixed(1)} 肩=${b.shoulder.y.toFixed(1)} 手=${b.hand.y.toFixed(1)}`);
+
+    const p = jointsOf(plankSVG);
+    ok('平板支撑图标 = 双肘撑地（肘在**地面线上**、就在肩的正下方）',
+      Math.abs(p.elbow.y - p.maxY) <= 0.5 && Math.abs(p.elbow.x - p.shoulder.x) <= 1
+      && p.elbowAngle >= 60 && p.elbowAngle <= 120,
+      `肘y=${p.elbow.y.toFixed(1)} 地面=${p.maxY.toFixed(1)} 肩x=${p.shoulder.x.toFixed(1)} 肘x=${p.elbow.x.toFixed(1)} 肘角=${Math.round(p.elbowAngle)}°`);
+    ok('平板支撑图标 = 小臂平贴地面、朝头的方向伸出去（一眼看出是撑在小臂上）',
+      Math.abs(p.hand.y - p.elbow.y) <= 0.5
+      && Math.sign(p.hand.x - p.elbow.x) === Math.sign(p.head.x - p.shoulder.x),
+      `手=(${p.hand.x.toFixed(1)},${p.hand.y.toFixed(1)}) 肘=(${p.elbow.x.toFixed(1)},${p.elbow.y.toFixed(1)})`);
+    ok('平板支撑图标 = 身体绷直（躯干-大腿、髋-膝都接近一条线，≥150°）',
+      p.hipAngle >= 150 && p.kneeAngle >= 150 && p.w > p.h,
+      `髋角=${Math.round(p.hipAngle)}° 膝角=${Math.round(p.kneeAngle)}°`);
+
+    // 参数是唯一来源：姿势由这几个数决定，改一个数图标就变（测试盯住它们）
+    ok('姿势参数写在一处（臀桥：躺下 + 屈膝 + 髋抬起 + 手臂贴地；平板支撑：小臂撑地）',
+      /bridge: \(\) => buildLie\(\{\s*\n\s*tilt: 92, hip: 176, knee: 92, rise: 0\.35, face: 'up', elbow: 172, armDeg: 282,/.test(read('src/icons.js'))
+      && /plank: \(\) => buildLie\(\{\s*\n?\s*tilt: 90, hip: 178, knee: 172, face: 'down', support: true, forearm: true, handMark: true,/.test(read('src/icons.js'))
+      && /if \(support && forearm\)/.test(read('src/icons.js')),
+      '参数与约定不一致');
+    ok('姿势图标接进了动作元数据（localizedExercise 提供 poseIcon），界面按 poseIcon ∨ emoji 取',
+      /poseIcon: exercisePoseSVG\(id\)/.test(read('src/exercises.js'))
+      && /<span class="ex-icon">\$\{ex\.poseIcon \|\| ex\.icon\}<\/span>/.test(app)
+      && /\$\('hudIcon'\)\.innerHTML = ex\.poseIcon \|\| ex\.icon;/.test(app)
+      && /const iconHtml = it\.poseIcon \|\| it\.icon;/.test(app));
+    ok('文字箭头（返回 / 上一页 / 下一页）的图标色是**白色**，和名字一个颜色',
+      /\.menu-icon \{[\s\S]*?color: #f2f8ff;/.test(css)
+      && /\.menu-name \{[\s\S]*?color: #f2f8ff;/.test(css));
+    ok('姿势图标的线条走 currentColor（放在哪儿就跟哪儿的文字颜色一致）',
+      /\.ex-pose \{[\s\S]*?stroke: currentColor;/.test(css)
+      && /\.ex-pose \{[\s\S]*?fill: none;/.test(css)
+      && /\.ex-pose \{[\s\S]*?width: 1em;/.test(css));
   }
 }
 

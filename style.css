@@ -1470,7 +1470,26 @@ kbd {
   background: rgba(6, 12, 20, 0.46);
 }
 .menu-ring:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-.menu-icon { position: relative; font-size: clamp(16px, 2vw, 28px); line-height: 1; pointer-events: none; }
+.menu-icon {
+  position: relative;
+  font-size: clamp(16px, 2vw, 28px);   /* 真实字号由 app.js 按圆环直径写进行内样式 */
+  line-height: 1;
+  color: #f2f8ff;                      /* 文字箭头（↩ ◀ ▶）跟名字一样是白色，一眼看得清 */
+  pointer-events: none;
+}
+/* 有「人体姿势」线条图的动作（臀桥 / 平板支撑）：线条走 currentColor，跟着上面的 color 走 */
+.ex-pose {
+  display: block;
+  width: 1em;
+  height: 1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ex-card .ex-icon .ex-pose { width: 1.1em; height: 1.1em; }
+#hudIcon .ex-pose { width: 1.05em; height: 1.05em; vertical-align: -0.12em; }
 .menu-name {
   position: absolute;
   top: calc(100% + 6px);

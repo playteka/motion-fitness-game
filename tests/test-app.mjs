@@ -4487,6 +4487,47 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     windowStub.performance = savedPerf;
   }
 
+  // ===== ⑦ 图标：臀桥 / 平板支撑用「人体姿势」线条图（用户要求），其余仍用 emoji =====
+  {
+    api.state.homeMode = false;
+    api.openMenu({ silent: true });
+    api.selectFromMenu('cat:core');
+    const items = api.menuItems();
+    const bridgeIt = items.find((it) => it.id === 'bridge');
+    const plankIt = items.find((it) => it.id === 'plank');
+    const crunchIt = items.find((it) => it.id === 'crunch');
+    ok('菜单里臀桥 / 平板支撑画的是「人体姿势」线条图（不是 emoji），而且两张图不一样',
+      bridgeIt.poseIcon.includes('ex-pose') && plankIt.poseIcon.includes('ex-pose')
+      && bridgeIt.poseIcon !== plankIt.poseIcon,
+      `bridge=${bridgeIt.poseIcon.length}B plank=${plankIt.poseIcon.length}B`);
+    ok('其余动作仍然是 emoji（没有姿势图就不硬画）',
+      crunchIt.poseIcon === '' && crunchIt.icon.length > 0, `${crunchIt.icon} / ${crunchIt.poseIcon.length}B`);
+    const bridgeEl = grid.children.find((c) => c.dataset.ex === 'bridge');
+    const crunchEl = grid.children.find((c) => c.dataset.ex === 'crunch');
+    ok('菜单圆环里真的画出来了（臀桥那一格的 DOM 带 ex-pose，小虫那格还是 emoji）',
+      /ex-pose/.test(bridgeEl.innerHTML) && !/ex-pose/.test(crunchEl.innerHTML)
+      && crunchEl.innerHTML.includes(crunchIt.icon));
+
+    // 主页动作卡片 / HUD 上也是同一张图（一处定义，三处显示一致）
+    const findByData = (root, id) => {
+      const stack = [...(root.children || [])];
+      while (stack.length) {
+        const el = stack.shift();
+        if (el?.dataset?.id === id) return el;
+        stack.push(...(el.children || []));
+      }
+      return null;
+    };
+    api.showHome();
+    const card = findByData(elements.get('homeCats'), 'bridge');
+    ok('主页上臀桥那张卡片画的也是「人体姿势」图',
+      !!card && /ex-pose/.test(card.innerHTML), card ? card.innerHTML.slice(0, 80) : '没找到卡片');
+    api.openExercise('bridge');
+    ok('HUD 里那个小图标同样是「人体姿势」图',
+      /ex-pose/.test(elements.get('hudIcon').innerHTML),
+      elements.get('hudIcon').innerHTML.slice(0, 60));
+  }
+
   // 恢复现场
   api.state.settings.mirror = savedMirror;
   api.camera.video.readyState = savedReady;

@@ -219,17 +219,30 @@ const spanFor = (l1, l2, deg) => Math.sqrt(Math.max(0.01, l1 * l1 + l2 * l2 - 2 
  * @param o.elbow   肘角（180 = 手臂伸直）
  * @param o.rise    髋部抬起量（倍躯干长，臀桥）
  * @param o.support 是不是「手撑地」的姿势
+ * @param o.forearm 撑地的是**小臂**（平板支撑）：肘在肩的正下方、小臂平贴地面向前伸 ——
+ *                  和「手撑地」（俯卧撑，手臂竖直）区分开。见下面的画法。
  * @param o.face    俯卧 'down' / 仰卧 'up' / 侧卧 'side' / 坐姿 'seated' / 前折 'fold'
+ * @param o.armDeg  **手臂方向的手动覆盖**（度；不传就按 face 走）。
+ *                  仰卧的默认画法是「手臂朝天花板」—— 画关键帧够用，但**画动作图标时看着别扭**
+ *                  （臀桥的人应该是双臂贴着地面放在身体两侧），所以臀桥图标传 282°（贴地、略朝脚的方向）。
  */
 function buildLie({
   tilt = 90, hip = 178, knee = 100, elbow = 178, rise = 0,
-  support = false, shoulderRise = 0, bodyLift = 0, hipLift = 0, kneeLift = 0,
-  handMark = false, face = 'down', hip2 = NaN, knee2 = NaN,
+  support = false, forearm = false, shoulderRise = 0, bodyLift = 0, hipLift = 0, kneeLift = 0,
+  handMark = false, face = 'down', hip2 = NaN, knee2 = NaN, armDeg = NaN,
 } = {}) {
   const lines = [];
   const circles = [];
+  /**
+   * 肩的位置：
+   *   - `forearm`（小臂撑地）：肩在肘的正上方，高度正好是一条上臂 → 画出来就是**平板支撑**；
+   *   - `support`（手撑地）：手在地面线上，肩高由肘角算出来（肘越弯身体越低）；
+   *   - 其它：以肩为锚点。
+   */
   const shoulder = support
-    ? { x: 0, y: -spanFor(SEG.upper, SEG.fore, elbow) - bodyLift }   // 手在地面时，肩高 = 肩到手距离
+    ? (forearm
+      ? { x: 0, y: -SEG.upper - bodyLift }
+      : { x: 0, y: -spanFor(SEG.upper, SEG.fore, elbow) - bodyLift })
     : { x: 0, y: -bodyLift };
   // 卷腹：肩离地量把肩「抬起来」，躯干也跟着立起来一点
   const riseTilt = shoulderRise > 0 ? tilt - clamp(shoulderRise, 0, 0.9) * 34 : tilt;
@@ -271,14 +284,22 @@ function buildLie({
   }
 
   // 手臂
-  if (support) {
+  if (support && forearm) {
+    // 小臂撑地（平板支撑）：肘落在肩的正下方、小臂平放在地面上向前伸 —— 就是「双肘撑地」的样子。
+    // 顺便在地面线上补一小段，一眼看出小臂是压在垫子上的。
+    const elbowP = { x: 0, y: 0 };
+    const hand = { x: SEG.fore, y: 0 };
+    lines.push(seg(shoulder, elbowP), seg(elbowP, hand));
+    if (handMark) lines.push(seg({ x: -1.2, y: 0 }, { x: SEG.fore + 1.6, y: 0 }));
+  } else if (support) {
     const hand = { x: 0, y: 0 };
     const elbowP = ikJoint(shoulder, hand, SEG.upper, SEG.fore, -1);
     lines.push(seg(shoulder, elbowP), seg(elbowP, hand));
     // 「手 / 小臂贴地」再补一小段横线，一眼看出是撑在地面上
     if (handMark) lines.push(seg({ x: hand.x - 1.8, y: hand.y }, { x: hand.x + 2.0, y: hand.y }));
   } else {
-    const armDir = face === 'up' || face === 'seated' ? 180 - 8 : 0;
+    const armDir = Number.isFinite(armDeg) ? armDeg
+      : (face === 'up' || face === 'seated' ? 180 - 8 : 0);
     const elbowP = add(shoulder, down(armDir), SEG.upper);
     const wrist = add(elbowP, down(armDir + (180 - num(elbow, 178))), SEG.fore);
     lines.push(seg(shoulder, elbowP), seg(elbowP, wrist));
@@ -832,20 +853,58 @@ export function angleLabel(stage, ctx = {}) {
 /** 某一格的图标 SVG（进度条上只画这个 + 一个判据角度数字，不写别的文字） */
 export function iconSVG(stage, ctx = {}) {
   const { lines, circles } = stageIcon(stage, ctx);
+  const label = angleLabel(stage, ctx);
+  return poseSVG(lines, circles, 'criteria-icon', label ? {
+    text: label,
+    // 描边当底（paint-order: stroke）→ 数字压在线条上也看得清
+    attrs: 'x="1.6" y="9.6" font-size="7.4" font-weight="800"'
+      + ' fill="currentColor" stroke="#0b1422" stroke-width="1.6" paint-order="stroke" text-anchor="start"',
+  } : null);
+}
+
+/** 把「线条 + 圆」拼成一张 SVG（进度条图标与动作图标共用一处写法） */
+function poseSVG(lines, circles, cls, text = null) {
   const parts = lines.map((l) => {
     const a = l.a || l[0];
     const b = l.b || l[1];
     return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />`;
   });
   for (const c of circles) parts.push(`<circle cx="${c.x}" cy="${c.y}" r="${c.r}" />`);
-  const label = angleLabel(stage, ctx);
-  if (label) {
-    // 描边当底（paint-order: stroke）→ 数字压在线条上也看得清
-    parts.push('<text class="criteria-deg" x="1.6" y="9.6" font-size="7.4" font-weight="800"'
-      + ' fill="currentColor" stroke="#0b1422" stroke-width="1.6" paint-order="stroke"'
-      + ` text-anchor="start">${label}</text>`);
-  }
-  return `<svg class="criteria-icon" viewBox="0 0 ${ICON_BOX} ${ICON_BOX}" aria-hidden="true">${parts.join('')}</svg>`;
+  if (text) parts.push(`<text class="criteria-deg" ${text.attrs}>${text.text}</text>`);
+  return `<svg class="${cls}" viewBox="0 0 ${ICON_BOX} ${ICON_BOX}" aria-hidden="true">${parts.join('')}</svg>`;
+}
+
+/**
+ * 动作的「人体姿势」线条图标（emoji 表达不出动作本身的几个动作用它）。
+ *
+ * 用户要求：「臀桥的图标要改为人体做臀桥的姿势，就是躺下，腿部弯曲，身体绷直的姿势。
+ *   平板支撑的图标也要改为双肘撑地，身体绷直的样子。」
+ *
+ * 姿势参数直接沿用**进度条上那两格关键帧用的同一份参数**（`buildLie`，不另造一套画法）：
+ *   - 臀桥顶：`rise` 把髋部抬起来 + 髋角 176°（躯干与大腿连成一条线 = 身体绷直）
+ *     + 膝角 92°（小腿落地、膝盖弯着）→ 躺下、屈膝、绷直的臀桥；
+ *   - 平板支撑：`support: true` 让手撑在地面线上、肘角 90°（上臂竖直、小臂贴地 = **双肘撑地**）
+ *     + 髋/膝接近伸直 → 身体一条线的平板支撑。
+ * 线条颜色走 `currentColor`，所以放在哪儿就跟哪儿的文字颜色一致（菜单里是白色）。
+ */
+const EXERCISE_POSES = {
+  // 双臂贴地放在身体两侧（`armDeg: 282`）——不然仰卧的默认画法会把手臂画成「朝天举」，
+  // 那不像臀桥；`rise` 取 0.35（比关键帧那格的典型值略小）让「身体绷直」这条更明显一些。
+  bridge: () => buildLie({
+    tilt: 92, hip: 176, knee: 92, rise: 0.35, face: 'up', elbow: 172, armDeg: 282,
+  }),
+  // 双肘撑地：`forearm: true` → 肘在肩的正下方、小臂平贴地面向前伸；躯干与腿接近一条线。
+  plank: () => buildLie({
+    tilt: 90, hip: 178, knee: 172, face: 'down', support: true, forearm: true, handMark: true,
+  }),
+};
+
+/** 这个动作有没有专门画的姿势图标（没有就返回空字符串，界面继续用 emoji） */
+export function exercisePoseSVG(id) {
+  const build = EXERCISE_POSES[id];
+  if (!build) return '';
+  const { lines, circles } = build();
+  return poseSVG(lines, circles, 'ex-pose');
 }
 
 /**

@@ -16,6 +16,7 @@ import {
 } from './detector-base.js';
 import { EXERCISES, EXERCISE_MAP, CATEGORIES, isTimedReps, targetUnitKey } from './catalog.js';
 import { createEngineDetector, bodyLift, GATES, GATE_HINT } from './engines.js';
+import { exercisePoseSVG } from './icons.js';
 
 // 提示文案的兜底：动作没写专属提示时用通用提示（见 detector-base.js）
 setCueKeyResolver(hasKey);
@@ -51,6 +52,13 @@ export function localizedExercise(id) {
     // 限时计数（固定秒数、时间到就结算）：界面要按这个标记换一套说法
     timed,
     name: t(`ex.${id}.name`),
+    /**
+     * 「人体姿势」图标（SVG 字符串；没有的话是空串，界面继续用 emoji）。
+     *
+     * 用户要求：「臀桥的图标要改为人体做臀桥的姿势……平板支撑的图标也要改为双肘撑地，身体绷直的样子。」
+     * 画法与进度条上的关键帧图标同一套（见 icons.js 的 exercisePoseSVG）。
+     */
+    poseIcon: exercisePoseSVG(id),
     cameraHint: t(`ex.${id}.cameraHint`),
     goal: t(`ex.${id}.goal`),
     // unit = **成绩**的单位（次数），targetUnit = **目标**的单位（限时/计时类是秒）

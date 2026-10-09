@@ -250,7 +250,7 @@ function buildHome() {
         if (ex.id === state.exerciseId) btn.classList.add('active');
         const kind = t(ex.kind === 'rep' ? (ex.timed ? 'ui.kindTimed' : 'ui.kindRep') : 'ui.kindHold');
         const target = `${ex.target} ${ex.targetUnit}`;
-        btn.innerHTML = `<span class="ex-icon">${ex.icon}</span>`
+        btn.innerHTML = `<span class="ex-icon">${ex.poseIcon || ex.icon}</span>`
           + `<span class="ex-name">${ex.name}</span>`
           + `<span class="ex-meta">${kind} · ${target} · ${ex.judgeText}</span>`
           + (ex.rough ? `<span class="ex-badge">${t('home.rough')}</span>` : '');
@@ -1692,9 +1692,9 @@ function menuItems() {
     }));
   }
   const list = localizedByCategory(state.menuCategory).map((ex) => ({
-    id: ex.id, kind: 'exercise', name: ex.name, icon: ex.icon, sub: '',
+    id: ex.id, kind: 'exercise', name: ex.name, icon: ex.icon, poseIcon: ex.poseIcon, sub: '',
   }));
-  list.push({ id: 'back', kind: 'back', name: t('menu.back'), icon: '↩', sub: '' });
+  list.push({ id: 'back', kind: 'back', name: t('menu.back'), icon: '↩', poseIcon: '', sub: '' });
   return list;
 }
 
@@ -1789,8 +1789,8 @@ function menuNavLayout(size) {
   const nameSize = clamp(d * 0.26, 12, 26);
   const iconSize = clamp(d * 0.42, 18, 40);
   return [
-    { id: 'page:prev', kind: 'prev', dir: -1, icon: '◀', name: t('menu.prev'), sub: '' },
-    { id: 'page:next', kind: 'next', dir: 1, icon: '▶', name: t('menu.next'), sub: '' },
+    { id: 'page:prev', kind: 'prev', dir: -1, icon: '◀', name: t('menu.prev'), poseIcon: '', sub: '' },
+    { id: 'page:next', kind: 'next', dir: 1, icon: '▶', name: t('menu.next'), poseIcon: '', sub: '' },
   ].map((it, i) => ({
     ...it,
     cx: i === 0 ? margin : size.w - margin,
@@ -1835,11 +1835,17 @@ function menuItemEl(it) {
   const label = it.kind === 'exercise' ? t('menu.item', { name: it.name }) : it.name;
   btn.setAttribute('aria-label', label);
   btn.setAttribute('title', label);
+  /**
+   * 图标：有「人体姿势」线条图的动作用它（臀桥 / 平板支撑，用户要求「图标要改为人体做臀桥的姿势」），
+   * 其余仍然用 emoji。姿势图的颜色走 currentColor —— 所以「返回」「上一页 / 下一页」这些
+   * 文字箭头与文字一样是白色，一眼看得清。
+   */
+  const iconHtml = it.poseIcon || it.icon;
   btn.innerHTML = '<svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">'
     + '<circle class="ring-track" cx="60" cy="60" r="52"></circle>'
     + '<circle class="ring-fill" cx="60" cy="60" r="52"></circle>'
     + '</svg>'
-    + `<span class="menu-icon" aria-hidden="true">${it.icon}</span>`
+    + `<span class="menu-icon" aria-hidden="true">${iconHtml}</span>`
     + `<span class="menu-name">${it.name}</span>`
     + `<span class="menu-sub">${it.sub || ''}</span>`
     + '<span class="ring-timer"></span>';
@@ -2396,7 +2402,8 @@ function selectExercise(id) {
     b.classList.toggle('active', b.dataset.id === id);
   });
 
-  $('hudIcon').textContent = ex.icon;
+  // HUD 里那个小图标：有「人体姿势」线条图的动作用它（和菜单 / 主页卡片一致），其余用 emoji
+  $('hudIcon').innerHTML = ex.poseIcon || ex.icon;
   $('hudName').textContent = ex.name;
   $('hudUnit').textContent = ex.unit;
   $('targetUnit').textContent = ex.unit;
