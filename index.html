@@ -172,7 +172,8 @@
               <button class="menu-page" id="menuPage" type="button" hidden></button>
             </div>
             <div class="menu-grid" id="menuGrid"></div>
-            <div class="menu-foot" data-i18n="menu.hint"></div>
+            <!-- 底部提示随层级换（第一级的「↩ 返回」= 回网页首页、第二级 = 回分类），文案见 renderMenu -->
+            <div class="menu-foot" id="menuFoot" data-i18n="menu.hint"></div>
           </div>
 
           <!-- 左下角常驻的「退出」圆环：手或脚伸进圆环停 3 秒 → 退出这一组并退出全屏。

@@ -2554,7 +2554,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
       api.touchDiagLine((v) => String(v)));
   }
 
-  // 手停满 3 秒 → 训练里退出 = 回手势菜单（用户要求）；在菜单里再退出才回网页首页 + 退出全屏
+  // 手停满 3 秒 → 训练里退出 = 回手势菜单（用户要求：「在各项运动中如果退出，则回到菜单页面」）
   documentStub.fullscreenElement = elements.get('stage');
   documentStub.exitFullscreenCalls = 0;
   resetCorner();
@@ -2565,14 +2565,28 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     api.state.menuMode === true && api.state.homeMode === false
     && documentStub.exitFullscreenCalls === 0,
     `menu=${api.state.menuMode} home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
-  ok('菜单里左下角圆环写的是「回首页」（动作里写「退出」）',
-    elements.get('ringQuickExitLabel').textContent === '回首页',
+  // 用户要求：「在第一级菜单选择页面去掉『退出』圆环，增加一个『返回』圆环，图标和其他『返回』圆环保持一致。」
+  // → 菜单里（两级都）不显示左下角那个「退出」圆环；左下角圆环的文案始终是「退出」
+  api.syncCornerExit();
+  ok('菜单里左下角那个「退出」圆环不再显示（菜单模式不摆它）',
+    cornerShown() === false && api.gestureState.cornerVisible === false,
+    `shown=${cornerShown()}`);
+  ok('左下角圆环的文案始终是「退出（回菜单）」（只有训练界面用它了）',
+    elements.get('ringQuickExitLabel').textContent === '退出',
     elements.get('ringQuickExitLabel').textContent);
-  api.triggerCornerExit();
-  ok('菜单里再退出一次：回网页首页 + 退出全屏',
-    api.state.homeMode === true && api.state.menuMode === false
-    && documentStub.exitFullscreenCalls >= 1,
-    `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
+  // 菜单里回网页首页走的是每一级都有的那一格「↩ 返回」
+  {
+    const backIt = api.menuItems().find((it) => it.kind === 'back');
+    ok('第一级也有一格「↩ 返回」（图标与第二级一致），点它 = 回网页首页',
+      !!backIt && backIt.icon === '↩' && api.menuItems().filter((it) => it.kind === 'back').length === 1
+      && api.menuRingLayout(api.stageSize()).some((it) => it.kind === 'back'),
+      JSON.stringify(backIt && { id: backIt.id, icon: backIt.icon }));
+    api.selectFromMenu(backIt.id);
+    ok('点第一级的「返回」→ 回网页首页 + 退出全屏',
+      api.state.homeMode === true && api.state.menuMode === false
+      && documentStub.exitFullscreenCalls >= 1,
+      `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
+  }
   ok('退出后左下角圆环收起（主页上不摆）', cornerShown() === false);
 
   // 脚也一样（用户要求「手或者脚」）
@@ -2620,7 +2634,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
   api.syncCornerExit();
   ok('摄像头关掉时圆环收起来（只在摄像头开着时显示）', cornerShown() === false);
 
-  // 直接点它也同样有效（鼠标 / 触屏）：训练里点 = 回手势菜单；菜单里点 = 回网页首页 + 退出全屏
+  // 直接点它也同样有效（鼠标 / 触屏）：训练里点 = 回手势菜单（菜单里它根本不显示）
   api.camera.stream = fakeStream;
   api.openExercise('squat');
   api.syncCornerExit();
@@ -2631,8 +2645,12 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     api.state.menuMode === true && api.state.homeMode === false
     && documentStub.exitFullscreenCalls === 0,
     `menu=${api.state.menuMode} home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
-  elements.get('ringQuickExit').dispatch('click');
-  ok('菜单里再点一下 → 回网页首页 + 退出全屏',
+  api.syncCornerExit();
+  ok('回到菜单后这个圆环立刻收起来（菜单里没有「退出」圆环了）',
+    cornerShown() === false && api.gestureState.cornerVisible === false);
+  // 菜单里回网页首页：点那一格「↩ 返回」（两级都有，图标一致）
+  api.selectFromMenu('back');
+  ok('点菜单里的「↩ 返回」→ 回网页首页 + 退出全屏',
     api.state.homeMode === true && documentStub.exitFullscreenCalls >= 1,
     `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
   api.camera.stream = savedStream;
@@ -4188,11 +4206,12 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   // ===== ② 第一级菜单：一页 4 列 × 2 行 = 8 个（用户要求「一页可以放 2 行，8 个」） =====
   const layout = api.menuRingLayout(api.stageSize());
   const info0 = api.menuPageInfo();
-  ok('一页 8 个（4 列 × 2 行），第一级 5 个分类**一页就放完**（平时根本不用翻页）',
-    api.state.menuLevel === 0 && layout.length === 5 && grid.children.length === 5
-    && layout.every((it) => it.kind === 'category')
+  ok('一页 8 个（4 列 × 2 行），第一级 5 个分类 + 一格「返回」**一页就放完**（平时根本不用翻页）',
+    api.state.menuLevel === 0 && layout.length === 6 && grid.children.length === 6
+    && layout.filter((it) => it.kind === 'category').length === 5
+    && layout[5].kind === 'back' && layout[5].icon === '↩'
     && api.MENU_COLS === 4 && api.MENU_ROWS === 2 && api.menuPerPage(api.stageSize()) === 8
-    && info0.total === 5 && info0.pages === 1,
+    && info0.total === 6 && info0.pages === 1,
     `${layout.length} / ${grid.children.length} per=${api.menuPerPage(api.stageSize())} pages=${info0.pages}`);
   ok('圆环仍然够大（1280×720 上直径 ≥180px；最早 19 个挤一屏只有 ~97px）',
     layout.every((it) => it.r * 2 >= 180), `${Math.round(layout[0].r * 2)}px`);
@@ -4208,8 +4227,10 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       return el.style.left === `${it.cx}px` && el.style.top === `${it.cy}px`
         && el.style.width === `${it.r * 2}px` && !!name;
     }), JSON.stringify({ left: layout[0].cx, r: layout[0].r }));
-  ok('分类那一格还写着「N 个动作」（第二级的动作格没有）',
-    /个动作/.test(grid.children[0].innerHTML) && layout.every((it) => it.sub.includes('个动作')),
+  ok('分类那几格还写着「N 个动作」（「返回」那格没有）',
+    /个动作/.test(grid.children[0].innerHTML)
+    && layout.filter((it) => it.kind === 'category').every((it) => it.sub.includes('个动作'))
+    && layout.find((it) => it.kind === 'back').sub === '',
     grid.children[0].innerHTML.slice(0, 140));
   {
     const bad = [];
@@ -4229,7 +4250,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   /* 用户反馈：「一页可以放 2 行，8 个。但是挥手换页的方式似乎也不太好。」
      → 翻页改成**和选动作完全一样的交互**：左右两侧各一个「上一页 / 下一页」圆环，
        手掌放进去 1 秒翻一页，按住不放连续翻（垂直挥手那套删掉了：它和「伸手够上面那排圆环」同方向，容易打架）。
-     宽屏一页 8 个已经把 5 个分类 + 7 个动作都装下了，所以这里**把舞台改成竖屏手机的尺寸**
+     宽屏一页 8 个已经把 5 个分类 + 「返回」都装下了，所以这里**把舞台改成竖屏手机的尺寸**
      （列数掉到 2 → 一页 4 个）来验证翻页本身。 */
   {
     const stageStub = stageEl;
@@ -4240,9 +4261,9 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     api.renderMenu();
     const nav = api.menuNavLayout(sizeN);
     const infoN = api.menuPageInfo(sizeN);
-    ok('窄屏（竖屏手机 400×700）：列数自动掉到 2 → 一页 4 个，于是 5 个分类分 2 页',
+    ok('窄屏（竖屏手机 400×700）：列数自动掉到 2 → 一页 4 个，于是「5 个分类 + 返回」分 2 页',
       api.menuCols(sizeN.w) === 2 && api.menuPerPage(sizeN) === 4 && infoN.pages === 2
-      && api.menuRingLayout(sizeN).length === 4,
+      && infoN.total === 6 && api.menuRingLayout(sizeN).length === 4,
       `cols=${api.menuCols(sizeN.w)} per=${api.menuPerPage(sizeN)} pages=${infoN.pages}`);
     ok('有第二页时才出现左右两个翻页圆环（上一页 / 下一页），并且在画面两侧正中',
       nav.length === 2 && nav[0].kind === 'prev' && nav[1].kind === 'next'
@@ -4253,10 +4274,10 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       api.menuRingLayout(sizeN).every((a) => nav.every((b) => (
         Math.hypot(a.cx - b.cx, a.cy - b.cy) >= a.hit + b.hit))),
       '重叠了');
-    ok('页码那一行写着「第 1 / 2 页 · 共 5 项」，而且能点',
+    ok('页码那一行写着「第 1 / 2 页 · 共 6 项」，而且能点',
       elements.get('menuPage').hidden === false
       && /第 1 \/ 2 页/.test(elements.get('menuPage').textContent)
-      && /5 项/.test(elements.get('menuPage').textContent),
+      && /6 项/.test(elements.get('menuPage').textContent),
       elements.get('menuPage').textContent);
     // 手掌放进「下一页」圆环，停 1 秒 → 翻页（和选动作同一个动作，只是更快）
     // ⚠️ palmsAt6 收的是「宽屏舞台像素」，这里舞台换成窄屏了，所以要按比例换算一下
@@ -4271,7 +4292,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       act && act.kind === 'page' && act.dir === 1, JSON.stringify(act));
     api.flipMenuPage(act.dir);
     ok('翻到第 2 页（只剩最后一个分类，仍然一样大、居中）',
-      api.state.menuPage === 1 && api.menuRingLayout(sizeN).length === 1
+      api.state.menuPage === 1 && api.menuRingLayout(sizeN).length === 2
       && /第 2 \/ 2 页/.test(elements.get('menuPage').textContent),
       `page=${api.state.menuPage}`);
     // 按住不放 → 一页一页连续翻（不会卡住）
@@ -4389,7 +4410,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   api.openMenu({ silent: true });
   ok('重新进菜单总是从第一级第 1 页开始（不会停在上一次的分类 / 页码里）',
     api.state.menuLevel === 0 && api.state.menuCategory === '' && api.state.menuPage === 0
-    && grid.children.length === 5 && api.menuPageInfo().total === 5);
+    && grid.children.length === 6 && api.menuPageInfo().total === 6);
   const before6 = api.state.exerciseId;
   const clickCat = api.menuRingLayout(api.stageSize()).find((it) => it.catId === 'core');
   grid.children.find((c) => c.dataset.ex === clickCat.id).dispatch('click');
@@ -4412,7 +4433,8 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     api.state.menuMode === true && api.state.homeMode === false
     && api.state.menuLevel === 0 && api.state.menuCategory === '' && api.state.menuPage === 0
     && menuEl.hidden === false && documentStub.exitFullscreenCalls === 0
-    && api.menuRingLayout(api.stageSize()).length === 5 && api.menuPageInfo().total === 5,
+    && api.menuRingLayout(api.stageSize()).length === 6 && api.menuPageInfo().total === 6
+    && api.gestureState.cornerVisible === false,      // 菜单里不再显示左下角那个「退出」圆环
     `menu=${api.state.menuMode} level=${api.state.menuLevel} exit=${documentStub.exitFullscreenCalls}`);
   api.triggerCornerExit();                  // 菜单里退出
   ok('菜单里退出 → 回网页首页（主页可见 + 退出全屏 + 菜单收起来）',

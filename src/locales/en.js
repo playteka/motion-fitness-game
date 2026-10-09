@@ -763,12 +763,11 @@ export default {
     prev: 'Previous',
     next: 'Next',
     page: 'Page {n} / {total} · {count} items',
-    hint: 'Hold 3 s to select · when a page is full, put your palm into the “Previous / Next” rings on the left and right · the bottom-left ring returns to the web page',
+    // The footer hint differs per level: “Back” means the web page at level 1 and the categories at level 2
+    hint: 'Hold 3 s to select · “Back” returns to the web page · use the side rings to turn pages',
+    hintIn: 'Hold 3 s to select · “Back” returns to the categories · use the side rings to turn pages',
     item: '{name} (hold 3 s)',
     picked: 'Starting: {name}',
-    // In the menu the bottom-left ring means “back to the web page” (during an exercise it means “back to the menu”)
-    exitHome: 'Home',
-    exitHomeVoice: 'Back to the home page',
     needCamera: 'This browser/device cannot use a camera, so gesture control is unavailable — pick an exercise from the library below instead',
   },
 

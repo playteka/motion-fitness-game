@@ -1486,10 +1486,14 @@ function hideCornerExit() {
 
 /**
  * 把左下角退出圆环的显示状态与「摄像头开着没有」对齐（每帧调用，很便宜）。
- * 条件：摄像头开着 + 不在主页 + 「一组结束」的两个大圆环没摆着。
+ * 条件：摄像头开着 + 不在主页 + **不在手势菜单里** + 「一组结束」的两个大圆环没摆着。
+ *
+ * 手势菜单里**不显示**这个圆环（用户要求：「在第一级菜单选择页面去掉『退出』圆环，
+ * 增加一个『返回』圆环」）：菜单每一级都有一格「↩ 返回」负责往上一层 / 回网页首页，
+ * 左下角那个「退出」只在**动作里**用（退出这一组 → 回菜单）。
  */
 function syncCornerExit() {
-  const want = !!camera.active && !state.homeMode && !gestureState.visible;
+  const want = !!camera.active && !state.homeMode && !state.menuMode && !gestureState.visible;
   if (want === gestureState.cornerVisible) return;
   if (want) showCornerExit(); else hideCornerExit();
 }
@@ -1568,9 +1572,9 @@ function updateCornerExit(landmarks, now) {
  * 左下角退出圆环触发。
  *
  * 用户要求（全手势流程）：「在各项运动中如果退出，则回到菜单页面，如果在菜单界面退出则回到网页首页。」
- * 所以它按当前所在的界面分流：
- *   - **手势菜单里** → 回网页首页（并退出全屏）；
- *   - **训练界面里** → 回手势菜单（这一组照常收尾结算，记录照旧保存）。
+ * 后来菜单里改由「↩ 返回」圆环负责往上一层 / 回网页首页（左下角这个圆环在菜单里不再显示），
+ * 所以它现在的活是：**训练界面里 → 回手势菜单**（这一组照常收尾结算，记录照旧保存）。
+ * `menuMode` 那一支留着当兜底（万一菜单里又出现这个圆环，行为仍然是回网页首页）。
  */
 function triggerCornerExit() {
   if (gestureState.corner.done && !gestureState.cornerVisible) return;
@@ -1578,7 +1582,7 @@ function triggerCornerExit() {
   paintRing('corner', 1);
   audio.milestone();
   const toHome = state.menuMode;
-  audio.say(t(toHome ? 'menu.exitHomeVoice' : 'ui.gestureExit'), { rate: 1.1, force: true });
+  audio.say(t('ui.gestureExit'), { rate: 1.1, force: true });
   hideCornerExit();
   if (toHome) showHome();
   else openMenu({ silent: true });
@@ -1682,14 +1686,22 @@ const MENU_ANNOUNCE_P = 0.28;
  */
 function menuItems() {
   if (state.menuLevel === 0) {
-    return localizedCategories().map((c) => ({
+    const list = localizedCategories().map((c) => ({
       id: `cat:${c.id}`,
       kind: 'category',
       catId: c.id,
       name: c.name,
       icon: c.icon,
+      poseIcon: '',
       sub: t('menu.catCount', { n: localizedByCategory(c.id).length }),
     }));
+    /**
+     * 第一级也有一格「↩ 返回」（用户要求：「在第一级菜单选择页面去掉『退出』圆环，
+     * 增加一个『返回』圆环，图标和其他『返回』圆环保持一致」）——
+     * 它回到**网页首页**，图标与第二级那格「返回」完全一样（同一个 `↩`）。
+     */
+    list.push({ id: 'back', kind: 'back', name: t('menu.back'), icon: '↩', poseIcon: '', sub: '' });
+    return list;
   }
   const list = localizedByCategory(state.menuCategory).map((ex) => ({
     id: ex.id, kind: 'exercise', name: ex.name, icon: ex.icon, poseIcon: ex.poseIcon, sub: '',
@@ -1886,6 +1898,9 @@ function renderMenu() {
       ? t('menu.lead')
       : t('menu.leadIn', { name: menuCategoryName() });
   }
+  // 底部提示随层级换：第一级的「↩ 返回」是回网页首页，第二级的是回分类
+  const foot = $('menuFoot');
+  if (foot) foot.textContent = state.menuLevel === 0 ? t('menu.hint') : t('menu.hintIn');
   buildMenu();
   layoutMenu();
   renderMenuPage();
@@ -2015,9 +2030,14 @@ function updateMenu(landmarks, now) {
   return { kind: 'select', id: picked };
 }
 
-/** 左下角圆环的文案：菜单里 = 回首页；训练里 = 退出（回菜单） */
+/**
+ * 左下角圆环的文案：**退出（回菜单）**。
+ *
+ * 它现在只在训练界面里出现 —— 手势菜单里改成每一级都有一格「↩ 返回」了
+ * （用户要求：「在第一级菜单选择页面去掉『退出』圆环，增加一个『返回』圆环」）。
+ */
 function syncCornerLabel() {
-  const txt = t(state.menuMode ? 'menu.exitHome' : 'ui.gestureExit');
+  const txt = t('ui.gestureExit');
   const label = cornerLabelEl();
   if (label) label.textContent = txt;
   const btn = ringEl('corner');
@@ -2052,7 +2072,7 @@ function openMenu({ silent = false } = {}) {
   $('btnExercise').hidden = true;    // 菜单里没有「运动设定」
   renderMenu();
   $('gestureMenu').hidden = false;
-  syncCornerLabel();         // 这时左下角圆环说的是「回首页」
+  syncCornerLabel();         // 左下角那个圆环此刻是隐藏的（菜单里不显示它）
   syncCornerExit();
   updateButtons();
   if (!silent) audio.say(t('menu.title'), { rate: 1.05 });
@@ -2072,7 +2092,8 @@ function closeMenu() {
 /**
  * 菜单里选中一格（手掌停满 3 秒，或者鼠标点一下那一格）。
  *
- * 两级菜单：分类 → 进第二级；「返回」→ 回第一级；动作 → 进训练界面（全屏留着，校准通过自动开练）。
+ * 两级菜单：分类 → 进第二级；「↩ 返回」→ 第二级回第一级、第一级回**网页首页**；
+ * 动作 → 进训练界面（全屏留着，校准通过自动开练）。
  */
 function selectFromMenu(id) {
   if (!state.menuMode) return;
@@ -2089,6 +2110,12 @@ function selectFromMenu(id) {
   }
   if (item.kind === 'back') {
     audio.milestone();
+    // 两级都有「返回」（图标都是 ↩，用户要求一致）：第二级 → 回分类；第一级 → 回网页首页
+    if (state.menuLevel === 0) {
+      audio.say(t('ui.gestureExit'), { rate: 1.1, force: true });
+      showHome();
+      return;
+    }
     state.menuLevel = 0;
     state.menuCategory = '';
     state.menuPage = 0;

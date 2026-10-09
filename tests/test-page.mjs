@@ -572,7 +572,7 @@ console.log('\n[3] 静态资源与模型文件');
     ok('菜单有标题 / 说明 / 圆环容器 / 底部提示四块（文案走 menu.*，中英都有）',
       /id="menuGrid"/.test(html) && /class="menu-title" id="menuTitle" data-i18n="menu\.title"/.test(html)
       && /class="menu-lead" id="menuLead" data-i18n="menu\.lead"/.test(html)
-      && /class="menu-foot" data-i18n="menu\.hint"/.test(html)
+      && /class="menu-foot" id="menuFoot" data-i18n="menu\.hint"/.test(html)
       && typeof LOCALES.zh.menu.lead === 'string' && typeof LOCALES.en.menu.lead === 'string'
       && typeof LOCALES.zh.menu.hint === 'string' && typeof LOCALES.en.menu.hint === 'string');
     const menuBlock = /(?:^|\n)\.gesture-menu\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
@@ -647,14 +647,24 @@ console.log('\n[3] 静态资源与模型文件');
     ok('主循环里跑菜单判定，选中 / 翻页各有各的出口',
       /if \(state\.menuMode\) \{/.test(app) && /updateMenu\(res \? res\.landmarks : null, now\)/.test(app)
       && /selectFromMenu\(act\.id\)/.test(app) && /flipMenuPage\(act\.dir\)/.test(app));
-    ok('退出分流：运动中退出回菜单、菜单里退出回网页首页',
+    ok('退出分流：菜单里不再显示左下角圆环（每一级都有一格「↩ 返回」），动作里点它回菜单',
       /const toHome = state\.menuMode;/.test(app)
       && /if \(toHome\) showHome\(\);\s*\n\s*else openMenu\(\{ silent: true \}\);/.test(app)
-      && /openMenu\(\{ silent: true \}\);\s*\/\/ 退出动作 → 回手势菜单/.test(app));
-    ok('菜单里左下角圆环写「回首页」、动作里写「退出」（同一套圆环，两种语义）',
+      && /openMenu\(\{ silent: true \}\);\s*\/\/ 退出动作 → 回手势菜单/.test(app)
+      && /const want = !!camera\.active && !state\.homeMode && !state\.menuMode && !gestureState\.visible;/.test(app));
+    ok('左下角圆环只有一种语义了：「退出（回菜单）」',
       /function syncCornerLabel\(\)/.test(app)
-      && /t\(state\.menuMode \? 'menu\.exitHome' : 'ui\.gestureExit'\)/.test(app)
-      && typeof LOCALES.zh.menu.exitHome === 'string' && typeof LOCALES.en.menu.exitHome === 'string');
+      && /const txt = t\('ui\.gestureExit'\);/.test(app)
+      && !/menu\.exitHome/.test(app)
+      && LOCALES.zh.menu.exitHome === undefined && LOCALES.en.menu.exitHome === undefined);
+    ok('第一级也有一格「↩ 返回」（图标与第二级完全一致），它回网页首页',
+      /list\.push\(\{ id: 'back', kind: 'back', name: t\('menu\.back'\), icon: '↩', poseIcon: '', sub: '' \}\);/.test(app)
+      && (app.match(/id: 'back', kind: 'back'/g) || []).length === 2
+      && /if \(state\.menuLevel === 0\) \{\s*\n\s*audio\.say\(t\('ui\.gestureExit'\)[\s\S]{0,80}?showHome\(\);/.test(app));
+    ok('底部提示分两级（第一级的「返回」回网页首页、第二级回分类）',
+      /id="menuFoot"/.test(html)
+      && /foot\.textContent = state\.menuLevel === 0 \? t\('menu\.hint'\) : t\('menu\.hintIn'\)/.test(app)
+      && typeof LOCALES.zh.menu.hintIn === 'string' && typeof LOCALES.en.menu.hintIn === 'string');
     ok('菜单里不摆「一组结束」的两个圆环（offerSetChoices 认得菜单模式）',
       /if \(state\.homeMode \|\| state\.menuMode \|\| !state\.detector\) return;/.test(app));
     ok('菜单里按 Esc = 回网页首页（键盘用户的退路）',
