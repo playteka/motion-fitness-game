@@ -161,12 +161,15 @@
           <div class="gesture-hint" id="gestureHint" hidden></div>
 
           <!-- 手势选择菜单（用户要求）：全屏视频界面上用手掌停 3 秒选动作。
-               **两级菜单**（用户反馈「圆环太小、字太小」）：第一级 5 个分类大圆环 → 第二级是该分类的动作 +「返回」。
+               **两级菜单 + 分页**（用户要求「每行放 4 个、一页不够就加页、向上/向下挥手翻页」）：
+               第一级 5 个分类 → 第二级是该分类的动作 +「返回」；一页只放一行 4 个，圆环因此做得很大。
                菜单项由 app.js 按动作库动态生成，位置 / 直径 / 字号都在那边按舞台尺寸算好写进行内样式。 -->
           <div class="gesture-menu" id="gestureMenu" hidden>
             <div class="menu-head">
               <div class="menu-title" id="menuTitle" data-i18n="menu.title"></div>
               <div class="menu-lead" id="menuLead" data-i18n="menu.lead"></div>
+              <!-- 页码（只有一页时隐藏；点一下 = 下一页，鼠标用户的翻页办法） -->
+              <button class="menu-page" id="menuPage" type="button" hidden></button>
             </div>
             <div class="menu-grid" id="menuGrid"></div>
             <div class="menu-foot" data-i18n="menu.hint"></div>

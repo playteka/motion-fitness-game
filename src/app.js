@@ -93,8 +93,9 @@ const state = {
   session: 'calibrating',   // calibrating | ready | countdown | running | paused | idle
   homeMode: false,          // 停在动作主页：不校准、不计数（避免浏览动作时偷偷开始一组）
   menuMode: false,          // 停在**手势菜单**：全屏视频画面上摆一圈圆环，手掌停 3 秒选中
-  menuLevel: 0,             // 手势菜单的层级：0 = 分类（5 个大圆环）、1 = 该分类下的动作 +「返回」
+  menuLevel: 0,             // 手势菜单的层级：0 = 分类、1 = 该分类下的动作 +「返回」
   menuCategory: '',         // 第二级当前是哪个分类
+  menuPage: 0,              // 当前这一层的页码（一页 4 个；向上 / 向下挥手翻页）
   autoStart: false,         // 校准识别完成后是否自动进入运动状态（选好动作后为 true）
   afterSet: false,          // 刚结束一组：先让用户休息，不自动开始；离开轮廓后自动恢复
   detector: null,
@@ -1018,8 +1019,9 @@ const gestureState = {
   /**
    * 手势菜单里「手掌正停在哪一个圆环里」——同一时刻只有一格在蓄力，
    * 所以只存一份状态（id + 进度），换一格就从头开始（见 updateMenu）。
+   * `swipe` 是挥手翻页用的：左右手各记一个「起点」（y0 + t0），外加翻页冷却 until。
    */
-  menu: { id: '', p: 0, since: 0, lastInside: 0, at: 0 },
+  menu: { id: '', p: 0, since: 0, lastInside: 0, at: 0, swipe: { L: { y0: 0, t0: 0 }, R: { y0: 0, t0: 0 }, until: 0 } },
 };
 
 /**
@@ -1634,21 +1636,28 @@ function retrySet() {
  * 判定复用其它圆环的同一套常量与手感：手掌中心 + GESTURE_HOLD_MS(3s) + GESTURE_GRACE_MS(300ms 抖动宽容)
  * + GESTURE_DRAIN_MS(1.5s 慢慢退回)；区别只有「一格一格地选」：手掌移到别的圆环上，
  * 之前那一格的进度立刻归零（不然会在两格之间攒进度）。
+ *
+ * 后来又要求：「把主菜单的圆环再进一步放大，每行放4个圆环就够了，一页不够就增加一页，
+ * 然后增加一个向上挥手和向下挥手的手势翻页。」
+ * → 一页只放**一行 4 个**（圆环因此能做得很大：1280×720 上 ≈264px，全屏 1920×1080 上 ≈360px），
+ *   一页放不下就分页；**向上挥 = 下一页、向下挥 = 上一页**（循环翻页，带冷却与「手在圆环里不算挥手」的保护）。
  * ------------------------------------------------------------------ */
 
-/**
- * 菜单的**列数**（两级菜单，圆环要够大够好瞄）：
- *   第一级 = 5 个分类 → 一行 5 个；第二级 = 某个分类里的动作 + 「返回」 → 一行 4 个（最多两行）。
- * 窄屏自动减列（见 menuRingLayout），否则圆环会挤成一团。
- */
-const MENU_COLS_L1 = 5;
-const MENU_COLS_L2 = 4;
+/** 每行 4 个（用户要求）；一页就放一行 → 圆环最大 */
+const MENU_COLS = 4;
+/** 一页几个圆环（= 一行 4 个） */
+const MENU_PER_PAGE = 4;
 /** 手掌落在「圆心 × 画出来的半径 × 这个比例」以内就算指着这一格（比圆圈稍大一点，好瞄准） */
 const MENU_HIT_RATIO = 1.15;
-/** 圆环直径的上限；下限只防「小得没法瞄」（真摆不下时会自动减列，见 MENU_CELL_MIN_PX） */
-const MENU_RING_MAX = 240;
+/** 圆环直径的上限（真摆不下时会自动减列，见 MENU_CELL_MIN_PX） */
+const MENU_RING_MAX = 360;
 /** 一格至少要有的宽度：大圆环 + 一行名字才摆得下（不够就自动减列） */
 const MENU_CELL_MIN_PX = 170;
+/** 挥手翻页：手掌要在这么短的窗口里挥够「舞台高度的这个比例」才算一次翻页 */
+const MENU_SWIPE_TRAVEL = 0.18;
+const MENU_SWIPE_MS = 600;
+/** 翻页冷却：一次挥手只翻一页（连挥也不会连跳） */
+const MENU_SWIPE_COOLDOWN_MS = 1100;
 
 /**
  * 菜单项：**两级**。
@@ -1656,8 +1665,8 @@ const MENU_CELL_MIN_PX = 170;
  *   第二级 `menuLevel === 1`：当前分类下的动作，末尾再加一个「↩ 返回」。
  *
  * 为什么要两级（用户反馈）：「主界面的圆环太小了，字也太小了，建议考虑二级菜单。」
- * 19 个圆环挤在一屏里，直径只有 ~97px、名字只有 12px；分成两级之后第一级 5 个大圆环（~190px）、
- * 第二级最多 7 个（~178px），名字跟着圆环一起放大（见 layoutMenu 里的字号计算）。
+ * 19 个圆环挤在一屏里，直径只有 ~97px、名字只有 12px；分成两级 + 一页 4 个之后，
+ * 圆环有 264~360px、名字跟着字号一起放大（见 layoutMenu 里的字号计算）。
  */
 function menuItems() {
   if (state.menuLevel === 0) {
@@ -1683,20 +1692,31 @@ function menuCategoryName() {
   return c ? c.name : t('menu.title');
 }
 
+/** 当前这一层的分页信息（一页 MENU_PER_PAGE 个；页码越界时夹回范围内） */
+function menuPageInfo() {
+  const n = menuItems().length;
+  const pages = Math.max(1, Math.ceil(n / MENU_PER_PAGE));
+  const page = clamp(Math.round(state.menuPage) || 0, 0, pages - 1);
+  return { page, pages, total: n, from: page * MENU_PER_PAGE, to: page * MENU_PER_PAGE + MENU_PER_PAGE };
+}
+
 /**
  * 菜单圆环的几何：**按舞台尺寸算**（不读 DOM 的布局）。
  *
  * 和左下角退出圆环是同一个做法：判定用的圆心 / 半径与写进元素的行内 `left/top` 永远来自同一份数，
  * 所以「看到哪一格」和「程序判哪一格」不会各说一套（测试也能在没有真实布局的桩里跑）。
  * 直径与字号一起算：字号按直径走，圆环一大字就跟着大（用户反馈「圆环太小、字也太小」）。
+ *
+ * ⚠️ 列数只看屏幕宽度（不看这一页有几个），这样**每一页的圆环都一样大**；
+ * 最后一页不满就整行居中（offset）。
  */
 function menuRingLayout(size) {
-  const list = menuItems();
-  const n = list.length;
+  const info = menuPageInfo();
+  const slice = menuItems().slice(info.from, info.to);
+  const n = slice.length;
   if (!n) return [];
-  const wantCols = state.menuLevel === 0 ? MENU_COLS_L1 : MENU_COLS_L2;
   // 窄屏自动减列：一列至少要有 MENU_CELL_MIN_PX 才摆得下「大圆环 + 名字」
-  const cols = Math.max(1, Math.min(wantCols, n, Math.floor(size.w / MENU_CELL_MIN_PX)));
+  const cols = Math.max(1, Math.min(MENU_COLS, Math.floor(size.w / MENU_CELL_MIN_PX)));
   const rows = Math.ceil(n / cols);
   const padX = Math.max(10, size.w * 0.02);
   // 顶部让开标题、底部让开提示（窄屏 / 竖屏手机多让一点）
@@ -1705,11 +1725,11 @@ function menuRingLayout(size) {
   const bottom = size.h * (narrow ? 0.14 : 0.12);
   const cellW = Math.max(1, (size.w - padX * 2) / cols);
   const cellH = Math.max(1, (size.h - top - bottom) / rows);
-  // 直径：横向留出间隙，纵向还要给名字留一行（所以纵向按 0.62 收）
-  const dia = Math.max(24, Math.min(cellW * 0.78, cellH * 0.62, MENU_RING_MAX));
-  const nameSize = clamp(dia * 0.17, 11, 30);
-  const iconSize = clamp(dia * 0.32, 15, 56);
-  return list.map((it, i) => {
+  // 直径：横向留出间隙（一页 4 个，可以占得更满），纵向还要给名字留一行
+  const dia = Math.max(24, Math.min(cellW * 0.86, cellH * 0.62, MENU_RING_MAX));
+  const nameSize = clamp(dia * 0.15, 12, 40);
+  const iconSize = clamp(dia * 0.32, 16, 64);
+  return slice.map((it, i) => {
     const col = i % cols;
     const row = Math.floor(i / cols);
     const inRow = Math.min(cols, n - row * cols);          // 最后一行可能不满
@@ -1733,12 +1753,13 @@ function menuRingEl(id) {
   return [...grid.children].find((el) => el?.dataset?.ex === id) || null;
 }
 
-/** 建菜单项（换层 / 换语言 / 重进菜单时重建；圆环位置与字号由 layoutMenu 单独写） */
+/** 建菜单项：**只建当前这一页的**（其它页的圆环不进 DOM，免得留在角落上） */
 function buildMenu() {
   const grid = $('menuGrid');
   if (!grid) return;
   grid.innerHTML = '';
-  for (const it of menuItems()) {
+  const info = menuPageInfo();
+  for (const it of menuItems().slice(info.from, info.to)) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = `menu-ring ring-btn menu-ring--${it.kind}`;   // 复用其它圆环的全部样式与动画
@@ -1780,7 +1801,7 @@ function layoutMenu() {
   }
 }
 
-/** 重建菜单（换层 / 换语言 / 进菜单时）：标题、文案与位置一起刷新 */
+/** 重建菜单（换层 / 换页 / 换语言 / 进菜单时）：标题、页码、文案与位置一起刷新 */
 function renderMenu() {
   const title = $('menuTitle');
   if (title) title.textContent = state.menuLevel === 0 ? t('menu.title') : menuCategoryName();
@@ -1792,10 +1813,73 @@ function renderMenu() {
   }
   buildMenu();
   layoutMenu();
+  renderMenuPage();
   resetMenuProgress();
 }
 
-/** 清掉「手掌停在哪一格」的进度（进菜单、换语言、选中之后都调） */
+/** 页码那一行（只有一页时不显示；点击 = 下一页，鼠标用户的翻页办法） */
+function renderMenuPage() {
+  const el = $('menuPage');
+  if (!el) return;
+  const { page, pages, total } = menuPageInfo();
+  el.hidden = pages <= 1;
+  el.textContent = pages > 1
+    ? t('menu.page', { n: String(page + 1), total: String(pages), count: String(total) })
+    : '';
+}
+
+/**
+ * 翻页（dir = +1 下一页 / -1 上一页；循环）。
+ *
+ * 用户要求：「一页不够就增加一页，然后增加一个向上挥手和向下挥手的手势翻页。」
+ */
+function flipMenuPage(dir) {
+  const { pages } = menuPageInfo();
+  if (pages <= 1) return false;
+  state.menuPage = ((state.menuPage + dir) % pages + pages) % pages;
+  buildMenu();                 // 换一页：菜单项本身也换了，重建 + 重新摆
+  layoutMenu();
+  renderMenuPage();
+  resetMenuProgress();         // 新的一页从零开始攒（手还停在原地也不算数）
+  audio.tick();
+  return true;
+}
+
+/**
+ * 向上 / 向下挥手翻页（用户要求）。
+ *
+ * 判定口径（刻意做得「不容易误触」）：
+ *   - 只有**手掌在圆环之外**时才开始记起点 —— 手伸进圆环是要「选它」，那次移动不该被当成翻页；
+ *   - 要在 `MENU_SWIPE_MS`（800ms）里挥够 `MENU_SWIPE_TRAVEL`（舞台高度的 16%）才算一次；
+ *     慢慢飘过去的（每帧都把起点往后挪）永远攒不够，所以不会误翻；
+ *   - 翻一次有 `MENU_SWIPE_COOLDOWN_MS`（1.1 秒）冷却：连挥不会连跳好几页；
+ *   - 左右手各自记起点（一只手挥就行）。
+ * 方向：**向上挥 = 下一页、向下挥 = 上一页**（和手机上「往上滑 = 往下看」一致）。
+ */
+function updateMenuSwipe(palms, layout, size, now) {
+  const sw = gestureState.menu.swipe;
+  if (!sw) return 0;
+  if (now < sw.until) return 0;                 // 冷却中
+  const need = MENU_SWIPE_TRAVEL * size.h;
+  let dir = 0;
+  for (const p of palms) {
+    const s = sw[p.side] || (sw[p.side] = { y0: 0, t0: 0 });
+    const inRing = layout.some((it) => Math.hypot(p.x - it.cx, p.y - it.cy) <= it.hit);
+    if (inRing) { s.y0 = 0; s.t0 = 0; continue; }         // 指着某一格：不算挥手
+    if (!s.t0 || now - s.t0 > MENU_SWIPE_MS) { s.y0 = p.y; s.t0 = now; continue; }
+    const dy = p.y - s.y0;                                // 画面坐标：向下为正
+    if (Math.abs(dy) < need) continue;
+    s.y0 = p.y;
+    s.t0 = now;
+    dir = dy < 0 ? 1 : -1;
+    break;
+  }
+  if (!dir) return 0;
+  sw.until = now + MENU_SWIPE_COOLDOWN_MS;
+  return dir;
+}
+
+/** 清掉「手掌停在哪一格」的进度（进菜单、换页 / 换层、换语言、选中之后都调） */
 function resetMenuProgress() {
   const st = gestureState.menu;
   if (st.id) paintMenuRing(st.id, 0);
@@ -1824,9 +1908,18 @@ function updateMenu(landmarks, now) {
   const size = stageSize();
   const st = gestureState.menu;
   const palms = palmPoints(landmarks, size.w, size.h, state.settings.mirror);
+  const layout = menuRingLayout(size);
 
+  // ① 先判「挥手翻页」：手正在挥的时候不该同时还在攒某一格的进度
+  const flip = updateMenuSwipe(palms, layout, size, now);
+  if (flip) {
+    flipMenuPage(flip);
+    return null;
+  }
+
+  // ② 停在某一格上 → 攒进度（3 秒选中）
   let hover = null;
-  for (const it of menuRingLayout(size)) {
+  for (const it of layout) {
     for (const p of palms) {
       const d = Math.hypot(p.x - it.cx, p.y - it.cy);
       if (d <= it.hit && (!hover || d < hover.d)) hover = { id: it.id, d };
@@ -1885,8 +1978,9 @@ function openMenu({ silent = false } = {}) {
   $('celebrate').hidden = true;
   state.celebrateUntil = 0;
   state.menuMode = true;
-  state.menuLevel = 0;       // 每次都从第一级（分类）开始
+  state.menuLevel = 0;       // 每次都从第一级（分类）第一页开始
   state.menuCategory = '';
+  state.menuPage = 0;
   state.homeMode = false;    // 菜单不算主页：摄像头要开着、识别要跑
   state.session = 'idle';
   state.calib = null;
@@ -1929,6 +2023,7 @@ function selectFromMenu(id) {
     audio.milestone();
     state.menuLevel = 1;
     state.menuCategory = item.catId;
+    state.menuPage = 0;
     renderMenu();
     audio.say(item.name, { rate: 1.1, force: true });
     return;
@@ -1937,6 +2032,7 @@ function selectFromMenu(id) {
     audio.milestone();
     state.menuLevel = 0;
     state.menuCategory = '';
+    state.menuPage = 0;
     renderMenu();
     audio.say(t('menu.title'), { rate: 1.05 });
     return;
@@ -3943,6 +4039,8 @@ function bindUI() {
 
   // 首页那个大「开始」按钮：全手势操作的入口（开摄像头 → 全屏 → 手势菜单）
   $('btnStartGesture')?.addEventListener('click', () => startGestureMode());
+  // 页码按钮：鼠标 / 触屏用户的翻页办法（手势是向上 / 向下挥手）
+  $('menuPage')?.addEventListener('click', () => flipMenuPage(1));
   document.addEventListener('fullscreenchange', () => {
     $('btnFullscreen').setAttribute('aria-pressed', String(!!document.fullscreenElement));
   });
@@ -4026,6 +4124,13 @@ function bindUI() {
       if (settingsOpen()) { closeSettings(); return; }
       if (state.menuMode) { showHome(); return; }
       stopSession('user');
+      return;
+    }
+    // 手势菜单里：上下方向键翻页（键盘用户 / 没有摄像头时也能翻）
+    if (state.menuMode && (e.key === 'ArrowUp' || e.key === 'PageUp'
+      || e.key === 'ArrowDown' || e.key === 'PageDown')) {
+      e.preventDefault();
+      flipMenuPage((e.key === 'ArrowUp' || e.key === 'PageUp') ? 1 : -1);
       return;
     }
     if (e.key === 'h' || e.key === 'H') { showHome(); return; }
@@ -4200,10 +4305,13 @@ window.__mfg = {
   // 调试数据记录（全局配置里的隐藏分组）：记录器本体 + 开关函数，测试直接用它们驱动
   poseLogger, setPoseLog, togglePoseLog, poseLogMeta, renderPoseLogStatus,
   setPoseLogUi, anyModalOpen, videoStateActive,
-  // 全手势操作：首页「开始」按钮 + 视频界面里的手势菜单（两级：分类 → 动作）
-  startGestureMode, openMenu, closeMenu, selectFromMenu, renderMenu, layoutMenu,
-  updateMenu, menuRingLayout, menuItems, menuCategoryName, paintMenuRing, requestStageFullscreen,
-  tickCornerExit, syncCornerLabel, MENU_COLS_L1, MENU_COLS_L2, MENU_HIT_RATIO, MENU_RING_MAX,
+  // 全手势操作：首页「开始」按钮 + 视频界面里的手势菜单（两级 + 分页 + 挥手翻页）
+  startGestureMode, openMenu, closeMenu, selectFromMenu, renderMenu, layoutMenu, renderMenuPage,
+  updateMenu, updateMenuSwipe, flipMenuPage, menuPageInfo,
+  menuRingLayout, menuItems, menuCategoryName, paintMenuRing, requestStageFullscreen,
+  tickCornerExit, syncCornerLabel,
+  MENU_COLS, MENU_PER_PAGE, MENU_HIT_RATIO, MENU_RING_MAX,
+  MENU_SWIPE_TRAVEL, MENU_SWIPE_MS, MENU_SWIPE_COOLDOWN_MS,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
 };

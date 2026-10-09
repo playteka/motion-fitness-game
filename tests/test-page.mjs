@@ -597,17 +597,32 @@ console.log('\n[3] 静态资源与模型文件');
     ok('菜单判定用「手掌中心 + 3 秒」，和别的圆环同一套常量',
       /function updateMenu\(/.test(app) && /palmPoints\(landmarks/.test(app)
       && /GESTURE_HOLD_MS/.test(app) && /MENU_HIT_RATIO/.test(app));
-    // 两级菜单（用户反馈「主界面的圆环太小了，字也太小了，建议考虑二级菜单」）
+    // 两级菜单 + 分页（用户要求「每行放 4 个、一页不够就加页、向上/向下挥手翻页」）
     ok('菜单是**两级**：第一级分类、第二级动作 + 返回（圆环才做得大）',
       /state\.menuLevel = 0;/.test(app) && /function menuItems\(\)/.test(app)
       && /if \(state\.menuLevel === 0\)/.test(app) && /kind: 'category'/.test(app)
-      && /kind: 'back'/.test(app) && /MENU_COLS_L1/.test(app) && /MENU_COLS_L2/.test(app));
-    ok('两级菜单的圆环直径上限 ≥200px（不再是 19 个挤一屏的小圆环）',
+      && /kind: 'back'/.test(app));
+    ok('一页一行 4 个 + 分页（每行 4 个、一页不够就多一页）',
+      /const MENU_COLS = 4;/.test(app) && /const MENU_PER_PAGE = 4;/.test(app)
+      && /function menuPageInfo\(\)/.test(app) && /state\.menuPage = 0;/.test(app)
+      && /id="menuPage"/.test(html) && typeof LOCALES.zh.menu.page === 'string'
+      && typeof LOCALES.en.menu.page === 'string');
+    ok('翻页只建当前这一页的圆环（其它页的不会留在画面角落上）',
+      /menuItems\(\)\.slice\(info\.from, info\.to\)/.test(app));
+    ok('向上 / 向下挥手翻页：方向、冷却、以及「手在圆环里不算挥手」的保护',
+      /function updateMenuSwipe\(/.test(app) && /MENU_SWIPE_TRAVEL/.test(app)
+      && /MENU_SWIPE_COOLDOWN_MS/.test(app)
+      && /dir = dy < 0 \? 1 : -1;/.test(app)
+      && /const inRing = layout\.some/.test(app));
+    ok('键盘 / 鼠标也能翻页（方向键、点页码按钮）',
+      /flipMenuPage\(\(e\.key === 'ArrowUp'/.test(app)
+      && /\$\('menuPage'\)\?\.addEventListener\('click', \(\) => flipMenuPage\(1\)\)/.test(app));
+    ok('两级菜单的圆环直径上限 ≥300px（不再是 19 个挤一屏的小圆环）',
       /const MENU_RING_MAX = (\d+)/.test(app)
-      && Number(/const MENU_RING_MAX = (\d+)/.exec(app)[1]) >= 200,
+      && Number(/const MENU_RING_MAX = (\d+)/.exec(app)[1]) >= 300,
       String(/const MENU_RING_MAX = (\d+)/.exec(app)?.[1]));
     ok('字号跟着圆环直径算（一处定义，圆环大字号就大）',
-      /const nameSize = clamp\(dia \* 0\.17/.test(app)
+      /const nameSize = clamp\(dia \* 0\.15/.test(app)
       && /name\.style\.fontSize = `\$\{it\.nameSize/.test(app));
     ok('菜单项就是动作库（一处定义：分类与动作都从目录取，不会再抄一份清单）',
       /function menuItems\(\)/.test(app) && /localizedCategories\(\)\.map/.test(app)

@@ -1436,15 +1436,31 @@ kbd {
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
 .menu-lead { font-size: clamp(12px, 1.15vw, 16px); color: #cfe6ff; opacity: 0.92; }
+/* 页码（只有一页时不显示；点一下 = 下一页） */
+.menu-page {
+  margin-top: 6px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(8, 15, 26, 0.55);
+  color: #dbeafe;
+  font: inherit;
+  font-size: clamp(12px, 1.05vw, 16px);
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;      /* 菜单整体不吃鼠标，这颗按钮要能吃 */
+}
+.menu-page[hidden] { display: none; }
+.menu-page:hover { border-color: #7dd3fc; }
 .menu-foot {
   position: absolute;
   bottom: 8px;
   left: 0;
   right: 0;
   text-align: center;
-  font-size: clamp(11px, 1.05vw, 14px);
+  font-size: clamp(12px, 1.2vw, 17px);
   color: #cfe6ff;
-  opacity: 0.82;
+  opacity: 0.85;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
 }
 /* 菜单里的每一个圆环：内联 left/top/width/height 由 app.js 写（见 layoutMenu） */
