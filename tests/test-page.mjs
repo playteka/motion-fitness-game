@@ -546,6 +546,76 @@ console.log('\n[3] 静态资源与模型文件');
       /function openSettings\(\)/.test(app)
       && /setPoseLogUi\(poseLogUiVisible\);\s*\n\s*renderPoseLogStatus\(\);/.test(app));
   }
+
+  /* ---- 用户要求：「我希望把界面改造为全手势操作。请在首页增加一个大的『开始』按钮，点击后就打开
+     摄像头进入到全屏的视频界面。在这个视频界面里面，给出手势选择菜单，也采用手进入圆环 3 秒的方式
+     来进行选择，菜单项就是各项运动，选择之后则直接进入到全屏的各项运动界面，在各项运动中如果退出，
+     则回到菜单页面，如果在菜单界面退出则回到网页首页。」---- */
+  {
+    const startAt = html.indexOf('id="btnStartGesture"');
+    const catsAt = html.indexOf('id="homeCats"');
+    ok('首页有那个大的「开始」按钮（在动作库网格之前，一眼就能看到）',
+      startAt > 0 && startAt < catsAt
+      && /<button class="start-gesture" id="btnStartGesture"/.test(html),
+      `start=${startAt} cats=${catsAt}`);
+    ok('按钮文案走 i18n，中英都有（menu.start / menu.startSub）',
+      /data-i18n="menu\.start"/.test(html) && /data-i18n="menu\.startSub"/.test(html)
+      && typeof LOCALES.zh.menu.start === 'string' && typeof LOCALES.en.menu.start === 'string'
+      && typeof LOCALES.zh.menu.startSub === 'string' && typeof LOCALES.en.menu.startSub === 'string');
+
+    const menuAt = html.indexOf('id="gestureMenu"');
+    ok('手势菜单盖在**视频框 #stage 里面**（全屏时跟着视频一起放大）',
+      menuAt > stageAt && menuAt < toolbarAt, `stage=${stageAt} menu=${menuAt} toolbar=${toolbarAt}`);
+    ok('菜单默认藏着（没点「开始」之前不显示）',
+      /<div class="gesture-menu" id="gestureMenu" hidden>/.test(html));
+    ok('菜单有标题 / 说明 / 圆环容器 / 底部提示四块（文案走 menu.*，中英都有）',
+      /id="menuGrid"/.test(html) && /class="menu-title" data-i18n="menu\.title"/.test(html)
+      && /class="menu-lead" data-i18n="menu\.lead"/.test(html)
+      && /class="menu-foot" data-i18n="menu\.hint"/.test(html)
+      && typeof LOCALES.zh.menu.lead === 'string' && typeof LOCALES.en.menu.lead === 'string'
+      && typeof LOCALES.zh.menu.hint === 'string' && typeof LOCALES.en.menu.hint === 'string');
+    const menuBlock = /(?:^|\n)\.gesture-menu\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+    ok('菜单铺满视频框、但只有圆环吃鼠标（pointer-events:none）',
+      /position:\s*absolute/.test(menuBlock) && /inset:\s*0/.test(menuBlock)
+      && /pointer-events:\s*none/.test(menuBlock), menuBlock.trim().slice(0, 80));
+    ok('菜单圆环复用 .ring-btn 那一套（同一种圆环动画与 3 秒手感）',
+      /\.menu-ring\s*\{/.test(css) && /\.ring-btn/.test(css)
+      && /btn\.className = 'menu-ring ring-btn'/.test(app) && /menu-name/.test(css)
+      && /\.menu-ring\s*\{[^}]*min-width:\s*0/.test(css));
+    ok('菜单模式把运动相关面板收起来（侧栏 / 工具栏 / HUD / 进度条）',
+      /#workoutView\.menu-mode \.panel/.test(css) && /#stage\.menu-mode \.hud/.test(css)
+      && /#stage\.menu-mode \.criteria-bar/.test(css));
+    // 接线：首页按钮 → 开摄像头 + 全屏 + 进菜单；菜单判定 → 选中动作；退出分流
+    ok('首页按钮接的是「开摄像头 → 全屏视频 → 手势菜单」这一套',
+      /\$\('btnStartGesture'\)\?\.addEventListener\('click', \(\) => startGestureMode\(\)\)/.test(app)
+      && /function startGestureMode\(\)/.test(app)
+      && /requestStageFullscreen\(\)/.test(app)
+      && /if \(!camera\.active\) startCamera\(state\.settings\.camDeviceId \|\| null\)/.test(app),
+      '按钮接线不对');
+    ok('全屏申请的是 #stage（视频框），不是整页',
+      /function requestStageFullscreen\(\)/.test(app) && /stage\.requestFullscreen\(\)/.test(app));
+    ok('菜单判定用「手掌中心 + 3 秒」，和别的圆环同一套常量',
+      /function updateMenu\(/.test(app) && /palmPoints\(landmarks/.test(app)
+      && /GESTURE_HOLD_MS/.test(app) && /MENU_HIT_RATIO/.test(app)
+      && /MENU_COLS/.test(app));
+    ok('菜单项就是动作库（一处定义：不会再抄一份动作清单）',
+      /function menuList\(\)/.test(app) && /EXERCISES\.map\(\(e\) => localizedExercise\(e\.id\)\)/.test(app));
+    ok('主循环里跑菜单判定，选中就进那个动作',
+      /if \(state\.menuMode\) \{/.test(app) && /updateMenu\(res \? res\.landmarks : null, now\)/.test(app)
+      && /selectFromMenu\(picked\)/.test(app));
+    ok('退出分流：运动中退出回菜单、菜单里退出回网页首页',
+      /const toHome = state\.menuMode;/.test(app)
+      && /if \(toHome\) showHome\(\);\s*\n\s*else openMenu\(\{ silent: true \}\);/.test(app)
+      && /openMenu\(\{ silent: true \}\);\s*\/\/ 退出动作 → 回手势菜单/.test(app));
+    ok('菜单里左下角圆环写「回首页」、动作里写「退出」（同一套圆环，两种语义）',
+      /function syncCornerLabel\(\)/.test(app)
+      && /t\(state\.menuMode \? 'menu\.exitHome' : 'ui\.gestureExit'\)/.test(app)
+      && typeof LOCALES.zh.menu.exitHome === 'string' && typeof LOCALES.en.menu.exitHome === 'string');
+    ok('菜单里不摆「一组结束」的两个圆环（offerSetChoices 认得菜单模式）',
+      /if \(state\.homeMode \|\| state\.menuMode \|\| !state\.detector\) return;/.test(app));
+    ok('菜单里按 Esc = 回网页首页（键盘用户的退路）',
+      /if \(state\.menuMode\) \{ showHome\(\); return; \}/.test(app));
+  }
 }
 
 /* ---------- 4. 动作与界面按钮一一对应 ---------- */

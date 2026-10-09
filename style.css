@@ -1376,6 +1376,99 @@ kbd {
 
 .home { display: flex; flex-direction: column; gap: 18px; }
 .home[hidden] { display: none; }
+
+/* ---------- 首页的大「开始」按钮：全手势操作的入口 ----------
+   用户要求：「请在首页增加一个大的『开始』按钮，点击后就打开摄像头进入到全屏的视频界面。」
+   所以它是首页最显眼的一块（整行、大字号、图标 + 说明），点它 = 开摄像头 + 全屏 + 手势菜单。 */
+.start-gesture {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 18px 22px;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  border-radius: 18px;
+  border: 1px solid rgba(125, 211, 252, 0.5);
+  background: linear-gradient(120deg, rgba(56, 189, 248, 0.22), rgba(34, 197, 94, 0.18));
+  box-shadow: var(--shadow);
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.start-gesture:hover { transform: translateY(-1px); border-color: #7dd3fc; box-shadow: 0 10px 30px rgba(56, 189, 248, 0.18); }
+.start-gesture:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.start-gesture-icon { font-size: 40px; line-height: 1; }
+.start-gesture-main { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.start-gesture-title { font-size: 22px; font-weight: 800; }
+.start-gesture-sub { font-size: 13px; color: var(--muted); }
+.start-gesture-go { font-size: 20px; opacity: 0.8; }
+
+/* ---------- 手势选择菜单（全屏视频界面上的圆环菜单） ----------
+   用户要求：「在这个视频界面里面，给出手势选择菜单，也采用手进入圆环 3 秒的方式来进行选择，
+   菜单项就是各项运动。」圆环本身复用 `.ring-btn` / `.ring-*`（和退出圆环同一套动画），
+   位置与大小由 app.js 按舞台尺寸算好写进行内样式（和左下角圆环同一个做法）。 */
+.gesture-menu {
+  position: absolute;
+  inset: 0;
+  z-index: 4;                 /* 在左下角退出圆环（z-index 5）下面：两者都要能看见 */
+  display: flex;
+  flex-direction: column;
+  padding: 10px 14px 12px;
+  pointer-events: none;       /* 空白处不挡鼠标，只有菜单圆环本身可点 */
+  background: radial-gradient(ellipse at 50% 8%, rgba(4, 10, 18, 0.72), rgba(4, 10, 18, 0.35) 62%, rgba(4, 10, 18, 0.55));
+}
+.gesture-menu[hidden] { display: none; }
+.menu-head { text-align: center; margin-bottom: 4px; }
+.menu-title {
+  font-size: clamp(15px, 1.5vw, 21px);
+  font-weight: 800;
+  color: #eaf4ff;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+.menu-lead { font-size: clamp(11px, 1.1vw, 14px); color: #cfe6ff; opacity: 0.92; }
+.menu-grid { position: relative; flex: 1; min-height: 0; }
+.menu-foot {
+  text-align: center;
+  font-size: clamp(10px, 0.95vw, 13px);
+  color: #cfe6ff;
+  opacity: 0.8;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
+}
+/* 菜单里的每一个圆环：内联 left/top/width/height 由 app.js 写（见 layoutMenu） */
+.menu-ring {
+  min-width: 0;               /* .ring-btn 的 min-width:92px 会压住小屏的内联宽度，这里放开 */
+  max-width: none;
+  background: rgba(6, 12, 20, 0.46);
+}
+.menu-ring:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.menu-icon { position: relative; font-size: clamp(16px, 2vw, 28px); line-height: 1; pointer-events: none; }
+.menu-name {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: clamp(9px, 0.92vw, 13px);
+  font-weight: 700;
+  color: #e6f1ff;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+/* ---------- 手势菜单模式：只留视频画面 + 菜单，其余面板全部收起 ---------- */
+#workoutView.menu-mode { display: block; }
+#workoutView.menu-mode .panel,
+#workoutView.menu-mode .stage-toolbar,
+#workoutView.menu-mode .debug-line { display: none; }
+#workoutView.menu-mode .stage-card { position: static; max-width: 100%; }
+#stage.menu-mode .hud,
+#stage.menu-mode .criteria-bar,
+#stage.menu-mode .pose-hint,
+#stage.menu-mode .calib-prompt,
+#stage.menu-mode .gesture-rings,
+#stage.menu-mode .gesture-hint,
+#stage.menu-mode .score-pop { display: none; }
 .home-head {
   display: flex;
   align-items: flex-end;

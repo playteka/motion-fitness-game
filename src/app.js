@@ -92,6 +92,7 @@ const state = {
   target: 15,
   session: 'calibrating',   // calibrating | ready | countdown | running | paused | idle
   homeMode: false,          // 停在动作主页：不校准、不计数（避免浏览动作时偷偷开始一组）
+  menuMode: false,          // 停在**手势菜单**：全屏视频画面上摆一圈动作圆环，手掌停 3 秒选中
   autoStart: false,         // 校准识别完成后是否自动进入运动状态（选好动作后为 true）
   afterSet: false,          // 刚结束一组：先让用户休息，不自动开始；离开轮廓后自动恢复
   detector: null,
@@ -365,7 +366,7 @@ function resumeCameraFromHome() {
 }
 
 function applyMusic() {
-  const want = !!state.settings.music && !state.homeMode;
+  const want = !!state.settings.music && !state.homeMode && !state.menuMode;
   audio.setMusic(want);
 }
 
@@ -401,6 +402,7 @@ function showHome({ syncRoute = true } = {}) {
   // 注意顺序：stopSession 会摆出手势圆环，所以收起来这一步必须在它之后
   hideGestureRings();
   hideCornerExit();
+  closeMenu();          // 回首页也一定离开手势菜单（收起覆盖层 + menu-mode 样式）
   // 回主页就一定离开「视频框全屏」：主页上全屏只会把整页放大，没有意义
   exitFullscreen();
   // 主页上不校准也不计数：摄像头可以留着预热，但不能在浏览动作时偷偷开始一组
@@ -1011,6 +1013,11 @@ const gestureState = {
   // 左下角常驻的「退出」圆环：独立显示/隐藏（不跟「一组结束」那两个一起）
   corner: { p: 0, since: 0, lastInside: 0, done: false },
   cornerVisible: false,
+  /**
+   * 手势菜单里「手掌正停在哪一个圆环里」——同一时刻只有一格在蓄力，
+   * 所以只存一份状态（id + 进度），换一格就从头开始（见 updateMenu）。
+   */
+  menu: { id: '', p: 0, since: 0, lastInside: 0, at: 0 },
 };
 
 /**
@@ -1553,14 +1560,24 @@ function updateCornerExit(landmarks, now) {
 }
 
 /** 左下角圆环触发：退出这一组**并且退出全屏**（和「一组结束后」的退出圆环同一个动作） */
+/**
+ * 左下角退出圆环触发。
+ *
+ * 用户要求（全手势流程）：「在各项运动中如果退出，则回到菜单页面，如果在菜单界面退出则回到网页首页。」
+ * 所以它按当前所在的界面分流：
+ *   - **手势菜单里** → 回网页首页（并退出全屏）；
+ *   - **训练界面里** → 回手势菜单（这一组照常收尾结算，记录照旧保存）。
+ */
 function triggerCornerExit() {
   if (gestureState.corner.done && !gestureState.cornerVisible) return;
   gestureState.corner.done = true;
   paintRing('corner', 1);
   audio.milestone();
-  audio.say(t('ui.gestureExit'), { rate: 1.1, force: true });
+  const toHome = state.menuMode;
+  audio.say(t(toHome ? 'menu.exitHomeVoice' : 'ui.gestureExit'), { rate: 1.1, force: true });
   hideCornerExit();
-  showHome();          // showHome 里会 stopSession + 退出全屏
+  if (toHome) showHome();
+  else openMenu({ silent: true });
 }
 
 /** 一组做完后的两个选择里那个「退出」圆环（手势停满 3 秒，或者用户直接点它） */
@@ -1569,7 +1586,7 @@ function triggerGesture(key) {
   hideGestureRings();
   if (key === 'exit') {
     audio.say(t('ui.gestureExit'), { rate: 1.1, force: true });
-    showHome();
+    openMenu({ silent: true });     // 退出动作 → 回手势菜单（用户要求）
   } else {
     audio.say(t('ui.gestureRetry'), { rate: 1.1, force: true });
     retrySet();
@@ -1598,10 +1615,294 @@ function retrySet() {
   beginCountdown();
 }
 
+/* ------------------------------------------------------------------ *
+ * 全手势操作：首页「开始」按钮 + 视频界面里的手势选择菜单
+ *
+ * 用户要求：「我希望把界面改造为全手势操作。请在首页增加一个大的『开始』按钮，点击后就打开摄像头
+ *   进入到全屏的视频界面。在这个视频界面里面，给出手势选择菜单，也采用手进入圆环 3 秒的方式来进行
+ *   选择，菜单项就是各项运动，选择之后则直接进入到全屏的各项运动界面，在各项运动中如果退出，
+ *   则回到菜单页面，如果在菜单界面退出则回到网页首页。」
+ *
+ * 流程：
+ *   首页「开始」 ──开摄像头 + #stage 全屏──▶ 手势菜单 ──手掌停满 3 秒选一格──▶ 该动作的训练界面
+ *        ▲                                      │                                    │
+ *        └────────── 左下角圆环（菜单里 = 回首页）┘                                    │
+ *        └──────────────── 左下角圆环（训练里 = 退出 → 回菜单）◀──────────────────────┘
+ *
+ * 判定复用其它圆环的同一套常量与手感：手掌中心 + GESTURE_HOLD_MS(3s) + GESTURE_GRACE_MS(300ms 抖动宽容)
+ * + GESTURE_DRAIN_MS(1.5s 慢慢退回)；区别只有「一格一格地选」：手掌移到别的圆环上，
+ * 之前那一格的进度立刻归零（不然会在两格之间攒进度）。
+ * ------------------------------------------------------------------ */
+
+/** 菜单的列数：19 个动作排成 5 列 4 行（最后一行不满就整行居中） */
+const MENU_COLS = 5;
+/** 手掌落在「圆心 × 画出来的半径 × 这个比例」以内就算指着这一格（比圆圈稍大一点，好瞄准） */
+const MENU_HIT_RATIO = 1.15;
+/** 圆环直径的上下限（按舞台尺寸算出来的格子自己缩） */
+const MENU_RING_MIN = 44;
+const MENU_RING_MAX = 132;
+
+/** 菜单里要列的动作（跟动作库同一个顺序；换语言时重建） */
+function menuList() {
+  return EXERCISES.map((e) => localizedExercise(e.id));
+}
+
+/**
+ * 菜单圆环的几何：**按舞台尺寸算**（不读 DOM 的布局）。
+ *
+ * 和左下角退出圆环是同一个做法：判定用的圆心 / 半径与写进元素的行内 `left/top` 永远来自同一份数，
+ * 所以「看到哪一格」和「程序判哪一格」不会各说一套（测试也能在没有真实布局的桩里跑）。
+ */
+function menuRingLayout(size) {
+  const list = menuList();
+  const n = list.length;
+  if (!n) return [];
+  const cols = Math.min(MENU_COLS, n);
+  const rows = Math.ceil(n / cols);
+  const padX = Math.max(12, size.w * 0.02);
+  // 顶部让开标题、底部让开提示（窄屏 / 竖屏手机多让一点）
+  const narrow = size.w < 620;
+  const top = size.h * (narrow ? 0.17 : 0.13);
+  const bottom = size.h * (narrow ? 0.15 : 0.12);
+  const cellW = Math.max(1, (size.w - padX * 2) / cols);
+  const cellH = Math.max(1, (size.h - top - bottom) / rows);
+  // 直径：横向留出间隙，纵向还要给名字留一行（所以纵向按 0.72 收）
+  const d = clamp(Math.min(cellW * 0.8, cellH * 0.72), MENU_RING_MIN, MENU_RING_MAX);
+  return list.map((ex, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const inRow = Math.min(cols, n - row * cols);          // 最后一行可能不满
+    const offset = ((cols - inRow) * cellW) / 2;           // 不满就整行居中
+    return {
+      id: ex.id,
+      name: ex.name,
+      icon: ex.icon,
+      cx: padX + offset + cellW * (col + 0.5),
+      cy: top + cellH * (row + 0.5),
+      r: d / 2,
+      hit: (d / 2) * MENU_HIT_RATIO,
+    };
+  });
+}
+
+/** 菜单里某一格的真实元素（按 data-ex 找） */
+function menuRingEl(id) {
+  const grid = $('menuGrid');
+  if (!grid || !grid.children) return null;
+  return [...grid.children].find((el) => el?.dataset?.ex === id) || null;
+}
+
+/** 建菜单项（只在换语言 / 重进菜单时重建；圆环位置由 layoutMenu 单独写） */
+function buildMenu() {
+  const grid = $('menuGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  for (const ex of menuList()) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'menu-ring ring-btn';     // 复用其它圆环的全部样式与动画
+    btn.dataset.ex = ex.id;
+    const label = t('menu.item', { name: ex.name });
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('title', label);
+    btn.innerHTML = '<svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">'
+      + '<circle class="ring-track" cx="60" cy="60" r="52"></circle>'
+      + '<circle class="ring-fill" cx="60" cy="60" r="52"></circle>'
+      + '</svg>'
+      + `<span class="menu-icon" aria-hidden="true">${ex.icon}</span>`
+      + `<span class="menu-name">${ex.name}</span>`
+      + '<span class="ring-timer"></span>';
+    btn.addEventListener('click', () => selectFromMenu(ex.id));   // 鼠标 / 触屏也能选
+    grid.appendChild(btn);
+  }
+}
+
+/** 把菜单圆环按当前舞台尺寸摆好（写行内 left/top/width/height） */
+function layoutMenu() {
+  const size = stageSize();
+  for (const it of menuRingLayout(size)) {
+    const el = menuRingEl(it.id);
+    if (!el) continue;
+    el.style.left = `${it.cx}px`;
+    el.style.top = `${it.cy}px`;
+    el.style.width = `${it.r * 2}px`;
+    el.style.height = `${it.r * 2}px`;
+  }
+}
+
+/** 重建菜单（换语言 / 进菜单时）：文案与位置一起刷新 */
+function renderMenu() {
+  buildMenu();
+  layoutMenu();
+  resetMenuProgress();
+}
+
+/** 清掉「手掌停在哪一格」的进度（进菜单、换语言、选中之后都调） */
+function resetMenuProgress() {
+  const st = gestureState.menu;
+  if (st.id) paintMenuRing(st.id, 0);
+  st.id = ''; st.p = 0; st.since = 0; st.lastInside = 0; st.at = 0;
+}
+
+/** 画某一格圆环的进度（复用 `.ring-fill` 的 dashoffset 口径，和别的圆环同一套） */
+function paintMenuRing(id, p, leftS = null) {
+  const el = menuRingEl(id);
+  if (!el) return;
+  const v = clamp(p, 0, 1);
+  const fill = el.querySelector?.('.ring-fill');
+  if (fill) fill.style.strokeDashoffset = String(326.7 * (1 - v));
+  el.classList.toggle('dwelling', v > 0.001);
+  const timer = el.querySelector?.('.ring-timer');
+  if (timer) timer.textContent = (v > 0.02 && v < 1 && Number.isFinite(leftS)) ? `${leftS.toFixed(1)}s` : '';
+}
+
+/**
+ * 每帧更新手势菜单：手掌停在哪一格、蓄力几成；够 3 秒就返回那一格的动作 id。
+ *
+ * 多个圆环都碰到时（判定半径比圆圈稍大，边缘会重叠）取**最近**的那一个，不会两边乱跳。
+ */
+function updateMenu(landmarks, now) {
+  if (!state.menuMode) return null;
+  const size = stageSize();
+  const st = gestureState.menu;
+  const palms = palmPoints(landmarks, size.w, size.h, state.settings.mirror);
+
+  let hover = null;
+  for (const it of menuRingLayout(size)) {
+    for (const p of palms) {
+      const d = Math.hypot(p.x - it.cx, p.y - it.cy);
+      if (d <= it.hit && (!hover || d < hover.d)) hover = { id: it.id, d };
+    }
+  }
+
+  if (hover) {
+    if (hover.id !== st.id) {          // 换了一格（或刚把手伸进来）：这一格从头开始
+      if (st.id) paintMenuRing(st.id, 0);
+      st.id = hover.id;
+      st.since = now;
+      st.p = 0;
+    }
+    if (!st.since) st.since = now;
+    st.lastInside = now;
+    st.p = clamp((now - st.since) / GESTURE_HOLD_MS, 0, 1);
+  } else if (st.id && now - st.lastInside > GESTURE_GRACE_MS) {
+    // 手移开了：宽限期内先不动，之后慢慢退回去（看得见「手离开了」）
+    const dt = clamp(now - (st.at || now), 0, 250);
+    st.p = Math.max(0, st.p - dt / GESTURE_DRAIN_MS);
+    if (st.p <= 0) { st.since = 0; st.id = ''; }
+  }
+  st.at = now;
+
+  if (st.id) {
+    const left = Math.max(0, GESTURE_HOLD_MS - (now - st.since)) / 1000;
+    paintMenuRing(st.id, st.p, left);
+  }
+  if (st.id && st.p >= 1) {
+    const picked = st.id;
+    resetMenuProgress();
+    return picked;
+  }
+  return null;
+}
+
+/** 左下角圆环的文案：菜单里 = 回首页；训练里 = 退出（回菜单） */
+function syncCornerLabel() {
+  const txt = t(state.menuMode ? 'menu.exitHome' : 'ui.gestureExit');
+  const label = cornerLabelEl();
+  if (label) label.textContent = txt;
+  const btn = ringEl('corner');
+  if (btn) { btn.setAttribute('title', txt); btn.setAttribute('aria-label', txt); }
+}
+
+/** 进手势菜单（首页「开始」按钮，或者从训练里退出） */
+function openMenu({ silent = false } = {}) {
+  // 从训练里退出来：先把这一组正常收尾（结算 / 记录照旧），再切到菜单
+  if (state.session === 'running' || state.session === 'paused' || state.session === 'countdown') {
+    stopSession('switch');
+  }
+  hideGestureRings();        // stopSession 会把「一组结束」的两个圆环摆出来，这里收掉
+  clearInterval(state.countdownTimer);
+  state.countdownTimer = null;
+  $('countdown').hidden = true;
+  $('celebrate').hidden = true;
+  state.celebrateUntil = 0;
+  state.menuMode = true;
+  state.homeMode = false;    // 菜单不算主页：摄像头要开着、识别要跑
+  state.session = 'idle';
+  state.calib = null;
+  renderCalibration(null);
+  $('homeView').hidden = true;
+  $('workoutView').hidden = false;
+  $('workoutView').classList.add('menu-mode');
+  $('stage').classList.add('menu-mode');
+  $('btnHome').hidden = false;
+  $('btnExercise').hidden = true;    // 菜单里没有「运动设定」
+  renderMenu();
+  $('gestureMenu').hidden = false;
+  syncCornerLabel();         // 这时左下角圆环说的是「回首页」
+  syncCornerExit();
+  updateButtons();
+  if (!silent) audio.say(t('menu.title'), { rate: 1.05 });
+}
+
+/** 离开菜单（选中动作 / 回首页时调用）：收起覆盖层与 menu-mode 样式 */
+function closeMenu() {
+  state.menuMode = false;
+  const menu = $('gestureMenu');
+  if (menu) menu.hidden = true;
+  $('workoutView')?.classList.remove('menu-mode');
+  $('stage')?.classList.remove('menu-mode');
+  resetMenuProgress();
+  syncCornerLabel();
+}
+
+/** 菜单里选中某个动作（手掌停满 3 秒，或者鼠标点一下那一格） */
+function selectFromMenu(id) {
+  if (!state.menuMode || !EXERCISE_MAP[id]) return;
+  const ex = localizedExercise(id);
+  audio.milestone();
+  audio.say(t('menu.picked', { name: ex.name }), { rate: 1.1, force: true });
+  closeMenu();
+  openExercise(id);          // 视频界面已经是全屏的，这里不会再动全屏
+}
+
+/** 首页那个大「开始」按钮：开摄像头 → 全屏视频界面 → 手势菜单 */
+function startGestureMode() {
+  if (!Camera.supported()) { setCueLine(t('menu.needCamera'), 'warn'); return; }
+  // ⚠️ 全屏必须在**这个点击手势里同步**申请，所以顺序是：先切视图（#stage 得可见）→ 申请全屏 → 开摄像头。
+  state.camStoppedForHome = false;   // 摄像头由下面统一开，别让 showWorkout 里再开一次
+  showWorkout();
+  openMenu({ silent: true });
+  requestStageFullscreen();
+  if (!camera.active) startCamera(state.settings.camDeviceId || null);
+  audio.say(t('menu.title'), { rate: 1.05 });
+}
+
+/** 申请「视频框」全屏（和右上角那个全屏按钮同一个动作） */
+function requestStageFullscreen() {
+  const stage = $('stage');
+  if (!stage || document.fullscreenElement || typeof stage.requestFullscreen !== 'function') return false;
+  try {
+    const p = stage.requestFullscreen();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+    $('btnFullscreen')?.setAttribute('aria-pressed', 'true');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 左下角退出圆环的每帧维护（菜单与训练页共用）：对齐显隐 → 更新进度 → 触发 */
+function tickCornerExit(landmarks, now) {
+  syncCornerExit();
+  if (gestureState.cornerVisible && updateCornerExit(landmarks || null, now)) triggerCornerExit();
+}
+
 /** 舞台尺寸变化（横竖屏切换、全屏）时把圆环重新摆一次 */
 function onStageResize() {
   if (gestureState.visible) layoutGestureRings();
   if (gestureState.cornerVisible) layoutCornerRing();
+  if (state.menuMode) layoutMenu();
 }
 
 /* ------------------------------------------------------------------ *
@@ -2519,7 +2820,7 @@ function stopSession(reason = 'user') {
  * 也可以直接点。只在主页上不摆（那儿根本没有「这一组」）。
  */
 function offerSetChoices() {
-  if (state.homeMode || !state.detector) return;
+  if (state.homeMode || state.menuMode || !state.detector) return;
   showGestureRings();
 }
 
@@ -3084,6 +3385,20 @@ function loop() {
   // 尺寸对齐
   renderer.resize(video.videoWidth || 1280, video.videoHeight || 720);
 
+  /**
+   * ---- 手势菜单：不校准、不计数、也不记调试帧（还没有动作），只判「手掌停在哪个圆环里」----
+   * 画面上仍然是摄像头 + 火柴人（看得见自己），加一圈动作圆环与左下角「回首页」圆环。
+   */
+  if (state.menuMode) {
+    renderCalibration(null);
+    renderer.draw({ landmarks, frame, exerciseId: state.exerciseId, status: 'ok', outline: null });
+    const picked = updateMenu(res ? res.landmarks : null, now);
+    tickCornerExit(res ? res.landmarks : null, now);
+    if (state.loopCount % 15 === 0) { updatePipelineStatus(); renderRecBadge(); }
+    if (picked && state.menuMode) selectFromMenu(picked);
+    return;
+  }
+
   const calibrating = !state.homeMode && (state.session === 'calibrating' || state.session === 'ready');
   const counting = !state.homeMode && state.session === 'running';
   let outline = null;
@@ -3146,12 +3461,9 @@ function loop() {
   if (gestureState.visible) {
     updateGesture(res ? res.landmarks : null, now);
   }
-  // 左下角常驻的「退出」圆环：手或脚进去停满 3 秒 → 退出这一组 + 退出全屏
+  // 左下角常驻的「退出」圆环：手或脚进去停满 3 秒 → 训练里回手势菜单、菜单里回网页首页
   // （显示与否由摄像头开着没有决定，见 syncCornerExit）
-  syncCornerExit();
-  if (gestureState.cornerVisible && updateCornerExit(res ? res.landmarks : null, now)) {
-    triggerCornerExit();
-  }
+  tickCornerExit(res ? res.landmarks : null, now);
 
   // 实时指标（调试用）
   renderDebug(frame, outline);
@@ -3343,6 +3655,8 @@ function refreshForLang() {
   buildHome();        // 主页分类/动作名也要跟着换语言
   buildMusicTracks(); // 曲子名也要跟着换语言
   if (gestureState.visible) showGestureRings({ speak: false });   // 圆环上的字也要跟着换
+  if (state.menuMode) renderMenu();                               // 手势菜单的文案也要跟着换
+  syncCornerLabel();
   setCueLine('');
 }
 
@@ -3542,8 +3856,11 @@ function bindUI() {
   // 整页全屏会把侧栏、要领清单、成绩卡一起放大，反而看不清动作。
   $('btnFullscreen').addEventListener('click', () => {
     if (document.fullscreenElement) document.exitFullscreen?.();
-    else $('stage').requestFullscreen?.().catch(() => {});
+    else requestStageFullscreen();
   });
+
+  // 首页那个大「开始」按钮：全手势操作的入口（开摄像头 → 全屏 → 手势菜单）
+  $('btnStartGesture')?.addEventListener('click', () => startGestureMode());
   document.addEventListener('fullscreenchange', () => {
     $('btnFullscreen').setAttribute('aria-pressed', String(!!document.fullscreenElement));
   });
@@ -3621,10 +3938,11 @@ function bindUI() {
       return;
     }
     if (e.key === 'Escape') {
-      // 弹窗优先关闭；其次是结束本组
+      // 弹窗优先关闭；手势菜单里按 Esc = 回网页首页（和左下角圆环同一个动作）；其次是结束本组
       if (recordsModalOpen()) { closeRecordsModal(); return; }
       if (exerciseSettingsOpen()) { closeExerciseSettings(); return; }
       if (settingsOpen()) { closeSettings(); return; }
+      if (state.menuMode) { showHome(); return; }
       stopSession('user');
       return;
     }
@@ -3800,6 +4118,10 @@ window.__mfg = {
   // 调试数据记录（全局配置里的隐藏分组）：记录器本体 + 开关函数，测试直接用它们驱动
   poseLogger, setPoseLog, togglePoseLog, poseLogMeta, renderPoseLogStatus,
   setPoseLogUi, anyModalOpen, videoStateActive,
+  // 全手势操作：首页「开始」按钮 + 视频界面里的手势菜单
+  startGestureMode, openMenu, closeMenu, selectFromMenu, renderMenu, layoutMenu,
+  updateMenu, menuRingLayout, menuList, paintMenuRing, requestStageFullscreen,
+  tickCornerExit, syncCornerLabel, MENU_COLS, MENU_HIT_RATIO,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
 };

@@ -1140,13 +1140,23 @@ console.log('\n[6] 火柴人开关');
 
   // 用户要求：「做完一个运动退出的时候不仅要退回到主页，也要退出全屏模式」。
   // 全屏是**视频框**的全屏，留在主页上只会把整页放大、还留着全屏状态，所以回主页时必须退出。
+  //
+  // ⚠️ 全手势改造之后分流变了（用户要求「在各项运动中如果退出，则回到菜单页面，
+  //    如果在菜单界面退出则回到网页首页」）：运动里的「退出」圆环现在回**手势菜单**（仍然是全屏），
+  //    只有菜单里的退出才回网页首页并退出全屏。两条都在这里钉住。
   api.openExercise('squat');
   documentStub.fullscreenElement = stageEl;
   documentStub.exitFullscreenCalls = 0;
   api.triggerGesture('exit');            // 一组做完后的「退出」圆环
-  ok('全屏时点「退出」圆环：既回主页、也退出全屏',
-    api.state.homeMode === true && documentStub.exitFullscreenCalls === 1,
-    `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
+  ok('运动里点「退出」圆环 → 回**手势菜单**（全屏留着，不停在网页上）',
+    api.state.homeMode === false && api.state.menuMode === true
+    && elements.get('gestureMenu').hidden === false && documentStub.exitFullscreenCalls === 0,
+    `home=${api.state.homeMode} menu=${api.state.menuMode} exit=${documentStub.exitFullscreenCalls}`);
+  api.triggerCornerExit();               // 菜单里再退出一次
+  ok('菜单里点「退出」圆环 → 回网页首页 + 退出全屏',
+    api.state.homeMode === true && api.state.menuMode === false
+    && documentStub.exitFullscreenCalls === 1,
+    `home=${api.state.homeMode} menu=${api.state.menuMode} exit=${documentStub.exitFullscreenCalls}`);
   ok('退出全屏后按钮状态同步成「未全屏」',
     fsBtn.attributes['aria-pressed'] === 'false', String(fsBtn.attributes['aria-pressed']));
 
@@ -1955,16 +1965,19 @@ console.log('\n[8c] 一组结束后的手势圆环');
   ok('触发后圆环收起来', shown() === false);
   api.finishCountdown();
 
-  // 退出：停满 3 秒 → 回到主页
+  // 退出：停满 3 秒 → 回手势菜单（用户要求：「在各项运动中如果退出，则回到菜单页面」）
   api.stopSession('goal');
   ok('一组做完后圆环又出现', shown() === true);
   api.updateGesture(palmsAt(at('exit').x, at('exit').y), 20000);
   api.updateGesture(palmsAt(at('exit').x, at('exit').y), 22000);
   api.updateGesture(palmsAt(at('exit').x, at('exit').y), 23001);
-  ok('手掌停满 3 秒触发「退出」：回到主页', api.state.homeMode === true);
+  ok('手掌停满 3 秒触发「退出」→ 回手势菜单（不是直接回网页首页）',
+    api.state.menuMode === true && api.state.homeMode === false,
+    `menu=${api.state.menuMode} home=${api.state.homeMode}`);
   ok('退出后圆环收起来', shown() === false);
 
   // 镜像预览：画面是翻过来的，圆环没有翻 → 判定必须跟着翻，否则手势会反
+  api.closeMenu();
   api.openExercise('squat');
   api.state.settings.mirror = true;
   api.state.session = 'running';
@@ -2541,15 +2554,24 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
       api.touchDiagLine((v) => String(v)));
   }
 
-  // 手停满 3 秒 → 退出这一组 + 退出全屏（和「一组结束后」的退出圆环同一个动作）
+  // 手停满 3 秒 → 训练里退出 = 回手势菜单（用户要求）；在菜单里再退出才回网页首页 + 退出全屏
   documentStub.fullscreenElement = elements.get('stage');
   documentStub.exitFullscreenCalls = 0;
   resetCorner();
   const fired = holdFrames(handAt(p0.x, p0.y), 90000, 3100);
   ok('手停满 3 秒 → 触发退出', fired === true, String(fired));
   api.triggerCornerExit();
-  ok('**手**停满 3 秒退出后：回主页 + 退出全屏',
-    api.state.homeMode === true && documentStub.exitFullscreenCalls >= 1,
+  ok('**手**停满 3 秒退出后：回手势菜单（全屏留着）',
+    api.state.menuMode === true && api.state.homeMode === false
+    && documentStub.exitFullscreenCalls === 0,
+    `menu=${api.state.menuMode} home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
+  ok('菜单里左下角圆环写的是「回首页」（动作里写「退出」）',
+    elements.get('ringQuickExitLabel').textContent === '回首页',
+    elements.get('ringQuickExitLabel').textContent);
+  api.triggerCornerExit();
+  ok('菜单里再退出一次：回网页首页 + 退出全屏',
+    api.state.homeMode === true && api.state.menuMode === false
+    && documentStub.exitFullscreenCalls >= 1,
     `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
   ok('退出后左下角圆环收起（主页上不摆）', cornerShown() === false);
 
@@ -2598,14 +2620,19 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
   api.syncCornerExit();
   ok('摄像头关掉时圆环收起来（只在摄像头开着时显示）', cornerShown() === false);
 
-  // 直接点它也同样有效（鼠标 / 触屏）
+  // 直接点它也同样有效（鼠标 / 触屏）：训练里点 = 回手势菜单；菜单里点 = 回网页首页 + 退出全屏
   api.camera.stream = fakeStream;
   api.openExercise('squat');
   api.syncCornerExit();
   documentStub.fullscreenElement = elements.get('stage');
   documentStub.exitFullscreenCalls = 0;
   elements.get('ringQuickExit').dispatch('click');
-  ok('点一下左下角圆环也能退出（回主页 + 退出全屏）',
+  ok('点一下左下角圆环 → 回手势菜单（全屏留着）',
+    api.state.menuMode === true && api.state.homeMode === false
+    && documentStub.exitFullscreenCalls === 0,
+    `menu=${api.state.menuMode} home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
+  elements.get('ringQuickExit').dispatch('click');
+  ok('菜单里再点一下 → 回网页首页 + 退出全屏',
     api.state.homeMode === true && documentStub.exitFullscreenCalls >= 1,
     `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
   api.camera.stream = savedStream;
@@ -4091,6 +4118,231 @@ console.log(`\n[16] 调试数据记录（全局配置里的隐藏分组 + 视频
   globalThis.fetch = savedFetch;
   Object.defineProperty(globalThis, 'performance', { value: savedPerf, configurable: true, writable: true });
   windowStub.performance = savedPerf;
+  api.state.session = 'idle';
+}
+
+/* ------------------------------------------------------------------ *
+ * [17] 全手势操作：首页「开始」→ 全屏手势菜单 → 手掌停 3 秒选动作
+ *      →（运动中退出）回菜单 →（菜单里退出）回网页首页
+ * ------------------------------------------------------------------ */
+
+console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选动作 → 退出回菜单 → 再退出回首页');
+{
+  const api = windowStub.__mfg;
+  const { LM: LMK } = await import('../src/geometry.js');
+  const { standingPose: sp6 } = await import('./synthetic-pose.mjs');
+  const { w: SW, h: SH } = api.stageSize();
+  const stageEl = elements.get('stage');
+  const menuEl = elements.get('gestureMenu');
+  const grid = elements.get('menuGrid');
+  const savedReady = api.camera.video.readyState;
+  const savedStream6 = api.camera.stream;
+  const savedMirror = api.state.settings.mirror;
+
+  api.state.settings.mirror = false;      // 判定与「屏幕上看到的那一边」一致，测试里关掉镜像更好算坐标
+  api.state.engineReady = true;
+
+  /** 骨架：两只手掌心放在舞台像素点 (x, y)，其它部位是站着的人 */
+  const palmsAt6 = (x, y, vis = 1) => {
+    const lm = sp6({ knee: 176, lean: 5, armDown: 0, ankleX: 1.0, view: 'front' })
+      .map((p) => ({ ...p, visibility: vis }));
+    for (const w of [LMK.L_WRIST, LMK.R_WRIST]) {
+      for (const off of [0, 2, 4, 6]) lm[w + off] = { x: x / SW, y: y / SH, z: 0, visibility: vis };
+    }
+    return lm;
+  };
+
+  // ===== ① 首页那个大「开始」按钮 =====
+  api.showHome();
+  const startBtn = elements.get('btnStartGesture');
+  ok('首页多了一个大的「开始」按钮（.start-gesture，文案走 menu.start / menu.startSub）',
+    !!startBtn && String(startBtn.attributes.class || '').includes('start-gesture'),
+    JSON.stringify({ cls: startBtn?.attributes?.class }));
+  ok('按钮在动作库上面（先看到它，再去挑动作）',
+    /id="btnStartGesture"[\s\S]*id="homeCats"/.test(html), '顺序不对');
+
+  // 点它：开摄像头 + 切到视频界面 + 进手势菜单 + 对 #stage 申请全屏
+  api.camera.stream = null;
+  api.camera.video.readyState = 0;
+  stageEl.requestFullscreenCalls = 0;
+  documentStub.fullscreenElement = null;
+  startBtn.dispatch('click');
+  await new Promise((r) => setTimeout(r, 40));      // startCamera 是异步的
+  ok('点「开始」→ 打开摄像头', !!api.camera.stream, String(!!api.camera.stream));
+  ok('点「开始」→ 切到全屏视频界面（对 #stage 申请全屏，而不是整页）',
+    stageEl.requestFullscreenCalls === 1 && elements.get('homeView').hidden === true
+    && elements.get('workoutView').hidden === false,
+    `fullscreen=${stageEl.requestFullscreenCalls} home=${elements.get('homeView').hidden}`);
+  ok('点「开始」→ 直接进入手势菜单（不是进某个动作）',
+    api.state.menuMode === true && menuEl.hidden === false
+    && String(elements.get('workoutView').className).includes('menu-mode')
+    && String(stageEl.className).includes('menu-mode'),
+    `menu=${api.state.menuMode} hidden=${menuEl.hidden}`);
+  ok('菜单模式把运动相关的面板收起来（侧栏 / 进度条 / HUD 都不显示）',
+    /#workoutView\.menu-mode \.panel/.test(fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8'))
+    && /#stage\.menu-mode \.hud/.test(fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8')),
+    '样式里没有 menu-mode 收起规则');
+
+  // ===== ② 菜单项 =====
+  const layout = api.menuRingLayout(api.stageSize());
+  ok('菜单项就是动作库里的每一个动作（19 个圆环，一格一个）',
+    layout.length === 19 && grid.children.length === 19
+    && layout.every((it, i) => it.id === api.menuList()[i].id),
+    `${layout.length} / ${grid.children.length}`);
+  ok('每一格都写好了位置与大小（和判定用的是同一份圆心/半径）',
+    layout.every((it) => {
+      const el = grid.children.find((c) => c.dataset.ex === it.id);
+      return el.style.left === `${it.cx}px` && el.style.top === `${it.cy}px`
+        && el.style.width === `${it.r * 2}px`;
+    }), JSON.stringify(layout[0]));
+  ok('菜单里每一格都写着动作名（两种语言都跟着切）',
+    grid.children[0].innerHTML.includes(api.menuList()[0].name)
+    && grid.children[0].attributes['aria-label'].includes(api.menuList()[0].name),
+    grid.children[0].innerHTML.slice(0, 120));
+  {
+    const bad = [];
+    for (let i = 0; i < layout.length; i += 1) {
+      const a = layout[i];
+      if (a.cx - a.r < 0 || a.cx + a.r > SW || a.cy - a.r < 0 || a.cy + a.r > SH) bad.push(`${a.id}:出画`);
+      for (let j = i + 1; j < layout.length; j += 1) {
+        const b = layout[j];
+        if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < a.hit + b.hit) bad.push(`${a.id}↔${b.id}:判定圈重叠`);
+      }
+    }
+    ok('19 个圆环都完整落在画面里、判定圈互不重叠（「最近的那一格」不会有歧义）',
+      bad.length === 0, bad.slice(0, 3).join(', '));
+  }
+
+  // ===== ③ 手掌停进某一格 3 秒 → 选中它 =====
+  const target = layout[6];                 // 随便挑一格（第 7 个动作）
+  const at6 = (it) => palmsAt6(it.cx, it.cy);
+  ok('手掌停在圆环里 2 秒：进度攒到 2/3，还没选中',
+    api.updateMenu(at6(target), 1000) === null
+    && api.updateMenu(at6(target), 2000) === null
+    && Math.abs(api.gestureState.menu.p - 1 / 3) < 0.05,
+    `p=${api.gestureState.menu.p}`);
+  ok('手掌移到**另一格**：进度从头开始（不会在两格之间攒进度）',
+    api.updateMenu(at6(layout[7]), 2100) === null
+    && api.gestureState.menu.id === layout[7].id
+    && api.gestureState.menu.p < 0.05,
+    `${api.gestureState.menu.id} p=${api.gestureState.menu.p}`);
+  api.updateMenu(at6(layout[7]), 3000);
+  const picked = api.updateMenu(at6(layout[7]), 5201);
+  ok('手掌停满 3 秒 → 判定选中这一格', picked === layout[7].id, String(picked));
+  ok('选中之后这一格的进度清干净（不会连着再选一次）',
+    api.gestureState.menu.p === 0 && api.gestureState.menu.id === '');
+
+  // 手离开：宽限期内先不动，之后慢慢退回去（看得出「手离开了」）
+  api.updateMenu(at6(target), 6000);
+  api.updateMenu(at6(target), 7000);
+  const kept6 = api.gestureState.menu.p;
+  api.updateMenu(palmsAt6(0.5, 0.02), 7100);          // 手离开（挪到画面最上面）
+  ok('手离开 0.1 秒（宽限期内）进度一点都不掉',
+    Math.abs(api.gestureState.menu.p - kept6) < 1e-6,
+    `${kept6} → ${api.gestureState.menu.p}`);
+  api.updateMenu(palmsAt6(0.5, 0.02), 8200);
+  ok('手离开久了只慢慢退（不是一秒清零）',
+    api.gestureState.menu.p > 0 && api.gestureState.menu.p < kept6,
+    `${kept6} → ${api.gestureState.menu.p}`);
+
+  // 选中之后落到那个动作的训练界面（这里调的就是主循环里那一句）
+  api.selectFromMenu(layout[7].id);
+  ok('选中后直接进入该动作的全屏训练界面（菜单收起来）',
+    api.state.menuMode === false && api.state.exerciseId === layout[7].id
+    && menuEl.hidden === true && elements.get('workoutView').hidden === false
+    && !String(elements.get('workoutView').className).includes('menu-mode'),
+    `menu=${api.state.menuMode} ex=${api.state.exerciseId}`);
+  ok('进入动作后左下角圆环又变回「退出」（退出 = 回菜单）',
+    elements.get('ringQuickExitLabel').textContent === '退出'
+    || api.gestureState.cornerVisible === false,         // 摄像头关着时它本来就不摆
+    elements.get('ringQuickExitLabel').textContent);
+
+  // ===== ④ 鼠标点菜单项同样能选（全手势之外的兜底） =====
+  api.openMenu({ silent: true });
+  const before6 = api.state.exerciseId;
+  const clickTarget = layout[11];
+  grid.children.find((c) => c.dataset.ex === clickTarget.id).dispatch('click');
+  ok('鼠标点一下菜单圆环也能选（不用非得用手势）',
+    api.state.menuMode === false && api.state.exerciseId === clickTarget.id
+    && api.state.exerciseId !== before6,
+    `${before6} → ${api.state.exerciseId}`);
+
+  // ===== ⑤ 退出分流：运动里 → 菜单；菜单里 → 网页首页（并退出全屏） =====
+  documentStub.fullscreenElement = stageEl;
+  documentStub.exitFullscreenCalls = 0;
+  api.triggerCornerExit();                  // 训练界面里退出
+  ok('运动中退出 → 回手势菜单（全屏留着，菜单项重新摆好）',
+    api.state.menuMode === true && api.state.homeMode === false
+    && menuEl.hidden === false && documentStub.exitFullscreenCalls === 0
+    && api.menuRingLayout(api.stageSize()).length === 19,
+    `menu=${api.state.menuMode} exit=${documentStub.exitFullscreenCalls}`);
+  api.triggerCornerExit();                  // 菜单里退出
+  ok('菜单里退出 → 回网页首页（主页可见 + 退出全屏 + 菜单收起来）',
+    api.state.homeMode === true && api.state.menuMode === false
+    && elements.get('homeView').hidden === false && menuEl.hidden === true
+    && documentStub.exitFullscreenCalls === 1,
+    `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
+  ok('菜单里按 Esc 也是回网页首页（键盘用户的退路）',
+    (() => {
+      api.openMenu({ silent: true });
+      documentStub.dispatch('keydown', { key: 'Escape' });
+      return api.state.homeMode === true && api.state.menuMode === false;
+    })());
+
+  // ===== ⑥ 走一遍**真实主循环**：摄像头 → 识别 → 菜单判定 → 自动进入那个动作 =====
+  {
+    const savedDetect = api.engine.detect;
+    const savedDraw = api.renderer.draw;
+    const savedPerf = globalThis.performance;
+    const savedStream7 = api.camera.stream;
+    const savedReady7 = api.camera.video.readyState;
+    api.camera.stream = { getTracks: () => [], getVideoTracks: () => [] };
+    api.camera.video.readyState = 4;
+    api.state.engineReady = true;
+    let clock = 8_000_000;
+    const fakePerf = { now: () => clock, timeOrigin: savedPerf.timeOrigin };
+    Object.defineProperty(globalThis, 'performance', { value: fakePerf, configurable: true, writable: true });
+    windowStub.performance = fakePerf;
+    let pose = null;
+    api.engine.detect = () => (pose ? { landmarks: pose, worldLandmarks: null } : null);
+    api.renderer.draw = () => {};
+    let vt = 7_000_000;
+    const pump = (lm, n) => {
+      pose = lm;
+      for (let i = 0; i < n; i += 1) {
+        clock += 33.4;
+        vt += 33.4;
+        api.camera.video.currentTime = vt;
+        api.state.engineReady = true;
+        if (!api.camera.stream) api.camera.stream = { getTracks: () => [], getVideoTracks: () => [] };
+        api.loop();
+      }
+    };
+    api.state.homeMode = false;
+    api.openMenu({ silent: true });
+    const t17 = api.menuRingLayout(api.stageSize())[3];
+    pump(palmsAt6(t17.cx, t17.cy), 40);
+    ok('真实主循环里：手掌停在某一格上还没满 3 秒，先不选（进度在攒）',
+      api.state.menuMode === true && api.gestureState.menu.p > 0.2 && api.gestureState.menu.p < 1,
+      `menu=${api.state.menuMode} p=${api.gestureState.menu.p}`);
+    pump(palmsAt6(t17.cx, t17.cy), 90);
+    ok('真实主循环里：手掌停满 3 秒 → 自动进入那个动作（菜单关掉、界面切过去）',
+      api.state.menuMode === false && api.state.exerciseId === t17.id
+      && menuEl.hidden === true && elements.get('workoutView').hidden === false,
+      `menu=${api.state.menuMode} ex=${api.state.exerciseId}`);
+
+    api.engine.detect = savedDetect;
+    api.renderer.draw = savedDraw;
+    api.camera.stream = savedStream7;
+    api.camera.video.readyState = savedReady7;
+    Object.defineProperty(globalThis, 'performance', { value: savedPerf, configurable: true, writable: true });
+    windowStub.performance = savedPerf;
+  }
+
+  // 恢复现场
+  api.state.settings.mirror = savedMirror;
+  api.camera.video.readyState = savedReady;
+  api.camera.stream = savedStream6;
   api.state.session = 'idle';
 }
 

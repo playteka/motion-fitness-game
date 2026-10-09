@@ -748,6 +748,23 @@ export default {
     stretch: 'Stretching',
   },
 
+  /* ---------------- Full gesture operation (home Start button + the in-video gesture menu) ---------------- */
+  menu: {
+    // The big button on the home screen
+    start: 'Start gesture workout',
+    startSub: 'Opens the camera → fullscreen video → put your palm in a ring to pick an exercise',
+    // The gesture menu itself
+    title: 'Pick an exercise',
+    lead: 'Put your palm into one of the rings and hold it for 3 seconds to select it',
+    hint: 'Hold 3 s to select · the bottom-left ring returns to the web page · clicking also works',
+    item: '{name} (hold 3 s)',
+    picked: 'Starting: {name}',
+    // In the menu the bottom-left ring means “back to the web page” (during an exercise it means “back to the menu”)
+    exitHome: 'Home',
+    exitHomeVoice: 'Back to the home page',
+    needCamera: 'This browser/device cannot use a camera, so gesture control is unavailable — pick an exercise from the library below instead',
+  },
+
   /* ---------------- Exercise library home ---------------- */
   home: {
     title: 'Pick an exercise',

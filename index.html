@@ -55,6 +55,18 @@
           <input id="exSearch" type="search" data-i18n-placeholder="home.search" autocomplete="off" />
         </label>
       </div>
+
+      <!-- 全手势操作的入口（用户要求）：点一下 → 打开摄像头 → 全屏视频界面 → 用手势选动作。
+           下面的动作库照旧保留：鼠标用户可以直接点开某个动作（两条路都通）。 -->
+      <button class="start-gesture" id="btnStartGesture" type="button">
+        <span class="start-gesture-icon" aria-hidden="true">🖐</span>
+        <span class="start-gesture-main">
+          <span class="start-gesture-title" data-i18n="menu.start"></span>
+          <span class="start-gesture-sub" data-i18n="menu.startSub"></span>
+        </span>
+        <span class="start-gesture-go" aria-hidden="true">▶</span>
+      </button>
+
       <div id="homeCats"></div>
     </main>
 
@@ -148,8 +160,20 @@
           </div>
           <div class="gesture-hint" id="gestureHint" hidden></div>
 
+          <!-- 手势选择菜单（用户要求）：全屏视频界面上用手掌停 3 秒选动作。
+               菜单项由 app.js 按动作库动态生成（19 个圆环），位置也在那边按舞台尺寸算好写进行内样式。 -->
+          <div class="gesture-menu" id="gestureMenu" hidden>
+            <div class="menu-head">
+              <div class="menu-title" data-i18n="menu.title"></div>
+              <div class="menu-lead" data-i18n="menu.lead"></div>
+            </div>
+            <div class="menu-grid" id="menuGrid"></div>
+            <div class="menu-foot" data-i18n="menu.hint"></div>
+          </div>
+
           <!-- 左下角常驻的「退出」圆环：手或脚伸进圆环停 3 秒 → 退出这一组并退出全屏。
-               动画与「一组结束后」的两个圆环完全一样（同一套 ring-* 样式与进度逻辑）。 -->
+               动画与「一组结束后」的两个圆环完全一样（同一套 ring-* 样式与进度逻辑）。
+               在手势菜单里它是「回到网页首页」，在动作里是「回到手势菜单」。 -->
           <div class="corner-ring" id="cornerExit" hidden>
             <button class="ring-btn" id="ringQuickExit" type="button"
                     data-i18n-title="ui.gestureExit" data-i18n-aria="ui.gestureExit">
