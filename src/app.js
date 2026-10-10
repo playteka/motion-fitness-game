@@ -1800,50 +1800,55 @@ function menuHasPages(size = stageSize()) {
 }
 
 /**
+ * 选项区那一带的纵向 / 横向几何（**一处定义**：`menuRingLayout` 与 `menuNavLayout` 共用）。
+ *
+ * 用「最满的一页」（`rows = menuRowsFor(size)`）来算 —— 这样导航圆环的位置**不随翻页跳动**
+ * （窄屏上一页可能是 1 行、另一页是 2 行，按当前页算的话导航会跟着上下跑）。
+ */
+function menuBandGeom(size) {
+  const narrow = size.w < 620;
+  const top = size.h * (narrow ? 0.20 : 0.15);
+  const bottom = size.h * (narrow ? 0.20 : 0.18);
+  const rows = menuRowsFor(size);
+  const padX = Math.max(10, size.w * 0.02);
+  const cellW = Math.max(1, (size.w - padX * 2) / menuCols(size.w));
+  const cellH = Math.max(1, (size.h - top - bottom) / rows);
+  const dia = Math.max(24, Math.min(cellW * 0.86, cellH * 0.70, MENU_RING_MAX));
+  return { narrow, top, bottom, rows, padX, cellW, cellH, dia };
+}
+
+/**
  * 菜单圆环的几何：**按舞台尺寸算**（不读 DOM 的布局）——只算**这一页的选项**。
  *
  * 和左下角退出圆环是同一个做法：判定用的圆心 / 半径与写进元素的行内 `left/top` 永远来自同一份数，
  * 所以「看到哪一格」和「程序判哪一格」不会各说一套（测试也能在没有真实布局的桩里跑）。
  * 直径与字号一起算：字号按直径走，圆环一大字就跟着大（用户反馈「圆环太小、字也太小」）。
  *
- * ⚠️ 列数只看屏幕宽度（不看这一页有几个），这样**每一页的圆环都一样大**；
- * 最后一页不满就整行居中（offset）。
+ * ⚠️ 列数只看屏幕宽度（不看这一页有几个），格子的高度按**最满的一页**算（`menuBandGeom`），
+ * 这样**每一页的圆环都一样大、都在同一行高度上**，最后一页不满就整行居中（offset）。
  *
- * 导航圆环（返回 / 上一页 / 下一页）**不占这里的宽度** —— 它们在画面顶部的另一条带子里
- * （见 `menuNavLayout()`），所以 5 个选项能把整幅宽度用满，圆环又大回去了。
+ * 导航圆环（返回 / 上一页 / 下一页）**不占这里的宽度** —— 它们在选项**上方**那一条带子里
+ * （见 `menuNavLayout()`），所以 5 个选项能把整幅宽度用满。
  */
 function menuRingLayout(size) {
   const info = menuPageInfo(size);
   const slice = menuItems().slice(info.from, info.to);
   const n = slice.length;
   if (!n) return [];
+  const g = menuBandGeom(size);
   const cols = menuCols(size.w);
-  const rows = Math.max(1, Math.ceil(n / cols));
-  const narrow = size.w < 620;
-  const padX = Math.max(10, size.w * 0.02);
-  /**
-   * 顶部让开标题 / 页码 / 导航圆环，底部让开提示，**并且故意把整块圆环往上放**：
-   * 底部留出的这一条（默认 18% 高度）就是「放手区」——
-   * 人站在画面里手自然垂下时，手就落在这一条里，不会压在某一格的判定圈上
-   * （用户反馈：「人站在画面中手很容易误触某个圆环」）。窄屏 / 竖屏手机再让多一点。
-   */
-  const top = size.h * (narrow ? 0.20 : 0.15);
-  const bottom = size.h * (narrow ? 0.20 : 0.18);
-  const cellW = Math.max(1, (size.w - padX * 2) / cols);
-  const cellH = Math.max(1, (size.h - top - bottom) / rows);
-  // 直径：横向留出间隙，纵向还要给名字留一行（按 0.70 收）
-  const dia = Math.max(24, Math.min(cellW * 0.86, cellH * 0.70, MENU_RING_MAX));
+  const dia = g.dia;
   const nameSize = clamp(dia * 0.15, 12, 40);
   const iconSize = clamp(dia * 0.32, 16, 64);
   return slice.map((it, i) => {
     const col = i % cols;
     const row = Math.floor(i / cols);
     const inRow = Math.min(cols, n - row * cols);          // 最后一行可能不满
-    const offset = ((cols - inRow) * cellW) / 2;           // 不满就整行居中
+    const offset = ((cols - inRow) * g.cellW) / 2;         // 不满就整行居中
     return {
       ...it,
-      cx: padX + offset + cellW * (col + 0.5),
-      cy: top + cellH * (row + 0.5),
+      cx: g.padX + offset + g.cellW * (col + 0.5),
+      cy: g.top + g.cellH * (row + 0.5),
       r: dia / 2,
       hit: (dia / 2) * MENU_HIT_RATIO,
       start: (dia / 2) * MENU_START_RATIO,
@@ -1854,23 +1859,35 @@ function menuRingLayout(size) {
 }
 
 /**
- * 常驻的**导航圆环**：顶部左角的「↩ 返回」+「◀ 上一页」，顶部右角的「下一页 ▶」。
+ * 常驻的**导航圆环**：左上角的「↩ 返回」+ 选项那一行**正上方**成对的「◀ 上一页 / 下一页 ▶」。
  *
- * 用户要求：「『返回』固定在画面上、不参与翻页」+「每页最多 5 个」——
- * 所以导航不占选项的格子：选项那一行能用满整幅宽度（1280×720 上圆环 ≈211px），
- * 而「返回」翻到哪一页都在，一眼看得到；翻页圆环只在**真的有第二页**时才出现
- * （现在 5 个一页，只有「核心」那样 6 个动作的分类才需要翻页）。
+ * 用户要求：「『返回』固定在画面上、不参与翻页」+「每页最多 5 个」+「上一页 / 下一页 / 返回都太小了、
+ * 位置也太偏了：上一页和下一页可以放在 5 个圆环的上方，返回在左上角可以，但圆环可以更大一些」。
+ * 于是：
+ *   - 三个导航圆环都放大（`min(宽,高) × 17%`，1280×720 上 Ø122px，封顶 180px），
+ *     图标与名字都放进圆圈里（见 style.css 的 `.menu-ring--back/--prev/--next`），所以摆得开也不挤；
+ *   - 「↩ 返回」留在**左上角**（和标题文字在垂直方向重叠没关系 —— 标题是居中的，横向离得很远）；
+ *   - 「◀ 上一页 / 下一页 ▶」成对**居中摆在选项那一行正上方**（不再是画面两侧的角落里），
+ *     只有真的有第二页时才出现（现在 5 个一页，只有「核心」那样 6 个动作的分类才需要翻页）。
  *
- * 三个都在画面**上沿**：手要抬起来才够得到，正好和「别误触」的方向一致；
- * 选出选项的那一行在画面中间，两者不会互相压住（判定圈也不重叠）。
+ * 三个都在**选项上方那一条带子里**（标题之下、选项之上），判定圈和选项不会重叠。
  */
 function menuNavLayout(size) {
-  const d = clamp(Math.min(size.w, size.h) * 0.115, 56, 104);
+  const narrow = size.w < 620;
+  const d = clamp(Math.min(size.w, size.h) * (narrow ? 0.13 : 0.17), narrow ? 64 : 90, 180);
   const r = d / 2;
+  const nameSize = clamp(d * 0.21, 12, 26);
+  const iconSize = clamp(d * 0.44, 22, 56);
   const margin = Math.max(10, size.w * 0.014);
-  const cy = r + Math.max(6, size.h * 0.012);
-  const nameSize = clamp(d * 0.24, 11, 22);
-  const iconSize = clamp(d * 0.42, 18, 40);
+  const gap = Math.max(12, size.w * 0.025);
+  /**
+   * 纵向位置：夹在「标题 / 页码那一块」和「选项那一行的上边缘」中间。
+   * 上边缘按**最满的一页**算（`menuBandGeom`），所以翻页时导航圆环不会上下跳。
+   */
+  const g = menuBandGeom(size);
+  const optTopEdge = g.top + (g.cellH - g.dia) / 2;
+  const headerBottom = size.h * 0.14;
+  const cy = clamp((headerBottom + optTopEdge) / 2, r + 4, optTopEdge - 6 - r);
   const rings = [{
     id: 'back', kind: 'back', icon: '↩', name: t('menu.back'), poseIcon: '', sub: '',
     cx: margin + r,
@@ -1878,11 +1895,11 @@ function menuNavLayout(size) {
   if (menuHasPages(size)) {
     rings.push({
       id: 'page:prev', kind: 'prev', dir: -1, icon: '◀', name: t('menu.prev'), poseIcon: '', sub: '',
-      cx: margin + r * 3 + Math.max(8, size.w * 0.01),
+      cx: size.w / 2 - r - gap,
     });
     rings.push({
       id: 'page:next', kind: 'next', dir: 1, icon: '▶', name: t('menu.next'), poseIcon: '', sub: '',
-      cx: size.w - margin - r,
+      cx: size.w / 2 + r + gap,
     });
   }
   return rings.map((it) => ({

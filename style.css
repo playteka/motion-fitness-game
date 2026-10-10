@@ -1526,6 +1526,18 @@ kbd {
 .menu-ring--next .ring-track { stroke: rgba(148, 163, 184, 0.3); }
 .menu-ring--prev .menu-name,
 .menu-ring--next .menu-name { color: #cfe6ff; font-weight: 700; }
+/* 导航圆环（返回 / 上一页 / 下一页）做得**更大**（用户要求「都太小了」）：
+   图标与名字都放进圆圈里（名字从圆圈下沿挪进圈内），所以圆环放大也不占额外的纵向空间。 */
+.menu-ring--back .menu-icon,
+.menu-ring--prev .menu-icon,
+.menu-ring--next .menu-icon { transform: translateY(-30%); }
+.menu-ring--back .menu-name,
+.menu-ring--prev .menu-name,
+.menu-ring--next .menu-name {
+  top: auto;
+  bottom: 13%;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+}
 
 /* ---------- 手势菜单模式：只留视频画面 + 菜单，其余面板全部收起 ---------- */
 #workoutView.menu-mode { display: block; }

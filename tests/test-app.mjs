@@ -4229,12 +4229,15 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && api.MENU_COLS === 5 && api.MENU_ROWS === 1 && api.menuPerPage(api.stageSize()) === 5
     && info0.total === 5 && info0.pages === 1,
     `${layout.length} 个 / 每页 ${api.menuPerPage(api.stageSize())} / ${info0.pages} 页`);
-  ok('「返回」固定在顶部左上角、**不参与翻页**（只有一页时也一直在，翻页圆环才按需出现）',
+  ok('「返回」固定在左上角、**不参与翻页**（只有一页时也一直在，翻页圆环才按需出现）',
     nav0.length === 1 && nav0[0].kind === 'back' && nav0[0].icon === '↩'
-    && nav0[0].cx < api.stageSize().w * 0.2 && nav0[0].cy < api.stageSize().h * 0.15
+    && nav0[0].cx < api.stageSize().w * 0.2
+    && nav0[0].cy + nav0[0].r <= Math.min(...layout.map((it) => it.cy - it.r)) + 1
     && api.menuItems().every((it) => it.kind !== 'back')
     && grid.children.some((c) => c.dataset.ex === 'back'),
     JSON.stringify(nav0.map((it) => [it.kind, Math.round(it.cx), Math.round(it.cy)])));
+  ok('导航圆环（返回）也放大了（1280×720 上 ≥110px，之前只有 Ø83px）',
+    nav0.every((it) => it.r * 2 >= 110), `Ø${Math.round(nav0[0].r * 2)}px`);
   ok('圆环反而更大了（一行 5 个 + 导航不占格子：1280×720 上 ≥200px）',
     layout.every((it) => it.r * 2 >= 200), `${Math.round(layout[0].r * 2)}px`);
   ok('名字字号跟着圆环走（≥30px）',
@@ -4305,10 +4308,15 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       api.menuCols(sizeN.w) === 2 && api.menuRowsFor(sizeN) === 2 && api.menuPerPage(sizeN) === 4
       && infoN.pages === 2 && infoN.total === 5 && api.menuRingLayout(sizeN).length === 4,
       `cols=${api.menuCols(sizeN.w)} rows=${api.menuRowsFor(sizeN)} per=${api.menuPerPage(sizeN)} pages=${infoN.pages}`);
-    ok('有第二页时顶部多出「◀ 上一页 / 下一页 ▶」（和「返回」一起常驻在顶部）',
+    ok('有第二页时「◀ 上一页 / 下一页 ▶」成对出现在**选项那一行的正上方**（和「返回」同一行）',
       nav.length === 3 && nav[0].kind === 'back'
       && nav.some((it) => it.kind === 'prev') && nav.some((it) => it.kind === 'next')
-      && nav.every((it) => it.cy < sizeN.h * 0.15),
+      && nav.every((it) => it.cy + it.r <= Math.min(...api.menuRingLayout(sizeN).map((x) => x.cy - x.r)) + 1)
+      && (() => {
+        const prev = nav.find((it) => it.kind === 'prev');
+        const next = nav.find((it) => it.kind === 'next');
+        return Math.abs((sizeN.w / 2 - prev.cx) - (next.cx - sizeN.w / 2)) < 1;   // 关于中线对称
+      })(),
       JSON.stringify(nav.map((it) => [it.kind, Math.round(it.cx), Math.round(it.cy)])));
     ok('导航圆环和选项圆环的判定圈互不重叠（不会抢格）',
       api.menuRingLayout(sizeN).every((a) => nav.every((b) => (
@@ -4365,13 +4373,13 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   api.selectFromMenu(catLower.id);
   const layout2 = api.menuRingLayout(api.stageSize());
   const navLower = api.menuNavLayout(api.stageSize());
-  ok('选了分类 → 进第二级：5 个动作一页放完（下肢正好 5 个），「返回」在顶部不下沉',
+  ok('选了分类 → 进第二级：5 个动作一页放完（下肢正好 5 个），「返回」在选项上方不下沉',
     api.state.menuLevel === 1 && api.state.menuCategory === 'lower'
     && api.state.menuPage === 0 && layout2.length === 5
     && layout2.every((it) => it.kind === 'exercise')
     && api.menuPageInfo().pages === 1
     && navLower.some((it) => it.kind === 'back')
-    && navLower.every((it) => it.cy < api.stageSize().h * 0.15),
+    && navLower.every((it) => it.cy + it.r <= Math.min(...layout2.map((x) => x.cy - x.r)) + 1),
     `${api.state.menuLevel}/${api.state.menuCategory} n=${layout2.length} pages=${api.menuPageInfo().pages}`);
   ok('第二级标题写着分类名（一眼知道自己在哪一层）',
     elements.get('menuTitle').textContent === catLower.name
@@ -4405,11 +4413,12 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       && lv1a.length === 5 && api.menuNavLayout(api.stageSize()).length === 3,
       `pages=${api.menuPageInfo().pages} n=${lv1a.length}`);
     api.flipMenuPage(1);
-    ok('第 2 页只剩最后 1 个动作，「返回」仍在顶部（不跟着翻走）',
+    ok('第 2 页只剩最后 1 个动作，「返回」仍在原位（不跟着翻走、位置也不跳）',
       api.menuRingLayout(api.stageSize()).length === 1
       && api.menuNavLayout(api.stageSize()).some((it) => it.kind === 'back')
-      && api.menuNavLayout(api.stageSize()).every((it) => it.cy < api.stageSize().h * 0.15),
-      `n=${api.menuRingLayout(api.stageSize()).length}`);
+      && api.menuNavLayout(api.stageSize())[0].cy === api.menuNavLayout(api.stageSize())[0].cy
+      && Math.abs(api.menuNavLayout(api.stageSize())[0].cy - navLower[0].cy) < 1,   // 翻页前后导航不跳
+      `n=${api.menuRingLayout(api.stageSize()).length} cy=${api.menuNavLayout(api.stageSize())[0].cy} vs ${navLower[0].cy}`);
     api.state.menuPage = 0;
     api.selectFromMenu('back');
   }
