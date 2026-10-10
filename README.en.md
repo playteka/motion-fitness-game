@@ -498,22 +498,23 @@ The search box at the top finds exercises by name directly (type “push” or �
   rings got **bigger** than the previous version. With 5 per row and one row per page, level 1 (5 categories) and most level-2 categories
   fit on a **single page**; only a 6-exercise category such as “core” needs a second page:
 
-  | Video frame size | Option rings | Navigation rings (Back / Previous / Next) | Name size | Per page |
+  | Video frame size | Option rings | Navigation rings (Previous / Back / Next) | Name size | Per page |
   |---|---|---|---|---|
-  | 1280×720 | **≈211 px** | **≈122 px** (was only 83 px) | **≈32 px** (it was 12 px when 19 exercises shared one screen) | 5 (one row) |
-  | 1920×1080 (typical fullscreen) | **≈317 px** | **≈180 px** (the cap) | 40 px | 5 (one row) |
-  | Portrait phone | columns drop, and rows relax to two (at least 170 px per cell) | ≈64 px | follows the diameter | columns × 2 |
+  | 1280×720 | **≈211 px** | **≈133 px** (was only 83 px at first) | **≈32 px** (it was 12 px when 19 exercises shared one screen) | 5 (one row) |
+  | 1920×1080 (typical fullscreen) | **≈317 px** | **≈200 px** (the cap) | 40 px | 5 (one row) |
+  | Portrait phone | columns drop, and rows relax to two (at least 170 px per cell) | ≈74 px | follows the diameter | columns × 2 |
 
-- **Where the navigation rings sit, and how big** (the user reported: “Previous, Next and Back all feel too small, and their positions are
-  too far off to the side; Previous and Next can go above the five rings, Back is fine in the top-left corner but its ring can be bigger”):
-  - **“↩ Back” stays in the top-left corner**, enlarged to Ø122 px (1280×720; Ø180 px fullscreen);
-  - **“◀ Previous / Next ▶” sit as a centred pair directly above the option row** (no longer out at the far edges), on the same line and
-    the same size as “Back” — a raised hand reaches them and your eyes never have to run to a corner;
-  - all three navigation rings now keep **both their icon and their name inside the circle** (the label moved from below into the lower part
-    of the ring), so getting bigger costs no extra vertical space;
-  - Previous / Next only appear when there really **is** a second page (with 5 per page, only a 6-exercise category such as “core” needs one);
-  - the navigation row is positioned from the **fullest possible page** (`menuBandGeom`, the same geometry the option layout uses), so
-    **it never jumps when you turn a page** — which is also what lets “hold to keep paging” stay held.
+- **All three navigation rings sit together in the middle** (the user's feedback accumulated: “Previous, Next and Back all feel too small
+  and too far off to the side” → “put Previous and Next above the five rings, Back can stay in the corner but its ring can be bigger” →
+  “just put Back, Previous and Next together, all in the middle, and make those three a little bigger still”):
+  - directly above the option row, **on the centre line**, stand three rings side by side: **`[◀ Previous] [↩ Back] [Next ▶]`** —
+    “Back” sits between the two page arrows, at exactly equal distances;
+  - **one more size step up**: `min(w,h) × 18.5%` (**Ø133 px** at 1280×720, Ø200 px fullscreen, Ø74 px portrait);
+    each ring keeps both its icon and its name inside the circle (the label moved from below into the lower part of the ring), so growing
+    costs no extra vertical space;
+  - Previous / Next only appear when there really **is** a second page — with a single page “Back” stays centred alone and **nothing jumps**
+    (the navigation row is positioned from the **fullest possible page**, see `menuBandGeom`; that is also what lets “hold to keep paging”
+    stay held).
 
 - **Paging = both hands swiping twice** (the user asked: “both hands swipe up twice to page up, down twice to page down”, with the
   direction taken from PageUp / PageDown): **up = previous page, down = next page**. Why “both hands” and “twice”: one hand waving is
@@ -529,12 +530,14 @@ The search box at the top finds exercises by name directly (type “push” or �
   | Chained pair | the second swipe must match the direction and land within `MENU_SWIPE_CHAIN_MS = 1.6 s` (a longer gap restarts the count) |
   | Cooldown | `MENU_SWIPE_COOLDOWN_MS = 1.2 s` after a flip, so repeated waves cannot skip several pages |
 
-  The two **“◀ Previous / Next ▶” rings directly above the option row** are the fallback (bad camera angle, or when you cannot wave): they
-  only appear when there really is a second page. Clicking the page line, or the keyboard (← / →, PageUp / PageDown), works too.
+  Of the three navigation rings directly above the option row, the outer **“◀ Previous / Next ▶”** ones are the fallback (bad camera
+  angle, or when you cannot wave): they only appear when there really is a second page. Clicking the page line, or the keyboard
+  (← / →, PageUp / PageDown), works too.
 
-- **“Back” is pinned to the top-left corner** (the user asked for it to be “pinned on screen, not part of paging”): it lives in the band
-  **above the option row** together with the page rings (you have to lift a hand to reach them, which is exactly the direction that avoids
-  accidental touches), while the option row sits just below — the hit discs never overlap. It stays visible on every page.
+- **“Back” lives in the middle** (the user asked for it to be “pinned on screen, not part of paging”, and later for all three to be
+  “together in the middle”): the three rings stand side by side in the band **above** the option row (you have to lift a hand to reach
+  them, which is exactly the direction that avoids accidental touches), while the option row sits just below — the hit discs never overlap.
+  It stays visible, in place, on every page.
 
 - **Hard to trigger by accident** (the user reported: “because the menu rings are large and there are many of them, your hands easily
   touch a ring by accident while you are standing in the frame”): the menu is **big targets on a full screen**, so the test is

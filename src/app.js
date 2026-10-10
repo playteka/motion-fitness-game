@@ -1807,7 +1807,7 @@ function menuHasPages(size = stageSize()) {
  */
 function menuBandGeom(size) {
   const narrow = size.w < 620;
-  const top = size.h * (narrow ? 0.20 : 0.15);
+  const top = size.h * (narrow ? 0.20 : 0.16);
   const bottom = size.h * (narrow ? 0.20 : 0.18);
   const rows = menuRowsFor(size);
   const padX = Math.max(10, size.w * 0.02);
@@ -1859,27 +1859,27 @@ function menuRingLayout(size) {
 }
 
 /**
- * 常驻的**导航圆环**：左上角的「↩ 返回」+ 选项那一行**正上方**成对的「◀ 上一页 / 下一页 ▶」。
+ * 常驻的**导航圆环**：选项那一行**正上方、居中并排的三个圆环** ——
+ * `[◀ 上一页] [↩ 返回] [下一页 ▶]`（只有一页时中间那颗「返回」单独居中）。
  *
- * 用户要求：「『返回』固定在画面上、不参与翻页」+「每页最多 5 个」+「上一页 / 下一页 / 返回都太小了、
- * 位置也太偏了：上一页和下一页可以放在 5 个圆环的上方，返回在左上角可以，但圆环可以更大一些」。
+ * 用户要求（几轮反馈累积）：「『返回』固定在画面上、不参与翻页」→「都太小了、位置太偏，
+ * 上一页和下一页放到 5 个圆环上方，返回在左上角可以、但可以更大」→
+ * 「干脆把返回和上一页下一页这三个圆环都放在一起，并且都放在中间，整体这三个圆环还可以更大一点点」。
  * 于是：
- *   - 三个导航圆环都放大（`min(宽,高) × 17%`，1280×720 上 Ø122px，封顶 180px），
- *     图标与名字都放进圆圈里（见 style.css 的 `.menu-ring--back/--prev/--next`），所以摆得开也不挤；
- *   - 「↩ 返回」留在**左上角**（和标题文字在垂直方向重叠没关系 —— 标题是居中的，横向离得很远）；
- *   - 「◀ 上一页 / 下一页 ▶」成对**居中摆在选项那一行正上方**（不再是画面两侧的角落里），
- *     只有真的有第二页时才出现（现在 5 个一页，只有「核心」那样 6 个动作的分类才需要翻页）。
+ *   - 三个导航圆环**并排居中**（关于画面中线对称），「返回」夹在两个翻页圆环中间；
+ *   - 尺寸再放大一档（`min(宽,高) × 18.5%`，1280×720 上 Ø133px，封顶 200px），
+ *     图标与名字都在圆圈里（见 style.css 的 `.menu-ring--back/--prev/--next`）；
+ *   - 只有真有第二页时「上一页 / 下一页」才出现 —— 只有一页时「返回」自己居中，位置不跳。
  *
- * 三个都在**选项上方那一条带子里**（标题之下、选项之上），判定圈和选项不会重叠。
+ * 三个都在**标题之下、选项之上**那一条带子里，判定圈和选项圆环不会重叠。
  */
 function menuNavLayout(size) {
   const narrow = size.w < 620;
-  const d = clamp(Math.min(size.w, size.h) * (narrow ? 0.13 : 0.17), narrow ? 64 : 90, 180);
+  const d = clamp(Math.min(size.w, size.h) * 0.185, narrow ? 64 : 96, 200);
   const r = d / 2;
   const nameSize = clamp(d * 0.21, 12, 26);
-  const iconSize = clamp(d * 0.44, 22, 56);
-  const margin = Math.max(10, size.w * 0.014);
-  const gap = Math.max(12, size.w * 0.025);
+  const iconSize = clamp(d * 0.44, 22, 58);
+  const gap = clamp(size.w * 0.022, 12, 44);
   /**
    * 纵向位置：夹在「标题 / 页码那一块」和「选项那一行的上边缘」中间。
    * 上边缘按**最满的一页**算（`menuBandGeom`），所以翻页时导航圆环不会上下跳。
@@ -1888,22 +1888,17 @@ function menuNavLayout(size) {
   const optTopEdge = g.top + (g.cellH - g.dia) / 2;
   const headerBottom = size.h * 0.14;
   const cy = clamp((headerBottom + optTopEdge) / 2, r + 4, optTopEdge - 6 - r);
-  const rings = [{
-    id: 'back', kind: 'back', icon: '↩', name: t('menu.back'), poseIcon: '', sub: '',
-    cx: margin + r,
-  }];
-  if (menuHasPages(size)) {
-    rings.push({
-      id: 'page:prev', kind: 'prev', dir: -1, icon: '◀', name: t('menu.prev'), poseIcon: '', sub: '',
-      cx: size.w / 2 - r - gap,
-    });
-    rings.push({
-      id: 'page:next', kind: 'next', dir: 1, icon: '▶', name: t('menu.next'), poseIcon: '', sub: '',
-      cx: size.w / 2 + r + gap,
-    });
-  }
-  return rings.map((it) => ({
-    ...it,
+  /** 三个圆环的顺序：翻页圆环分列两边，「返回」在中间（只有一页时只剩中间那一颗） */
+  const page = menuHasPages(size);
+  const list = page
+    ? [['page:prev', 'prev', -1, '◀', t('menu.prev')], ['back', 'back', 0, '↩', t('menu.back')],
+      ['page:next', 'next', 1, '▶', t('menu.next')]]
+    : [['back', 'back', 0, '↩', t('menu.back')]];
+  const step = r * 2 + gap;
+  const mid = (list.length - 1) / 2;
+  return list.map(([id, kind, dir, icon, name], i) => ({
+    id, kind, dir, icon, name, poseIcon: '', sub: '',
+    cx: size.w / 2 + (i - mid) * step,
     cy,
     r,
     hit: r * MENU_NAV_HIT_RATIO,

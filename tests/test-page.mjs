@@ -609,14 +609,16 @@ console.log('\n[3] 静态资源与模型文件');
       && /state\.menuPage = 0;/.test(app)
       && /id="menuPage"/.test(html) && typeof LOCALES.zh.menu.page === 'string'
       && typeof LOCALES.en.menu.page === 'string');
-    ok('「返回」固定在画面上、不参与翻页（在 menuNavLayout 里，不在 menuItems 里）',
+    ok('三个导航圆环并排居中（上一页 / 返回 / 下一页），「返回」不在 menuItems 里、不参与翻页',
       /function menuNavLayout\(/.test(app)
-      && /const rings = \[\{\s*\n\s*id: 'back', kind: 'back'/.test(app)
+      && /const page = menuHasPages\(size\);/.test(app)
+      && /\['page:prev', 'prev', -1, '◀', t\('menu\.prev'\)\], \['back', 'back', 0, '↩', t\('menu\.back'\)\]/.test(app)
+      && /cx: size\.w \/ 2 \+ \(i - mid\) \* step,/.test(app)
       && !/list\.push\(\{ id: 'back'/.test(app)
-      && /if \(menuHasPages\(size\)\) \{\s*\n\s*rings\.push\(\{\s*\n\s*id: 'page:prev'/.test(app)
       && /const item = \[\.\.\.menuItems\(\), \.\.\.menuNavLayout\(stageSize\(\)\)\]\.find/.test(app));
     ok('「上一页 / 下一页」圆环按需出现（有第二页才有），按住 1 秒翻一页',
-      /kind: 'prev'/.test(app) && /kind: 'next'/.test(app) && /MENU_NAV_HOLD_MS/.test(app)
+      /\['page:prev', 'prev', -1/.test(app) && /\['page:next', 'next', 1/.test(app)
+      && /const page = menuHasPages\(size\);/.test(app) && /MENU_NAV_HOLD_MS/.test(app)
       && /const holdMs = item && \(item\.kind === 'prev' \|\| item\.kind === 'next'\) \? MENU_NAV_HOLD_MS : GESTURE_HOLD_MS;/.test(app)
       && typeof LOCALES.zh.menu.prev === 'string' && typeof LOCALES.en.menu.next === 'string');
     ok('翻页主路径 = **双手同时挥两次**（向上 = 上一页、向下 = 下一页；单手 / 只挥一次都不算）',
@@ -670,8 +672,8 @@ console.log('\n[3] 静态资源与模型文件');
       /const MENU_DRAIN_MS = (\d+);/.test(app)
       && Number(/const MENU_DRAIN_MS = (\d+)/.exec(app)[1]) < 1500
       && /st\.p = Math\.max\(0, st\.p - dt \/ MENU_DRAIN_MS\);/.test(app));
-    ok('防误触⑥：整块圆环往上放，底部留出「放手区」（top 15% / bottom 18%，窄屏 20% / 20%）',
-      /const top = size\.h \* \(narrow \? 0\.20 : 0\.15\);/.test(app)
+    ok('防误触⑥：整块圆环往上放，底部留出「放手区」（top 16% / bottom 18%，窄屏 20% / 20%）',
+      /const top = size\.h \* \(narrow \? 0\.20 : 0\.16\);/.test(app)
       && /const bottom = size\.h \* \(narrow \? 0\.20 : 0\.18\);/.test(app));
     ok('字号跟着圆环直径算（一处定义，圆环大字号就大）',
       /const nameSize = clamp\(dia \* 0\.15/.test(app)
@@ -698,7 +700,7 @@ console.log('\n[3] 静态资源与模型文件');
       && !/menu\.exitHome/.test(app)
       && LOCALES.zh.menu.exitHome === undefined && LOCALES.en.menu.exitHome === undefined);
     ok('导航那颗「↩ 返回」图标与样式和其他「返回」完全一致（`↩` + menu-ring--back），第一级回网页首页',
-      /id: 'back', kind: 'back', icon: '↩', name: t\('menu\.back'\)/.test(app)
+      /\['back', 'back', 0, '↩', t\('menu\.back'\)\]/.test(app)
       && /menu-ring--\$\{it\.kind\}/.test(app)
       && /if \(state\.menuLevel === 0\) \{\s*\n\s*audio\.say\(t\('ui\.gestureExit'\)[\s\S]{0,80}?showHome\(\);/.test(app));
     ok('底部提示分两级 + 教翻页手势（双手挥两次）',

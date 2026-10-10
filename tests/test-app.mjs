@@ -4229,15 +4229,15 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && api.MENU_COLS === 5 && api.MENU_ROWS === 1 && api.menuPerPage(api.stageSize()) === 5
     && info0.total === 5 && info0.pages === 1,
     `${layout.length} 个 / 每页 ${api.menuPerPage(api.stageSize())} / ${info0.pages} 页`);
-  ok('「返回」固定在左上角、**不参与翻页**（只有一页时也一直在，翻页圆环才按需出现）',
+  ok('「返回」**居中**常驻在选项一行上方、**不参与翻页**（只有一页时它自己居中，翻页圆环才按需出现）',
     nav0.length === 1 && nav0[0].kind === 'back' && nav0[0].icon === '↩'
-    && nav0[0].cx < api.stageSize().w * 0.2
+    && Math.abs(nav0[0].cx - api.stageSize().w / 2) < 1
     && nav0[0].cy + nav0[0].r <= Math.min(...layout.map((it) => it.cy - it.r)) + 1
     && api.menuItems().every((it) => it.kind !== 'back')
     && grid.children.some((c) => c.dataset.ex === 'back'),
     JSON.stringify(nav0.map((it) => [it.kind, Math.round(it.cx), Math.round(it.cy)])));
-  ok('导航圆环（返回）也放大了（1280×720 上 ≥110px，之前只有 Ø83px）',
-    nav0.every((it) => it.r * 2 >= 110), `Ø${Math.round(nav0[0].r * 2)}px`);
+  ok('导航圆环又放大一档（1280×720 上 ≥130px，最早只有 Ø83px）',
+    nav0.every((it) => it.r * 2 >= 130), `Ø${Math.round(nav0[0].r * 2)}px`);
   ok('圆环反而更大了（一行 5 个 + 导航不占格子：1280×720 上 ≥200px）',
     layout.every((it) => it.r * 2 >= 200), `${Math.round(layout[0].r * 2)}px`);
   ok('名字字号跟着圆环走（≥30px）',
@@ -4308,15 +4308,13 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       api.menuCols(sizeN.w) === 2 && api.menuRowsFor(sizeN) === 2 && api.menuPerPage(sizeN) === 4
       && infoN.pages === 2 && infoN.total === 5 && api.menuRingLayout(sizeN).length === 4,
       `cols=${api.menuCols(sizeN.w)} rows=${api.menuRowsFor(sizeN)} per=${api.menuPerPage(sizeN)} pages=${infoN.pages}`);
-    ok('有第二页时「◀ 上一页 / 下一页 ▶」成对出现在**选项那一行的正上方**（和「返回」同一行）',
-      nav.length === 3 && nav[0].kind === 'back'
-      && nav.some((it) => it.kind === 'prev') && nav.some((it) => it.kind === 'next')
+    ok('有第二页时三个导航圆环**并排居中**（上一页 / 返回 / 下一页），整体在选项一行正上方',
+      nav.length === 3
+      && nav.map((it) => it.kind).join(',') === 'prev,back,next'
       && nav.every((it) => it.cy + it.r <= Math.min(...api.menuRingLayout(sizeN).map((x) => x.cy - x.r)) + 1)
-      && (() => {
-        const prev = nav.find((it) => it.kind === 'prev');
-        const next = nav.find((it) => it.kind === 'next');
-        return Math.abs((sizeN.w / 2 - prev.cx) - (next.cx - sizeN.w / 2)) < 1;   // 关于中线对称
-      })(),
+      && Math.abs(nav[1].cx - sizeN.w / 2) < 1                              // 「返回」在中线上
+      && Math.abs((nav[1].cx - nav[0].cx) - (nav[2].cx - nav[1].cx)) < 1    // 左右等距
+      && nav[0].cx > nav[1].r + nav[1].r,                                   // 圆环之间不重叠
       JSON.stringify(nav.map((it) => [it.kind, Math.round(it.cx), Math.round(it.cy)])));
     ok('导航圆环和选项圆环的判定圈互不重叠（不会抢格）',
       api.menuRingLayout(sizeN).every((a) => nav.every((b) => (
