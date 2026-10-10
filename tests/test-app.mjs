@@ -2589,11 +2589,11 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
   // 菜单里回网页首页走的是顶部常驻那颗「↩ 返回」（不参与翻页）
   {
     const backIt = api.menuNavLayout(api.stageSize()).find((it) => it.kind === 'back');
-    ok('顶部常驻一颗「↩ 返回」（图标与第二级一致），点它 = 回网页首页',
-      !!backIt && backIt.icon === '↩'
+    ok('顶部常驻一颗「返回」（线条箭头图标，和别的图标同一套画法），点它 = 回网页首页',
+      !!backIt && /class="ex-pose"/.test(backIt.poseIcon)
       && api.menuNavLayout(api.stageSize()).filter((it) => it.kind === 'back').length === 1
       && !api.menuItems().some((it) => it.kind === 'back'),
-      JSON.stringify(backIt && { id: backIt.id, icon: backIt.icon }));
+      JSON.stringify(backIt && { id: backIt.id, svg: backIt.poseIcon.length }));
     api.selectFromMenu(backIt.id);
     ok('点「返回」→ 回网页首页 + 退出全屏',
       api.state.homeMode === true && api.state.menuMode === false
@@ -4242,7 +4242,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && info0.total === 5 && info0.pages === 1,
     `${layout.length} 个 / 每页 ${api.menuPerPage(api.stageSize())} / ${info0.pages} 页`);
   ok('「返回」**居中**常驻在选项一行上方、**不参与翻页**（只有一页时它自己居中，翻页圆环才按需出现）',
-    nav0.length === 1 && nav0[0].kind === 'back' && nav0[0].icon === '↩'
+    nav0.length === 1 && nav0[0].kind === 'back' && /class="ex-pose"/.test(nav0[0].poseIcon)
     && Math.abs(nav0[0].cx - api.stageSize().w / 2) < 1
     && nav0[0].cy + nav0[0].r <= Math.min(...layout.map((it) => it.cy - it.r)) + 1
     && api.menuItems().every((it) => it.kind !== 'back')
@@ -4893,17 +4893,27 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     const bridgeIt = items.find((it) => it.id === 'bridge');
     const plankIt = items.find((it) => it.id === 'plank');
     const crunchIt = items.find((it) => it.id === 'crunch');
-    ok('菜单里臀桥 / 平板支撑画的是「人体姿势」线条图（不是 emoji），而且两张图不一样',
-      bridgeIt.poseIcon.includes('ex-pose') && plankIt.poseIcon.includes('ex-pose')
-      && bridgeIt.poseIcon !== plankIt.poseIcon,
-      `bridge=${bridgeIt.poseIcon.length}B plank=${plankIt.poseIcon.length}B`);
-    ok('其余动作仍然是 emoji（没有姿势图就不硬画）',
-      crunchIt.poseIcon === '' && crunchIt.icon.length > 0, `${crunchIt.icon} / ${crunchIt.poseIcon.length}B`);
+    ok('菜单里每个动作画的都是「人体姿势」线条图（不再用 emoji），而且两两不同',
+      items.length > 0 && items.every((it) => /class="ex-pose"/.test(it.poseIcon))
+      && new Set(items.map((it) => it.poseIcon)).size === items.length
+      && bridgeIt.poseIcon !== plankIt.poseIcon && bridgeIt.poseIcon !== crunchIt.poseIcon,
+      `n=${items.length} 去重=${new Set(items.map((it) => it.poseIcon)).size}`);
+    api.state.menuLevel = 0;
+    api.state.menuCategory = '';
+    api.state.menuPage = 0;
+    api.renderMenu();
+    const cats = api.menuItems();
+    ok('第一级的五个分类也换成线条图标，而且是「部位示意图」：同一个火柴人 + 相关部位加粗',
+      cats.length === 5 && cats.every((it) => /class="ex-pose"/.test(it.poseIcon)
+        && /class="icon-bold"/.test(it.poseIcon))
+      && new Set(cats.map((it) => it.poseIcon)).size >= 4,        // 拉伸那颗举手的，和其它不同
+      `n=${cats.length} 去重=${new Set(cats.map((it) => it.poseIcon)).size}`);
+    api.selectFromMenu('cat:core');
     const bridgeEl = grid.children.find((c) => c.dataset.ex === 'bridge');
     const crunchEl = grid.children.find((c) => c.dataset.ex === 'crunch');
-    ok('菜单圆环里真的画出来了（臀桥那一格的 DOM 带 ex-pose，小虫那格还是 emoji）',
-      /ex-pose/.test(bridgeEl.innerHTML) && !/ex-pose/.test(crunchEl.innerHTML)
-      && crunchEl.innerHTML.includes(crunchIt.icon));
+    ok('菜单圆环的 DOM 里真的画出来了（不再有 emoji 字形）',
+      /ex-pose/.test(bridgeEl.innerHTML) && /ex-pose/.test(crunchEl.innerHTML)
+      && !/🌀/.test(crunchEl.innerHTML));
 
     // 主页动作卡片 / HUD 上也是同一张图（一处定义，三处显示一致）
     const findByData = (root, id) => {

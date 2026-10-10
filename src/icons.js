@@ -345,31 +345,84 @@ const STRAIGHT_KNEE = 174;
  *
  * @param o.legAngle  每条腿相对竖直向外张开的角度（度）
  * @param o.armAngle  手臂相对「竖直向上」的角度：0 = 举过头顶，180 = 自然下垂
+ * @param o.knee      膝角（180 = 腿伸直）—— 相扑深蹲这类「正面 + 屈膝」的动作用它：
+ *                    小腿相对大腿再向外折一点，人变矮、更宽，一眼就是「宽站屈膝」
+ * @param o.bold      哪些部位加粗（'arms' / 'legs' / 'torso' / 'all'），分类的「部位示意图」用
  */
-function buildJack({ legAngle = 6, armAngle = 150 } = {}) {
+function buildJack({ legAngle = 6, armAngle = 150, knee = 180, bold = null } = {}) {
   const S = { thigh: 6.2, shin: 6.2, torso: 7.4, head: 2.0, upper: 3.7, fore: 3.6 };
   const cx = ICON_BOX / 2;
   const la = clamp(num(legAngle, 6), 0, 34);
   const aa = clamp(num(armAngle, 150), 0, 180);
+  const bend = (180 - clamp(num(knee, 180), 90, 180)) / 2;   // 每条腿再折出去的角度
+  const on = (part) => bold === 'all' || bold === part;
 
   const lines = [];
   const circles = [];
-  // 脚底落在地面线上 → 髋的高度由开合角决定（张得越开，人越矮，看得出在「开」）
-  const legLen = S.thigh + S.shin;
-  const hip = { x: cx, y: STAND_FLOOR - legLen * Math.cos(rad(la)) };
+  // 脚底落在地面线上 → 髋的高度由开合角（和膝角）决定（张得越开、蹲得越深，人越矮）
+  const legLen = S.thigh * Math.cos(rad(la)) + S.shin * Math.cos(rad(la + bend));
+  const hip = { x: cx, y: STAND_FLOOR - legLen };
   const shoulder = { x: cx, y: hip.y - S.torso };
 
   for (const side of [1, -1]) {
-    const knee = add(hip, down(side * la), S.thigh);
-    const ankle = add(knee, down(side * la), S.shin);
-    lines.push(seg(hip, knee), seg(knee, ankle));
+    const kneeP = add(hip, down(side * la), S.thigh);
+    const ankle = add(kneeP, down(side * (la + bend)), S.shin);
+    lines.push({ ...seg(hip, kneeP), bold: on('legs') }, { ...seg(kneeP, ankle), bold: on('legs') });
     const elbow = add(shoulder, up(side * aa), S.upper);
     const wrist = add(elbow, up(side * aa), S.fore);
-    lines.push(seg(shoulder, elbow), seg(elbow, wrist));
+    lines.push({ ...seg(shoulder, elbow), bold: on('arms') }, { ...seg(elbow, wrist), bold: on('arms') });
   }
-  lines.push(seg(hip, shoulder));
-  circles.push({ x: shoulder.x, y: shoulder.y - S.head * 1.6, r: S.head });
+  lines.push({ ...seg(hip, shoulder), bold: on('torso') });
+  circles.push({ x: shoulder.x, y: shoulder.y - S.head * 1.6, r: S.head, bold: on('all') });
   return { lines, circles };
+}
+
+/**
+ * 「身体部位」示意图（正面站姿）：同一个火柴人，**把相关部位画粗**。
+ *
+ * 分类图标用它（上肢 / 下肢 / 核心 / 全身 / 拉伸）：和动作图标同一套线条语言
+ * （同样的描边宽度、圆头、颜色跟随文字），但语义完全不同 ——
+ * 动作图标回答「这个动作长什么样」，分类图标回答「这一类练哪儿」。
+ *
+ * @param o.region   'arms' | 'legs' | 'torso' | 'all'
+ * @param o.armAngle 手臂相对「竖直向上」的角度（拉伸那一类用 18 = 双手举过头顶）
+ */
+function buildBodyMap({ region = 'all', armAngle = 158 } = {}) {
+  // 站得开一点（腿 12°、手臂稍微外张）——不然加粗的那几条会和躯干挤在一根竖线上
+  return buildJack({ legAngle: 12, armAngle, bold: region });
+}
+
+/**
+ * 导航箭头（返回 / 上一页 / 下一页）的线条形状：和动作图标同一套描边风格，
+ * 不再是字体里的 `◀ ▶ ↩` 字符（字形风格和线条图标不一致）。
+ */
+function navArrowShape(kind) {
+  const cx = ICON_BOX / 2;
+  const cy = ICON_BOX / 2;
+  if (kind === 'prev') {
+    return {
+      lines: [seg({ x: cx + 4.5, y: cy - 6.5 }, { x: cx - 3, y: cy }),
+        seg({ x: cx - 3, y: cy }, { x: cx + 4.5, y: cy + 6.5 })],
+      circles: [],
+    };
+  }
+  if (kind === 'next') {
+    return {
+      lines: [seg({ x: cx - 4.5, y: cy - 6.5 }, { x: cx + 3, y: cy }),
+        seg({ x: cx + 3, y: cy }, { x: cx - 4.5, y: cy + 6.5 })],
+      circles: [],
+    };
+  }
+  // 返回：一条「弯回头」的箭头（`↩` 的意思，但用线条画）
+  return {
+    lines: [
+      seg({ x: cx + 6.5, y: cy + 5.5 }, { x: cx + 6.5, y: cy - 1.5 }),
+      seg({ x: cx + 6.5, y: cy - 1.5 }, { x: cx - 4.5, y: cy - 1.5 }),
+      seg({ x: cx - 4.5, y: cy - 1.5 }, { x: cx - 0.5, y: cy - 6 }),
+      seg({ x: cx - 4.5, y: cy - 1.5 }, { x: cx - 0.5, y: cy + 3 }),
+    ],
+    circles: [],
+  };
 }
 
 /**
@@ -867,43 +920,133 @@ function poseSVG(lines, circles, cls, text = null) {
   const parts = lines.map((l) => {
     const a = l.a || l[0];
     const b = l.b || l[1];
-    return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />`;
+    const w = l.bold ? ' class="icon-bold"' : '';      // 「部位示意图」把相关部位画粗
+    return `<line${w} x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />`;
   });
-  for (const c of circles) parts.push(`<circle cx="${c.x}" cy="${c.y}" r="${c.r}" />`);
+  for (const c of circles) {
+    parts.push(`<circle${c.bold ? ' class="icon-bold"' : ''} cx="${c.x}" cy="${c.y}" r="${c.r}" />`);
+  }
   if (text) parts.push(`<text class="criteria-deg" ${text.attrs}>${text.text}</text>`);
   return `<svg class="${cls}" viewBox="0 0 ${ICON_BOX} ${ICON_BOX}" aria-hidden="true">${parts.join('')}</svg>`;
 }
 
 /**
- * 动作的「人体姿势」线条图标（emoji 表达不出动作本身的几个动作用它）。
+ * 动作的「人体姿势」线条图标 —— **19 个动作全部用它**（用户要求「图标全面重新设计，
+ * 保持风格的一致性，同时和运动动作有相关性」）。
  *
- * 用户要求：「臀桥的图标要改为人体做臀桥的姿势，就是躺下，腿部弯曲，身体绷直的姿势。
- *   平板支撑的图标也要改为双肘撑地，身体绷直的样子。」
+ * 设计规则（三条，测试盯着）：
+ *   1. **同一个画法**：全部由 `buildStand`（侧视站姿）/ `buildLie`（躺、撑、坐）/ `buildJack`（正面开合）
+ *      / `buildKick`（勾腿）四个构建器画出来 —— 同一套骨架比例、描边宽度、圆头线帽，
+ *      颜色统一走 `currentColor`（放到哪儿就跟哪儿的文字颜色一致）；
+ *   2. **姿势就是这个动作的姿势**：每个动作挑**最有辨识度的那一帧**（比如深蹲选蹲到底、
+ *      平板支撑选双肘撑地、臀桥选髋顶起来、跳箱选腾空过箱），参数集中写在这一张表里，一处改处处变；
+ *   3. **互相不重复**：19 张图两两不同（测试逐个比对，重复就报错）。
  *
- * 姿势参数直接沿用**进度条上那两格关键帧用的同一份参数**（`buildLie`，不另造一套画法）：
- *   - 臀桥顶：`rise` 把髋部抬起来 + 髋角 176°（躯干与大腿连成一条线 = 身体绷直）
- *     + 膝角 92°（小腿落地、膝盖弯着）→ 躺下、屈膝、绷直的臀桥；
- *   - 平板支撑：`support: true` 让手撑在地面线上、肘角 90°（上臂竖直、小臂贴地 = **双肘撑地**）
- *     + 髋/膝接近伸直 → 身体一条线的平板支撑。
- * 线条颜色走 `currentColor`，所以放在哪儿就跟哪儿的文字颜色一致（菜单里是白色）。
+ * 参数取法：能沿用进度条关键帧那套参数的（臀桥 / 平板支撑 / 深蹲 / 箭步蹲…）就沿用，
+ * 保持「图标」和「判定进度条上的小图」是同一个姿势；动作特有的（跳箱的箱子、勾腿跳的勾腿）单独写。
  */
 const EXERCISE_POSES = {
-  // 双臂贴地放在身体两侧（`armDeg: 282`）——不然仰卧的默认画法会把手臂画成「朝天举」，
-  // 那不像臀桥；`rise` 取 0.35（比关键帧那格的典型值略小）让「身体绷直」这条更明显一些。
+  /* ---- 上肢 ---- */
+  // 俯卧撑：手撑地、肘弯到 100°（正在下去的途中，身体明显比平板支撑高）、身体一条线
+  pushup: () => buildLie({
+    tilt: 90, hip: 178, knee: 174, elbow: 100, face: 'down', support: true, handMark: true,
+  }),
+
+  /* ---- 下肢 ---- */
+  // 自重深蹲：蹲到底（膝 ~92°）+ 上身前倾 + 双手前平举
+  squat: () => buildStand({ knee: 92, lean: 22, armDown: 52, elbow: 150 }),
+  // 相扑深蹲：正面视角、宽站 + 屈膝（正面才看得出「宽」）
+  squatSumo: () => buildJack({ legAngle: 26, knee: 122, armAngle: 168 }),
+  // 向前箭步蹲：大步幅、前膝 90°、后腿较直（后膝 105°）、上身前倾
+  lunge: () => buildStand({ knee: 90, backKnee: 105, stride: 8, lean: 16, armDown: 30 }),
+  // 向后箭步蹲：步幅小、后膝沉到接近地面（后膝 70°）、上身更直 —— 和向前箭步蹲一眼分得开
+  lungeBack: () => buildStand({ knee: 94, backKnee: 70, stride: 3, lean: 8, armDown: 14 }),
+  // 勾腿跳：站立、脚跟往臀部勾起来（画法直接沿用进度条那一套）
+  buttKick: () => buildKick({ kickKnee: 68, kicked: 'near' }),
+
+  /* ---- 核心 ---- */
+  // 臀桥：躺下、屈膝、髋顶起来、身体绷直、双臂贴地
   bridge: () => buildLie({
     tilt: 92, hip: 176, knee: 92, rise: 0.35, face: 'up', elbow: 172, armDeg: 282,
   }),
-  // 双肘撑地：`forearm: true` → 肘在肩的正下方、小臂平贴地面向前伸；躯干与腿接近一条线。
+  // 平板支撑：双肘撑地、小臂平贴地面、身体一条线
   plank: () => buildLie({
     tilt: 90, hip: 178, knee: 172, face: 'down', support: true, forearm: true, handMark: true,
   }),
+  // 死虫式：仰卧，一条腿伸出去、另一条腿屈在「桌面位」，手臂朝上
+  deadBug: () => buildLie({
+    tilt: 92, hip: 176, knee: 172, hip2: 92, knee2: 92, face: 'up', armDeg: 196,
+  }),
+  // 卷腹：仰卧屈膝，肩离地卷起来（`shoulderRise` 就是把肩抬起来的那一项）
+  crunch: () => buildLie({
+    tilt: 92, hip: 118, knee: 96, shoulderRise: 0.62, face: 'up', armDeg: 206,
+  }),
+  // 反向卷腹：仰卧，膝盖往胸口收（髋角 70° = 大腿越过垂直、向胸口折）
+  reverseCrunch: () => buildLie({
+    tilt: 92, hip: 70, knee: 92, kneeLift: 2.2, face: 'up', armDeg: 278,
+  }),
+  // 仰卧抬腿：仰卧，双腿竖直向上伸直
+  lyingLegRaise: () => buildLie({
+    tilt: 92, hip: 92, knee: 176, face: 'up', armDeg: 278,
+  }),
+
+  /* ---- 全身 ---- */
+  // 深蹲跳：腾空 + 双腿伸展 + 双臂上摆
+  squatJump: () => buildStand({ knee: 168, lean: 8, armDown: -58, elbow: 162, airborne: true }),
+  // 波比跳：腾空 + 双腿收起 + 双手举过头顶（和深蹲跳靠「收腿」区分）
+  burpee: () => buildStand({ knee: 112, lean: 6, armDown: -84, elbow: 160, airborne: true }),
+  // 登山者：手撑地、身体一条线、一条腿的膝盖往胸口提起来
+  mountainClimber: () => buildLie({
+    tilt: 90, hip: 178, knee: 172, elbow: 176, hip2: 112, knee2: 84,
+    face: 'down', support: true, handMark: true,
+  }),
+  // 开合跳：正面、双腿张开、双手举过头顶
+  jumpingJack: () => buildJack({ legAngle: 28, armAngle: 8 }),
+  // 跳箱：腾空越过脚下的箱子（箱子由 buildStand 的 box 画出来）
+  boxJump: () => buildStand({ knee: 132, lean: 12, armDown: 24, airborne: true, box: true }),
+
+  /* ---- 拉伸 ---- */
+  // 站立体前屈：膝盖基本伸直、上身折下去、双手垂向脚面
+  standingForwardFold: () => buildStand({ knee: 172, lean: 76, armDown: 6, elbow: 166 }),
+  // 坐姿体前屈：坐着、双腿前伸、上身往腿上折、双手前伸够脚
+  seatedForwardFold: () => buildLie({
+    tilt: 44, hip: 136, knee: 174, face: 'seated', armDeg: 264,
+  }),
 };
 
-/** 这个动作有没有专门画的姿势图标（没有就返回空字符串，界面继续用 emoji） */
+/**
+ * 分类的「身体部位」示意图（上肢 / 下肢 / 核心 / 全身 / 拉伸）。
+ *
+ * 动作图标回答「这个动作长什么样」，分类图标回答「这一类练哪儿」：
+ * 同一个正面火柴人，**相关部位画粗**（`.icon-bold`）。只有拉伸那一类是把双手举起来（看得出在拉）。
+ */
+const CATEGORY_POSES = {
+  upper: () => buildBodyMap({ region: 'arms' }),
+  lower: () => buildBodyMap({ region: 'legs' }),
+  core: () => buildBodyMap({ region: 'torso' }),
+  full: () => buildBodyMap({ region: 'all' }),
+  stretch: () => buildBodyMap({ region: 'all', armAngle: 18 }),
+};
+
+/** 动作的姿势图标（19 个动作都有；万一漏了返回空串，界面会退回 emoji） */
 export function exercisePoseSVG(id) {
   const build = EXERCISE_POSES[id];
   if (!build) return '';
   const { lines, circles } = build();
+  return poseSVG(lines, circles, 'ex-pose');
+}
+
+/** 分类的「部位示意图」图标（和动作图标同一套线条风格） */
+export function categoryMarkSVG(id) {
+  const build = CATEGORY_POSES[id];
+  if (!build) return '';
+  const { lines, circles } = build();
+  return poseSVG(lines, circles, 'ex-pose');
+}
+
+/** 导航圆环的图标（返回 / 上一页 / 下一页）：同风格的线条箭头 */
+export function navPoseSVG(kind) {
+  const { lines, circles } = navArrowShape(kind);
   return poseSVG(lines, circles, 'ex-pose');
 }
 

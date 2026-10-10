@@ -17,7 +17,7 @@ import {
   exerciseSpecs, specCondition, specStages, stageHolds, stageText, stagePoints, stageIndexForStep, SPEC_METRICS,
 } from './specs.js';
 import { getStepPlan } from './steps.js';
-import { iconSVG, uniqueStages } from './icons.js';
+import { iconSVG, uniqueStages, categoryMarkSVG, navPoseSVG } from './icons.js';
 import { PoseLogger } from './pose-log.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
@@ -1764,7 +1764,12 @@ function menuItems() {
       catId: c.id,
       name: c.name,
       icon: c.icon,
-      poseIcon: '',
+      /**
+       * 分类也用**线条图标**（用户要求「图标全面重新设计、保持风格一致」）：
+       * 同一个正面火柴人、把这一类练的部位画粗（见 icons.js 的 `categoryMarkSVG`）。
+       * emoji 还留着当兜底（万一某个分类没画）。
+       */
+      poseIcon: categoryMarkSVG(c.id),
       sub: t('menu.catCount', { n: localizedByCategory(c.id).length }),
     }));
   }
@@ -1903,13 +1908,14 @@ function menuNavLayout(size) {
   /** 三个圆环的顺序：翻页圆环分列两边，「返回」在中间（只有一页时只剩中间那一颗） */
   const page = menuHasPages(size);
   const list = page
-    ? [['page:prev', 'prev', -1, '◀', t('menu.prev')], ['back', 'back', 0, '↩', t('menu.back')],
-      ['page:next', 'next', 1, '▶', t('menu.next')]]
-    : [['back', 'back', 0, '↩', t('menu.back')]];
+    ? [['page:prev', 'prev', -1, t('menu.prev')], ['back', 'back', 0, t('menu.back')],
+      ['page:next', 'next', 1, t('menu.next')]]
+    : [['back', 'back', 0, t('menu.back')]];
   const step = r * 2 + gap;
   const mid = (list.length - 1) / 2;
-  return list.map(([id, kind, dir, icon, name], i) => ({
-    id, kind, dir, icon, name, poseIcon: '', sub: '',
+  return list.map(([id, kind, dir, name], i) => ({
+    // 箭头也改成**线条画**的（`navPoseSVG`），不再用字体里的 ◀ ▶ ↩ —— 字形风格和线条图标不一致
+    id, kind, dir, name, icon: '', poseIcon: navPoseSVG(kind), sub: '',
     cx: size.w / 2 + (i - mid) * step,
     cy,
     r,

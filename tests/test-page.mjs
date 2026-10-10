@@ -18,7 +18,7 @@ import { EXERCISES, createDetector, localizedExercise } from '../src/exercises.j
 import { isTimedReps, targetUnitKey } from '../src/catalog.js';
 import { getStepPlan } from '../src/steps.js';
 import { setLang, t, LOCALES, LANG_ORDER } from '../src/i18n.js';
-import { exercisePoseSVG } from '../src/icons.js';
+import { exercisePoseSVG, categoryMarkSVG, navPoseSVG } from '../src/icons.js';
 
 setLang('zh', { persist: false });
 
@@ -612,7 +612,7 @@ console.log('\n[3] 静态资源与模型文件');
     ok('三个导航圆环并排居中（上一页 / 返回 / 下一页），「返回」不在 menuItems 里、不参与翻页',
       /function menuNavLayout\(/.test(app)
       && /const page = menuHasPages\(size\);/.test(app)
-      && /\['page:prev', 'prev', -1, '◀', t\('menu\.prev'\)\], \['back', 'back', 0, '↩', t\('menu\.back'\)\]/.test(app)
+      && /\['page:prev', 'prev', -1, t\('menu\.prev'\)\], \['back', 'back', 0, t\('menu\.back'\)\]/.test(app)
       && /cx: size\.w \/ 2 \+ \(i - mid\) \* step,/.test(app)
       && !/list\.push\(\{ id: 'back'/.test(app)
       && /const item = \[\.\.\.menuItems\(\), \.\.\.menuNavLayout\(stageSize\(\)\)\]\.find/.test(app));
@@ -699,9 +699,10 @@ console.log('\n[3] 静态资源与模型文件');
       && /const txt = t\('ui\.gestureExit'\);/.test(app)
       && !/menu\.exitHome/.test(app)
       && LOCALES.zh.menu.exitHome === undefined && LOCALES.en.menu.exitHome === undefined);
-    ok('导航那颗「↩ 返回」图标与样式和其他「返回」完全一致（`↩` + menu-ring--back），第一级回网页首页',
-      /\['back', 'back', 0, '↩', t\('menu\.back'\)\]/.test(app)
+    ok('导航那颗「返回」图标与样式和其他「返回」完全一致（线条箭头 + menu-ring--back），第一级回网页首页',
+      /\['back', 'back', 0, t\('menu\.back'\)\]/.test(app)
       && /menu-ring--\$\{it\.kind\}/.test(app)
+      && /poseIcon: navPoseSVG\(kind\)/.test(app)
       && /menuBackHome\(\);                     \/\/ 淡出 \+ 主页淡入（用户要求返回也要有淡入淡出）/.test(app));
     ok('底部提示分两级 + 教翻页手势（双手挥两次）',
       /id="menuFoot"/.test(html)
@@ -751,9 +752,9 @@ console.log('\n[3] 静态资源与模型文件');
   {
     const bridgeSVG = exercisePoseSVG('bridge');
     const plankSVG = exercisePoseSVG('plank');
-    ok('臀桥 / 平板支撑有专门画的「人体姿势」线条图标（其余动作仍然用 emoji）',
+    ok('臀桥 / 平板支撑的线条图标（用户最早点名要改的两个）画的是各自的姿势',
       /class="ex-pose"/.test(bridgeSVG) && /class="ex-pose"/.test(plankSVG)
-      && exercisePoseSVG('squat') === '' && bridgeSVG !== plankSVG,
+      && bridgeSVG !== plankSVG && exercisePoseSVG('squat') !== '',
       `bridge=${bridgeSVG.length}B plank=${plankSVG.length}B squat=${exercisePoseSVG('squat').length}B`);
 
     /**
@@ -859,6 +860,67 @@ console.log('\n[3] 静态资源与模型文件');
       /\.ex-pose \{[\s\S]*?stroke: currentColor;/.test(css)
       && /\.ex-pose \{[\s\S]*?fill: none;/.test(css)
       && /\.ex-pose \{[\s\S]*?width: 1em;/.test(css));
+
+    /* ---- 用户要求：「图标能否全面重新设计一下，要保持风格的一致性，同时和运动动作有相关性。」
+       三条设计规则逐条钉住：① 全部用同一套线条画法；② 姿势就是这个动作的姿势（躺/坐/站的构图对得上）；
+       ③ 19 张两两不同。 ---- */
+    {
+      const ids = EXERCISES.map((x) => x.id);
+      const svgOf = new Map(ids.map((id) => [id, exercisePoseSVG(id)]));
+      const segsOf = (svg) => [...svg.matchAll(/<line(?: class="icon-bold")? x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)"/g)]
+        .map((m) => m.slice(1).map(Number));
+      const boxOf = (svg) => {
+        const segs = segsOf(svg);
+        const xs = segs.flatMap((s) => [s[0], s[2]]);
+        const ys = segs.flatMap((s) => [s[1], s[3]]);
+        const head = (svg.match(/<circle(?: class="icon-bold")? cx="([\d.]+)" cy="([\d.]+)"/) || []).slice(1).map(Number);
+        return {
+          minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys),
+          w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys),
+          headX: head[0], headY: head[1], heads: (svg.match(/<circle/g) || []).length,
+          segs: segs.length,
+        };
+      };
+      ok('19 个动作**全部**有自己的线条姿势图标（emoji 不再是界面上的图标）',
+        ids.every((id) => /class="ex-pose"/.test(svgOf.get(id)) && segsOf(svgOf.get(id)).length >= 5),
+        ids.filter((id) => !/class="ex-pose"/.test(svgOf.get(id))).join(', ') || 'all ok');
+      ok('19 张图**两两不同**（每个动作都有自己的样子，不会两张一样）',
+        new Set([...svgOf.values()]).size === ids.length,
+        `${new Set([...svgOf.values()]).size} / ${ids.length}`);
+      ok('全部画在同一个 32×32 方框里、都只有一个「头」、线段数一致（同一套骨架语言）',
+        ids.every((id) => {
+          const b = boxOf(svgOf.get(id));
+          return b.minX >= 0 && b.maxX <= 32 && b.minY >= 0 && b.maxY <= 32 && b.heads === 1;
+        }),
+        ids.map((id) => `${id}:${boxOf(svgOf.get(id)).heads}`).filter((s) => !s.endsWith(':1')).join(', ') || 'ok');
+      /**
+       * 躺 / 撑 / 坐的动作画成横构图，而且头在画面一端。
+       *
+       * ⚠️ 例外：**反向卷腹 / 仰卧抬腿**是躺着的，但腿是往正上方抬的 ——
+       * 外框会变成「竖的」（9×15），所以这两张只要求「头在画面一端」。
+       */
+      const LEGS_UP = new Set(['reverseCrunch', 'lyingLegRaise']);
+      const lyingIds = ids.filter((id) => EXERCISES.find((x) => x.id === id).posture !== 'stand');
+      ok('**和动作相关**：躺 / 撑 / 坐的动作画成横构图，而且头在画面一端',
+        lyingIds.every((id) => {
+          const b = boxOf(svgOf.get(id));
+          const atEnd = b.headX <= b.minX + b.w * 0.3 || b.headX >= b.maxX - b.w * 0.3;
+          return atEnd && (LEGS_UP.has(id) || b.w > b.h * 0.85);
+        }),
+        lyingIds.map((id) => `${id}:${boxOf(svgOf.get(id)).w.toFixed(0)}x${boxOf(svgOf.get(id)).h.toFixed(0)}`).join(' '));
+      ok('**和动作相关**：站姿的动作画成竖构图（高度 ≥14px，不会躺下来）',
+        ids.filter((id) => EXERCISES.find((x) => x.id === id).posture === 'stand')
+          .every((id) => boxOf(svgOf.get(id)).h >= 14),
+        ids.filter((id) => EXERCISES.find((x) => x.id === id).posture === 'stand')
+          .map((id) => `${id}:h${boxOf(svgOf.get(id)).h.toFixed(0)}`).join(' '));
+      ok('分类图标：同一套线条 + 相关部位**加粗**，五个分类各不相同（拉伸那颗把手举起来）',
+        ['upper', 'lower', 'core', 'full', 'stretch'].every((c) => /class="ex-pose"/.test(categoryMarkSVG(c))
+          && /class="icon-bold"/.test(categoryMarkSVG(c)))
+        && new Set(['upper', 'lower', 'core', 'full', 'stretch'].map((c) => categoryMarkSVG(c))).size >= 4);
+      ok('导航箭头（返回 / 上一页 / 下一页）也是线条画的，不是字体里的 ◀ ▶ ↩',
+        ['back', 'prev', 'next'].every((k) => /class="ex-pose"/.test(navPoseSVG(k)))
+        && !/◀|▶|↩/.test(navPoseSVG('back') + navPoseSVG('prev') + navPoseSVG('next')));
+    }
   }
 }
 
