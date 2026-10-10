@@ -1895,7 +1895,8 @@ function menuNavLayout(size) {
   const d = clamp(Math.min(size.w, size.h) * 0.185, narrow ? 64 : 96, 200);
   const r = d / 2;
   const nameSize = clamp(d * 0.21, 12, 26);
-  const iconSize = clamp(d * 0.44, 22, 58);
+  // 导航圆环里**只有图标、没有文字**（用户要求），所以图标可以画得更大
+  const iconSize = clamp(d * 0.62, 30, 78);
   const gap = clamp(size.w * 0.022, 12, 44);
   /**
    * 纵向位置：夹在「标题 / 页码那一块」和「选项那一行的上边缘」中间。
@@ -1960,17 +1961,22 @@ function menuItemEl(it) {
   btn.setAttribute('aria-label', label);
   btn.setAttribute('title', label);
   /**
-   * 图标：有「人体姿势」线条图的动作用它（臀桥 / 平板支撑，用户要求「图标要改为人体做臀桥的姿势」），
-   * 其余仍然用 emoji。姿势图的颜色走 currentColor —— 所以「返回」「上一页 / 下一页」这些
-   * 文字箭头与文字一样是白色，一眼看得清。
+   * 图标：有「人体姿势」线条图的动作用它（19 个动作 + 5 个分类都是），
+   * 导航圆环用线条箭头。姿势图的颜色走 currentColor —— 和文字一样是白色，一眼看得清。
    */
   const iconHtml = it.poseIcon || it.icon;
+  /**
+   * 导航圆环（返回 / 上一页 / 下一页）**只显示图标、不显示文字**（用户要求）：
+   * 图标本身已经说得清，圈里再塞一行字反而把图标挤小了。
+   * 无障碍名称保留在上面那个 `aria-label` / `title` 上，所以读屏和鼠标悬停仍然知道是什么。
+   */
+  const navKind = it.kind === 'back' || it.kind === 'prev' || it.kind === 'next';
   btn.innerHTML = '<svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">'
     + '<circle class="ring-track" cx="60" cy="60" r="52"></circle>'
     + '<circle class="ring-fill" cx="60" cy="60" r="52"></circle>'
     + '</svg>'
     + `<span class="menu-icon" aria-hidden="true">${iconHtml}</span>`
-    + `<span class="menu-name">${it.name}</span>`
+    + (navKind ? '' : `<span class="menu-name">${it.name}</span>`)
     + `<span class="menu-sub">${it.sub || ''}</span>`
     + '<span class="ring-timer"></span>';
   btn.addEventListener('click', () => {

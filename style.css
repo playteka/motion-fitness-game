@@ -1575,18 +1575,16 @@ kbd {
 .menu-ring--next .ring-track { stroke: rgba(148, 163, 184, 0.3); }
 .menu-ring--prev .menu-name,
 .menu-ring--next .menu-name { color: #cfe6ff; font-weight: 700; }
-/* 导航圆环（返回 / 上一页 / 下一页）做得**更大**（用户要求「都太小了」）：
-   图标与名字都放进圆圈里（名字从圆圈下沿挪进圈内），所以圆环放大也不占额外的纵向空间。 */
+/* 导航圆环（返回 / 上一页 / 下一页）做得**更大**（用户要求「都太小了」），
+   而且里面**只放图标、不放文字**（用户要求）—— 图标因此可以画满整个圆环，居中显示。
+   名字仍然在按钮的 aria-label / title 上（读屏与鼠标悬停都能看到），只是不画在圈里。 */
 .menu-ring--back .menu-icon,
 .menu-ring--prev .menu-icon,
-.menu-ring--next .menu-icon { transform: translateY(-30%); }
+.menu-ring--next .menu-icon { transform: none; }
+/* 兜底：万一有文字混进来，也别显示（正常路径下 app.js 就不生成 .menu-name） */
 .menu-ring--back .menu-name,
 .menu-ring--prev .menu-name,
-.menu-ring--next .menu-name {
-  top: auto;
-  bottom: 13%;
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
-}
+.menu-ring--next .menu-name { display: none; }
 
 /* ---------- 手势菜单模式：只留视频画面 + 菜单，其余面板全部收起 ---------- */
 #workoutView.menu-mode { display: block; }

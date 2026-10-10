@@ -4933,6 +4933,23 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     ok('HUD 里那个小图标同样是「人体姿势」图',
       /ex-pose/.test(elements.get('hudIcon').innerHTML),
       elements.get('hudIcon').innerHTML.slice(0, 60));
+
+    // 用户要求：「返回，上一页，下一页不要显示文字了，显示图标即可」
+    const navRings = api.menuNavLayout(api.stageSize());
+    const navHtml = navRings.map((it) => api.menuItemEl(it).innerHTML);
+    ok('导航圆环（返回 / 上一页 / 下一页）**只显示图标、不显示文字**',
+      navRings.length >= 1 && navHtml.every((h) => /class="menu-icon"/.test(h) && /ex-pose/.test(h)
+        && !/menu-name/.test(h) && !/(返回|上一页|下一页)/.test(h)),
+      navHtml.map((h) => (h.match(/menu-name/) ? '有文字' : '纯图标')).join(', '));
+    ok('但无障碍名称还在（aria-label / title 仍然是「返回」这类文字，读屏和悬停提示不受影响）',
+      api.menuItemEl(navRings[0]).attributes['aria-label'] === navRings[0].name
+      && api.menuItemEl(navRings[0]).attributes.title === navRings[0].name);
+    ok('动作 / 分类的圆环照旧显示名字（只有导航那三个不显示）',
+      /class="menu-name"/.test(api.menuItemEl(items[0]).innerHTML),
+      items[0].name);
+    ok('不显示文字之后图标画得更大（导航圆环的图标 ≈ 直径的 62%）',
+      navRings[0].iconSize >= navRings[0].r * 2 * 0.55,
+      `icon=${navRings[0].iconSize.toFixed(0)}px 环=${(navRings[0].r * 2).toFixed(0)}px`);
   }
 
   // 恢复现场

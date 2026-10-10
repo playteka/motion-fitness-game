@@ -920,6 +920,15 @@ console.log('\n[3] 静态资源与模型文件');
       ok('导航箭头（返回 / 上一页 / 下一页）也是线条画的，不是字体里的 ◀ ▶ ↩',
         ['back', 'prev', 'next'].every((k) => /class="ex-pose"/.test(navPoseSVG(k)))
         && !/◀|▶|↩/.test(navPoseSVG('back') + navPoseSVG('prev') + navPoseSVG('next')));
+      /* 用户要求：「返回，上一页，下一页不要显示文字了，显示图标即可」 */
+      ok('导航圆环只画图标、不生成文字节点（动作 / 分类仍然有名字），无障碍名称保留在 aria-label 上',
+        /const navKind = it\.kind === 'back' \|\| it\.kind === 'prev' \|\| it\.kind === 'next';/.test(app)
+        && /\(navKind \? '' : `<span class="menu-name">\$\{it\.name\}<\/span>`\)/.test(app)
+        && /btn\.setAttribute\('aria-label', label\);/.test(app));
+      ok('兜底样式：万一有文字混进导航圆环也不显示；图标居中而不是给文字让位（图标还可以画得更大）',
+        /\.menu-ring--back \.menu-name,[\s\S]{0,140}?\{ display: none; \}/.test(css)
+        && /\.menu-ring--back \.menu-icon,[\s\S]{0,140}?\{ transform: none; \}/.test(css)
+        && /const iconSize = clamp\(d \* 0\.62, 30, 78\);/.test(app));
     }
   }
 }
