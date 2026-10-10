@@ -4338,34 +4338,79 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       && /第 1 \/ 2 页/.test(elements.get('menuPage').textContent)
       && /5 项/.test(elements.get('menuPage').textContent),
       elements.get('menuPage').textContent);
-    // 手掌放进「下一页」圆环，停 1 秒 → 翻页（和选动作同一个动作，只是更快）
+    // 手掌放进「下一页」圆环，停 5 秒 → 翻页（用户要求导航圆环的沙漏时间加到 5 秒）
     // ⚠️ palmsAt6 收的是「宽屏舞台像素」，这里舞台换成窄屏了，所以要按比例换算一下
     const palmsAt = (x, y) => palmsAt6(x * (SW / sizeN.w), y * (SH / sizeN.h));
     const next = nav.find((it) => it.kind === 'next');
     // 防误触第 4 条：手必须**从圆环外面进来**才算数（先把「许可」拿到手）
     api.updateMenu(palmsAt(200, 690), 19900);
-    ok('手掌放进「下一页」0.6 秒还没到（选动作要 3 秒、翻页只要 1 秒）',
+    ok('手掌放进「下一页」2.6 秒还没到（导航圆环要停满 5 秒）',
       api.updateMenu(palmsAt(next.cx, next.cy), 20000) === null
-      && api.updateMenu(palmsAt(next.cx, next.cy), 20600) === null,
+      && api.updateMenu(palmsAt(next.cx, next.cy), 22600) === null,
       String(api.gestureState.menu.p));
-    const act = api.updateMenu(palmsAt(next.cx, next.cy), 21501);
-    ok('停满 1 秒 → 判定翻页（返回 {kind:page, dir:+1}）',
+    ok('沙漏时间确实是 5 秒（面板上倒计时从 5 秒开始走）',
+      api.MENU_NAV_HOLD_MS === 5000
+      && api.gestureState.menu.p > 0.4 && api.gestureState.menu.p < 0.6,
+      `p=${api.gestureState.menu.p.toFixed(2)}`);
+    const act = api.updateMenu(palmsAt(next.cx, next.cy), 25300);
+    ok('停满 5 秒 → 判定翻页（返回 {kind:page, dir:+1}）',
       act && act.kind === 'page' && act.dir === 1, JSON.stringify(act));
     api.flipMenuPage(act.dir);
     ok('翻到第 2 页（只剩最后一个分类，仍然一样大、居中）',
       api.state.menuPage === 1 && api.menuRingLayout(sizeN).length === 1
       && /第 2 \/ 2 页/.test(elements.get('menuPage').textContent),
       `page=${api.state.menuPage}`);
-    // 按住不放 → 一页一页连续翻（不会卡住）
-    const act2 = api.updateMenu(palmsAt(next.cx, next.cy), 22600);
-    ok('手掌**一直按着**：再过 1 秒又翻一页（按住不放连续翻）',
+    // 按住不放 → 一页一页连续翻（不会卡住；间隔就是那 5 秒）
+    const act2 = api.updateMenu(palmsAt(next.cx, next.cy), 30500);
+    ok('手掌**一直按着**：再过 5 秒又翻一页（按住不放仍然能连翻）',
       act2 && act2.kind === 'page' && act2.dir === 1, JSON.stringify(act2));
     api.flipMenuPage(act2.dir);
     ok('翻回第 1 页（循环翻页）', api.state.menuPage === 0, `page=${api.state.menuPage}`);
     // 手离开 → 进度慢慢退回去，不会连翻
-    api.updateMenu(palmsAt(200, 60), 23000);
-    const act3 = api.updateMenu(palmsAt(200, 60), 23400);
+    api.updateMenu(palmsAt(200, 60), 31200);
+    const act3 = api.updateMenu(palmsAt(200, 60), 31600);
     ok('手掌移开之后就不再翻了', act3 === null && api.state.menuPage === 0);
+
+    /* 用户反馈：「因为返回、上一页、下一页始终在相同的位置，容易在返回之后持续返回，
+       这几个圆环的沙漏时间我觉得可以增加到 5 秒。」—— 蓄力加到 5 秒，
+       而且触发之后**必须把手拿出圆环再进来**才会重新计满（一直停在原地也不会连触发）。 */
+    {
+      api.state.menuLevel = 0;
+      api.state.menuCategory = '';
+      api.state.menuPage = 0;
+      api.renderMenu();
+      api.selectFromMenu('cat:core');                        // 进到第二级，「返回」才有意义
+      const back = api.menuNavLayout(api.stageSize()).find((it) => it.kind === 'back');
+      api.updateMenu(palmsAt(200, 690), 40000);              // 先出环拿许可（窄屏舞台坐标）
+      api.updateMenu(palmsAt(back.cx, back.cy), 40100);
+      ok('「返回」也是 5 秒沙漏：停 4 秒还没到',
+        api.state.menuLevel === 1
+        && api.updateMenu(palmsAt(back.cx, back.cy), 44100) === null
+        && api.gestureState.menu.p > 0.7,
+        `level=${api.state.menuLevel} p=${api.gestureState.menu.p.toFixed(2)}`);
+      const backAct = api.updateMenu(palmsAt(back.cx, back.cy), 45300);
+      ok('停满 5 秒 → 触发一次「返回」（主循环接着调 selectFromMenu）',
+        !!backAct && backAct.kind === 'select' && backAct.id === 'back',
+        JSON.stringify(backAct));
+      if (backAct) api.selectFromMenu(backAct.id);
+      ok('触发之后层级回到第一级', api.state.menuLevel === 0, `level=${api.state.menuLevel}`);
+      // 手一直停在同一颗圆环上（用户最怕的「持续返回」）：再等 10 秒也不会再触发
+      const again1 = api.updateMenu(palmsAt(back.cx, back.cy), 50300);
+      const again2 = api.updateMenu(palmsAt(back.cx, back.cy), 55300);
+      ok('触发之后手还停在原地：**不会**连续返回（要拿出圆环再进来才重新计满）',
+        again1 === null && again2 === null && api.state.menuLevel === 0 && api.state.menuMode === true,
+        `level=${api.state.menuLevel} act=${JSON.stringify(again2)}`);
+      // 拿出去再进来 → 才允许再来一次
+      api.updateMenu(palmsAt(200, 690), 56000);
+      api.updateMenu(palmsAt(back.cx, back.cy), 56100);
+      const again3 = api.updateMenu(palmsAt(back.cx, back.cy), 61300);
+      ok('手拿出圆环再进来 → 才能再触发（许可机制没被绕过）',
+        !!again3 && again3.id === 'back', JSON.stringify(again3));
+      api.state.menuLevel = 0;
+      api.state.menuCategory = '';
+      api.state.menuPage = 0;
+      api.renderMenu();
+    }
     // 鼠标点翻页圆环同样有效
     const prev = nav.find((it) => it.kind === 'prev');
     grid.children.find((c) => c.dataset.ex === prev.id).dispatch('click');

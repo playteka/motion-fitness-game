@@ -1698,10 +1698,26 @@ const MENU_CELL_MIN_PX = 170;
 /**
  * 「上一页 / 下一页」圆环：按住多久翻一页。
  *
- * 比选动作的 3 秒短得多 —— 翻页是**可逆、还会重复**的动作（翻错了再翻回来就行），
- * 而且按住不放会连续翻（每 `MENU_NAV_HOLD_MS` 一页），所以不用等 3 秒那么久。
+ * 这三颗圆环**位置固定**、又是可逆动作，所以本来想做得比选动作快；
+ * 但用户反馈「返回之后就停在那儿，容易持续返回」，于是把蓄力改到 **5 秒**（比选动作的 3 秒还长）——
+ * 想触发必须真的停在那一格上，代价是「按住连翻」变慢（每 `MENU_NAV_HOLD_MS` 一页）。
  */
-const MENU_NAV_HOLD_MS = 1000;
+/**
+ * 导航圆环（返回 / 上一页 / 下一页）的蓄力时间：**5 秒**。
+ *
+ * 用户反馈：「因为返回、上一页、下一页始终在相同的位置，容易在返回之后持续返回，
+ * 这几个圆环的沙漏时间我觉得可以增加到 5 秒。」
+ *
+ * 为什么单独设一个更长的值：
+ *   - 这三颗圆环**位置固定**（不随翻页动），返回之后手还停在原地就会接着攒进度 → 连续返回；
+ *   - 所以蓄力拉到 5 秒（`GESTURE_HOLD_MS` 是 3 秒）：想触发必须**真的停在那一格上**，
+ *     手垂在那儿、顺手划过都不会误触；
+ *   - 代价是「按住连翻」变慢（每 5 秒一页），但翻页的主路径是**双手同时挥两次**（`MENU_SWIPE_*`），
+ *     那一条仍然是快的，圆环只是兜底 + 鼠标 / 键盘（页码、← / →）也有。
+ */
+const MENU_NAV_HOLD_MS = 5000;
+/** 三个导航圆环的 kind：都用上面那个 5 秒蓄力（返回 / 上一页 / 下一页） */
+const MENU_NAV_KINDS = { back: 1, prev: 1, next: 1 };
 /** 悬停多久开始念这一格的名字（先让人看清自己指着哪一个，再决定要不要停 3 秒） */
 const MENU_ANNOUNCE_P = 0.28;
 /**
@@ -1731,7 +1747,7 @@ const MENU_DRAIN_MS = 700;
  * 用户反馈（两次）：「淡入淡出的效果太快了，放慢速度，让人能清楚的看到滑出滑入的动画效果。」
  * →「还是太快了，还可以进一步放慢。」所以从 160 / 240ms 先放到 320 / 500ms，
  * 再放到 **500 / 800ms**（一整次换屏 ≈0.8 秒，滑出的残影和新一屏的滑入都看得清清楚楚）。
- * 按住翻页圆环是每 1 秒翻一页（`MENU_NAV_HOLD_MS`），比一次动画略长，所以连续翻页仍是每页都播完。
+ * 按住翻页圆环是每 5 秒翻一页（`MENU_NAV_HOLD_MS`），比一次动画长得多，所以连续翻页每一页都播得完。
  */
 const MENU_ANIM_OUT_MS = 500;
 const MENU_ANIM_IN_MS = 800;
@@ -2254,7 +2270,7 @@ function updateMenuSwipe(palms, layout, size, now, speed) {
  * 返回 `null`（还没选定）或：
  *   - `{ kind: 'select', id }`  —— 手掌在某一格圆环里停满 `GESTURE_HOLD_MS`（3 秒）：选中它；
  *   - `{ kind: 'page', dir }`   —— 翻页：**双手同时挥两次**（见 updateMenuSwipe），
- *     或者手掌在「◀ 上一页 / 下一页 ▶」圆环里停满 `MENU_NAV_HOLD_MS`（1 秒）。
+ *     或者手掌在「◀ 上一页 / 下一页 ▶」圆环里停满 `MENU_NAV_HOLD_MS`（5 秒）。
  *
  * 翻页入口有两个是刻意的：**双手挥两次**是主路径（自然、几乎不会误触），
  * 顶部那两个小圆环是给「挥不动 / 摄像头角度不好」的情况兜底，鼠标和键盘（← / →）也能翻。
@@ -2315,7 +2331,8 @@ function updateMenu(landmarks, now) {
     }
   }
   const item = hover ? layout.find((it) => it.id === hover.id) : null;
-  const holdMs = item && (item.kind === 'prev' || item.kind === 'next') ? MENU_NAV_HOLD_MS : GESTURE_HOLD_MS;
+  /** 三个导航圆环（返回 / 上一页 / 下一页）都用更长的 5 秒蓄力，见 MENU_NAV_HOLD_MS 的说明 */
+  const holdMs = item && MENU_NAV_KINDS[item.kind] ? MENU_NAV_HOLD_MS : GESTURE_HOLD_MS;
   const dt = clamp(now - (st.at || now), 0, 250);
 
   if (hover) {

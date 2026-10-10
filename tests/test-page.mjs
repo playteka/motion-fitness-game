@@ -616,10 +616,12 @@ console.log('\n[3] 静态资源与模型文件');
       && /cx: size\.w \/ 2 \+ \(i - mid\) \* step,/.test(app)
       && !/list\.push\(\{ id: 'back'/.test(app)
       && /const item = \[\.\.\.menuItems\(\), \.\.\.menuNavLayout\(stageSize\(\)\)\]\.find/.test(app));
-    ok('「上一页 / 下一页」圆环按需出现（有第二页才有），按住 1 秒翻一页',
+    ok('「上一页 / 下一页」圆环按需出现（有第二页才有），和「返回」一样停满 5 秒才触发',
       /\['page:prev', 'prev', -1/.test(app) && /\['page:next', 'next', 1/.test(app)
-      && /const page = menuHasPages\(size\);/.test(app) && /MENU_NAV_HOLD_MS/.test(app)
-      && /const holdMs = item && \(item\.kind === 'prev' \|\| item\.kind === 'next'\) \? MENU_NAV_HOLD_MS : GESTURE_HOLD_MS;/.test(app)
+      && /const page = menuHasPages\(size\);/.test(app)
+      && /const MENU_NAV_HOLD_MS = 5000;/.test(app)
+      && /const MENU_NAV_KINDS = \{ back: 1, prev: 1, next: 1 \};/.test(app)
+      && /const holdMs = item && MENU_NAV_KINDS\[item\.kind\] \? MENU_NAV_HOLD_MS : GESTURE_HOLD_MS;/.test(app)
       && typeof LOCALES.zh.menu.prev === 'string' && typeof LOCALES.en.menu.next === 'string');
     ok('翻页主路径 = **双手同时挥两次**（向上 = 上一页、向下 = 下一页；单手 / 只挥一次都不算）',
       /function updateMenuSwipe\(palms, layout, size, now, speed\)/.test(app)
