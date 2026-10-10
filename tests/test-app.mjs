@@ -30,8 +30,9 @@ const htmlIds = [...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
 function makeClassList() {
   const set = new Set();
   return {
-    add: (c) => set.add(c),
-    remove: (c) => set.delete(c),
+    // 真实 DOM 的 add/remove 都收**多个**类名，桩里也一样（换屏动画就是一次移除两个方向）
+    add: (...cs) => { for (const c of cs) set.add(c); },
+    remove: (...cs) => { for (const c of cs) set.delete(c); },
     contains: (c) => set.has(c),
     toggle: (c, force) => {
       const on = force === undefined ? !set.has(c) : !!force;
@@ -102,6 +103,17 @@ class El {
   }
   querySelectorAll() { return []; }
   getBoundingClientRect() { return { width: 1280, height: 720, left: 0, top: 0 }; }
+  /** 换屏动画会把当前这一屏的圆环克隆到残影层里，桩里也要能克隆（属性 + 子元素 + 类名够用了） */
+  cloneNode() {
+    const copy = new El(this.tagName, this.id);
+    copy.className = this.className;
+    copy._html = this._html;
+    copy.style = { ...this.style };
+    copy.children = this.children.map((c) => (typeof c.cloneNode === 'function' ? c.cloneNode(true) : c));
+    for (const [k, v] of Object.entries(this.attributes || {})) copy.attributes[k] = v;
+    if (this.dataset) copy.dataset = { ...this.dataset };
+    return copy;
+  }
   focus() {}
 }
 
@@ -4796,6 +4808,80 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     api.camera.video.readyState = savedReady7;
     Object.defineProperty(globalThis, 'performance', { value: savedPerf, configurable: true, writable: true });
     windowStub.performance = savedPerf;
+  }
+
+  // ===== ⑥ 翻页 / 返回的「滑动 + 淡入淡出」动画（用户要求） =====
+  {
+    const grid = elements.get('menuGrid');
+    const ghost = elements.get('menuGridGhost');
+    const menuEl2 = elements.get('gestureMenu');
+    // 用窄屏（400×700）造出第二页，才有翻页动画可看
+    stageEl.clientWidth = 400;
+    stageEl.clientHeight = 700;
+    api.openMenu({ silent: true });            // 保证在菜单里（前一段真实主循环用例把菜单关掉了）
+    api.state.menuLevel = 0;
+    api.state.menuCategory = '';
+    api.state.menuPage = 0;
+    api.renderMenu();
+    const perf = globalThis.performance;
+    const savedNow = perf.now;
+    let clock2 = api.gestureState.menuAnim.until + 100;
+    perf.now = () => clock2;
+
+    ok('菜单里有一个「残影」层用来播滑出动画（#menuGridGhost）',
+      !!ghost && typeof ghost.className === 'string' && api.menuPageInfo().pages === 2);
+
+    api.flipMenuPage(1);
+    ok('翻到下一页：新一屏立刻换好（DOM 与状态同步，不等动画），并带上「从右边滑入 + 淡入」的类',
+      api.state.menuPage === 1
+      && grid.classList.contains('menu-anim-in-next')
+      && !grid.classList.contains('menu-anim-in-prev')
+      && ghost.classList.contains('menu-anim-out-next'),
+      `page=${api.state.menuPage} grid=${grid.className}`);
+    ok('残影层里是上一屏圆环的克隆（滑出去的就是刚才那一屏）',
+      ghost.children.length > 0, `${ghost.children.length} 个克隆`);
+
+    clock2 = api.gestureState.menuAnim.until + 100;
+    api.flipMenuPage(-1);
+    ok('翻回上一页：方向反过来（从左边滑入）',
+      api.state.menuPage === 0 && grid.classList.contains('menu-anim-in-prev')
+      && ghost.classList.contains('menu-anim-out-prev'),
+      `page=${api.state.menuPage} grid=${grid.className}`);
+
+    // 返回上一层也走同一套动画；回网页首页则是菜单淡出 + 主页淡入
+    api.state.menuLevel = 0;
+    api.state.menuCategory = '';
+    api.state.menuPage = 0;
+    api.renderMenu();
+    clock2 = api.gestureState.menuAnim.until + 100;
+    const catCore = api.menuItems().find((it) => it.kind === 'category');
+    api.selectFromMenu(catCore.id);
+    ok('进下一层（选分类）：向右滑入 + 淡入（和「下一页」同方向）',
+      api.state.menuLevel === 1 && grid.classList.contains('menu-anim-in-next'),
+      `level=${api.state.menuLevel} grid=${grid.className}`);
+    clock2 = api.gestureState.menuAnim.until + 100;
+    api.selectFromMenu('back');
+    ok('「返回」上一层：方向反过来（向左滑入），层级也回到第一级',
+      api.state.menuLevel === 0 && grid.classList.contains('menu-anim-in-prev'),
+      `level=${api.state.menuLevel} grid=${grid.className}`);
+    clock2 = api.gestureState.menuAnim.until + 100;
+    api.menuBackHome();
+    ok('「返回」到网页首页：主页淡入、菜单淡出，而且**立刻**就切过去了（不等动画）',
+      api.state.homeMode === true
+      && elements.get('homeView').classList.contains('menu-anim-in-home')
+      && menuEl2.classList.contains('menu-anim-out-home'),
+      `home=${api.state.homeMode} homeCls=${elements.get('homeView').className}`);
+    clock2 = api.gestureState.menuAnim.until + 100;
+    api.openMenu({ silent: true });
+    ok('从动作退回菜单 / 刚进菜单：菜单从左边滑入 + 淡入',
+      api.state.menuMode === true && grid.classList.contains('menu-anim-in-prev'),
+      `menu=${api.state.menuMode} grid=${grid.className}`);
+
+    perf.now = savedNow;
+    stageEl.clientWidth = savedClientW;
+    stageEl.clientHeight = savedClientH;
+    api.state.menuPage = 0;
+    api.renderMenu();
   }
 
   // ===== ⑦ 图标：臀桥 / 平板支撑用「人体姿势」线条图（用户要求），其余仍用 emoji =====

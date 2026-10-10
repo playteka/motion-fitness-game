@@ -702,13 +702,37 @@ console.log('\n[3] 静态资源与模型文件');
     ok('导航那颗「↩ 返回」图标与样式和其他「返回」完全一致（`↩` + menu-ring--back），第一级回网页首页',
       /\['back', 'back', 0, '↩', t\('menu\.back'\)\]/.test(app)
       && /menu-ring--\$\{it\.kind\}/.test(app)
-      && /if \(state\.menuLevel === 0\) \{\s*\n\s*audio\.say\(t\('ui\.gestureExit'\)[\s\S]{0,80}?showHome\(\);/.test(app));
+      && /menuBackHome\(\);                     \/\/ 淡出 \+ 主页淡入（用户要求返回也要有淡入淡出）/.test(app));
     ok('底部提示分两级 + 教翻页手势（双手挥两次）',
       /id="menuFoot"/.test(html)
       && /foot\.textContent = state\.menuLevel === 0 \? t\('menu\.hint'\) : t\('menu\.hintIn'\)/.test(app)
       && typeof LOCALES.zh.menu.hintIn === 'string' && typeof LOCALES.en.menu.hintIn === 'string'
       && /双手同时向上挥两次/.test(LOCALES.zh.menu.hint)
       && /swipe up twice/.test(LOCALES.en.menu.hint));
+    /* 用户要求：「翻页以及返回都要采用滑动的淡入淡出动画效果。」 */
+    ok('翻页 / 返回的「滑动 + 淡入淡出」：残影层 + 滑出滑入四组关键帧 + 方向类',
+      /id="menuGridGhost"/.test(html) && /class="menu-ghost"/.test(html)
+      && /\.menu-ghost \{ position: absolute; inset: 0; pointer-events: none; \}/.test(css)
+      && /@keyframes menuSlideOutLeft/.test(css) && /@keyframes menuSlideOutRight/.test(css)
+      && /@keyframes menuSlideInLeft/.test(css) && /@keyframes menuSlideInRight/.test(css)
+      && /@keyframes menuFadeIn/.test(css) && /@keyframes menuFadeOut/.test(css)
+      && /\.menu-ghost\.menu-anim-out-next > \.menu-ring \{ animation: menuSlideOutLeft/.test(css)
+      && /\.menu-grid\.menu-anim-in-next > \.menu-ring \{ animation: menuSlideInRight/.test(css)
+      && /\.menu-grid\.menu-anim-in-prev > \.menu-ring \{ animation: menuSlideInLeft/.test(css)
+      && /menu-head\.menu-anim-in-next/.test(css) && /menu-foot\.menu-anim-in-prev/.test(css));
+    ok('滑动动画在「减少动态效果」偏好下自动关掉',
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.menu-grid\.menu-anim-in-next > \.menu-ring[\s\S]*?animation: none;/.test(css));
+    ok('翻页 / 返回 / 进下一层 / 退回菜单都接了这套动画，而且真实 DOM 立刻重建（状态与界面同步）',
+      /function animateMenuSwap\(dir, rebuild\)/.test(app)
+      && /const copy = typeof child\.cloneNode === 'function' \? child\.cloneNode\(true\) : null;/.test(app)
+      && /rebuild\(\);                                     \/\/ ② 真实那一屏马上换好（同步）/.test(app)
+      && /animateMenuSwap\(dir, \(\) => \{\s*\n\s*buildMenu\(\);/.test(app)          // 翻页
+      && /animateMenuSwap\(-1, \(\) => renderMenu\(\)\);/.test(app)                  // 返回上一层
+      && /animateMenuSwap\(1, \(\) => renderMenu\(\)\);/.test(app)                   // 进下一层
+      && /function menuBackHome\(\)/.test(app)                                       // 回网页首页：菜单淡出 + 主页淡入
+      && /home\.classList\.add\('menu-anim-in-home'\)/.test(app)
+      && /\.home\.menu-anim-in-home \{ animation: menuFadeIn/.test(css)
+      && /MENU_ANIM_OUT_MS = 160;/.test(app) && /MENU_ANIM_IN_MS = 240;/.test(app));
     ok('菜单里不摆「一组结束」的两个圆环（offerSetChoices 认得菜单模式）',
       /if \(state\.homeMode \|\| state\.menuMode \|\| !state\.detector\) return;/.test(app));
     ok('菜单里按 Esc = 回网页首页（键盘用户的退路）',

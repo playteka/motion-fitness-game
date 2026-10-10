@@ -1422,6 +1422,49 @@ kbd {
  * 所以标题与底部提示改成绝对定位的浮层（不吃鼠标），网格仍然从 (0,0) 开始。
  */
 .menu-grid { position: absolute; inset: 0; }
+/* 换屏动画用的「残影」层（翻页 / 返回时上一屏的圆环克隆到这里滑出去） */
+.menu-ghost { position: absolute; inset: 0; pointer-events: none; }
+/**
+ * 手势菜单换屏（翻页 / 返回）的**滑动 + 淡入淡出**（用户要求：「翻页以及返回都要采用滑动的淡入淡出动画效果」）。
+ *
+ * 上一屏在 `.menu-ghost` 里滑出并淡出，新一屏在 `.menu-grid` 里滑入并淡入；
+ * 标题 / 说明 / 页码 / 底部提示跟着一起淡。
+ * 方向按「翻页」的直觉：+1（下一页）= 老的往左走、新的从右边进来；-1（上一页 / 返回）反过来。
+ */
+@keyframes menuSlideOutLeft {
+  from { opacity: 1; transform: translate(-50%, -50%); }
+  to { opacity: 0; transform: translate(-50%, -50%) translateX(-42%); }
+}
+@keyframes menuSlideOutRight {
+  from { opacity: 1; transform: translate(-50%, -50%); }
+  to { opacity: 0; transform: translate(-50%, -50%) translateX(42%); }
+}
+@keyframes menuSlideInRight {
+  from { opacity: 0; transform: translate(-50%, -50%) translateX(42%); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+@keyframes menuSlideInLeft {
+  from { opacity: 0; transform: translate(-50%, -50%) translateX(-42%); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+@keyframes menuFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes menuFadeOut { from { opacity: 1; } to { opacity: 0; } }
+.menu-ghost.menu-anim-out-next > .menu-ring { animation: menuSlideOutLeft 160ms ease-in forwards; }
+.menu-ghost.menu-anim-out-prev > .menu-ring { animation: menuSlideOutRight 160ms ease-in forwards; }
+.menu-grid.menu-anim-in-next > .menu-ring { animation: menuSlideInRight 240ms ease-out both; }
+.menu-grid.menu-anim-in-prev > .menu-ring { animation: menuSlideInLeft 240ms ease-out both; }
+.menu-head.menu-anim-in-next, .menu-head.menu-anim-in-prev,
+.menu-foot.menu-anim-in-next, .menu-foot.menu-anim-in-prev { animation: menuFadeIn 240ms ease-out both; }
+/* 回网页首页：菜单整体淡出（主页那边同时淡入，见 app.js 的 menuBackHome） */
+.gesture-menu.menu-anim-out-home { animation: menuFadeOut 160ms ease-in forwards; }
+.home.menu-anim-in-home { animation: menuFadeIn 260ms ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .menu-ghost.menu-anim-out-next > .menu-ring, .menu-ghost.menu-anim-out-prev > .menu-ring,
+  .menu-grid.menu-anim-in-next > .menu-ring, .menu-grid.menu-anim-in-prev > .menu-ring,
+  .menu-head.menu-anim-in-next, .menu-head.menu-anim-in-prev,
+  .menu-foot.menu-anim-in-next, .menu-foot.menu-anim-in-prev,
+  .gesture-menu.menu-anim-out-home, .home.menu-anim-in-home { animation: none; }
+}
 .menu-head {
   position: absolute;
   top: 8px;

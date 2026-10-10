@@ -1033,6 +1033,8 @@ const gestureState = {
       ref: {}, dir: 0, count: 0, lastAt: 0, quietSince: 0, cooldownUntil: 0,
     },
   },
+  /** 换屏动画的定时器与「动画到什么时候为止」（见 animateMenuSwap） */
+  menuAnim: { until: 0, ghostTimer: 0, inTimer: 0, homeTimer: 0 },
 };
 
 /**
@@ -1722,6 +1724,11 @@ const MENU_STILL_SPEED = 0.30;
 const MENU_ARM_MS = 260;
 /** 手离开后进度退回去的速度（比别的圆环那 1.5 秒快：蹭一下不该留下半格进度） */
 const MENU_DRAIN_MS = 700;
+/* ---- 换屏动画（翻页 / 返回的「滑动 + 淡入淡出」） ---- */
+/** 上一屏滑出 / 淡出的时长（要和 style.css 里的动画时长一致） */
+const MENU_ANIM_OUT_MS = 160;
+/** 新一屏滑入 / 淡入的时长 */
+const MENU_ANIM_IN_MS = 240;
 /* ---- 「双手同时挥两次」翻页（用户要求） ---- */
 /** 一次挥动的行程：舞台高度的 16%（1280×720 上约 115px），两边手都要挥够这个量 */
 const MENU_SWIPE_TRAVEL = 0.16;
@@ -2013,26 +2020,98 @@ function renderMenuPage() {
 }
 
 /**
+ * 菜单换屏的**滑动 + 淡入淡出**（用户要求：「翻页以及返回都要采用滑动的淡入淡出动画效果」）。
+ *
+ * 做法（关键是**真实 DOM 立刻重建**，动画只做在「残影」上，状态与界面永远同步、测试也不用等动画）：
+ *   1. 把当前这一屏的圆环**克隆**进 `.menu-ghost` 残影层，让它按方向滑出并淡出；
+ *   2. 立刻 `rebuild()` 真实的那一屏；
+ *   3. 给新的圆环（以及标题 / 说明 / 页码 / 底部提示）加滑入 + 淡入的动画。
+ *
+ * 方向：`dir >= 0`（下一页）= 老的往左走、新的从右边进来；`dir < 0`（上一页 / 返回）反过来。
+ * 动画没播完又触发一次：直接换，不叠加（免得连续翻页时一片乱飞）。
+ */
+function animateMenuSwap(dir, rebuild) {
+  const grid = $('menuGrid');
+  const ghost = $('menuGridGhost');
+  const head = $('menuHead');
+  const foot = $('menuFoot');
+  const anim = gestureState.menuAnim;
+  const cls = dir >= 0 ? 'next' : 'prev';
+  const now = performance.now();
+  const fresh = now >= anim.until;
+
+  if (fresh && ghost && grid) {                  // ① 上一屏滑出去（克隆件，不影响真实状态）
+    ghost.innerHTML = '';
+    for (const child of [...(grid.children || [])]) {
+      const copy = typeof child.cloneNode === 'function' ? child.cloneNode(true) : null;
+      if (copy) ghost.appendChild(copy);
+    }
+    ghost.className = `menu-ghost menu-anim-out-${cls}`;
+    clearTimeout(anim.ghostTimer);
+    anim.ghostTimer = setTimeout(() => {
+      ghost.innerHTML = '';
+      ghost.className = 'menu-ghost';
+    }, MENU_ANIM_OUT_MS);
+  }
+
+  rebuild();                                     // ② 真实那一屏马上换好（同步）
+
+  if (fresh) {                                   // ③ 新一屏滑进来
+    for (const el of [grid, head, foot]) {
+      if (!el?.classList) continue;
+      el.classList.remove('menu-anim-in-next', 'menu-anim-in-prev');   // 两个方向互斥，别叠在一起
+      void el.offsetWidth;                       // 强制重排，同一个类名也能重放动画
+      el.classList.add(`menu-anim-in-${cls}`);
+    }
+    clearTimeout(anim.inTimer);
+    anim.inTimer = setTimeout(() => {
+      for (const el of [grid, head, foot]) el?.classList?.remove(`menu-anim-in-${cls}`);
+    }, MENU_ANIM_IN_MS);
+    anim.until = now + MENU_ANIM_IN_MS + 40;
+  }
+}
+
+/** 回网页首页：菜单淡出 + 主页淡入（异步那 160ms 只影响观感，`showHome()` 仍然立刻生效） */
+function menuBackHome() {
+  const anim = gestureState.menuAnim;
+  const menu = $('gestureMenu');
+  const home = $('homeView');
+  menu?.classList?.add('menu-anim-out-home');
+  if (home?.classList) {
+    home.classList.remove('menu-anim-in-home');
+    void home.offsetWidth;
+    home.classList.add('menu-anim-in-home');
+  }
+  showHome();                                    // 立刻切（不等动画），返回手势不会有延迟
+  clearTimeout(anim.homeTimer);
+  anim.homeTimer = setTimeout(() => {
+    menu?.classList?.remove('menu-anim-out-home');
+    home?.classList?.remove('menu-anim-in-home');
+  }, MENU_ANIM_IN_MS);
+}
+
+/**
  * 翻页（dir = +1 下一页 / -1 上一页；循环）。
  *
- * 用户要求：「一页不够就增加一页」；后来又说「挥手换页的方式似乎也不太好」，
- * 所以现在翻页入口是**左右两侧那两个翻页圆环**（把手掌放进去，1 秒翻一页，按住不放连续翻），
- * 另外鼠标点页码、键盘 ← / → 也能翻。
+ * 用户要求：「一页不够就增加一页」；翻页入口有两个：**双手同时挥两次**（主路径）与顶部那排
+ * 「◀ 上一页 / 下一页 ▶」圆环（兜底），鼠标点页码、键盘 ← / → 也能翻。
+ * 换页时走一遍滑动 + 淡入淡出（`animateMenuSwap`）。
  */
 function flipMenuPage(dir) {
   const { pages } = menuPageInfo();
   if (pages <= 1) return false;
   state.menuPage = ((state.menuPage + dir) % pages + pages) % pages;
-  buildMenu();                 // 换一页：菜单项本身也换了，重建 + 重新摆
-  layoutMenu();
-  renderMenuPage();
+  animateMenuSwap(dir, () => {
+    buildMenu();                 // 换一页：菜单项本身也换了，重建 + 重新摆
+    layoutMenu();
+    renderMenuPage();
+  });
   audio.tick();
   return true;
 }
 
 /** 清掉「手掌停在哪一格」的进度（进菜单、换页 / 换层、换语言、选中之后都调） */
-function resetMenuProgress() {
-  const st = gestureState.menu;
+function resetMenuProgress() {  const st = gestureState.menu;
   if (st.id) paintMenuRing(st.id, 0);
   st.id = ''; st.side = ''; st.p = 0; st.since = 0; st.lastInside = 0; st.at = 0;
   st.announced = '';
@@ -2307,6 +2386,11 @@ function openMenu({ silent = false } = {}) {
   $('btnExercise').hidden = true;    // 菜单里没有「运动设定」
   renderMenu();
   $('gestureMenu').hidden = false;
+  /**
+   * 从动作里退回菜单 / 刚进菜单：让这一屏**从左边滑入 + 淡入**（用户要求返回也要有滑动淡入淡出）。
+   * 用 `animateMenuSwap` 的「只做入场」那一半 —— 传一个空的重建函数（这一屏刚刚已经建好了）。
+   */
+  animateMenuSwap(-1, () => {});
   syncCornerLabel();         // 左下角那个圆环此刻是隐藏的（菜单里不显示它）
   syncCornerExit();
   updateButtons();
@@ -2340,7 +2424,8 @@ function selectFromMenu(id) {
     state.menuLevel = 1;
     state.menuCategory = item.catId;
     state.menuPage = 0;
-    renderMenu();
+    // 进下一层：走一遍**向右滑入**的动画（和「下一页」同方向，符合「往里走」的直觉）
+    animateMenuSwap(1, () => renderMenu());
     audio.say(item.name, { rate: 1.1, force: true });
     return;
   }
@@ -2349,13 +2434,14 @@ function selectFromMenu(id) {
     // 两级都有「返回」（图标都是 ↩，用户要求一致）：第二级 → 回分类；第一级 → 回网页首页
     if (state.menuLevel === 0) {
       audio.say(t('ui.gestureExit'), { rate: 1.1, force: true });
-      showHome();
+      menuBackHome();                     // 淡出 + 主页淡入（用户要求返回也要有淡入淡出）
       return;
     }
     state.menuLevel = 0;
     state.menuCategory = '';
     state.menuPage = 0;
-    renderMenu();
+    // 回上一层：走一遍**向左滑入**的动画（和「上一页」同方向，符合「往回走」的直觉）
+    animateMenuSwap(-1, () => renderMenu());
     audio.say(t('menu.title'), { rate: 1.05 });
     return;
   }
@@ -4641,6 +4727,7 @@ window.__mfg = {
   MENU_STILL_SPEED, MENU_ARM_MS, MENU_DRAIN_MS,
   MENU_SWIPE_TRAVEL, MENU_SWIPE_MS, MENU_SWIPE_CHAIN_MS, MENU_SWIPE_COOLDOWN_MS,
   MENU_SWIPE_QUIET, MENU_SWIPE_QUIET_MS, updateMenuSwipe, menuRowsFor,
+  animateMenuSwap, menuBackHome, menuBandGeom, MENU_ANIM_OUT_MS, MENU_ANIM_IN_MS,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
 };
