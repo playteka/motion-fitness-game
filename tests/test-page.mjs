@@ -861,65 +861,88 @@ console.log('\n[3] 静态资源与模型文件');
       && /\.ex-pose \{[\s\S]*?fill: none;/.test(css)
       && /\.ex-pose \{[\s\S]*?width: 1em;/.test(css));
 
-    /* ---- 用户要求：「图标能否全面重新设计一下，要保持风格的一致性，同时和运动动作有相关性。」
-       三条设计规则逐条钉住：① 全部用同一套线条画法；② 姿势就是这个动作的姿势（躺/坐/站的构图对得上）；
-       ③ 19 张两两不同。 ---- */
+    /* ---- 用户要求（第一次）：「图标能否全面重新设计一下，要保持风格的一致性，同时和运动动作有相关性。」
+       ---- 用户要求（第二次）：「使用新装的专业设计图标的 skill，ui-icon-design 来重新设计所有的图标。」
+       按 skill 的规格钉住：24×24 网格 / 20×20 活动区居中 / 坐标落在整数或 .5 上 /
+       只含 shapes（没有 <text>、没有 emoji）/ 颜色走 currentColor；
+       分类图标与导航箭头用库里现成的专业图标（Lucide ISC / Tabler MIT），动作姿势图自己画但同一套几何。 ---- */
     {
       const ids = EXERCISES.map((x) => x.id);
       const svgOf = new Map(ids.map((id) => [id, exercisePoseSVG(id)]));
-      const segsOf = (svg) => [...svg.matchAll(/<line(?: class="icon-bold")? x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)"/g)]
+      const numsOf = (svg) => [...svg.matchAll(/(?:x1|y1|x2|y2|cx|cy|r)="(-?[\d.]+)"/g)].map((m) => Number(m[1]));
+      const linesOf = (svg) => [...svg.matchAll(/<line x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)"/g)]
         .map((m) => m.slice(1).map(Number));
       const boxOf = (svg) => {
-        const segs = segsOf(svg);
-        const xs = segs.flatMap((s) => [s[0], s[2]]);
-        const ys = segs.flatMap((s) => [s[1], s[3]]);
-        const head = (svg.match(/<circle(?: class="icon-bold")? cx="([\d.]+)" cy="([\d.]+)"/) || []).slice(1).map(Number);
+        const segs = linesOf(svg);
+        const circles = [...svg.matchAll(/<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)"/g)].map((m) => m.slice(1).map(Number));
+        const xs = [...segs.flatMap((s) => [s[0], s[2]]), ...circles.flatMap((c) => [c[0] - c[2], c[0] + c[2]])];
+        const ys = [...segs.flatMap((s) => [s[1], s[3]]), ...circles.flatMap((c) => [c[1] - c[2], c[1] + c[2]])];
         return {
           minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys),
           w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys),
-          headX: head[0], headY: head[1], heads: (svg.match(/<circle/g) || []).length,
-          segs: segs.length,
+          headX: circles.length ? circles[0][0] : null,
+          el: segs.length + circles.length,
+          heads: circles.length,
         };
       };
-      ok('19 个动作**全部**有自己的线条姿势图标（emoji 不再是界面上的图标）',
-        ids.every((id) => /class="ex-pose"/.test(svgOf.get(id)) && segsOf(svgOf.get(id)).length >= 5),
-        ids.filter((id) => !/class="ex-pose"/.test(svgOf.get(id))).join(', ') || 'all ok');
+      const allShared = [...ids.map((id) => svgOf.get(id)),
+        ...['upper', 'lower', 'core', 'full', 'stretch'].map((c) => categoryMarkSVG(c)),
+        ...['back', 'prev', 'next'].map((k) => navPoseSVG(k))];
+      ok('19 个动作**全部**有自己的线条姿势图标（一整套里没有 emoji 当图标）',
+        ids.every((id) => /class="ex-pose"/.test(svgOf.get(id)) && boxOf(svgOf.get(id)).el >= 4
+          && boxOf(svgOf.get(id)).heads === 1),
+        ids.map((id) => `${id}:${boxOf(svgOf.get(id)).el}`).join(' '));
       ok('19 张图**两两不同**（每个动作都有自己的样子，不会两张一样）',
         new Set([...svgOf.values()]).size === ids.length,
         `${new Set([...svgOf.values()]).size} / ${ids.length}`);
-      ok('全部画在同一个 32×32 方框里、都只有一个「头」、线段数一致（同一套骨架语言）',
+      ok('skill 规格：全部是 24×24 网格、只含 shapes、没有 <text> / emoji',
+        allShared.every((svg) => /viewBox="0 0 24 24"/.test(svg) && !/<text/.test(svg)
+          && !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(svg)),
+        '有图标不合规');
+      ok('skill 规格：坐标全部落在整数或 .5 上（不会出现半像素虚边）',
+        allShared.every((svg) => numsOf(svg).every((v) => Math.abs(v * 2 - Math.round(v * 2)) < 1e-6)),
+        allShared.map((svg, i) => (numsOf(svg).every((v) => Math.abs(v * 2 - Math.round(v * 2)) < 1e-6) ? '' : i))
+          .filter(Boolean).join(',') || 'ok');
+      ok('skill 规格：动作图标都画在 20×20 活动区里（四周至少留 1px）',
         ids.every((id) => {
           const b = boxOf(svgOf.get(id));
-          return b.minX >= 0 && b.maxX <= 32 && b.minY >= 0 && b.maxY <= 32 && b.heads === 1;
+          return b.minX >= 2 && b.maxX <= 22 && b.minY >= 2 && b.maxY <= 22 && b.el <= 10;
         }),
-        ids.map((id) => `${id}:${boxOf(svgOf.get(id)).heads}`).filter((s) => !s.endsWith(':1')).join(', ') || 'ok');
+        ids.map((id) => `${id}:[${boxOf(svgOf.get(id)).minX},${boxOf(svgOf.get(id)).minY}]`).join(' '));
       /**
        * 躺 / 撑 / 坐的动作画成横构图，而且头在画面一端。
-       *
-       * ⚠️ 例外：**反向卷腹 / 仰卧抬腿**是躺着的，但腿是往正上方抬的 ——
-       * 外框会变成「竖的」（9×15），所以这两张只要求「头在画面一端」。
+       * ⚠️ 例外：**反向卷腹 / 仰卧抬腿**是躺着的，但腿是往正上方抬的 —— 外框会变成「竖的」，只要求头在一端。
        */
       const LEGS_UP = new Set(['reverseCrunch', 'lyingLegRaise']);
       const lyingIds = ids.filter((id) => EXERCISES.find((x) => x.id === id).posture !== 'stand');
+      const standIds = ids.filter((id) => EXERCISES.find((x) => x.id === id).posture === 'stand');
       ok('**和动作相关**：躺 / 撑 / 坐的动作画成横构图，而且头在画面一端',
         lyingIds.every((id) => {
           const b = boxOf(svgOf.get(id));
           const atEnd = b.headX <= b.minX + b.w * 0.3 || b.headX >= b.maxX - b.w * 0.3;
           return atEnd && (LEGS_UP.has(id) || b.w > b.h * 0.85);
         }),
-        lyingIds.map((id) => `${id}:${boxOf(svgOf.get(id)).w.toFixed(0)}x${boxOf(svgOf.get(id)).h.toFixed(0)}`).join(' '));
-      ok('**和动作相关**：站姿的动作画成竖构图（高度 ≥14px，不会躺下来）',
-        ids.filter((id) => EXERCISES.find((x) => x.id === id).posture === 'stand')
-          .every((id) => boxOf(svgOf.get(id)).h >= 14),
-        ids.filter((id) => EXERCISES.find((x) => x.id === id).posture === 'stand')
-          .map((id) => `${id}:h${boxOf(svgOf.get(id)).h.toFixed(0)}`).join(' '));
-      ok('分类图标：同一套线条 + 相关部位**加粗**，五个分类各不相同（拉伸那颗把手举起来）',
+        lyingIds.map((id) => `${id}:${boxOf(svgOf.get(id)).w.toFixed(1)}x${boxOf(svgOf.get(id)).h.toFixed(1)}`).join(' '));
+      ok('**和动作相关**：躺姿都比站姿「扁」（站姿最矮的一张也比躺姿最高的一张高）',
+        Math.min(...standIds.map((id) => boxOf(svgOf.get(id)).h))
+          > Math.max(...lyingIds.map((id) => boxOf(svgOf.get(id)).h)),
+        `站姿最矮 ${Math.min(...standIds.map((id) => boxOf(svgOf.get(id)).h)).toFixed(1)}`
+        + ` vs 躺姿最高 ${Math.max(...lyingIds.map((id) => boxOf(svgOf.get(id)).h)).toFixed(1)}`);
+      ok('分类图标用库里现成的专业图标（5 个各不相同、只含 shapes、元素 ≤6）',
         ['upper', 'lower', 'core', 'full', 'stretch'].every((c) => /class="ex-pose"/.test(categoryMarkSVG(c))
-          && /class="icon-bold"/.test(categoryMarkSVG(c)))
-        && new Set(['upper', 'lower', 'core', 'full', 'stretch'].map((c) => categoryMarkSVG(c))).size >= 4);
-      ok('导航箭头（返回 / 上一页 / 下一页）也是线条画的，不是字体里的 ◀ ▶ ↩',
-        ['back', 'prev', 'next'].every((k) => /class="ex-pose"/.test(navPoseSVG(k)))
+          && !/<text/.test(categoryMarkSVG(c)))
+        && new Set(['upper', 'lower', 'core', 'full', 'stretch'].map((c) => categoryMarkSVG(c))).size === 5
+        && ['upper', 'lower', 'core', 'full', 'stretch']
+          .every((c) => (categoryMarkSVG(c).match(/<(path|circle|line|rect|polyline|polygon|ellipse)/g) || []).length <= 6));
+      ok('导航箭头用库里现成的专业箭头（返回 / 上一页 / 下一页各不相同），不是字体里的 ◀ ▶ ↩',
+        new Set(['back', 'prev', 'next'].map((k) => navPoseSVG(k))).size === 3
+        && ['back', 'prev', 'next'].every((k) => /class="ex-pose"/.test(navPoseSVG(k)))
         && !/◀|▶|↩/.test(navPoseSVG('back') + navPoseSVG('prev') + navPoseSVG('next')));
+      ok('界面按钮的图标也换成线条图标（主页 / 成绩 / 设定 / 开始），HTML 里没有 emoji 图标了',
+        !/[\u{1F300}-\u{1FAFF}]/u.test(html)
+        && (html.match(/class="ui-icon"/g) || []).length >= 4);
+      ok('现成图标的来源与许可写在源码里（Lucide ISC / Tabler MIT），换图标时查得到出处',
+        /Lucide 1\.55（ISC 许可）/.test(read('src/icons.js')) && /Tabler Icons 3\.49 outline（MIT）/.test(read('src/icons.js')));
       /* 用户要求：「返回，上一页，下一页不要显示文字了，显示图标即可」 */
       ok('导航圆环只画图标、不生成文字节点（动作 / 分类仍然有名字），无障碍名称保留在 aria-label 上',
         /const navKind = it\.kind === 'back' \|\| it\.kind === 'prev' \|\| it\.kind === 'next';/.test(app)

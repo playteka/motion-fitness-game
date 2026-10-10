@@ -3445,9 +3445,10 @@ console.log('\n[13] 最佳成绩 / 运动记录（两个图标 + 弹窗）');
     !/<h2 class="card-title" data-i18n="ui\.best"><\/h2>/.test(html));
   ok('动作页侧栏里不再有「训练记录」卡片（连清空按钮一起搬走）',
     !/<ul class="history-list" id="historyList">/.test(html.split('id="historyModal"')[0]));
-  ok('两个新图标（🏆 最佳成绩 / 📜 运动记录）在顶栏里',
+  ok('两个新图标（最佳成绩 / 运动记录）在顶栏里，而且都是线条图标（不再是 emoji）',
     /id="btnBest"/.test(html) && /id="btnHistory"/.test(html)
-    && /🏆/.test(html) && /📜/.test(html));
+    && /id="btnBest"[\s\S]{0,400}?class="ui-icon"/.test(html)
+    && /id="btnHistory"[\s\S]{0,400}?class="ui-icon"/.test(html));
   {
     const span = (from, to) => html.slice(html.indexOf(from), html.indexOf(to));
     ok('列表被搬进了弹窗里（recordList / historyList / 清空按钮都在弹窗中）',
@@ -4903,10 +4904,9 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     api.state.menuPage = 0;
     api.renderMenu();
     const cats = api.menuItems();
-    ok('第一级的五个分类也换成线条图标，而且是「部位示意图」：同一个火柴人 + 相关部位加粗',
-      cats.length === 5 && cats.every((it) => /class="ex-pose"/.test(it.poseIcon)
-        && /class="icon-bold"/.test(it.poseIcon))
-      && new Set(cats.map((it) => it.poseIcon)).size >= 4,        // 拉伸那颗举手的，和其它不同
+    ok('第一级的五个分类也换成线条图标（库里现成的专业图标：上肢 / 下肢 / 核心 / 全身 / 拉伸）',
+      cats.length === 5 && cats.every((it) => /class="ex-pose"/.test(it.poseIcon) && !/<text/.test(it.poseIcon))
+      && new Set(cats.map((it) => it.poseIcon)).size === 5,
       `n=${cats.length} 去重=${new Set(cats.map((it) => it.poseIcon)).size}`);
     api.selectFromMenu('cat:core');
     const bridgeEl = grid.children.find((c) => c.dataset.ex === 'bridge');

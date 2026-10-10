@@ -13,6 +13,7 @@
     "test:specs": "node tests/test-specs.mjs",
     "test:dump": "node tests/test-detectors.mjs --dump",
     "test:page": "node tests/test-page.mjs",
-    "test:app": "node tests/test-app.mjs"
+    "test:app": "node tests/test-app.mjs",
+    "icons:preview": "node tests/preview-icons.mjs"
   }
 }

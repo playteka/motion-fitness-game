@@ -347,15 +347,13 @@ const STRAIGHT_KNEE = 174;
  * @param o.armAngle  手臂相对「竖直向上」的角度：0 = 举过头顶，180 = 自然下垂
  * @param o.knee      膝角（180 = 腿伸直）—— 相扑深蹲这类「正面 + 屈膝」的动作用它：
  *                    小腿相对大腿再向外折一点，人变矮、更宽，一眼就是「宽站屈膝」
- * @param o.bold      哪些部位加粗（'arms' / 'legs' / 'torso' / 'all'），分类的「部位示意图」用
  */
-function buildJack({ legAngle = 6, armAngle = 150, knee = 180, bold = null } = {}) {
+function buildJack({ legAngle = 6, armAngle = 150, knee = 180 } = {}) {
   const S = { thigh: 6.2, shin: 6.2, torso: 7.4, head: 2.0, upper: 3.7, fore: 3.6 };
   const cx = ICON_BOX / 2;
   const la = clamp(num(legAngle, 6), 0, 34);
   const aa = clamp(num(armAngle, 150), 0, 180);
   const bend = (180 - clamp(num(knee, 180), 90, 180)) / 2;   // 每条腿再折出去的角度
-  const on = (part) => bold === 'all' || bold === part;
 
   const lines = [];
   const circles = [];
@@ -367,62 +365,90 @@ function buildJack({ legAngle = 6, armAngle = 150, knee = 180, bold = null } = {
   for (const side of [1, -1]) {
     const kneeP = add(hip, down(side * la), S.thigh);
     const ankle = add(kneeP, down(side * (la + bend)), S.shin);
-    lines.push({ ...seg(hip, kneeP), bold: on('legs') }, { ...seg(kneeP, ankle), bold: on('legs') });
+    lines.push(seg(hip, kneeP), seg(kneeP, ankle));
     const elbow = add(shoulder, up(side * aa), S.upper);
     const wrist = add(elbow, up(side * aa), S.fore);
-    lines.push({ ...seg(shoulder, elbow), bold: on('arms') }, { ...seg(elbow, wrist), bold: on('arms') });
+    lines.push(seg(shoulder, elbow), seg(elbow, wrist));
   }
-  lines.push({ ...seg(hip, shoulder), bold: on('torso') });
-  circles.push({ x: shoulder.x, y: shoulder.y - S.head * 1.6, r: S.head, bold: on('all') });
+  lines.push(seg(hip, shoulder));
+  circles.push({ x: shoulder.x, y: shoulder.y - S.head * 1.6, r: S.head });
   return { lines, circles };
 }
 
 /**
- * 「身体部位」示意图（正面站姿）：同一个火柴人，**把相关部位画粗**。
- *
- * 分类图标用它（上肢 / 下肢 / 核心 / 全身 / 拉伸）：和动作图标同一套线条语言
- * （同样的描边宽度、圆头、颜色跟随文字），但语义完全不同 ——
- * 动作图标回答「这个动作长什么样」，分类图标回答「这一类练哪儿」。
- *
- * @param o.region   'arms' | 'legs' | 'torso' | 'all'
- * @param o.armAngle 手臂相对「竖直向上」的角度（拉伸那一类用 18 = 双手举过头顶）
+ * 「身体部位」示意图 —— **已改用现成的专业图标**（见下面的 `LIB_ICON_PATHS`），
+ * 所以这里不再自己画；保留这个注释是为了说明历史与查找位置。
  */
-function buildBodyMap({ region = 'all', armAngle = 158 } = {}) {
-  // 站得开一点（腿 12°、手臂稍微外张）——不然加粗的那几条会和躯干挤在一根竖线上
-  return buildJack({ legAngle: 12, armAngle, bold: region });
-}
 
 /**
- * 导航箭头（返回 / 上一页 / 下一页）的线条形状：和动作图标同一套描边风格，
- * 不再是字体里的 `◀ ▶ ↩` 字符（字形风格和线条图标不一致）。
+ * 现成的专业图标（**优先用它们，不自己画** —— ui-icon-design skill 的第 2 步）。
+ *
+ * 来源与许可：
+ *   - Lucide 1.55（ISC 许可）：`biceps-flexed`（上肢）、`footprints`（下肢）、`flame`（核心）、
+ *     `person-standing`（全身）、`corner-up-left`（返回）、`chevron-left` / `chevron-right`（上一页 / 下一页）、
+ *     `house` / `trophy` / `settings` / `play`（界面按钮）
+ *   - Tabler Icons 3.49 outline（MIT）：`stretching`（拉伸）
+ * 这里只留它们的 `<path>` / `<circle>`，样式统一交给 CSS 的 `.ex-pose`（stroke 2 / currentColor / 圆头圆角），
+ * 所以和手绘的动作图标是同一套几何参数。
  */
-function navArrowShape(kind) {
-  const cx = ICON_BOX / 2;
-  const cy = ICON_BOX / 2;
-  if (kind === 'prev') {
-    return {
-      lines: [seg({ x: cx + 4.5, y: cy - 6.5 }, { x: cx - 3, y: cy }),
-        seg({ x: cx - 3, y: cy }, { x: cx + 4.5, y: cy + 6.5 })],
-      circles: [],
-    };
-  }
-  if (kind === 'next') {
-    return {
-      lines: [seg({ x: cx - 4.5, y: cy - 6.5 }, { x: cx + 3, y: cy }),
-        seg({ x: cx + 3, y: cy }, { x: cx - 4.5, y: cy + 6.5 })],
-      circles: [],
-    };
-  }
-  // 返回：一条「弯回头」的箭头（`↩` 的意思，但用线条画）
-  return {
-    lines: [
-      seg({ x: cx + 6.5, y: cy + 5.5 }, { x: cx + 6.5, y: cy - 1.5 }),
-      seg({ x: cx + 6.5, y: cy - 1.5 }, { x: cx - 4.5, y: cy - 1.5 }),
-      seg({ x: cx - 4.5, y: cy - 1.5 }, { x: cx - 0.5, y: cy - 6 }),
-      seg({ x: cx - 4.5, y: cy - 1.5 }, { x: cx - 0.5, y: cy + 3 }),
-    ],
-    circles: [],
-  };
+const LIB_ICON_PATHS = {
+  // ---- 分类：上肢 / 下肢 / 核心 / 全身 / 拉伸 ----
+  'cat:upper': '<path d="M12.409 13.017A5 5 0 0 1 22 15c0 3.866-4 7-9 7-4.077 0-8.153-.82-10.371-2.462'
+    + '-.426-.316-.631-.832-.62-1.362C2.118 12.723 2.627 2 10 2a3 3 0 0 1 3 3 2 2 0 0 1-2 2c-1.105 0-1.64-.444-2-1"/>'
+    + '<path d="M15 14a5 5 0 0 0-7.584 2"/><path d="M9.964 6.825C8.019 7.977 9.5 13 8 15"/>',
+  'cat:lower': '<path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z"/>'
+    + '<path d="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z"/>'
+    + '<path d="M16 17h4"/><path d="M4 13h4"/>',
+  'cat:core': '<path d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"/>',
+  'cat:full': '<circle cx="12" cy="5" r="1"/><path d="m9 20 3-6 3 6"/><path d="m6 8 6 2 6-2"/><path d="M12 10v4"/>',
+  'cat:stretch': '<path d="M15 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M5 20l5 -.5l1 -2"/>'
+    + '<path d="M18 20v-5h-5.5l2.5 -6.5l-5.5 1l1.5 2"/>',
+  // ---- 导航：返回 / 上一页 / 下一页 ----
+  back: '<path d="M20 20v-7a4 4 0 0 0-4-4H4"/><path d="M9 14 4 9l5-5"/>',
+  prev: '<path d="m15 18-6-6 6-6"/>',
+  next: '<path d="m9 18 6-6-6-6"/>',
+  // ---- 界面按钮（不再是 emoji）----
+  'ui:home': '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/>'
+    + '<path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  'ui:trophy': '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/>'
+    + '<path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/>'
+    + '<path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/>'
+    + '<path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>',
+  'ui:settings': '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/>'
+    + '<circle cx="12" cy="12" r="3"/>',
+  'ui:play': '<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/>',
+  'ui:brand': '<path d="M17.596 12.768a2 2 0 1 0 2.829-2.829l-1.768-1.767a2 2 0 0 0 2.828-2.829l-2.828-2.828a2 2 0 0 0-2.829 2.828l-1.767-1.768a2 2 0 1 0-2.829 2.829z"/>'
+    + '<path d="m2.5 21.5 1.4-1.4"/><path d="m20.1 3.9 1.4-1.4"/>'
+    + '<path d="M5.343 21.485a2 2 0 1 0 2.829-2.828l1.767 1.768a2 2 0 1 0 2.829-2.829l-6.364-6.364a2 2 0 1 0-2.829 2.829l1.768 1.767a2 2 0 0 0-2.828 2.829z"/>'
+    + '<path d="m9.6 14.4 4.8-4.8"/>',
+  'ui:target': '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  'ui:history': '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  'ui:search': '<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>',
+  'ui:hand': '<path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/>'
+    + '<path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/>'
+    + '<path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+  'ui:camera': '<path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/>'
+    + '<circle cx="12" cy="13" r="3"/>',
+  'ui:maximize': '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/>'
+    + '<path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  'ui:close': '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+};
+
+/** 现成图标的 SVG（样式由 `.ex-pose` / `.ui-icon` 给，这里只放形状） */
+export function libIconSVG(key, cls = 'ex-pose') {
+  const paths = LIB_ICON_PATHS[key];
+  if (!paths) return '';
+  return `<svg class="${cls}" viewBox="0 0 ${APP_ICON_BOX} ${APP_ICON_BOX}" aria-hidden="true">${paths}</svg>`;
+}
+
+/** 分类图标（上肢 / 下肢 / 核心 / 全身 / 拉伸）：用现成的专业图标 */
+export function categoryMarkSVG(id) {
+  return libIconSVG(`cat:${id}`);
+}
+
+/** 导航圆环的图标（返回 / 上一页 / 下一页）：用现成的专业箭头 */
+export function navPoseSVG(kind) {
+  return libIconSVG(kind);
 }
 
 /**
@@ -920,30 +946,28 @@ function poseSVG(lines, circles, cls, text = null) {
   const parts = lines.map((l) => {
     const a = l.a || l[0];
     const b = l.b || l[1];
-    const w = l.bold ? ' class="icon-bold"' : '';      // 「部位示意图」把相关部位画粗
-    return `<line${w} x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />`;
+    return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />`;
   });
-  for (const c of circles) {
-    parts.push(`<circle${c.bold ? ' class="icon-bold"' : ''} cx="${c.x}" cy="${c.y}" r="${c.r}" />`);
-  }
+  for (const c of circles) parts.push(`<circle cx="${c.x}" cy="${c.y}" r="${c.r}" />`);
   if (text) parts.push(`<text class="criteria-deg" ${text.attrs}>${text.text}</text>`);
   return `<svg class="${cls}" viewBox="0 0 ${ICON_BOX} ${ICON_BOX}" aria-hidden="true">${parts.join('')}</svg>`;
 }
 
 /**
- * 动作的「人体姿势」线条图标 —— **19 个动作全部用它**（用户要求「图标全面重新设计，
+ * 动作的「人体姿势」图标 —— **19 个动作全部手绘**（用户要求「图标全面重新设计，
  * 保持风格的一致性，同时和运动动作有相关性」）。
  *
- * 设计规则（三条，测试盯着）：
- *   1. **同一个画法**：全部由 `buildStand`（侧视站姿）/ `buildLie`（躺、撑、坐）/ `buildJack`（正面开合）
- *      / `buildKick`（勾腿）四个构建器画出来 —— 同一套骨架比例、描边宽度、圆头线帽，
- *      颜色统一走 `currentColor`（放到哪儿就跟哪儿的文字颜色一致）；
- *   2. **姿势就是这个动作的姿势**：每个动作挑**最有辨识度的那一帧**（比如深蹲选蹲到底、
- *      平板支撑选双肘撑地、臀桥选髋顶起来、跳箱选腾空过箱），参数集中写在这一张表里，一处改处处变；
- *   3. **互相不重复**：19 张图两两不同（测试逐个比对，重复就报错）。
+ * 为什么手绘：按 ui-icon-design skill 的第 2 步先在离线库里检索过 ——
+ * Lucide / Tabler 只有通用的健身符号（`dumbbell` / `exercise-ball` / `flame` / `person-standing` …），
+ * **没有**具体动作（squat / plank / lunge / crunch / bridge 检索命中 0），
+ * 所以这 19 张按 skill 第 3 步的规格自己画；分类图标和导航箭头则用库里的现成图标（见上面）。
  *
- * 参数取法：能沿用进度条关键帧那套参数的（臀桥 / 平板支撑 / 深蹲 / 箭步蹲…）就沿用，
- * 保持「图标」和「判定进度条上的小图」是同一个姿势；动作特有的（跳箱的箱子、勾腿跳的勾腿）单独写。
+ * 设计规则（三条，测试盯着）：
+ *   1. **同一个画法**：全部由 `buildStand`（侧视站姿/蹲/箭步蹲，跳箱还会画出箱子）、
+ *      `buildLie`（躺 / 撑 / 坐）、`buildJack`（正面开合）、`buildKick`（勾腿）四个构建器画出来，
+ *      再统一映射到 skill 规定的 **24×24 网格 / 20×20 活动区 / 坐标落在 .5 上**；
+ *   2. **姿势就是这个动作的姿势**：每个动作挑**最有辨识度的那一帧**，参数集中写在这一张表里；
+ *   3. **互相不重复**：19 张图两两不同（测试逐个比对）。
  */
 const EXERCISE_POSES = {
   /* ---- 上肢 ---- */
@@ -1015,39 +1039,98 @@ const EXERCISE_POSES = {
 };
 
 /**
- * 分类的「身体部位」示意图（上肢 / 下肢 / 核心 / 全身 / 拉伸）。
- *
- * 动作图标回答「这个动作长什么样」，分类图标回答「这一类练哪儿」：
- * 同一个正面火柴人，**相关部位画粗**（`.icon-bold`）。只有拉伸那一类是把双手举起来（看得出在拉）。
+ * 分类的「部位示意图」→ 已改用现成的专业图标（`LIB_ICON_PATHS` 的 `cat:*`）。
+ * 动作图标回答「这个动作长什么样」，分类图标回答「这一类练哪儿」。
  */
-const CATEGORY_POSES = {
-  upper: () => buildBodyMap({ region: 'arms' }),
-  lower: () => buildBodyMap({ region: 'legs' }),
-  core: () => buildBodyMap({ region: 'torso' }),
-  full: () => buildBodyMap({ region: 'all' }),
-  stretch: () => buildBodyMap({ region: 'all', armAngle: 18 }),
-};
 
-/** 动作的姿势图标（19 个动作都有；万一漏了返回空串，界面会退回 emoji） */
+/** 应用图标的画布：**24×24 网格、20×20 活动区居中**（ui-icon-design skill 的硬性规格） */
+export const APP_ICON_BOX = 24;
+const APP_LIVE = 20;
+const APP_PAD = (APP_ICON_BOX - APP_LIVE) / 2;
+/** 活动区里再留 0.5 的边（四舍五入到 .5 之后也不会顶到边线） */
+const APP_INNER = APP_LIVE - 1;
+
+/** 手绘骨架（32 单位）→ 24 网格：缩进 20×20 活动区，坐标落在整数 / .5 上（避免半像素虚边） */
+const gridVal = (v) => Math.round((v / ICON_BOX * APP_LIVE + APP_PAD) * 2) / 2;
+
+/**
+ * 把内容整体缩放进活动区（保持比例、居中）。
+ *
+ * 四个构建器各有各的「张开幅度」（躺着的很长、跳起来的很高），直接映射进来会有的大有的小、
+ * 腾空的还会顶出活动区；这一步统一缩放，让 19 张图在同一个 20×20 的框里**视觉重量一致**。
+ */
+function fitToLiveArea(lines, circles) {
+  const xs = [...lines.flatMap((l) => [l.a.x, l.b.x]), ...circles.flatMap((c) => [c.x - c.r, c.x + c.r])];
+  const ys = [...lines.flatMap((l) => [l.a.y, l.b.y]), ...circles.flatMap((c) => [c.y - c.r, c.y + c.r])];
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const k = Math.min(1, APP_INNER / Math.max(maxX - minX, maxY - minY, 0.001));
+  const mid = APP_ICON_BOX / 2;
+  const px = (x) => Math.round((mid + (x - cx) * k) * 2) / 2;
+  const py = (y) => Math.round((mid + (y - cy) * k) * 2) / 2;
+  return {
+    lines: lines.map((l) => ({ a: { x: px(l.a.x), y: py(l.a.y) }, b: { x: px(l.b.x), y: py(l.b.y) } })),
+    circles: circles.map((c) => ({ x: px(c.x), y: py(c.y), r: Math.max(0.5, Math.round(c.r * k * 2) / 2) })),
+  };
+}
+
+/**
+ * 共线的小段合并成一段。
+ *
+ * skill 规定「一个图标最多 6 个元素」；人体姿势是**象形图**（一个关节必须两笔），
+ * 所以这里把「肘 / 膝基本伸直」的那些两段合成一段 —— 伸直的手臂、站直的腿不用画成两笔，
+ * 元素数就能从 10 降到 6~8（README 里写明了这条与 skill 规格的差异与原因）。
+ */
+function mergeStraightLimbs(lines, tol = 14) {
+  const out = lines.map((l) => ({ a: { ...l.a }, b: { ...l.b } }));
+  const ang = (from, to) => Math.atan2(to.y - from.y, to.x - from.x);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 0; i < out.length && !changed; i += 1) {
+      for (let j = i + 1; j < out.length && !changed; j += 1) {
+        const A = out[i];
+        const B = out[j];
+        const pairs = [[A.a, A.b, B.a, B.b], [A.a, A.b, B.b, B.a], [A.b, A.a, B.a, B.b], [A.b, A.a, B.b, B.a]];
+        const hit = pairs.find(([p, , q]) => Math.hypot(p.x - q.x, p.y - q.y) < 0.05);
+        if (!hit) continue;
+        const [p, far1, , far2] = hit;
+        let d = Math.abs(ang(p, far1) - ang(p, far2)) * 180 / Math.PI;
+        if (d > 180) d = 360 - d;
+        if (d > tol) continue;
+        out.splice(j, 1);
+        out.splice(i, 1, { a: far1, b: far2 });
+        changed = true;
+      }
+    }
+  }
+  return out;
+}
+
+/** 把骨架画成 SVG（24 网格、只含 shapes、颜色走 currentColor） */
+function appIconSVG(lines, circles) {
+  const parts = lines.map((l) => `<line x1="${l.a.x}" y1="${l.a.y}" x2="${l.b.x}" y2="${l.b.y}" />`);
+  for (const c of circles) {
+    parts.push(`<circle cx="${c.x}" cy="${c.y}" r="${Math.max(0.5, Math.round((c.r / ICON_BOX * 24) * 2) / 2)}" />`);
+  }
+  return `<svg class="ex-pose" viewBox="0 0 ${APP_ICON_BOX} ${APP_ICON_BOX}" aria-hidden="true">${parts.join('')}</svg>`;
+}
+
+/** 动作的姿势图标（19 个动作都有；万一漏了返回空串，界面会退回图标字符） */
 export function exercisePoseSVG(id) {
   const build = EXERCISE_POSES[id];
   if (!build) return '';
   const { lines, circles } = build();
-  return poseSVG(lines, circles, 'ex-pose');
-}
-
-/** 分类的「部位示意图」图标（和动作图标同一套线条风格） */
-export function categoryMarkSVG(id) {
-  const build = CATEGORY_POSES[id];
-  if (!build) return '';
-  const { lines, circles } = build();
-  return poseSVG(lines, circles, 'ex-pose');
-}
-
-/** 导航圆环的图标（返回 / 上一页 / 下一页）：同风格的线条箭头 */
-export function navPoseSVG(kind) {
-  const { lines, circles } = navArrowShape(kind);
-  return poseSVG(lines, circles, 'ex-pose');
+  const merged = mergeStraightLimbs(lines);
+  const fitted = fitToLiveArea(
+    merged.map((l) => ({ a: { x: gridVal(l.a.x), y: gridVal(l.a.y) }, b: { x: gridVal(l.b.x), y: gridVal(l.b.y) } })),
+    circles.map((c) => ({ x: gridVal(c.x), y: gridVal(c.y), r: c.r })),
+  );
+  return appIconSVG(fitted.lines, fitted.circles);
 }
 
 /**

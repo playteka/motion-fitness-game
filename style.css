@@ -1523,20 +1523,30 @@ kbd {
   color: #f2f8ff;                      /* 文字箭头（↩ ◀ ▶）跟名字一样是白色，一眼看得清 */
   pointer-events: none;
 }
-/* 有「人体姿势」线条图的动作（19 个动作 + 5 个分类 + 导航箭头）：
-   线条走 currentColor，跟着上面的 color 走 */
+/* 图标：一整套线条画（ui-icon-design skill 的 `rounded` 原型 —— 24×24 网格、20×20 活动区、
+   stroke 2、圆头圆角、颜色走 currentColor）。动作姿势图、分类图标、导航箭头、界面按钮全用它。 */
 .ex-pose {
   display: block;
   width: 1em;
   height: 1em;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.9;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-/* 分类的「身体部位示意图」：相关部位画粗（同一个火柴人，粗的那一段就是这一类练的地方） */
-.ex-pose .icon-bold { stroke-width: 3.4; }
+/* 界面按钮上的图标（主页 / 成绩 / 运动设定 / 开始） */
+.ui-icon {
+  width: 1.1em;
+  height: 1.1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  display: inline-block;
+  vertical-align: -0.15em;
+}
 .ex-card .ex-icon .ex-pose { width: 1.1em; height: 1.1em; }
 #hudIcon .ex-pose { width: 1.05em; height: 1.05em; vertical-align: -0.12em; }
 .menu-name {
