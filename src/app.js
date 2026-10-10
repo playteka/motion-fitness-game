@@ -1022,12 +1022,16 @@ const gestureState = {
    *   - `side`      正在蓄力的是哪只手（速度闸门按这只手算）；
    *   - `prev`      每只手上一帧的位置（算速度用，判「手是不是在动」）；
    *   - `armed`     每只手有没有「从所有圆环外面进来」的许可（防误触的核心，见 MENU_ARM_MS）；
-   *   - `announced` 这一格的名字是不是已经念过了（指着它一会儿就先念出来）。
+   *   - `announced` 这一格的名字是不是已经念过了（指着它一会儿就先念出来）；
+   *   - `swipe`     「双手同时挥两次」翻页的状态（参考点 / 方向 / 数到第几下 / 冷却，见 updateMenuSwipe）。
    */
   menu: {
     id: '', side: '', p: 0, since: 0, lastInside: 0, at: 0, announced: '',
     prev: { L: null, R: null },
     armed: { L: false, R: false },
+    swipe: {
+      ref: {}, dir: 0, count: 0, lastAt: 0, quietSince: 0, cooldownUntil: 0,
+    },
   },
 };
 
@@ -1660,10 +1664,10 @@ function retrySet() {
  *   鼠标点页码那一行、键盘 ← / →（或 PageUp / PageDown）同样能翻页。
  * ------------------------------------------------------------------ */
 
-/** 每行 4 个（用户要求） */
-const MENU_COLS = 4;
-/** 一页最多几行（用户要求 2 行 → 宽屏一页 8 个；窄屏自动减列，一页就变成 4 个） */
-const MENU_ROWS = 2;
+/** 每行最多 5 个（用户要求「每一行最多 5 个圆环选项」） */
+const MENU_COLS = 5;
+/** 宽屏每页只摆**一行**（用户要求「每页还是最多一行」）；窄屏另见 menuRowsFor() */
+const MENU_ROWS = 1;
 /**
  * 判定半径 = **画出来的圆圈本身**（1.0 倍）。
  *
@@ -1718,19 +1722,31 @@ const MENU_STILL_SPEED = 0.30;
 const MENU_ARM_MS = 260;
 /** 手离开后进度退回去的速度（比别的圆环那 1.5 秒快：蹭一下不该留下半格进度） */
 const MENU_DRAIN_MS = 700;
+/* ---- 「双手同时挥两次」翻页（用户要求） ---- */
+/** 一次挥动的行程：舞台高度的 16%（1280×720 上约 115px），两边手都要挥够这个量 */
+const MENU_SWIPE_TRAVEL = 0.16;
+/** 一次挥动要在这么短的时间里完成（秒表式：慢慢挪不算） */
+const MENU_SWIPE_MS = 550;
+/** 两次挥动之间的间隔上限：超过这个时间就重新数（要「连着挥两下」） */
+const MENU_SWIPE_CHAIN_MS = 1600;
+/** 翻完一页的冷却：连挥不会一下子翻好几页 */
+const MENU_SWIPE_COOLDOWN_MS = 1200;
+/** 「手停下来了」的速度门槛（舞台高度 / 秒）—— 两次挥动之间必须停一下，否则一次长挥会被算成两次 */
+const MENU_SWIPE_QUIET = 0.12;
+/** 停多久才算「停下来了」 */
+const MENU_SWIPE_QUIET_MS = 130;
 
 /**
- * 菜单项：**两级**。
+ * 菜单项：**两级**，每页最多 `MENU_COLS` 个（宽屏 5 个一行，用户要求）。
  *   第一级 `menuLevel === 0`：5 个分类（上肢 / 下肢 / 核心 / 全身 / 拉伸）；
- *   第二级 `menuLevel === 1`：当前分类下的动作，末尾再加一个「↩ 返回」。
+ *   第二级 `menuLevel === 1`：当前分类下的动作。
  *
- * 为什么要两级（用户反馈）：「主界面的圆环太小了，字也太小了，建议考虑二级菜单。」
- * 19 个圆环挤在一屏里，直径只有 ~97px、名字只有 12px；分成两级 + 一页 8 个之后，
- * 圆环有 199~299px、名字跟着字号一起放大（见 layoutMenu 里的字号计算）。
+ * 「↩ 返回」**不在这里**了（用户要求「固定在画面上，不参与翻页」）——见 `menuNavLayout()`：
+ * 它和「◀ 上一页 / 下一页 ▶」一起常驻在画面顶部，所以每页专心放 5 个选项。
  */
 function menuItems() {
   if (state.menuLevel === 0) {
-    const list = localizedCategories().map((c) => ({
+    return localizedCategories().map((c) => ({
       id: `cat:${c.id}`,
       kind: 'category',
       catId: c.id,
@@ -1739,19 +1755,10 @@ function menuItems() {
       poseIcon: '',
       sub: t('menu.catCount', { n: localizedByCategory(c.id).length }),
     }));
-    /**
-     * 第一级也有一格「↩ 返回」（用户要求：「在第一级菜单选择页面去掉『退出』圆环，
-     * 增加一个『返回』圆环，图标和其他『返回』圆环保持一致」）——
-     * 它回到**网页首页**，图标与第二级那格「返回」完全一样（同一个 `↩`）。
-     */
-    list.push({ id: 'back', kind: 'back', name: t('menu.back'), icon: '↩', poseIcon: '', sub: '' });
-    return list;
   }
-  const list = localizedByCategory(state.menuCategory).map((ex) => ({
+  return localizedByCategory(state.menuCategory).map((ex) => ({
     id: ex.id, kind: 'exercise', name: ex.name, icon: ex.icon, poseIcon: ex.poseIcon, sub: '',
   }));
-  list.push({ id: 'back', kind: 'back', name: t('menu.back'), icon: '↩', poseIcon: '', sub: '' });
-  return list;
 }
 
 /** 菜单里要列的分类名（第二级的标题用） */
@@ -1765,9 +1772,17 @@ function menuCols(w) {
   return Math.max(1, Math.min(MENU_COLS, Math.floor(w / MENU_CELL_MIN_PX)));
 }
 
-/** 这一页放几个：宽屏 4 列 × 2 行 = 8；窄屏列数少了，一页也就少几个 */
+/**
+ * 摆几行：宽屏**只摆一行**（用户要求「每页还是最多一行」）；
+ * 竖屏手机那种窄屏宽度只够 1~2 列，一行就只能放一两个，翻页太碎，所以窄屏放宽到两行。
+ */
+function menuRowsFor(size = stageSize()) {
+  return size.w < 620 ? 2 : MENU_ROWS;
+}
+
+/** 这一页放几个：宽屏 5 个（5 列 × 1 行）；窄屏列数少了，一页也就少几个 */
 function menuPerPage(size = stageSize()) {
-  return Math.max(1, menuCols(size.w) * MENU_ROWS);
+  return Math.max(1, menuCols(size.w) * menuRowsFor(size));
 }
 
 /** 当前这一层的分页信息（页码越界时夹回范围内） */
@@ -1785,14 +1800,17 @@ function menuHasPages(size = stageSize()) {
 }
 
 /**
- * 菜单圆环的几何：**按舞台尺寸算**（不读 DOM 的布局）。
+ * 菜单圆环的几何：**按舞台尺寸算**（不读 DOM 的布局）——只算**这一页的选项**。
  *
  * 和左下角退出圆环是同一个做法：判定用的圆心 / 半径与写进元素的行内 `left/top` 永远来自同一份数，
  * 所以「看到哪一格」和「程序判哪一格」不会各说一套（测试也能在没有真实布局的桩里跑）。
  * 直径与字号一起算：字号按直径走，圆环一大字就跟着大（用户反馈「圆环太小、字也太小」）。
  *
  * ⚠️ 列数只看屏幕宽度（不看这一页有几个），这样**每一页的圆环都一样大**；
- * 最后一页不满就整行居中（offset）。有翻页圆环时两侧留出它们的位置（不然会互相压住）。
+ * 最后一页不满就整行居中（offset）。
+ *
+ * 导航圆环（返回 / 上一页 / 下一页）**不占这里的宽度** —— 它们在画面顶部的另一条带子里
+ * （见 `menuNavLayout()`），所以 5 个选项能把整幅宽度用满，圆环又大回去了。
  */
 function menuRingLayout(size) {
   const info = menuPageInfo(size);
@@ -1802,16 +1820,14 @@ function menuRingLayout(size) {
   const cols = menuCols(size.w);
   const rows = Math.max(1, Math.ceil(n / cols));
   const narrow = size.w < 620;
-  const nav = menuNavLayout(size);
-  const navW = nav.length ? (nav[0].r * 2 + 26) : 0;
-  const padX = Math.max(10, size.w * 0.02) + navW;
+  const padX = Math.max(10, size.w * 0.02);
   /**
-   * 顶部让开标题 / 页码，底部让开提示，**并且故意把整块圆环往上放**：
+   * 顶部让开标题 / 页码 / 导航圆环，底部让开提示，**并且故意把整块圆环往上放**：
    * 底部留出的这一条（默认 18% 高度）就是「放手区」——
    * 人站在画面里手自然垂下时，手就落在这一条里，不会压在某一格的判定圈上
    * （用户反馈：「人站在画面中手很容易误触某个圆环」）。窄屏 / 竖屏手机再让多一点。
    */
-  const top = size.h * (narrow ? 0.16 : 0.13);
+  const top = size.h * (narrow ? 0.20 : 0.15);
   const bottom = size.h * (narrow ? 0.20 : 0.18);
   const cellW = Math.max(1, (size.w - padX * 2) / cols);
   const cellH = Math.max(1, (size.h - top - bottom) / rows);
@@ -1838,28 +1854,43 @@ function menuRingLayout(size) {
 }
 
 /**
- * 「上一页 / 下一页」两个圆环（只有一页时返回空数组 = 不显示）。
+ * 常驻的**导航圆环**：顶部左角的「↩ 返回」+「◀ 上一页」，顶部右角的「下一页 ▶」。
  *
- * 用户反馈「挥手换页的方式似乎也不太好」之后的替代方案：用**和选动作完全一样的交互**翻页，
- * 只是按住时间短（1 秒）并且按住不放会连续翻。位置放在画面**左右两侧正中**：
- * 那里离动作圆环最远（不会被误判成某一格），也不碰左下角的退出圆环。
+ * 用户要求：「『返回』固定在画面上、不参与翻页」+「每页最多 5 个」——
+ * 所以导航不占选项的格子：选项那一行能用满整幅宽度（1280×720 上圆环 ≈211px），
+ * 而「返回」翻到哪一页都在，一眼看得到；翻页圆环只在**真的有第二页**时才出现
+ * （现在 5 个一页，只有「核心」那样 6 个动作的分类才需要翻页）。
+ *
+ * 三个都在画面**上沿**：手要抬起来才够得到，正好和「别误触」的方向一致；
+ * 选出选项的那一行在画面中间，两者不会互相压住（判定圈也不重叠）。
  */
 function menuNavLayout(size) {
-  if (!menuHasPages(size)) return [];
-  const d = clamp(Math.min(size.w, size.h) * 0.15, 64, 132);
-  const margin = d * 0.55 + Math.max(8, size.w * 0.012);
-  const nameSize = clamp(d * 0.26, 12, 26);
+  const d = clamp(Math.min(size.w, size.h) * 0.115, 56, 104);
+  const r = d / 2;
+  const margin = Math.max(10, size.w * 0.014);
+  const cy = r + Math.max(6, size.h * 0.012);
+  const nameSize = clamp(d * 0.24, 11, 22);
   const iconSize = clamp(d * 0.42, 18, 40);
-  return [
-    { id: 'page:prev', kind: 'prev', dir: -1, icon: '◀', name: t('menu.prev'), poseIcon: '', sub: '' },
-    { id: 'page:next', kind: 'next', dir: 1, icon: '▶', name: t('menu.next'), poseIcon: '', sub: '' },
-  ].map((it, i) => ({
+  const rings = [{
+    id: 'back', kind: 'back', icon: '↩', name: t('menu.back'), poseIcon: '', sub: '',
+    cx: margin + r,
+  }];
+  if (menuHasPages(size)) {
+    rings.push({
+      id: 'page:prev', kind: 'prev', dir: -1, icon: '◀', name: t('menu.prev'), poseIcon: '', sub: '',
+      cx: margin + r * 3 + Math.max(8, size.w * 0.01),
+    });
+    rings.push({
+      id: 'page:next', kind: 'next', dir: 1, icon: '▶', name: t('menu.next'), poseIcon: '', sub: '',
+      cx: size.w - margin - r,
+    });
+  }
+  return rings.map((it) => ({
     ...it,
-    cx: i === 0 ? margin : size.w - margin,
-    cy: size.h * 0.5,
-    r: d / 2,
-    hit: (d / 2) * MENU_NAV_HIT_RATIO,
-    start: (d / 2) * MENU_START_RATIO,
+    cy,
+    r,
+    hit: r * MENU_NAV_HIT_RATIO,
+    start: r * MENU_START_RATIO,
     nameSize,
     iconSize,
   }));
@@ -1999,6 +2030,10 @@ function resetMenuProgress() {
    * 手只要在环外露过面就会重新拿到许可（见 updateMenu 的闸 4）。
    */
   st.armed = { L: false, R: false };
+  // 「双手挥两次」的数数也一起清掉：刚进菜单 / 刚翻完页不该把上一轮的半次挥动接着算
+  st.swipe = {
+    ref: {}, dir: 0, count: 0, lastAt: 0, quietSince: 0, cooldownUntil: st.swipe?.cooldownUntil || 0,
+  };
 }
 
 /** 画某一格圆环的进度（复用 `.ring-fill` 的 dashoffset 口径，和别的圆环同一套） */
@@ -2014,25 +2049,120 @@ function paintMenuRing(id, p, leftS = null) {
 }
 
 /**
+ * **双手同时挥两次**翻页（用户要求：「双手向上挥动两次则向上翻页，双手向下挥动两次则向下翻页」）。
+ *
+ * 方向按键盘 PageUp / PageDown 的口径（用户确认）：**向上挥 = 上一页、向下挥 = 下一页**。
+ *
+ * 为什么是「双手 + 两次」：单手挥手在生活里太常见（抬手、挠头、换姿势），
+ * 而「两只手一起、同一个方向、连着挥两下」几乎只有「我要翻页」才会做 —— 误触概率极低。
+ *
+ * 判定口径：
+ *   - 两只手都要**看得见**，而且**立参考点**的时候两只手都要**在所有圆环之外**
+ *     （正指着某一格时挥手不算翻页；挥的过程中穿过圆环那一片没关系 —— 人挥手的路线本来就在那儿）；
+ *   - 两只手各自都要在 `MENU_SWIPE_MS`（550ms）里朝**同一个方向**挥够 `MENU_SWIPE_TRAVEL`
+ *     （舞台高度的 16%，1280×720 上约 115px）—— 一只手挥不算；
+ *   - **一次挥动只算一次**（burst）：挥完必须**停一下**（两只手的速度掉到 `MENU_SWIPE_QUIET` 以下
+ *     并保持 `MENU_SWIPE_QUIET_MS`）才会重置参考点、接受下一次 ——
+ *     所以「挥出去再收回来」那个回收动作不会被算成第二次，一次不停的长挥动也不会被算成两次；
+ *   - 第二下要和第一下**同方向**、并且在 `MENU_SWIPE_CHAIN_MS`（1.6 秒）内出现；
+ *   - 翻完一页有 `MENU_SWIPE_COOLDOWN_MS`（1.2 秒）冷却，连挥不会连翻好几页。
+ *
+ * @param {object} speed 每只手的当前速度（px/s，见 updateMenu），用来判「停下来了没有」
+ * @returns {number} 0 = 不翻页；+1 = 下一页；-1 = 上一页
+ */
+function updateMenuSwipe(palms, layout, size, now, speed) {
+  const sw = gestureState.menu.swipe;
+  if (!sw) return 0;
+  const travel = MENU_SWIPE_TRAVEL * size.h;
+  const quietSpeed = MENU_SWIPE_QUIET * size.h;
+  // 必须**两只手都看得见**（一只手挥不算）
+  const both = palms.length >= 2 && palms[0].side !== palms[1].side;
+  const outside = both && palms.every(
+    (p) => layout.every((it) => Math.hypot(p.x - it.cx, p.y - it.cy) > it.hit),
+  );
+  /** 数数清零（手离开画面 / 冷却中都不能接着数） */
+  const drop = () => {
+    sw.ref = {}; sw.dir = 0; sw.count = 0; sw.burst = false; sw.quietSince = 0;
+  };
+  if (!both || now < sw.cooldownUntil) {
+    drop();
+    return 0;
+  }
+  /** 立参考点（只有「两只手都在所有圆环之外」时才允许 —— 正指着某一格时挥手不算翻页） */
+  const capture = () => {
+    sw.ref = {};
+    for (const p of palms) sw.ref[p.side] = { y: p.y, t: now };
+  };
+
+  // 两只手都停下来了吗？（停下来 = 一次挥动结束，可以重新参考点、接受下一次）
+  const quiet = palms.every((p) => (speed?.[p.side] ?? 0) < quietSpeed);
+  if (quiet) {
+    if (!sw.quietSince) sw.quietSince = now;
+    if (now - sw.quietSince >= MENU_SWIPE_QUIET_MS) {
+      sw.burst = false;                      // 这一轮结束：下一次挥动从这里重新量
+      if (outside) capture(); else sw.ref = {};
+      sw.quietSince = 0;
+    }
+    return 0;
+  }
+  sw.quietSince = 0;
+  if (sw.burst) return 0;                    // 还在同一次挥动里（挥出去 / 收回来都不再数）
+
+  // 两只手各自相对参考点的位移：要同向、都要够行程、都要在时间窗内
+  const refs = palms.map((p) => sw.ref[p.side]);
+  if (!refs.every(Boolean)) {
+    /**
+     * 还没有参考点：手在动但人在环外，就从这一刻起算。
+     *
+     * ⚠️ 「在环外」这一条**只在立参考点时要**，挥的过程中可以**穿过圆环那一片** ——
+     * 人站在画面里挥手的路线本来就会从菜单那一行上经过，中途判一次「手在环里」就作废就太苛刻了。
+     */
+    if (outside) capture();
+    return 0;
+  }
+  const dys = palms.map((p, i) => p.y - refs[i].y);
+  const dts = palms.map((_, i) => now - refs[i].t);
+  const up = dys.every((d) => d <= -travel) && dts.every((t) => t <= MENU_SWIPE_MS);
+  const down = dys.every((d) => d >= travel) && dts.every((t) => t <= MENU_SWIPE_MS);
+  if (!up && !down) return 0;
+
+  const dir = up ? -1 : 1;                     // 上 = 上一页（-1）、下 = 下一页（+1）
+  sw.burst = true;                             // 这一次挥动到此为止（要停下来才能数下一次）
+  const same = dir === sw.dir && now - sw.lastAt <= MENU_SWIPE_CHAIN_MS;
+  sw.dir = dir;
+  sw.count = same ? sw.count + 1 : 1;
+  sw.lastAt = now;
+  if (sw.count < 2) return 0;                  // 要连着挥两次
+  sw.count = 0;
+  sw.cooldownUntil = now + MENU_SWIPE_COOLDOWN_MS;
+  return dir;
+}
+
+/**
  * 每帧更新手势菜单。
  *
  * 返回 `null`（还没选定）或：
- *   - `{ kind: 'select', id }`  —— 手掌在某一格动作圆环里停满 `GESTURE_HOLD_MS`（3 秒）：选中它；
- *   - `{ kind: 'page', dir }`   —— 手掌在「上一页 / 下一页」圆环里停满 `MENU_NAV_HOLD_MS`（1 秒）：翻页。
+ *   - `{ kind: 'select', id }`  —— 手掌在某一格圆环里停满 `GESTURE_HOLD_MS`（3 秒）：选中它；
+ *   - `{ kind: 'page', dir }`   —— 翻页：**双手同时挥两次**（见 updateMenuSwipe），
+ *     或者手掌在「◀ 上一页 / 下一页 ▶」圆环里停满 `MENU_NAV_HOLD_MS`（1 秒）。
  *
- * 为什么翻页也做成圆环（用户反馈「挥手换页的方式似乎也不太好」）：
- * 垂直挥手和「伸手去够上面那一排圆环」是同一个方向，很容易互相打架；
- * 而「把手掌放进圆环」是这里**唯一**需要学的手势 —— 用同一个动作翻页最自然，
- * 也不会有误触：翻页圆环在画面左右两侧正中，离所有动作圆环都很远。
- * 按住不放会**连续翻**（每 1 秒一页），所以不用停三次翻三页。
- * 另外：手掌刚进入某一格时先把它念出来（`MENU_ANNOUNCE_P`），让人确认自己指的是哪一个。
+ * 翻页入口有两个是刻意的：**双手挥两次**是主路径（自然、几乎不会误触），
+ * 顶部那两个小圆环是给「挥不动 / 摄像头角度不好」的情况兜底，鼠标和键盘（← / →）也能翻。
+ *
+ * 「不容易误触」的四道闸（用户反馈：「菜单圆环很大、数量又多，人站在画面中手很容易误触某个圆环」）：
+ *   1. **判定圈 = 画出来的圆圈**（`MENU_HIT_RATIO = 1.0`，不再外扩 15%）；
+ *   2. **起手要更靠里**（`MENU_START_RATIO = 0.8`，迟滞：进环之后待在边上不算离开）；
+ *   3. **手要基本停住**才攒进度（`MENU_STILL_SPEED`）—— 抬手/转身时手从圆环上扫过不算；
+ *   4. **要从圆环外面进来**才算数（`MENU_ARM_MS` / `st.armed`）—— 进菜单时手正好垂在某一格里，
+ *      那一格不会自己开始攒 3 秒；把手抬出来再放进去才认。
+ * 另外：手离开后进度退得比别的圆环快（`MENU_DRAIN_MS`），蹭一下不会留下半格进度。
  */
 function updateMenu(landmarks, now) {
   if (!state.menuMode) return null;
   const size = stageSize();
   const st = gestureState.menu;
   const palms = palmPoints(landmarks, size.w, size.h, state.settings.mirror);
-  // 动作圆环 + 翻页圆环一起判：取**最近**的那一个（翻页圆环在两侧，和动作圆环不会打架）
+  // 选项圆环 + 顶部常驻的导航圆环（返回 / 上一页 / 下一页）一起判：取**最近**的那一个
   const layout = [...menuRingLayout(size), ...menuNavLayout(size)];
 
   // ---- 闸 3：手掌速度（px/s）。没看到的那只手把记录清掉，免得它再出现时算出一个假速度
@@ -2048,6 +2178,14 @@ function updateMenu(landmarks, now) {
     st.prev[p.side] = { x: p.x, y: p.y, t: now };
   }
   for (const side of ['L', 'R']) if (!seen[side]) { st.prev[side] = null; st.armed[side] = false; }
+
+  // ---- 双手同时挥两次 → 翻页（先判这个：手在挥的时候本来也不在圆环里）
+  const swipeDir = updateMenuSwipe(palms, layout, size, now, speed);
+  if (swipeDir) {
+    resetMenuProgress();
+    audio.tick();
+    return { kind: 'page', dir: swipeDir };
+  }
 
   // ---- 闸 4：这只手现在「在所有圆环之外」吗？在外就发一次蓄力许可（进环之后就用掉）
   for (const p of palms) {
@@ -2182,7 +2320,8 @@ function closeMenu() {
  */
 function selectFromMenu(id) {
   if (!state.menuMode) return;
-  const item = menuItems().find((it) => it.id === id);
+  // 「返回」在顶部常驻的导航圆环里（不在 menuItems 里），所以两处一起找
+  const item = [...menuItems(), ...menuNavLayout(stageSize())].find((it) => it.id === id);
   if (!item) return;
   if (item.kind === 'category') {
     audio.milestone();
@@ -4488,6 +4627,8 @@ window.__mfg = {
   MENU_COLS, MENU_ROWS, MENU_HIT_RATIO, MENU_START_RATIO, MENU_NAV_HIT_RATIO, MENU_RING_MAX,
   MENU_NAV_HOLD_MS, MENU_ANNOUNCE_P, MENU_CELL_MIN_PX,
   MENU_STILL_SPEED, MENU_ARM_MS, MENU_DRAIN_MS,
+  MENU_SWIPE_TRAVEL, MENU_SWIPE_MS, MENU_SWIPE_CHAIN_MS, MENU_SWIPE_COOLDOWN_MS,
+  MENU_SWIPE_QUIET, MENU_SWIPE_QUIET_MS, updateMenuSwipe, menuRowsFor,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
 };

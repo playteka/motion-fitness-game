@@ -763,9 +763,10 @@ export default {
     prev: 'Previous',
     next: 'Next',
     page: 'Page {n} / {total} · {count} items',
-    // The footer hint differs per level: “Back” means the web page at level 1 and the categories at level 2
-    hint: 'Hold 3 s to select · “Back” returns to the web page · use the side rings to turn pages',
-    hintIn: 'Hold 3 s to select · “Back” returns to the categories · use the side rings to turn pages',
+    // The footer hint differs per level: “Back” means the web page at level 1 and the categories at level 2;
+    // paging is “both hands swipe twice”.
+    hint: 'Hold 3 s to select · both hands swipe up twice = previous page, down twice = next page · “Back” returns to the web page',
+    hintIn: 'Hold 3 s to select · both hands swipe up twice = previous page, down twice = next page · “Back” returns to the categories',
     item: '{name} (hold 3 s)',
     picked: 'Starting: {name}',
     needCamera: 'This browser/device cannot use a camera, so gesture control is unavailable — pick an exercise from the library below instead',

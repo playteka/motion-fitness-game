@@ -598,24 +598,37 @@ console.log('\n[3] 静态资源与模型文件');
     ok('菜单判定用「手掌中心 + 3 秒」，和别的圆环同一套常量',
       /function updateMenu\(/.test(app) && /palmPoints\(landmarks/.test(app)
       && /GESTURE_HOLD_MS/.test(app) && /MENU_HIT_RATIO/.test(app));
-    // 两级菜单 + 分页（用户要求「每行放 4 个、一页不够就加页、向上/向下挥手翻页」）
-    ok('菜单是**两级**：第一级分类、第二级动作 + 返回（圆环才做得大）',
+    // 两级菜单 + 每页一行 5 个 + 「双手挥两次」翻页（用户要求）
+    ok('菜单是**两级**：第一级分类、第二级动作',
       /state\.menuLevel = 0;/.test(app) && /function menuItems\(\)/.test(app)
-      && /if \(state\.menuLevel === 0\)/.test(app) && /kind: 'category'/.test(app)
-      && /kind: 'back'/.test(app));
-    ok('一页 4 列 × 2 行 = 8 个（用户要求「一页可以放 2 行，8 个」），放不下才分页',
-      /const MENU_COLS = 4;/.test(app) && /const MENU_ROWS = 2;/.test(app)
+      && /if \(state\.menuLevel === 0\)/.test(app) && /kind: 'category'/.test(app));
+    ok('每页最多一行、每行最多 5 个（用户要求「每页还是最多一行，每一行最多 5 个圆环选项」）',
+      /const MENU_COLS = 5;/.test(app) && /const MENU_ROWS = 1;/.test(app)
       && /function menuPageInfo\(/.test(app) && /function menuPerPage\(/.test(app)
-      && /function menuCols\(/.test(app) && /state\.menuPage = 0;/.test(app)
+      && /function menuCols\(/.test(app) && /function menuRowsFor\(/.test(app)
+      && /state\.menuPage = 0;/.test(app)
       && /id="menuPage"/.test(html) && typeof LOCALES.zh.menu.page === 'string'
       && typeof LOCALES.en.menu.page === 'string');
-    ok('翻页改成左右两个圆环（用户反馈「挥手换页的方式似乎也不太好」→ 垂直挥手那套删掉了）',
-      /function menuNavLayout\(/.test(app) && /kind: 'prev'/.test(app) && /kind: 'next'/.test(app)
-      && /MENU_NAV_HOLD_MS/.test(app) && !/updateMenuSwipe/.test(app) && !/MENU_SWIPE_/.test(app)
+    ok('「返回」固定在画面上、不参与翻页（在 menuNavLayout 里，不在 menuItems 里）',
+      /function menuNavLayout\(/.test(app)
+      && /const rings = \[\{\s*\n\s*id: 'back', kind: 'back'/.test(app)
+      && !/list\.push\(\{ id: 'back'/.test(app)
+      && /if \(menuHasPages\(size\)\) \{\s*\n\s*rings\.push\(\{\s*\n\s*id: 'page:prev'/.test(app)
+      && /const item = \[\.\.\.menuItems\(\), \.\.\.menuNavLayout\(stageSize\(\)\)\]\.find/.test(app));
+    ok('「上一页 / 下一页」圆环按需出现（有第二页才有），按住 1 秒翻一页',
+      /kind: 'prev'/.test(app) && /kind: 'next'/.test(app) && /MENU_NAV_HOLD_MS/.test(app)
+      && /const holdMs = item && \(item\.kind === 'prev' \|\| item\.kind === 'next'\) \? MENU_NAV_HOLD_MS : GESTURE_HOLD_MS;/.test(app)
       && typeof LOCALES.zh.menu.prev === 'string' && typeof LOCALES.en.menu.next === 'string');
-    ok('翻页圆环用的是和选动作同一个动作（手掌放进去），只是按住时间短（1 秒）且按住不放连续翻',
-      /const holdMs = item && \(item\.kind === 'prev' \|\| item\.kind === 'next'\) \? MENU_NAV_HOLD_MS : GESTURE_HOLD_MS;/.test(app)
-      && /st\.p = 0;\s*\n\s*st\.since = now;\s*\n\s*return \{ kind: 'page', dir: fired\.dir \};/.test(app));
+    ok('翻页主路径 = **双手同时挥两次**（向上 = 上一页、向下 = 下一页；单手 / 只挥一次都不算）',
+      /function updateMenuSwipe\(palms, layout, size, now, speed\)/.test(app)
+      && /const up = dys\.every\(\(d\) => d <= -travel\)/.test(app)
+      && /const down = dys\.every\(\(d\) => d >= travel\)/.test(app)
+      && /const dir = up \? -1 : 1;/.test(app)                    // 上 = 上一页
+      && /const both = palms\.length >= 2 && palms\[0\]\.side !== palms\[1\]\.side;/.test(app)
+      && /if \(sw\.count < 2\) return 0;/.test(app)
+      && /sw\.burst = true;/.test(app)                            // 一次挥动只算一次
+      && /const swipeDir = updateMenuSwipe\(palms, layout, size, now, speed\);/.test(app)
+      && /MENU_SWIPE_CHAIN_MS/.test(app) && /MENU_SWIPE_COOLDOWN_MS/.test(app));
     ok('主循环按返回的动作分流：翻页 / 选中',
       /const act = updateMenu\(res \? res\.landmarks : null, now\)/.test(app)
       && /if \(act\.kind === 'page'\) flipMenuPage\(act\.dir\);/.test(app)
@@ -641,7 +654,7 @@ console.log('\n[3] 静态资源与模型文件');
     ok('防误触②：起手圈收到 0.8 倍（贴边那一圈 36% 面积排除在「起手」之外），进环后仍按 1.0 算（迟滞）',
       /const MENU_START_RATIO = 0\.8;/.test(app)
       && /start: \(dia \/ 2\) \* MENU_START_RATIO,/.test(app)
-      && /start: \(d \/ 2\) \* MENU_START_RATIO,/.test(app)
+      && /start: r \* MENU_START_RATIO,/.test(app)
       && /if \(d > \(same \? it\.hit : it\.start\)\) continue;/.test(app));
     ok('防误触③：手在动就暂停计时（`MENU_STILL_SPEED`，走过去 / 挥过去都不算）',
       /const MENU_STILL_SPEED = 0\.30;/.test(app)
@@ -657,8 +670,8 @@ console.log('\n[3] 静态资源与模型文件');
       /const MENU_DRAIN_MS = (\d+);/.test(app)
       && Number(/const MENU_DRAIN_MS = (\d+)/.exec(app)[1]) < 1500
       && /st\.p = Math\.max\(0, st\.p - dt \/ MENU_DRAIN_MS\);/.test(app));
-    ok('防误触⑥：整块圆环往上放，底部留出「放手区」（top 13% / bottom 18%，窄屏 16% / 20%）',
-      /const top = size\.h \* \(narrow \? 0\.16 : 0\.13\);/.test(app)
+    ok('防误触⑥：整块圆环往上放，底部留出「放手区」（top 15% / bottom 18%，窄屏 20% / 20%）',
+      /const top = size\.h \* \(narrow \? 0\.20 : 0\.15\);/.test(app)
       && /const bottom = size\.h \* \(narrow \? 0\.20 : 0\.18\);/.test(app));
     ok('字号跟着圆环直径算（一处定义，圆环大字号就大）',
       /const nameSize = clamp\(dia \* 0\.15/.test(app)
@@ -674,7 +687,7 @@ console.log('\n[3] 静态资源与模型文件');
     ok('主循环里跑菜单判定，选中 / 翻页各有各的出口',
       /if \(state\.menuMode\) \{/.test(app) && /updateMenu\(res \? res\.landmarks : null, now\)/.test(app)
       && /selectFromMenu\(act\.id\)/.test(app) && /flipMenuPage\(act\.dir\)/.test(app));
-    ok('退出分流：菜单里不再显示左下角圆环（每一级都有一格「↩ 返回」），动作里点它回菜单',
+    ok('退出分流：菜单里不再显示左下角圆环（顶部常驻「↩ 返回」），动作里点它回菜单',
       /const toHome = state\.menuMode;/.test(app)
       && /if \(toHome\) showHome\(\);\s*\n\s*else openMenu\(\{ silent: true \}\);/.test(app)
       && /openMenu\(\{ silent: true \}\);\s*\/\/ 退出动作 → 回手势菜单/.test(app)
@@ -684,14 +697,16 @@ console.log('\n[3] 静态资源与模型文件');
       && /const txt = t\('ui\.gestureExit'\);/.test(app)
       && !/menu\.exitHome/.test(app)
       && LOCALES.zh.menu.exitHome === undefined && LOCALES.en.menu.exitHome === undefined);
-    ok('第一级也有一格「↩ 返回」（图标与第二级完全一致），它回网页首页',
-      /list\.push\(\{ id: 'back', kind: 'back', name: t\('menu\.back'\), icon: '↩', poseIcon: '', sub: '' \}\);/.test(app)
-      && (app.match(/id: 'back', kind: 'back'/g) || []).length === 2
+    ok('导航那颗「↩ 返回」图标与样式和其他「返回」完全一致（`↩` + menu-ring--back），第一级回网页首页',
+      /id: 'back', kind: 'back', icon: '↩', name: t\('menu\.back'\)/.test(app)
+      && /menu-ring--\$\{it\.kind\}/.test(app)
       && /if \(state\.menuLevel === 0\) \{\s*\n\s*audio\.say\(t\('ui\.gestureExit'\)[\s\S]{0,80}?showHome\(\);/.test(app));
-    ok('底部提示分两级（第一级的「返回」回网页首页、第二级回分类）',
+    ok('底部提示分两级 + 教翻页手势（双手挥两次）',
       /id="menuFoot"/.test(html)
       && /foot\.textContent = state\.menuLevel === 0 \? t\('menu\.hint'\) : t\('menu\.hintIn'\)/.test(app)
-      && typeof LOCALES.zh.menu.hintIn === 'string' && typeof LOCALES.en.menu.hintIn === 'string');
+      && typeof LOCALES.zh.menu.hintIn === 'string' && typeof LOCALES.en.menu.hintIn === 'string'
+      && /双手同时向上挥两次/.test(LOCALES.zh.menu.hint)
+      && /swipe up twice/.test(LOCALES.en.menu.hint));
     ok('菜单里不摆「一组结束」的两个圆环（offerSetChoices 认得菜单模式）',
       /if \(state\.homeMode \|\| state\.menuMode \|\| !state\.detector\) return;/.test(app));
     ok('菜单里按 Esc = 回网页首页（键盘用户的退路）',
