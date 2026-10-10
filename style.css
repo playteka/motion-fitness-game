@@ -1524,7 +1524,7 @@ kbd {
   pointer-events: none;
 }
 /* 图标：一整套线条画（ui-icon-design skill 的 `rounded` 原型 —— 24×24 网格、20×20 活动区、
-   stroke 2、圆头圆角、颜色走 currentColor）。动作姿势图、分类图标、导航箭头、界面按钮全用它。 */
+   stroke 2、圆头圆角、颜色走 currentColor）。分类图标、导航箭头、界面按钮用它。 */
 .ex-pose {
   display: block;
   width: 1em;
@@ -1535,6 +1535,13 @@ kbd {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+/**
+ * 运动类的姿势图标 = **实心象形图**（用户要求「更大气、上档次一些」）：
+ * 描边加粗到 3（四肢变成实心身体）+ 头填实（和身体连成剪影）+ 用满 20×20 活动区。
+ * 网格 / 圆头圆角 / currentColor 和界面图标完全一致 —— 同一族里的「内容」那一层。
+ */
+.ex-pose--solid { stroke-width: 3; }
+.ex-pose--solid circle { fill: currentColor; }
 /* 界面按钮上的图标（主页 / 成绩 / 运动设定 / 开始） */
 .ui-icon {
   width: 1.1em;

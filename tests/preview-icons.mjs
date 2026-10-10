@@ -19,10 +19,31 @@ const groups = [
     .reduce((acc, v, i, arr) => (i % 2 === 0 ? [...acc, [v, arr[i + 1], libIconSVG(v, 'ui-icon')]] : acc), [])],
 ];
 
+/**
+ * 把 class 换成显式属性。
+ *
+ * 导出的独立 SVG 没有 CSS，必须自己带上描边；而且**两层要分开处理**：
+ * 界面图标 = 细线（stroke 2、圆不填），运动象形图 = 实心（stroke 3、头填实）。
+ */
+function tint(svg, color) {
+  const solid = /ex-pose--solid/.test(svg);
+  const body = svg.replace(/^[\s\S]*?<svg[^>]*>/, '').replace(/<\/svg>[\s\S]*$/, '');
+  const shaped = body.replace(/<(line|path|circle|polyline|polygon|rect)\b([^>]*?)\/?>/g, (m, tag, attrs) => {
+    const clean = attrs.replace(/\sclass="[^"]*"/g, '').trim();
+    const pad = clean ? ` ${clean}` : '';
+    if (solid && tag === 'circle') return `<circle${pad} fill="${color}" stroke="none"/>`;
+    return `<${tag}${pad} fill="none" stroke="${color}" stroke-width="${solid ? 3 : 2}"`
+      + ' stroke-linecap="round" stroke-linejoin="round"/>';
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${APP_ICON_BOX} ${APP_ICON_BOX}"`
+    + ` width="${APP_ICON_BOX}" height="${APP_ICON_BOX}">${shaped}</svg>`;
+}
+
 let files = 0;
 for (const [, items] of groups) {
   for (const [id, , svg] of items) {
-    fs.writeFileSync(path.join(out, `${id.replace(':', '-')}.svg`), svg);
+    // 独立 SVG 自带描边属性（脱离页面 CSS 也能正确显示）
+    fs.writeFileSync(path.join(out, `${id.replace(':', '-')}.svg`), tint(svg, '#e8eefc'));
     files += 1;
   }
 }
@@ -54,6 +75,11 @@ const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8">
   .ico { width:64px; height:64px; display:grid; place-items:center; }
   .ico svg { width:64px; height:64px; color:var(--ink); }
   figure.light .ico svg { color:#0b1017; }
+  /* 和 style.css 同一套参数：细线图标 + 实心运动象形图 */
+  .ex-pose, .ui-icon { fill:none; stroke:currentColor; stroke-width:2;
+                       stroke-linecap:round; stroke-linejoin:round; }
+  .ex-pose--solid { stroke-width:3; }
+  .ex-pose--solid circle { fill:currentColor; }
   figcaption { font-size:12px; text-align:center; color:#c8d8f5; }
   figcaption span { display:block; color:#6f86a8; font-size:11px; }
   .row { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-end; margin-top:10px; }
@@ -62,9 +88,9 @@ const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8">
 </style></head><body>
 <h1>图标集预览（ui-icon-design skill 交付）</h1>
 <p class="spec">风格原型 <code>rounded</code> · <code>viewBox 0 0 ${APP_ICON_BOX} ${APP_ICON_BOX}</code> ·
- 活动区 20×20 居中 · <code>stroke-width 2</code> · <code>stroke-linecap/linejoin round</code> ·
- 颜色 <code>currentColor</code> · 坐标落在整数 / .5 上 · 无 emoji、无位图、无硬编码颜色。
- 现成图标来自 Lucide 1.55（ISC）与 Tabler Icons 3.49 outline（MIT）。</p>
+ 活动区 20×20 居中 · 界面图标 <code>stroke-width 2</code> / 运动象形图 <code>stroke-width 3 + 头填实</code> ·
+ <code>stroke-linecap/linejoin round</code> · 颜色 <code>currentColor</code> · 坐标落在整数 / .5 上 ·
+ 无 emoji、无位图、无硬编码颜色。现成图标来自 Lucide 1.55（ISC）与 Tabler Icons 3.49 outline（MIT）。</p>
 ${groups.map(section).join('')}
 <section><h2>多尺寸检查（16 / 24 / 48 / 64px，选几个代表）</h2>
 <div class="row">${['squat', 'plank', 'jumpingJack', 'back', 'cat:core', 'ui:settings']
@@ -95,9 +121,8 @@ if (!sharp) {
   const parts = all.map(([id, , svg], i) => {
     const x = (i % cols) * size;
     const y = Math.floor(i / cols) * size;
-    return `<g transform="translate(${x + 12},${y + 12}) scale(2)">${svg
-      .replace(/<svg[^>]*>/, '').replace('</svg>', '')
-      .replace(/class="[^"]*"/g, 'stroke="#e8eefc" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"')}</g>`;
+    const shape = tint(svg, '#e8eefc').replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');
+    return `<g transform="translate(${x + 12},${y + 12}) scale(2)">${shape}</g>`;
   });
   const sheet = `<svg xmlns="http://www.w3.org/2000/svg" width="${cols * size}" height="${rows * size}">`
     + `<rect width="100%" height="100%" fill="#0b1017"/>${parts.join('')}</svg>`;

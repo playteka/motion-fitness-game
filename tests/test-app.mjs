@@ -4895,7 +4895,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     const plankIt = items.find((it) => it.id === 'plank');
     const crunchIt = items.find((it) => it.id === 'crunch');
     ok('菜单里每个动作画的都是「人体姿势」线条图（不再用 emoji），而且两两不同',
-      items.length > 0 && items.every((it) => /class="ex-pose"/.test(it.poseIcon))
+      items.length > 0 && items.every((it) => /class="ex-pose ex-pose--solid"/.test(it.poseIcon))
       && new Set(items.map((it) => it.poseIcon)).size === items.length
       && bridgeIt.poseIcon !== plankIt.poseIcon && bridgeIt.poseIcon !== crunchIt.poseIcon,
       `n=${items.length} 去重=${new Set(items.map((it) => it.poseIcon)).size}`);

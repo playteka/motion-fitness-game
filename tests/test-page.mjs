@@ -753,7 +753,7 @@ console.log('\n[3] 静态资源与模型文件');
     const bridgeSVG = exercisePoseSVG('bridge');
     const plankSVG = exercisePoseSVG('plank');
     ok('臀桥 / 平板支撑的线条图标（用户最早点名要改的两个）画的是各自的姿势',
-      /class="ex-pose"/.test(bridgeSVG) && /class="ex-pose"/.test(plankSVG)
+      /class="ex-pose/.test(bridgeSVG) && /class="ex-pose/.test(plankSVG)
       && bridgeSVG !== plankSVG && exercisePoseSVG('squat') !== '',
       `bridge=${bridgeSVG.length}B plank=${plankSVG.length}B squat=${exercisePoseSVG('squat').length}B`);
 
@@ -889,9 +889,21 @@ console.log('\n[3] 静态资源与模型文件');
         ...['upper', 'lower', 'core', 'full', 'stretch'].map((c) => categoryMarkSVG(c)),
         ...['back', 'prev', 'next'].map((k) => navPoseSVG(k))];
       ok('19 个动作**全部**有自己的线条姿势图标（一整套里没有 emoji 当图标）',
-        ids.every((id) => /class="ex-pose"/.test(svgOf.get(id)) && boxOf(svgOf.get(id)).el >= 4
+        ids.every((id) => /class="ex-pose/.test(svgOf.get(id)) && boxOf(svgOf.get(id)).el >= 4
           && boxOf(svgOf.get(id)).heads === 1),
         ids.map((id) => `${id}:${boxOf(svgOf.get(id)).el}`).join(' '));
+      /**
+       * 用户要求（第三次）：「运动类的图标也重新设计一下，要设计得更大气、上档次一些。」
+       * 做法：运动图标升级成**实心象形图**（`.ex-pose--solid`）—— 描边 3（四肢变成实心身体）、
+       * 头填实且按骨架的 1.7 倍放大（剪影要有一个明显的头）、内容用满 20×20 活动区。
+       * 界面图标（导航 / 分类 / 按钮）保持细线 `rounded`（用户说「导航类的图标设计得还可以」）。
+       */
+      ok('运动类图标是**实心象形图**：带 ex-pose--solid、头填实、描边 3、用满活动区',
+        ids.every((id) => /class="ex-pose ex-pose--solid"/.test(svgOf.get(id)))
+        && /\.ex-pose--solid \{ stroke-width: 3; \}/.test(css)
+        && /\.ex-pose--solid circle \{ fill: currentColor; \}/.test(css)
+        && /r: c\.r \* 1\.7/.test(read('src/icons.js'))
+        && /const APP_INNER_POSE = APP_LIVE;/.test(read('src/icons.js')));
       ok('19 张图**两两不同**（每个动作都有自己的样子，不会两张一样）',
         new Set([...svgOf.values()]).size === ids.length,
         `${new Set([...svgOf.values()]).size} / ${ids.length}`);
@@ -929,14 +941,16 @@ console.log('\n[3] 静态资源与模型文件');
         `站姿最矮 ${Math.min(...standIds.map((id) => boxOf(svgOf.get(id)).h)).toFixed(1)}`
         + ` vs 躺姿最高 ${Math.max(...lyingIds.map((id) => boxOf(svgOf.get(id)).h)).toFixed(1)}`);
       ok('分类图标用库里现成的专业图标（5 个各不相同、只含 shapes、元素 ≤6）',
-        ['upper', 'lower', 'core', 'full', 'stretch'].every((c) => /class="ex-pose"/.test(categoryMarkSVG(c))
+        ['upper', 'lower', 'core', 'full', 'stretch'].every((c) => /class="ex-pose/.test(categoryMarkSVG(c))
           && !/<text/.test(categoryMarkSVG(c)))
         && new Set(['upper', 'lower', 'core', 'full', 'stretch'].map((c) => categoryMarkSVG(c))).size === 5
         && ['upper', 'lower', 'core', 'full', 'stretch']
           .every((c) => (categoryMarkSVG(c).match(/<(path|circle|line|rect|polyline|polygon|ellipse)/g) || []).length <= 6));
       ok('导航箭头用库里现成的专业箭头（返回 / 上一页 / 下一页各不相同），不是字体里的 ◀ ▶ ↩',
         new Set(['back', 'prev', 'next'].map((k) => navPoseSVG(k))).size === 3
-        && ['back', 'prev', 'next'].every((k) => /class="ex-pose"/.test(navPoseSVG(k)))
+        && ['back', 'prev', 'next'].every((k) => /class="ex-pose/.test(navPoseSVG(k)))
+        && ['back', 'prev', 'next'].every((k) => !/ex-pose--solid/.test(navPoseSVG(k)))
+        && ['upper', 'lower', 'core', 'full', 'stretch'].every((c) => !/ex-pose--solid/.test(categoryMarkSVG(c)))
         && !/◀|▶|↩/.test(navPoseSVG('back') + navPoseSVG('prev') + navPoseSVG('next')));
       ok('界面按钮的图标也换成线条图标（主页 / 成绩 / 设定 / 开始），HTML 里没有 emoji 图标了',
         !/[\u{1F300}-\u{1FAFF}]/u.test(html)

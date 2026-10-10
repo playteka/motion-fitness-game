@@ -1857,7 +1857,8 @@ function menuRingLayout(size) {
   const cols = menuCols(size.w);
   const dia = g.dia;
   const nameSize = clamp(dia * 0.15, 12, 40);
-  const iconSize = clamp(dia * 0.32, 16, 64);
+  // 运动图标改成实心象形图之后更有分量，也跟着放大一档（用户要求「更大气、上档次」）
+  const iconSize = clamp(dia * 0.38, 18, 76);
   return slice.map((it, i) => {
     const col = i % cols;
     const row = Math.floor(i / cols);

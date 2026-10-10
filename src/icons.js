@@ -1047,8 +1047,10 @@ const EXERCISE_POSES = {
 export const APP_ICON_BOX = 24;
 const APP_LIVE = 20;
 const APP_PAD = (APP_ICON_BOX - APP_LIVE) / 2;
-/** 活动区里再留 0.5 的边（四舍五入到 .5 之后也不会顶到边线） */
-const APP_INNER = APP_LIVE - 1;
+/** 界面图标（导航 / 分类 / 按钮）在活动区里再留 0.5 的边 */
+const APP_INNER_UI = APP_LIVE - 1;
+/** 动作象形图用满整个活动区 —— 用户要求「更大气、上档次」，所以要画得满、画得有分量 */
+const APP_INNER_POSE = APP_LIVE;
 
 /** 手绘骨架（32 单位）→ 24 网格：缩进 20×20 活动区，坐标落在整数 / .5 上（避免半像素虚边） */
 const gridVal = (v) => Math.round((v / ICON_BOX * APP_LIVE + APP_PAD) * 2) / 2;
@@ -1059,7 +1061,7 @@ const gridVal = (v) => Math.round((v / ICON_BOX * APP_LIVE + APP_PAD) * 2) / 2;
  * 四个构建器各有各的「张开幅度」（躺着的很长、跳起来的很高），直接映射进来会有的大有的小、
  * 腾空的还会顶出活动区；这一步统一缩放，让 19 张图在同一个 20×20 的框里**视觉重量一致**。
  */
-function fitToLiveArea(lines, circles) {
+function fitToLiveArea(lines, circles, inner = APP_INNER_UI) {
   const xs = [...lines.flatMap((l) => [l.a.x, l.b.x]), ...circles.flatMap((c) => [c.x - c.r, c.x + c.r])];
   const ys = [...lines.flatMap((l) => [l.a.y, l.b.y]), ...circles.flatMap((c) => [c.y - c.r, c.y + c.r])];
   const minX = Math.min(...xs);
@@ -1068,7 +1070,7 @@ function fitToLiveArea(lines, circles) {
   const maxY = Math.max(...ys);
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
-  const k = Math.min(1, APP_INNER / Math.max(maxX - minX, maxY - minY, 0.001));
+  const k = Math.min(1, inner / Math.max(maxX - minX, maxY - minY, 0.001));
   const mid = APP_ICON_BOX / 2;
   const px = (x) => Math.round((mid + (x - cx) * k) * 2) / 2;
   const py = (y) => Math.round((mid + (y - cy) * k) * 2) / 2;
@@ -1111,26 +1113,43 @@ function mergeStraightLimbs(lines, tol = 14) {
   return out;
 }
 
-/** 把骨架画成 SVG（24 网格、只含 shapes、颜色走 currentColor） */
-function appIconSVG(lines, circles) {
+/** 把骨架画成 SVG（24 网格、只含 shapes、颜色走 currentColor）。`solid` = 动作象形图那一路 */
+function appIconSVG(lines, circles, solid = false) {
   const parts = lines.map((l) => `<line x1="${l.a.x}" y1="${l.a.y}" x2="${l.b.x}" y2="${l.b.y}" />`);
   for (const c of circles) {
     parts.push(`<circle cx="${c.x}" cy="${c.y}" r="${Math.max(0.5, Math.round((c.r / ICON_BOX * 24) * 2) / 2)}" />`);
   }
-  return `<svg class="ex-pose" viewBox="0 0 ${APP_ICON_BOX} ${APP_ICON_BOX}" aria-hidden="true">${parts.join('')}</svg>`;
+  const cls = solid ? 'ex-pose ex-pose--solid' : 'ex-pose';
+  return `<svg class="${cls}" viewBox="0 0 ${APP_ICON_BOX} ${APP_ICON_BOX}" aria-hidden="true">${parts.join('')}</svg>`;
 }
 
-/** 动作的姿势图标（19 个动作都有；万一漏了返回空串，界面会退回图标字符） */
+/**
+ * 动作的姿势图标（19 个动作都有；万一漏了返回空串，界面会退回图标字符）。
+ *
+ * **「实心象形图」而不是细线条**（用户要求：「运动类的图标重新设计一下，要设计得更大气、上档次一些」）：
+ *   - 骨架描边加粗到 `3`（`.ex-pose--solid`）—— 四肢因此变成**实心的身体**，不再是根火柴棍；
+ *   - 头**填实**（`.ex-pose--solid circle { fill: currentColor }`），和身体连成一个剪影；
+ *   - 象形图**用满 20×20 活动区**（界面图标留 0.5 的边），所以内容更大、更有分量。
+ * 网格、圆头圆角、`currentColor`、坐标落点这些**与界面图标仍然完全一致** —— 一整套还是同一族，
+ * 只是分成「界面细线图标」和「内容象形图」两层（和真实设​​计系统里的做法一样）。
+ */
 export function exercisePoseSVG(id) {
   const build = EXERCISE_POSES[id];
   if (!build) return '';
   const { lines, circles } = build();
   const merged = mergeStraightLimbs(lines);
+  /**
+   * 头放大到 1.7 倍再做整体适配。
+   *
+   * 实心象形图里「头」要明显比四肢粗才有剪影感（四肢描边 3 → 头直径 ≈5）；
+   * 按原来骨架比例，头的直径和四肢一样粗，看着就是一根棍子顶了个疙瘩。
+   */
   const fitted = fitToLiveArea(
     merged.map((l) => ({ a: { x: gridVal(l.a.x), y: gridVal(l.a.y) }, b: { x: gridVal(l.b.x), y: gridVal(l.b.y) } })),
-    circles.map((c) => ({ x: gridVal(c.x), y: gridVal(c.y), r: c.r })),
+    circles.map((c) => ({ x: gridVal(c.x), y: gridVal(c.y), r: c.r * 1.7 })),
+    APP_INNER_POSE,
   );
-  return appIconSVG(fitted.lines, fitted.circles);
+  return appIconSVG(fitted.lines, fitted.circles, true);
 }
 
 /**
