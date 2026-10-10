@@ -633,6 +633,33 @@ console.log('\n[3] 静态资源与模型文件');
       /const MENU_RING_MAX = (\d+)/.test(app)
       && Number(/const MENU_RING_MAX = (\d+)/.exec(app)[1]) >= 300,
       String(/const MENU_RING_MAX = (\d+)/.exec(app)?.[1]));
+    /* 防误触（用户反馈：「菜单圆环很大、数量又多，人站在画面中手很容易误触某个圆环」）：
+       四道闸 + 更快退回，都在源码里有单一出处，测试盯住它们别再被放松回去。 */
+    ok('防误触①：判定圈 = 画出来的圆圈本身（1.0 倍，不再外扩 15%）',
+      /const MENU_HIT_RATIO = 1\.0;/.test(app)
+      && /const MENU_NAV_HIT_RATIO = 1\.0;/.test(app));
+    ok('防误触②：起手圈收到 0.8 倍（贴边那一圈 36% 面积排除在「起手」之外），进环后仍按 1.0 算（迟滞）',
+      /const MENU_START_RATIO = 0\.8;/.test(app)
+      && /start: \(dia \/ 2\) \* MENU_START_RATIO,/.test(app)
+      && /start: \(d \/ 2\) \* MENU_START_RATIO,/.test(app)
+      && /if \(d > \(same \? it\.hit : it\.start\)\) continue;/.test(app));
+    ok('防误触③：手在动就暂停计时（`MENU_STILL_SPEED`，走过去 / 挥过去都不算）',
+      /const MENU_STILL_SPEED = 0\.30;/.test(app)
+      && /const speed = \{ L: 0, R: 0 \};/.test(app)
+      && /if \(speed\[st\.side\] > MENU_STILL_SPEED \* size\.h\) st\.since \+= dt;/.test(app));
+    ok('防误触④：一只手必须先在**所有圆环之外**露过面，才算「从外面进来」（先垂在某一格里不会自己开始攒）',
+      /const MENU_ARM_MS = \d+;/.test(app) && /armed: \{ L: false, R: false \}/.test(app)
+      && /if \(layout\.every\(\(it\) => Math\.hypot\(p\.x - it\.cx, p\.y - it\.cy\) > it\.hit\)\) st\.armed\[p\.side\] = true;/.test(app)
+      && /if \(!same && !st\.armed\[p\.side\]\) continue;/.test(app)
+      && /st\.armed\[hover\.side\] = false;/.test(app)
+      && /st\.armed = \{ L: false, R: false \};/.test(app));
+    ok('防误触⑤：手离开后退得更快（MENU_DRAIN_MS < 别的圆环的 GESTURE_DRAIN_MS），蹭一下不留半格进度',
+      /const MENU_DRAIN_MS = (\d+);/.test(app)
+      && Number(/const MENU_DRAIN_MS = (\d+)/.exec(app)[1]) < 1500
+      && /st\.p = Math\.max\(0, st\.p - dt \/ MENU_DRAIN_MS\);/.test(app));
+    ok('防误触⑥：整块圆环往上放，底部留出「放手区」（top 13% / bottom 18%，窄屏 16% / 20%）',
+      /const top = size\.h \* \(narrow \? 0\.16 : 0\.13\);/.test(app)
+      && /const bottom = size\.h \* \(narrow \? 0\.20 : 0\.18\);/.test(app));
     ok('字号跟着圆环直径算（一处定义，圆环大字号就大）',
       /const nameSize = clamp\(dia \* 0\.15/.test(app)
       && /name\.style\.fontSize = `\$\{it\.nameSize/.test(app));

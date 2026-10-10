@@ -4206,6 +4206,22 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   // ===== ② 第一级菜单：一页 4 列 × 2 行 = 8 个（用户要求「一页可以放 2 行，8 个」） =====
   const layout = api.menuRingLayout(api.stageSize());
   const info0 = api.menuPageInfo();
+  /**
+   * 误触面积（用户反馈：「菜单圆环很大、数量又多，人站在画面中手很容易误触某个圆环」）：
+   * 在画面上撒点，量一量「圆环 / 起手圈 / 判定圈」各占整幅画面的百分之几。
+   */
+  const coverPct = (list, size, rad = (it) => it.r, N = 96) => {
+    const cols = Math.round(N * (size.w / size.h));
+    let n = 0;
+    for (let iy = 0; iy < N; iy += 1) {
+      for (let ix = 0; ix < cols; ix += 1) {
+        const x = ((ix + 0.5) / cols) * size.w;
+        const y = ((iy + 0.5) / N) * size.h;
+        if (list.some((it) => Math.hypot(x - it.cx, y - it.cy) <= rad(it))) n += 1;
+      }
+    }
+    return (n / (N * cols)) * 100;
+  };
   ok('一页 8 个（4 列 × 2 行），第一级 5 个分类 + 一格「返回」**一页就放完**（平时根本不用翻页）',
     api.state.menuLevel === 0 && layout.length === 6 && grid.children.length === 6
     && layout.filter((it) => it.kind === 'category').length === 5
@@ -4213,11 +4229,29 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && api.MENU_COLS === 4 && api.MENU_ROWS === 2 && api.menuPerPage(api.stageSize()) === 8
     && info0.total === 6 && info0.pages === 1,
     `${layout.length} / ${grid.children.length} per=${api.menuPerPage(api.stageSize())} pages=${info0.pages}`);
-  ok('圆环仍然够大（1280×720 上直径 ≥180px；最早 19 个挤一屏只有 ~97px）',
-    layout.every((it) => it.r * 2 >= 180), `${Math.round(layout[0].r * 2)}px`);
+  ok('圆环仍然够大（1280×720 上 ≥165px；最早 19 个挤一屏只有 ~97px）',
+    layout.every((it) => it.r * 2 >= 165), `${Math.round(layout[0].r * 2)}px`);
   ok('名字字号跟着圆环走（≥24px，最早只有 12px）',
     layout.every((it) => it.nameSize >= 24),
     `name=${layout[0].nameSize.toFixed(1)} dia=${Math.round(layout[0].r * 2)}`);
+  {
+    // ---- 误触面积（用户反馈：「人站在画面中手很容易误触某个圆环」）
+    const sz = api.stageSize();
+    const all = [...layout, ...api.menuNavLayout(sz)];
+    const hitPct = coverPct(all, sz, (it) => it.hit);
+    const startPct = coverPct(all, sz, (it) => it.start);
+    const oldPct = coverPct(all.map((it) => ({ ...it, hit: it.r * 1.15 })), sz, (it) => it.hit);
+    ok('判定圈就是**画出来的圆圈**（1.0 倍，不再外扩 15%）：误触面积从 ~20% 降到 ~15%',
+      api.MENU_HIT_RATIO === 1 && hitPct <= 17 && oldPct >= 19,
+      `判定 ${hitPct.toFixed(1)}% / 旧口径 ${oldPct.toFixed(1)}% / 画出来 ${coverPct(all, sz).toFixed(1)}%`);
+    ok('起手圈再收 20%（0.8 倍）：**开始蓄力**的误触面积只有 ~10%（旧口径的三分之一）',
+      api.MENU_START_RATIO === 0.8 && startPct <= 12 && startPct < hitPct * 0.75,
+      `起手 ${startPct.toFixed(1)}% vs 判定 ${hitPct.toFixed(1)}%（旧口径 ${oldPct.toFixed(1)}%）`);
+    const lowest = Math.max(...layout.map((it) => it.cy + it.r));
+    ok('整块圆环往上放：画面下方留出「放手区」（圆环最低点不超过画面高度的 80%）',
+      lowest / sz.h <= 0.8,
+      `最低 ${(lowest / sz.h * 100).toFixed(0)}%（放手区 ${(100 - lowest / sz.h * 100).toFixed(0)}%）`);
+  }
   ok('只有一页时不显示翻页圆环、也不显示页码',
     api.menuNavLayout(api.stageSize()).length === 0 && elements.get('menuPage').hidden === true);
   ok('每一格都写好了位置 / 直径 / 字号（和判定用的是同一份圆心、半径）',
@@ -4283,11 +4317,13 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     // ⚠️ palmsAt6 收的是「宽屏舞台像素」，这里舞台换成窄屏了，所以要按比例换算一下
     const palmsAt = (x, y) => palmsAt6(x * (SW / sizeN.w), y * (SH / sizeN.h));
     const next = nav.find((it) => it.kind === 'next');
+    // 防误触第 4 条：手必须**从圆环外面进来**才算数（先把「许可」拿到手）
+    api.updateMenu(palmsAt(200, 690), 19900);
     ok('手掌放进「下一页」0.6 秒还没到（选动作要 3 秒、翻页只要 1 秒）',
       api.updateMenu(palmsAt(next.cx, next.cy), 20000) === null
       && api.updateMenu(palmsAt(next.cx, next.cy), 20600) === null,
       String(api.gestureState.menu.p));
-    const act = api.updateMenu(palmsAt(next.cx, next.cy), 21001);
+    const act = api.updateMenu(palmsAt(next.cx, next.cy), 21501);
     ok('停满 1 秒 → 判定翻页（返回 {kind:page, dir:+1}）',
       act && act.kind === 'page' && act.dir === 1, JSON.stringify(act));
     api.flipMenuPage(act.dir);
@@ -4296,7 +4332,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       && /第 2 \/ 2 页/.test(elements.get('menuPage').textContent),
       `page=${api.state.menuPage}`);
     // 按住不放 → 一页一页连续翻（不会卡住）
-    const act2 = api.updateMenu(palmsAt(next.cx, next.cy), 22002);
+    const act2 = api.updateMenu(palmsAt(next.cx, next.cy), 22600);
     ok('手掌**一直按着**：再过 1 秒又翻一页（按住不放连续翻）',
       act2 && act2.kind === 'page' && act2.dir === 1, JSON.stringify(act2));
     api.flipMenuPage(act2.dir);
@@ -4358,39 +4394,94 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && elements.get('menuTitle').textContent === '选择运动',
     `${api.state.menuLevel}/${api.state.menuCategory}`);
   const target = layout[0];
-  ok('手掌停在圆环里 2 秒：进度攒到 2/3，还没选中',
-    api.updateMenu(at6(target), 1000) === null
-    && api.updateMenu(at6(target), 2000) === null
+  {   // 选中一次之后要重新攒「许可」：先把手放在圆环外面
+    api.updateMenu(palmsAt6(0.5, 0.02), 690);
+  }
+  ok('手**从圆环外面移进来**的那一帧：手还在动，进度一点都不攒（防误触第 3 条）',
+    api.updateMenu(at6(target), 1000) === null && api.gestureState.menu.p === 0,
+    `p=${api.gestureState.menu.p}`);
+  ok('手停下来：停 1 秒 → 进度攒到约 1/3，还没选中',
+    api.updateMenu(at6(target), 2250) === null
     && Math.abs(api.gestureState.menu.p - 1 / 3) < 0.05,
     `p=${api.gestureState.menu.p}`);
   ok('手掌移到**另一格**：进度从头开始（不会在两格之间攒进度）',
-    api.updateMenu(at6(layout[1]), 2100) === null
+    api.updateMenu(at6(layout[1]), 2400) === null
     && api.gestureState.menu.id === layout[1].id
     && api.gestureState.menu.p < 0.05,
     `${api.gestureState.menu.id} p=${api.gestureState.menu.p}`);
-  api.updateMenu(at6(layout[1]), 3000);
+  api.updateMenu(at6(layout[1]), 3400);
   ok('指着某一格一会儿就会把它念出来（先确认指的是哪一个，再决定要不要停满 3 秒）',
     api.gestureState.menu.announced === layout[1].id && api.gestureState.menu.id === layout[1].id,
     `${api.gestureState.menu.announced} / ${api.gestureState.menu.id}`);
-  const picked = api.updateMenu(at6(layout[1]), 5201);
+  const picked = api.updateMenu(at6(layout[1]), 5700);
   ok('手掌停满 3 秒 → 判定选中这一格（返回 {kind:select, id}）',
     picked && picked.kind === 'select' && picked.id === layout[1].id, JSON.stringify(picked));
   ok('选中之后这一格的进度清干净（不会连着再选一次）',
     api.gestureState.menu.p === 0 && api.gestureState.menu.id === ''
     && api.gestureState.menu.announced === '');
 
-  // 手离开：宽限期内先不动，之后慢慢退回去（看得出「手离开了」）
+  // 手离开：宽限期内先不动，之后退回去（菜单里退得比别的圆环快：蹭一下不留半格进度）
+  api.updateMenu(palmsAt6(0.5, 0.02), 5900);          // 重新拿到许可
   api.updateMenu(at6(target), 6000);
   api.updateMenu(at6(target), 7000);
   const kept6 = api.gestureState.menu.p;
+  ok('手停住 1 秒后攒下了进度（这一次是正常起手，能攒）', kept6 > 0.2, `p=${kept6}`);
   api.updateMenu(palmsAt6(0.5, 0.02), 7100);          // 手离开（挪到画面最上面）
   ok('手离开 0.1 秒（宽限期内）进度一点都不掉',
     Math.abs(api.gestureState.menu.p - kept6) < 1e-6,
     `${kept6} → ${api.gestureState.menu.p}`);
   api.updateMenu(palmsAt6(0.5, 0.02), 8200);
-  ok('手离开久了只慢慢退（不是一秒清零）',
-    api.gestureState.menu.p > 0 && api.gestureState.menu.p < kept6,
+  ok('手离开久了就退干净（菜单里退得更快，蹭一下不会留下半格进度）',
+    api.gestureState.menu.p === 0 && api.gestureState.menu.id === '',
     `${kept6} → ${api.gestureState.menu.p}`);
+
+  // ===== ④ 防误触（用户反馈：「菜单圆环很大、数量又多，人站在画面中手很容易误触某个圆环」）=====
+  {
+    const ring = layout[0];                              // 第一级第一格
+    const atK = (it, k) => palmsAt6(it.cx + it.r * k, it.cy);   // 离圆心 k 倍半径处
+    // (1) 进菜单时手本来就垂在某一格里 → 一格都不该亮
+    api.openMenu({ silent: true });
+    const acts = [];
+    for (let t = 0; t <= 6000; t += 200) acts.push(api.updateMenu(at6(ring), 30000 + t));
+    ok('手本来就在圆环里（进菜单时手垂在那一格）：停 6 秒也不亮、不念名字、更不会选中',
+      acts.every((a) => a === null) && api.gestureState.menu.p === 0
+      && api.gestureState.menu.id === '' && api.gestureState.menu.announced === '',
+      `p=${api.gestureState.menu.p} 选中=${acts.filter(Boolean).length}`);
+
+    // (2) 手**从环外**进来才认（正常流程照旧好使）
+    api.updateMenu(palmsAt6(0.5, 0.02), 37000);
+    api.updateMenu(at6(ring), 37300);
+    api.updateMenu(at6(ring), 40300);
+    ok('手从环外进来之后照旧能攒（防误触没有把正常选中变难）',
+      api.gestureState.menu.p > 0.5, `p=${api.gestureState.menu.p}`);
+
+    // (3) 手一直在动（从圆环上扫过去）→ 一点都不攒
+    api.openMenu({ silent: true });
+    api.updateMenu(palmsAt6(0.5, 0.02), 50000);
+    for (let i = 0; i < 24; i += 1) {
+      api.updateMenu(palmsAt6(ring.cx - 240 + i * 40, ring.cy), 50100 + i * 100);   // 40px/100ms = 400px/s
+    }
+    ok('手从圆环上**扫过去**（一直在动，400px/s）：进度一点都不攒（MENU_STILL_SPEED）',
+      api.gestureState.menu.p === 0, `p=${api.gestureState.menu.p}`);
+
+    // (4) 起手圈 0.8 倍：停在圆内但贴边（0.9 倍半径）不算起手
+    api.openMenu({ silent: true });
+    api.updateMenu(palmsAt6(0.5, 0.02), 60000);
+    for (let t = 60100; t <= 61000; t += 100) api.updateMenu(atK(ring, 0.9), t);
+    ok('手停在「圈内但离圆心 0.9 倍半径」处：不算起手（起手圈是 0.8 倍，排除贴边那一圈）',
+      api.gestureState.menu.p === 0 && api.gestureState.menu.id === '',
+      `p=${api.gestureState.menu.p} id=${api.gestureState.menu.id}`);
+
+    // (5) 从圆环中间进来 → 正常起手；已经在蓄力时晃到 0.95 倍半径仍然继续（迟滞）
+    api.updateMenu(palmsAt6(0.5, 0.02), 62000);
+    api.updateMenu(atK(ring, 0.5), 62300);
+    api.updateMenu(atK(ring, 0.5), 63300);
+    const beforeK = api.gestureState.menu.p;
+    ok('从圆环中间（0.5 倍半径）进来就正常起手', beforeK > 0.2, `p=${beforeK}`);
+    api.updateMenu(atK(ring, 0.95), 63900);
+    ok('已经在蓄力时，手晃到 0.95 倍半径（仍在圆内）不算离开、继续攒（迟滞）',
+      api.gestureState.menu.p > beforeK, `${beforeK} → ${api.gestureState.menu.p}`);
+  }
 
   // 选中一个动作 → 落到那个动作的训练界面（这里调的就是主循环里那一句）
   api.selectFromMenu(layout.find((it) => it.catId === 'full').id);      // 先随便进一个分类
@@ -4480,6 +4571,8 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     };
     api.state.homeMode = false;
     api.openMenu({ silent: true });
+    // 防误触第 4 条：手得先在圆环外面露过面（真实场景里就是「手从身侧抬起来去够圆环」）
+    pump(palmsAt6(0.5, 0.02), 6);
     const cat17 = api.menuRingLayout(api.stageSize())[2];      // 第一级：某一格分类
     pump(palmsAt6(cat17.cx, cat17.cy), 40);
     ok('真实主循环里：手掌停在分类圆环上还没满 3 秒，先不选（进度在攒）',
@@ -4495,6 +4588,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       `level=${api.state.menuLevel} cat=${api.state.menuCategory}`);
 
     const ex17 = api.menuRingLayout(api.stageSize()).find((it) => it.kind === 'exercise');
+    pump(palmsAt6(0.5, 0.02), 6);        // 手从环外再进来一次（防误触第 4 条要的「许可」）
     pump(palmsAt6(ex17.cx, ex17.cy), 100);
     ok('真实主循环里：再停满 3 秒 → 进入那个动作（菜单关掉、界面切过去）',
       api.state.menuMode === false && api.state.exerciseId === ex17.id

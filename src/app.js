@@ -1018,10 +1018,17 @@ const gestureState = {
   cornerVisible: false,
   /**
    * 手势菜单里「手掌正停在哪一个圆环里」——同一时刻只有一格在蓄力，
-   * 所以只存一份状态（id + 进度），换一格就从头开始（见 updateMenu）。
-   * `announced` 记住这一格的名字是不是已经念过了（指着它一会儿就先念出来）。
+   * 所以只存一份状态（哪一格 + 哪只手 + 进度），换一格 / 换只手就从头开始（见 updateMenu）。
+   *   - `side`      正在蓄力的是哪只手（速度闸门按这只手算）；
+   *   - `prev`      每只手上一帧的位置（算速度用，判「手是不是在动」）；
+   *   - `armed`     每只手有没有「从所有圆环外面进来」的许可（防误触的核心，见 MENU_ARM_MS）；
+   *   - `announced` 这一格的名字是不是已经念过了（指着它一会儿就先念出来）。
    */
-  menu: { id: '', p: 0, since: 0, lastInside: 0, at: 0, announced: '' },
+  menu: {
+    id: '', side: '', p: 0, since: 0, lastInside: 0, at: 0, announced: '',
+    prev: { L: null, R: null },
+    armed: { L: false, R: false },
+  },
 };
 
 /**
@@ -1657,9 +1664,26 @@ function retrySet() {
 const MENU_COLS = 4;
 /** 一页最多几行（用户要求 2 行 → 宽屏一页 8 个；窄屏自动减列，一页就变成 4 个） */
 const MENU_ROWS = 2;
-/** 手掌落在「圆心 × 画出来的半径 × 这个比例」以内就算指着这一格（比圆圈稍大一点，好瞄准） */
-const MENU_HIT_RATIO = 1.15;
-/** 翻页圆环的判定比例（比动作圆环严一点：它和动作圆环挨得近，宁可少判也别抢） */
+/**
+ * 判定半径 = **画出来的圆圈本身**（1.0 倍）。
+ *
+ * 用户反馈：「因为菜单圆环很大，数量又比较多，人站在画面中手很容易误触某个圆环。」
+ * 圆环现在有 200~300px，瞄准早就不难了，多放出去的那 15% 半径（面积 +32%）**全部是误触面积**：
+ * 手从旁边走过、站在画面里手自然下垂，都可能蹭到某一格的判定圈。所以收紧到「必须真的在圆圈里」。
+ * （左下角那个退出圆环是反过来的老问题 —— 手/脚够不到，所以它单独用 `RING_TOUCH_TOL = 1.12` 放宽；
+ *   菜单是「太灵敏」，两者口径不同是刻意的。）
+ */
+const MENU_HIT_RATIO = 1.0;
+/**
+ * **起手**要更靠里一点（0.8 倍），进来之后就按 1.0 倍算（迟滞）。
+ *
+ * 为什么是 0.8：贴着圆环外沿那一圈（0.8~1.0 半径）占整个圆盘 **36% 的面积**，
+ * 而「瞄准」时人自然会把手指向圆圈中间 —— 把这一圈排除在「起手」之外，
+ * 误触面积直接砍掉三分之一，而正常瞄准（圆环中心那 80%）一点都没变难。
+ * 一旦开始蓄力，手在圆环里晃到边上（≤1.0 倍）也不算离开，不会因为一点抖动就断。
+ */
+const MENU_START_RATIO = 0.8;
+/** 翻页圆环的判定比例（和动作圆环一样严格：它就在画面两侧，手很容易扫到） */
 const MENU_NAV_HIT_RATIO = 1.0;
 /** 圆环直径的上限（真摆不下时会自动减列，见 MENU_CELL_MIN_PX） */
 const MENU_RING_MAX = 360;
@@ -1674,6 +1698,26 @@ const MENU_CELL_MIN_PX = 170;
 const MENU_NAV_HOLD_MS = 1000;
 /** 悬停多久开始念这一格的名字（先让人看清自己指着哪一个，再决定要不要停 3 秒） */
 const MENU_ANNOUNCE_P = 0.28;
+/**
+ * **手要基本停住才算「指着这一格」**：手掌移动速度超过这个值（单位：舞台高度 / 秒）时，
+ * 蓄力的计时跟着往后挪（不攒进度）。
+ *
+ * 为什么需要：菜单铺满整幅画面，人站在画面里抬手、转身、换姿势时手会**从圆环上扫过** ——
+ * 以前这种扫过也会攒进度（甚至会念出名字）。现在「走过去、挥过去」一律不算，
+ * 只有**停在那儿**才算，这也正是人「瞄准某一格」时的自然动作。
+ */
+const MENU_STILL_SPEED = 0.30;
+/**
+ * **要从圆环外面进来才算数**（"armed"）：一只手只有在**所有圆环之外**露过面，
+ * 才允许它开始给某一格蓄力；一旦开始蓄力，这次「许可」就用掉了，要再选一次得先出环再进环。
+ *
+ * 为什么需要：用户反馈「人站在画面中手很容易误触」—— 最常见的情形就是
+ * **进菜单时手正好垂在某一格的判定圈里**（画面下半部分那两格），以前它会默默开始攒 3 秒。
+ * 现在这种情况一格都不会亮；把手抬出来再放进去（或者干脆垂着不动）都安全。
+ */
+const MENU_ARM_MS = 260;
+/** 手离开后进度退回去的速度（比别的圆环那 1.5 秒快：蹭一下不该留下半格进度） */
+const MENU_DRAIN_MS = 700;
 
 /**
  * 菜单项：**两级**。
@@ -1761,9 +1805,14 @@ function menuRingLayout(size) {
   const nav = menuNavLayout(size);
   const navW = nav.length ? (nav[0].r * 2 + 26) : 0;
   const padX = Math.max(10, size.w * 0.02) + navW;
-  // 顶部让开标题 / 页码、底部让开提示（窄屏 / 竖屏手机多让一点）
+  /**
+   * 顶部让开标题 / 页码，底部让开提示，**并且故意把整块圆环往上放**：
+   * 底部留出的这一条（默认 18% 高度）就是「放手区」——
+   * 人站在画面里手自然垂下时，手就落在这一条里，不会压在某一格的判定圈上
+   * （用户反馈：「人站在画面中手很容易误触某个圆环」）。窄屏 / 竖屏手机再让多一点。
+   */
   const top = size.h * (narrow ? 0.16 : 0.13);
-  const bottom = size.h * (narrow ? 0.12 : 0.08);
+  const bottom = size.h * (narrow ? 0.20 : 0.18);
   const cellW = Math.max(1, (size.w - padX * 2) / cols);
   const cellH = Math.max(1, (size.h - top - bottom) / rows);
   // 直径：横向留出间隙，纵向还要给名字留一行（按 0.70 收）
@@ -1781,6 +1830,7 @@ function menuRingLayout(size) {
       cy: top + cellH * (row + 0.5),
       r: dia / 2,
       hit: (dia / 2) * MENU_HIT_RATIO,
+      start: (dia / 2) * MENU_START_RATIO,
       nameSize,
       iconSize,
     };
@@ -1809,6 +1859,7 @@ function menuNavLayout(size) {
     cy: size.h * 0.5,
     r: d / 2,
     hit: (d / 2) * MENU_NAV_HIT_RATIO,
+    start: (d / 2) * MENU_START_RATIO,
     nameSize,
     iconSize,
   }));
@@ -1940,8 +1991,14 @@ function flipMenuPage(dir) {
 function resetMenuProgress() {
   const st = gestureState.menu;
   if (st.id) paintMenuRing(st.id, 0);
-  st.id = ''; st.p = 0; st.since = 0; st.lastInside = 0; st.at = 0;
+  st.id = ''; st.side = ''; st.p = 0; st.since = 0; st.lastInside = 0; st.at = 0;
   st.announced = '';
+  /**
+   * 蓄力许可也一起清掉：刚进菜单 / 刚翻完页时，手可能正垂在某一格里，
+   * 这时候**不该**自己开始攒进度（用户反馈「人站在画面中手很容易误触某个圆环」）。
+   * 手只要在环外露过面就会重新拿到许可（见 updateMenu 的闸 4）。
+   */
+  st.armed = { L: false, R: false };
 }
 
 /** 画某一格圆环的进度（复用 `.ring-fill` 的 dashoffset 口径，和别的圆环同一套） */
@@ -1978,26 +2035,55 @@ function updateMenu(landmarks, now) {
   // 动作圆环 + 翻页圆环一起判：取**最近**的那一个（翻页圆环在两侧，和动作圆环不会打架）
   const layout = [...menuRingLayout(size), ...menuNavLayout(size)];
 
+  // ---- 闸 3：手掌速度（px/s）。没看到的那只手把记录清掉，免得它再出现时算出一个假速度
+  const speed = { L: 0, R: 0 };
+  const seen = { L: false, R: false };
+  for (const p of palms) {
+    seen[p.side] = true;
+    const prev = st.prev[p.side];
+    if (prev) {
+      const dt = clamp(now - prev.t, 1, 500);
+      speed[p.side] = Math.hypot(p.x - prev.x, p.y - prev.y) / (dt / 1000);
+    }
+    st.prev[p.side] = { x: p.x, y: p.y, t: now };
+  }
+  for (const side of ['L', 'R']) if (!seen[side]) { st.prev[side] = null; st.armed[side] = false; }
+
+  // ---- 闸 4：这只手现在「在所有圆环之外」吗？在外就发一次蓄力许可（进环之后就用掉）
+  for (const p of palms) {
+    if (layout.every((it) => Math.hypot(p.x - it.cx, p.y - it.cy) > it.hit)) st.armed[p.side] = true;
+  }
+
+  // 找最近的那一格：**已经在蓄力的那一格**按 hit 判（手晃到边上不算离开），
+  // 要**新起手**的那一格按 start 判（贴着圆环外沿蹭过去不算）；而且那只手必须是「从外面进来」的
   let hover = null;
   for (const it of layout) {
     for (const p of palms) {
       const d = Math.hypot(p.x - it.cx, p.y - it.cy);
-      if (d <= it.hit && (!hover || d < hover.d)) hover = { id: it.id, d };
+      const same = st.id === it.id && st.side === p.side;
+      if (d > (same ? it.hit : it.start)) continue;
+      if (!same && !st.armed[p.side]) continue;       // 闸 4：没从外面进来的手不算
+      if (!hover || d < hover.d) hover = { id: it.id, d, side: p.side };
     }
   }
   const item = hover ? layout.find((it) => it.id === hover.id) : null;
   const holdMs = item && (item.kind === 'prev' || item.kind === 'next') ? MENU_NAV_HOLD_MS : GESTURE_HOLD_MS;
+  const dt = clamp(now - (st.at || now), 0, 250);
 
   if (hover) {
-    if (hover.id !== st.id) {          // 换了一格（或刚把手伸进来）：这一格从头开始
+    if (hover.id !== st.id || hover.side !== st.side) {   // 换了一格 / 换了只手：这一格从头开始
       if (st.id) paintMenuRing(st.id, 0);
       st.id = hover.id;
+      st.side = hover.side;
       st.since = now;
       st.p = 0;
       st.announced = '';
+      st.armed[hover.side] = false;                      // 许可用掉了：要再选一次得先出环再进环
     }
     if (!st.since) st.since = now;
     st.lastInside = now;
+    // ---- 闸 3：手在动 → 计时的起点跟着往后挪，进度就不涨（走过去 / 挥过去都不算）
+    if (speed[st.side] > MENU_STILL_SPEED * size.h) st.since += dt;
     st.p = clamp((now - st.since) / holdMs, 0, 1);
     // 指着某一格一会儿了 → 把它念出来（先确认「我指的是这个」，再决定要不要停满 3 秒）
     if (item && st.p >= MENU_ANNOUNCE_P && st.announced !== st.id) {
@@ -2005,10 +2091,9 @@ function updateMenu(landmarks, now) {
       audio.say(item.name, { rate: 1.25, minGapMs: 400 });
     }
   } else if (st.id && now - st.lastInside > GESTURE_GRACE_MS) {
-    // 手移开了：宽限期内先不动，之后慢慢退回去（看得见「手离开了」）
-    const dt = clamp(now - (st.at || now), 0, 250);
-    st.p = Math.max(0, st.p - dt / GESTURE_DRAIN_MS);
-    if (st.p <= 0) { st.since = 0; st.id = ''; st.announced = ''; }
+    // 手移开了：宽限期内先不动，之后退回去（菜单里退得更快，蹭一下不留痕迹）
+    st.p = Math.max(0, st.p - dt / MENU_DRAIN_MS);
+    if (st.p <= 0) { st.since = 0; st.id = ''; st.side = ''; st.announced = ''; }
   }
   st.at = now;
 
@@ -4400,8 +4485,9 @@ window.__mfg = {
   updateMenu, flipMenuPage, menuPageInfo, menuPerPage, menuHasPages, menuNavLayout, menuCols,
   menuRingLayout, menuItems, menuItemEl, menuCategoryName, paintMenuRing, requestStageFullscreen,
   tickCornerExit, syncCornerLabel,
-  MENU_COLS, MENU_ROWS, MENU_HIT_RATIO, MENU_NAV_HIT_RATIO, MENU_RING_MAX,
+  MENU_COLS, MENU_ROWS, MENU_HIT_RATIO, MENU_START_RATIO, MENU_NAV_HIT_RATIO, MENU_RING_MAX,
   MENU_NAV_HOLD_MS, MENU_ANNOUNCE_P, MENU_CELL_MIN_PX,
+  MENU_STILL_SPEED, MENU_ARM_MS, MENU_DRAIN_MS,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
 };
