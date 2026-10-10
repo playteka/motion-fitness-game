@@ -68,7 +68,7 @@ const seg = (a, b) => ({ a, b });
  */
 function buildStand({
   knee = 176, thighFwd = null, backKnee = null, stride = 0, lean = 6,
-  armDown = 0, elbow = 172, airborne = false, box = false,
+  armDown = 0, elbow = 172, airborne = false, box = false, lift = 1.8,
 } = {}) {
   const lines = [];
   const circles = [];
@@ -107,7 +107,7 @@ function buildStand({
   // 平移：脚底贴到地面线（跳跃时整幅抬起来）。先缩放再落位，否则会跑出方框
   const shift = (p) => ({
     x: p.x * STAND_SCALE + STAND_HIP_X,
-    y: (p.y - lowest) * STAND_SCALE + STAND_FLOOR - (airborne ? 1.8 : 0),
+    y: (p.y - lowest) * STAND_SCALE + STAND_FLOOR - (airborne ? lift : 0),
   });
   const drawn = lines.map((l) => seg(shift(l.a), shift(l.b)));
   /**
@@ -116,22 +116,22 @@ function buildStand({
    * 一眼就能看出「这一格是要跳过那个箱子」。
    */
   if (box) {
-    const bw = 7.4;
-    const bh = 2.6;
+    // 奥运图标那一路的画法：**一条台面 + 两条短立柱**（画成实心矩形，在细描边下会糊成一根粗杠）
+    const bw = 8.6;
+    const bh = 3.4;
     const x0 = STAND_HIP_X - bw / 2;
     const x1 = STAND_HIP_X + bw / 2;
-    const y1 = STAND_FLOOR + 1.4;
-    const y0 = y1 - bh;
+    const top = STAND_FLOOR + 1.2;
     drawn.push(
-      seg({ x: x0, y: y0 }, { x: x1, y: y0 }),
-      seg({ x: x1, y: y0 }, { x: x1, y: y1 }),
-      seg({ x: x1, y: y1 }, { x: x0, y: y1 }),
-      seg({ x: x0, y: y1 }, { x: x0, y: y0 }),
+      seg({ x: x0, y: top }, { x: x1, y: top }),
+      seg({ x: x0, y: top }, { x: x0, y: top + bh }),
+      seg({ x: x1, y: top }, { x: x1, y: top + bh }),
     );
   }
   return {
     lines: drawn,
     circles: circles.map((c) => ({ ...shift(c), r: c.r * STAND_SCALE })),
+    floor: STAND_FLOOR,          // 这一套骨架的「落点线」（脚底 / 箱底所在的那一行）
   };
 }
 
@@ -145,7 +145,7 @@ function buildStand({
  * @param o.kickKnee 勾起来那条腿的膝角（度），越小说明脚跟勾得越靠近臀部
  * @param o.kicked   'near' = 勾近侧腿（腿画在身体这一侧）；'far' = 勾远侧腿（往后一点，颜色一样但位置不同）
  */
-function buildKick({ kickKnee = 100, kicked = 'near' } = {}) {
+function buildKick({ kickKnee = 100, kicked = 'near', armDown: armIn = null, elbow: elbowIn = 118 } = {}) {
   const lines = [];
   const circles = [];
   const hip = { x: 0, y: 0 };
@@ -169,9 +169,13 @@ function buildKick({ kickKnee = 100, kicked = 'near' } = {}) {
   // 躯干直立、手臂自然摆动（勾腿跳时手臂在体侧小幅摆动），画在最后免得被腿压住
   const shoulder = add(hip, up(4), SEG.torso);
   lines.push(seg(hip, shoulder));
-  const armDown = kicked === 'near' ? -12 : 14;
+  /**
+   * 手臂：默认是跑步式的摆臂（前臂折起来、手抬到胸前）。
+   * 以前是 ±12° 笔直垂下 —— 会贴着勾起来的脚跟和支撑腿，两段线条糊在一起。
+   */
+  const armDown = Number.isFinite(armIn) ? armIn : (kicked === 'near' ? -64 : -42);
   const elbowP = add(shoulder, down(armDown), SEG.upper);
-  const wrist = add(elbowP, down(armDown - 26), SEG.fore);
+  const wrist = add(elbowP, down(armDown + (180 - num(elbowIn, 118))), SEG.fore);
   lines.push(seg(shoulder, elbowP), seg(elbowP, wrist));
   const head = add(shoulder, up(4), SEG.head * 1.6);
   circles.push({ x: head.x, y: head.y, r: SEG.head });
@@ -183,6 +187,7 @@ function buildKick({ kickKnee = 100, kicked = 'near' } = {}) {
   return {
     lines: lines.map((l) => seg(shift(l.a), shift(l.b))),
     circles: circles.map((c) => ({ ...shift(c), r: c.r * STAND_SCALE })),
+    floor: STAND_FLOOR,
   };
 }
 
@@ -290,13 +295,13 @@ function buildLie({
     const elbowP = { x: 0, y: 0 };
     const hand = { x: SEG.fore, y: 0 };
     lines.push(seg(shoulder, elbowP), seg(elbowP, hand));
-    if (handMark) lines.push(seg({ x: -1.2, y: 0 }, { x: SEG.fore + 1.6, y: 0 }));
+    if (handMark) lines.push({ ...seg({ x: -1.2, y: 0 }, { x: SEG.fore + 1.6, y: 0 }), mark: true });
   } else if (support) {
     const hand = { x: 0, y: 0 };
     const elbowP = ikJoint(shoulder, hand, SEG.upper, SEG.fore, -1);
     lines.push(seg(shoulder, elbowP), seg(elbowP, hand));
     // 「手 / 小臂贴地」再补一小段横线，一眼看出是撑在地面上
-    if (handMark) lines.push(seg({ x: hand.x - 1.8, y: hand.y }, { x: hand.x + 2.0, y: hand.y }));
+    if (handMark) lines.push({ ...seg({ x: hand.x - 1.8, y: hand.y }, { x: hand.x + 2.0, y: hand.y }), mark: true });
   } else {
     const armDir = Number.isFinite(armDeg) ? armDeg
       : (face === 'up' || face === 'seated' ? 180 - 8 : 0);
@@ -326,6 +331,7 @@ function buildLie({
   return {
     lines: lines.map((l) => seg(shift(l.a), shift(l.b))),
     circles: circles.map((c) => ({ ...shift(c), r: c.r * LIE_SCALE })),
+    floor: STAND_FLOOR - 1.5,    // buildLie 把身体/手落位在这一行
   };
 }
 
@@ -348,7 +354,7 @@ const STRAIGHT_KNEE = 174;
  * @param o.knee      膝角（180 = 腿伸直）—— 相扑深蹲这类「正面 + 屈膝」的动作用它：
  *                    小腿相对大腿再向外折一点，人变矮、更宽，一眼就是「宽站屈膝」
  */
-function buildJack({ legAngle = 6, armAngle = 150, knee = 180 } = {}) {
+function buildJack({ legAngle = 6, armAngle = 150, knee = 180, elbow = 180 } = {}) {
   const S = { thigh: 6.2, shin: 6.2, torso: 7.4, head: 2.0, upper: 3.7, fore: 3.6 };
   const cx = ICON_BOX / 2;
   const la = clamp(num(legAngle, 6), 0, 34);
@@ -366,13 +372,14 @@ function buildJack({ legAngle = 6, armAngle = 150, knee = 180 } = {}) {
     const kneeP = add(hip, down(side * la), S.thigh);
     const ankle = add(kneeP, down(side * (la + bend)), S.shin);
     lines.push(seg(hip, kneeP), seg(kneeP, ankle));
-    const elbow = add(shoulder, up(side * aa), S.upper);
-    const wrist = add(elbow, up(side * aa), S.fore);
-    lines.push(seg(shoulder, elbow), seg(elbow, wrist));
+    const fold = (180 - clamp(num(elbow, 180), 40, 180)) / 2;   // 小臂再往里折的角度
+    const elbowP = add(shoulder, up(side * aa), S.upper);
+    const wrist = add(elbowP, up(side * (aa + fold)), S.fore);
+    lines.push(seg(shoulder, elbowP), seg(elbowP, wrist));
   }
   lines.push(seg(hip, shoulder));
   circles.push({ x: shoulder.x, y: shoulder.y - S.head * 1.6, r: S.head });
-  return { lines, circles };
+  return { lines, circles, floor: STAND_FLOOR };
 }
 
 /**
@@ -971,70 +978,74 @@ function poseSVG(lines, circles, cls, text = null) {
  */
 const EXERCISE_POSES = {
   /* ---- 上肢 ---- */
-  // 俯卧撑：手撑地、肘弯到 100°（正在下去的途中，身体明显比平板支撑高）、身体一条线
+  // 俯卧撑：**下到最低点**（肘 76°，身体明显低、头往下探），和平板支撑（小臂撑地、身体一条线）拉开
   pushup: () => buildLie({
-    tilt: 90, hip: 178, knee: 174, elbow: 100, face: 'down', support: true, handMark: true,
+    tilt: 90, hip: 176, knee: 156, elbow: 62, face: 'down', support: true, handMark: true,
   }),
 
   /* ---- 下肢 ---- */
-  // 自重深蹲：蹲到底（膝 ~92°）+ 上身前倾 + 双手前平举
-  squat: () => buildStand({ knee: 92, lean: 22, armDown: 52, elbow: 150 }),
-  // 相扑深蹲：正面视角、宽站 + 屈膝（正面才看得出「宽」）
-  squatSumo: () => buildJack({ legAngle: 26, knee: 122, armAngle: 168 }),
-  // 向前箭步蹲：大步幅、前膝 90°、后腿较直（后膝 105°）、上身前倾
-  lunge: () => buildStand({ knee: 90, backKnee: 105, stride: 8, lean: 16, armDown: 30 }),
-  // 向后箭步蹲：步幅小、后膝沉到接近地面（后膝 70°）、上身更直 —— 和向前箭步蹲一眼分得开
-  lungeBack: () => buildStand({ knee: 94, backKnee: 70, stride: 3, lean: 8, armDown: 14 }),
-  // 勾腿跳：站立、脚跟往臀部勾起来（画法直接沿用进度条那一套）
-  buttKick: () => buildKick({ kickKnee: 68, kicked: 'near' }),
+  // 自重深蹲：蹲到底 + 上身前倾 + 双手前平举（手在膝盖前面，不贴着腿）
+  squat: () => buildStand({ knee: 90, lean: 24, armDown: 44, elbow: 150 }),
+  // 相扑深蹲：正面宽站 + 屈膝更深 + **拳头收在胸前**（`elbow` 把两条小臂折到身前）
+  squatSumo: () => buildJack({ legAngle: 32, knee: 100, armAngle: 158, elbow: 150 }),
+  // 向前箭步蹲：大步幅、前膝 90°、后腿较直，**手臂往前摆**（不压在前大腿上）
+  lunge: () => buildStand({ knee: 90, backKnee: 118, stride: 9, lean: 18, armDown: -26, elbow: 158 }),
+  // 向后箭步蹲：步幅小、**后膝沉到地面**（后膝 64°）、上身直、手臂自然垂在体侧
+  lungeBack: () => buildStand({ knee: 92, backKnee: 64, stride: 2, lean: 6, armDown: -6 }),
+  // 勾腿跳：站立、脚跟往臀部勾起来（手臂往前摆，让开勾起来的脚跟）
+  buttKick: () => buildKick({ kickKnee: 66, kicked: 'near', armDown: -48, elbow: 78 }),
 
   /* ---- 核心 ---- */
-  // 臀桥：躺下、屈膝、髋顶起来、身体绷直、双臂贴地
+  // 臀桥：躺下、屈膝、**髋顶得很高**（rise 0.62，弓形明显）、双臂贴地
   bridge: () => buildLie({
-    tilt: 92, hip: 176, knee: 92, rise: 0.35, face: 'up', elbow: 172, armDeg: 282,
+    tilt: 92, hip: 176, knee: 86, rise: 0.7, face: 'up', elbow: 172, armDeg: 282,
   }),
-  // 平板支撑：双肘撑地、小臂平贴地面、身体一条线
+  // 平板支撑：双肘撑地、小臂平贴地面、**髋膝完全伸直**（合成一条干净的线）
   plank: () => buildLie({
-    tilt: 90, hip: 178, knee: 172, face: 'down', support: true, forearm: true, handMark: true,
+    tilt: 90, hip: 180, knee: 180, face: 'down', support: true, forearm: true, handMark: true,
   }),
   // 死虫式：仰卧，一条腿伸出去、另一条腿屈在「桌面位」，手臂朝上
   deadBug: () => buildLie({
     tilt: 92, hip: 176, knee: 172, hip2: 92, knee2: 92, face: 'up', armDeg: 196,
   }),
-  // 卷腹：仰卧屈膝，肩离地卷起来（`shoulderRise` 就是把肩抬起来的那一项）
+  // 卷腹：仰卧、**膝盖收得更高**（hip 138 / knee 74）、肩离地卷起来
   crunch: () => buildLie({
-    tilt: 92, hip: 118, knee: 96, shoulderRise: 0.62, face: 'up', armDeg: 206,
+    tilt: 92, hip: 138, knee: 74, shoulderRise: 0.72, face: 'up', armDeg: 214,
   }),
-  // 反向卷腹：仰卧，膝盖往胸口收（髋角 70° = 大腿越过垂直、向胸口折）
+  // 反向卷腹：仰卧，膝盖往胸口收（髋角 62° = 大腿越过垂直、向胸口折），手臂贴地让开大腿
   reverseCrunch: () => buildLie({
-    tilt: 92, hip: 70, knee: 92, kneeLift: 2.2, face: 'up', armDeg: 278,
+    tilt: 92, hip: 52, knee: 72, kneeLift: 3.2, face: 'up', armDeg: 318,
   }),
-  // 仰卧抬腿：仰卧，双腿竖直向上伸直
+  // 仰卧抬腿：仰卧，双腿竖直向上伸直，手臂贴地
   lyingLegRaise: () => buildLie({
-    tilt: 92, hip: 92, knee: 176, face: 'up', armDeg: 278,
+    tilt: 92, hip: 104, knee: 178, face: 'up', armDeg: 318,
   }),
 
   /* ---- 全身 ---- */
-  // 深蹲跳：腾空 + 双腿伸展 + 双臂上摆
-  squatJump: () => buildStand({ knee: 168, lean: 8, armDown: -58, elbow: 162, airborne: true }),
-  // 波比跳：腾空 + 双腿收起 + 双手举过头顶（和深蹲跳靠「收腿」区分）
-  burpee: () => buildStand({ knee: 112, lean: 6, armDown: -84, elbow: 160, airborne: true }),
-  // 登山者：手撑地、身体一条线、一条腿的膝盖往胸口提起来
+  // 深蹲跳：腾空 + **双腿收起** + 双臂上摆（和波比跳的「蹲下撑手」区分开）
+  squatJump: () => buildStand({
+    knee: 118, lean: 8, armDown: -64, elbow: 156, airborne: true, lift: 3.0,
+  }),
+  // 波比跳：**蹲下、双手撑到地面**（最有辨识度的那一帧；两个手臂笔直朝下）
+  burpee: () => buildStand({ knee: 104, lean: 48, armDown: 18, elbow: 176 }),
+  // 登山者：手撑地、身体一条线、**一条腿的膝盖提到胸口**（提膝幅度拉大，和平板支撑区分）
   mountainClimber: () => buildLie({
-    tilt: 90, hip: 178, knee: 172, elbow: 176, hip2: 112, knee2: 84,
+    tilt: 90, hip: 178, knee: 176, elbow: 176, hip2: 96, knee2: 62,
     face: 'down', support: true, handMark: true,
   }),
-  // 开合跳：正面、双腿张开、双手举过头顶
-  jumpingJack: () => buildJack({ legAngle: 28, armAngle: 8 }),
-  // 跳箱：腾空越过脚下的箱子（箱子由 buildStand 的 box 画出来）
-  boxJump: () => buildStand({ knee: 132, lean: 12, armDown: 24, airborne: true, box: true }),
+  // 开合跳：正面、双腿张开、**双手举成宽 V**（手臂让开脑袋）
+  jumpingJack: () => buildJack({ legAngle: 30, armAngle: 26 }),
+  // 跳箱：**腾空得比箱顶高**（lift 4.4），箱子画在脚下
+  boxJump: () => buildStand({
+    knee: 138, lean: 10, armDown: -18, elbow: 168, airborne: true, box: true, lift: 3.0,
+  }),
 
   /* ---- 拉伸 ---- */
   // 站立体前屈：膝盖基本伸直、上身折下去、双手垂向脚面
-  standingForwardFold: () => buildStand({ knee: 172, lean: 76, armDown: 6, elbow: 166 }),
+  standingForwardFold: () => buildStand({ knee: 172, lean: 78, armDown: 4, elbow: 168 }),
   // 坐姿体前屈：坐着、双腿前伸、上身往腿上折、双手前伸够脚
   seatedForwardFold: () => buildLie({
-    tilt: 44, hip: 136, knee: 174, face: 'seated', armDeg: 264,
+    tilt: 30, hip: 150, knee: 178, face: 'seated', armDeg: 268,
   }),
 };
 
@@ -1047,37 +1058,51 @@ const EXERCISE_POSES = {
 export const APP_ICON_BOX = 24;
 const APP_LIVE = 20;
 const APP_PAD = (APP_ICON_BOX - APP_LIVE) / 2;
-/** 界面图标（导航 / 分类 / 按钮）在活动区里再留 0.5 的边 */
-const APP_INNER_UI = APP_LIVE - 1;
-/** 动作象形图用满整个活动区 —— 用户要求「更大气、上档次」，所以要画得满、画得有分量 */
-const APP_INNER_POSE = APP_LIVE;
-
-/** 手绘骨架（32 单位）→ 24 网格：缩进 20×20 活动区，坐标落在整数 / .5 上（避免半像素虚边） */
-const gridVal = (v) => Math.round((v / ICON_BOX * APP_LIVE + APP_PAD) * 2) / 2;
 
 /**
- * 把内容整体缩放进活动区（保持比例、居中）。
+ * 运动象形图的排版（仿奥运项目图标：**一条地面线 + 人站在线上方一点**）。
  *
- * 四个构建器各有各的「张开幅度」（躺着的很长、跳起来的很高），直接映射进来会有的大有的小、
- * 腾空的还会顶出活动区；这一步统一缩放，让 19 张图在同一个 20×20 的框里**视觉重量一致**。
+ * - `APP_POSE_SCALE`：手绘骨架（32 单位）→ 图标的统一缩放。**所有动作共用同一个比例**，
+ *   所以「深蹲比站姿矮、躺姿比站姿长」这些相对大小是保留的（不是每张都拉满活动区，
+ *   那会让深蹲和跳跃一样高，反而不像）；
+ * - `APP_POSE_FLOOR_Y`：姿势的「落点线」（脚 / 手 / 接触点落在这一行）；
+ * - `APP_GROUND_Y`：地面线（所有图标共用），和落点线之间留出空隙 ——
+ *   腾空的动作（深蹲跳 / 波比跳 / 跳箱）和地面的距离就是这个空隙，一眼看得出「离地」。
  */
-function fitToLiveArea(lines, circles, inner = APP_INNER_UI) {
-  const xs = [...lines.flatMap((l) => [l.a.x, l.b.x]), ...circles.flatMap((c) => [c.x - c.r, c.x + c.r])];
-  const ys = [...lines.flatMap((l) => [l.a.y, l.b.y]), ...circles.flatMap((c) => [c.y - c.r, c.y + c.r])];
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  const k = Math.min(1, inner / Math.max(maxX - minX, maxY - minY, 0.001));
-  const mid = APP_ICON_BOX / 2;
-  const px = (x) => Math.round((mid + (x - cx) * k) * 2) / 2;
-  const py = (y) => Math.round((mid + (y - cy) * k) * 2) / 2;
+const APP_POSE_SCALE = 0.53;
+const APP_POSE_FLOOR_Y = 17.5;
+const APP_GROUND_Y = 21;
+
+/** 手绘骨架（32 单位）→ 图标坐标：统一缩放、横向居中、落点线对齐到 APP_POSE_FLOOR_Y，坐标落 .5 */
+const gridX = (x, cx) => Math.round((APP_ICON_BOX / 2 + (x - cx) * APP_POSE_SCALE) * 2) / 2;
+const gridY = (y, floor) => Math.round((APP_POSE_FLOOR_Y + (y - floor) * APP_POSE_SCALE) * 2) / 2;
+
+/**
+ * 按统一比例把骨架摆到地面线上（不再「每张图各自拉满活动区」）。
+ *
+ * 每张图各自缩放到填满活动区，会让紧凑的动作（深蹲）和舒展的动作（跳跃）看起来一样大，
+ * 而且紧凑动作被放大后关节处的线条更容易糊在一起 —— 用户反馈「线条纠缠成一团，不够舒展」。
+ * 统一比例之后：站姿最高、深蹲明显矮、躺姿最长，**相对大小和动作本身对得上**。
+ */
+function placeOnGround(lines, circles, floor) {
+  const cx = (Math.min(...lines.flatMap((l) => [l.a.x, l.b.x]), ...lines.map((l) => (l.a.x + l.b.x) / 2))
+    + Math.max(...lines.flatMap((l) => [l.a.x, l.b.x]))) / 2;
   return {
-    lines: lines.map((l) => ({ a: { x: px(l.a.x), y: py(l.a.y) }, b: { x: px(l.b.x), y: py(l.b.y) } })),
-    circles: circles.map((c) => ({ x: px(c.x), y: py(c.y), r: Math.max(0.5, Math.round(c.r * k * 2) / 2) })),
+    lines: lines.map((l) => ({
+      a: { x: gridX(l.a.x, cx), y: gridY(l.a.y, floor) },
+      b: { x: gridX(l.b.x, cx), y: gridY(l.b.y, floor) },
+      mark: !!l.mark,
+      ground: !!l.ground,
+    })),
+    circles: circles.map((c) => ({
+      x: gridX(c.x, cx), y: gridY(c.y, floor), r: Math.max(0.8, Math.round(c.r * APP_POSE_SCALE * 1.7 * 2) / 2),
+    })),
   };
+}
+
+/** 地面线（所有运动图标共用一条，画在活动区底部） */
+function groundLine() {
+  return { a: { x: 4.5, y: APP_GROUND_Y }, b: { x: 19.5, y: APP_GROUND_Y }, ground: true };
 }
 
 /**
@@ -1088,7 +1113,7 @@ function fitToLiveArea(lines, circles, inner = APP_INNER_UI) {
  * 元素数就能从 10 降到 6~8（README 里写明了这条与 skill 规格的差异与原因）。
  */
 function mergeStraightLimbs(lines, tol = 14) {
-  const out = lines.map((l) => ({ a: { ...l.a }, b: { ...l.b } }));
+  const out = lines.map((l) => ({ a: { ...l.a }, b: { ...l.b }, mark: !!l.mark, ground: !!l.ground }));
   const ang = (from, to) => Math.atan2(to.y - from.y, to.x - from.x);
   let changed = true;
   while (changed) {
@@ -1105,7 +1130,7 @@ function mergeStraightLimbs(lines, tol = 14) {
         if (d > 180) d = 360 - d;
         if (d > tol) continue;
         out.splice(j, 1);
-        out.splice(i, 1, { a: far1, b: far2 });
+        out.splice(i, 1, { a: far1, b: far2, mark: !!(out[i].mark && out[j].mark), ground: !!(out[i].ground && out[j].ground) });
         changed = true;
       }
     }
@@ -1115,7 +1140,7 @@ function mergeStraightLimbs(lines, tol = 14) {
 
 /** 把骨架画成 SVG（24 网格、只含 shapes、颜色走 currentColor）。`solid` = 动作象形图那一路 */
 function appIconSVG(lines, circles, solid = false) {
-  const parts = lines.map((l) => `<line x1="${l.a.x}" y1="${l.a.y}" x2="${l.b.x}" y2="${l.b.y}" />`);
+  const parts = lines.map((l) => `<line${l.ground ? ' class="icon-ground"' : l.mark ? ' class="icon-mark"' : ''} x1="${l.a.x}" y1="${l.a.y}" x2="${l.b.x}" y2="${l.b.y}" />`);
   for (const c of circles) {
     parts.push(`<circle cx="${c.x}" cy="${c.y}" r="${Math.max(0.5, Math.round((c.r / ICON_BOX * 24) * 2) / 2)}" />`);
   }
@@ -1136,20 +1161,12 @@ function appIconSVG(lines, circles, solid = false) {
 export function exercisePoseSVG(id) {
   const build = EXERCISE_POSES[id];
   if (!build) return '';
-  const { lines, circles } = build();
+  const pose = build();
+  const { lines, circles, floor = STAND_FLOOR } = pose;
   const merged = mergeStraightLimbs(lines);
-  /**
-   * 头放大到 1.7 倍再做整体适配。
-   *
-   * 实心象形图里「头」要明显比四肢粗才有剪影感（四肢描边 3 → 头直径 ≈5）；
-   * 按原来骨架比例，头的直径和四肢一样粗，看着就是一根棍子顶了个疙瘩。
-   */
-  const fitted = fitToLiveArea(
-    merged.map((l) => ({ a: { x: gridVal(l.a.x), y: gridVal(l.a.y) }, b: { x: gridVal(l.b.x), y: gridVal(l.b.y) } })),
-    circles.map((c) => ({ x: gridVal(c.x), y: gridVal(c.y), r: c.r * 1.7 })),
-    APP_INNER_POSE,
-  );
-  return appIconSVG(fitted.lines, fitted.circles, true);
+  const placed = placeOnGround(merged, circles, floor);
+  // 地面线也进画面（仿奥运图标：人站在一条线上，腾空的动作和线之间留出空隙）
+  return appIconSVG([...placed.lines, groundLine()], placed.circles, true);
 }
 
 /**

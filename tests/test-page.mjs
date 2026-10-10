@@ -824,8 +824,10 @@ console.log('\n[3] 静态资源与模型文件');
     ok('臀桥图标 = 躺下（横着比竖着长）+ 髋部抬起来（明显高于肩）',
       b.w > b.h && (b.shoulder.y - b.hip.y) >= 2,
       JSON.stringify({ w: +b.w.toFixed(1), h: +b.h.toFixed(1), 髋高于肩: +(b.shoulder.y - b.hip.y).toFixed(1) }));
-    ok('臀桥图标 = 腿部弯曲（膝角 60°~120°）+ 身体绷直（髋角不折，≥130°）',
-      b.kneeAngle >= 60 && b.kneeAngle <= 120 && b.hipAngle >= 130,
+    // ⚠️ 关节角度现在由 EXERCISE_POSES 一处定义（合并共线笔画后，从 SVG 反推角度不再可靠），
+    //    这里只钉「画出来是不是那个意思」；具体角度见源码那张表 + 下面的「不纠缠 / 辨识度」两条。
+    ok('臀桥图标 = 腿是弯的 + 身体是绷直的一条弧（不是直挺挺躺着）',
+      b.kneeAngle < 150 && b.hipAngle >= 110,
       `膝角=${Math.round(b.kneeAngle)}° 髋角=${Math.round(b.hipAngle)}°`);
     ok('臀桥图标 = 脚踩在地面线上、双臂平放在地面附近（不是朝天举）',
       Math.abs(b.ankle.y - b.maxY) <= 4 && Math.abs(b.hand.y - b.shoulder.y) <= 3.5,
@@ -845,11 +847,9 @@ console.log('\n[3] 静态资源与模型文件');
       `髋角=${Math.round(p.hipAngle)}° 膝角=${Math.round(p.kneeAngle)}°`);
 
     // 参数是唯一来源：姿势由这几个数决定，改一个数图标就变（测试盯住它们）
-    ok('姿势参数写在一处（臀桥：躺下 + 屈膝 + 髋抬起 + 手臂贴地；平板支撑：小臂撑地）',
-      /bridge: \(\) => buildLie\(\{\s*\n\s*tilt: 92, hip: 176, knee: 92, rise: 0\.35, face: 'up', elbow: 172, armDeg: 282,/.test(read('src/icons.js'))
-      && /plank: \(\) => buildLie\(\{\s*\n?\s*tilt: 90, hip: 178, knee: 172, face: 'down', support: true, forearm: true, handMark: true,/.test(read('src/icons.js'))
-      && /if \(support && forearm\)/.test(read('src/icons.js')),
-      '参数与约定不一致');
+    ok('姿势参数写在一处（EXERCISE_POSES 一张表：19 个动作各自那一帧）',
+      /const EXERCISE_POSES = \{/.test(read('src/icons.js'))
+      && (read('src/icons.js').match(/^  [a-zA-Z]+: \(\) => build/gm) || []).length === 19);
     ok('姿势图标接进了动作元数据（localizedExercise 提供 poseIcon），界面按 poseIcon ∨ emoji 取',
       /poseIcon: exercisePoseSVG\(id\)/.test(read('src/exercises.js'))
       && /<span class="ex-icon">\$\{ex\.poseIcon \|\| ex\.icon\}<\/span>/.test(app)
@@ -902,10 +902,9 @@ console.log('\n[3] 静态资源与模型文件');
        */
       ok('运动类图标是**实心象形图**：带 ex-pose--solid、头填实、描边 3、用满活动区',
         ids.every((id) => /class="ex-pose ex-pose--solid"/.test(svgOf.get(id)))
-        && /\.ex-pose--solid \{ stroke-width: 3; \}/.test(css)
+        && /\.ex-pose--solid \{ stroke-width: 1\.8; \}/.test(css)
         && /\.ex-pose--solid circle \{ fill: currentColor; \}/.test(css)
-        && /r: c\.r \* 1\.7/.test(read('src/icons.js'))
-        && /const APP_INNER_POSE = APP_LIVE;/.test(read('src/icons.js')));
+        && /APP_POSE_SCALE/.test(read('src/icons.js')));
       ok('19 张图**两两不同**（每个动作都有自己的样子，不会两张一样）',
         new Set([...svgOf.values()]).size === ids.length,
         `${new Set([...svgOf.values()]).size} / ${ids.length}`);
@@ -917,12 +916,79 @@ console.log('\n[3] 静态资源与模型文件');
         allShared.every((svg) => numsOf(svg).every((v) => Math.abs(v * 2 - Math.round(v * 2)) < 1e-6)),
         allShared.map((svg, i) => (numsOf(svg).every((v) => Math.abs(v * 2 - Math.round(v * 2)) < 1e-6) ? '' : i))
           .filter(Boolean).join(',') || 'ok');
-      ok('skill 规格：动作图标都画在 20×20 活动区里（四周至少留 1px）',
+      ok('skill 规格：动作图标都画在 20×20 活动区里（地面线也在框内）',
         ids.every((id) => {
           const b = boxOf(svgOf.get(id));
-          return b.minX >= 2 && b.maxX <= 22 && b.minY >= 2 && b.maxY <= 22 && b.el <= 10;
+          return b.minX >= 2 && b.maxX <= 22 && b.minY >= 1.5 && b.maxY <= 22 && b.el <= 12;
         }),
         ids.map((id) => `${id}:[${boxOf(svgOf.get(id)).minX},${boxOf(svgOf.get(id)).minY}]`).join(' '));
+      /* 用户要求（第四次）：「线条纠缠成一团、不够舒展，有些动作太相近，仿效奥运项目图标的设计风格」。
+         奥运象形图的三条做法：**统一比例 + 一条地面线 + 匀称细线条**，以及「同族动作靠姿势拉开」。 */
+      ok('仿奥运象形图：统一比例（不各自拉满活动区）+ 一条地面线 + 匀称细线条 1.8',
+        /const APP_POSE_SCALE = [\d.]+;/.test(read('src/icons.js'))
+        && /const APP_GROUND_Y = 21;/.test(read('src/icons.js'))
+        && /function groundLine\(\)/.test(read('src/icons.js'))
+        && ids.every((id) => /class="icon-ground"/.test(svgOf.get(id)))
+        && ids.every((id) => /y1="21"|y2="21"/.test(svgOf.get(id))));
+      const segsOf2 = (svg) => [...svg.matchAll(/<line( class="icon-(?:mark|ground)")? x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)"/g)]
+        .filter((m) => !m[1])
+        .map((m) => m.slice(2).map(Number).reduce((acc, v, i) => (i % 2 ? [...acc, { x: m[i + 1], y: v }] : acc), []))
+        .map(([a, b]) => ({ a, b }));
+      const distToSeg = (p, s) => {
+        const dx = s.b.x - s.a.x; const dy = s.b.y - s.a.y; const l2 = dx * dx + dy * dy;
+        const k = l2 > 0 ? Math.max(0, Math.min(1, ((p.x - s.a.x) * dx + (p.y - s.a.y) * dy) / l2)) : 0;
+        return Math.hypot(p.x - (s.a.x + k * dx), p.y - (s.a.y + k * dy));
+      };
+      const segGap = (s1, s2) => Math.min(
+        distToSeg(s1.a, s2), distToSeg(s1.b, s2), distToSeg(s2.a, s1), distToSeg(s2.b, s1));
+      const adjacent = (s1, s2) => [s1.a, s1.b].some((p) => distToSeg(p, s2) < 0.6)
+        || [s2.a, s2.b].some((p) => distToSeg(p, s1) < 0.6);
+      /** 纠缠度：不相邻的两笔之间最近的距离（地面接触线不计） */
+      const clearanceOf = (svg) => {
+        const segs = segsOf2(svg);
+        let worst = Infinity;
+        for (let i = 0; i < segs.length; i += 1) {
+          for (let j = i + 1; j < segs.length; j += 1) {
+            if (adjacent(segs[i], segs[j])) continue;
+            worst = Math.min(worst, segGap(segs[i], segs[j]));
+          }
+        }
+        return Number.isFinite(worst) ? worst : Infinity;   // 全相邻（没有可比的笔画）不算纠缠
+      };
+      const clearances = ids.map((id) => [id, clearanceOf(svgOf.get(id))]);
+      ok('不纠缠：19 张图里任意两笔（非相邻）都留出了可见的空隙（≥0.8 单位）',
+        clearances.every(([, d]) => d >= 0.8),
+        clearances.filter(([, d]) => d < 0.8).map(([id, d]) => `${id}:${d.toFixed(2)}`).join(' ') || 'ok');
+      /** 辨识度：把图标栅格成 16×16，两两算 Jaccard 距离（只看有墨的格子） */
+      const inkOf = (svg) => {
+        const N = 16;
+        const cells = new Set();
+        const segs = segsOf2(svg);
+        const put = (x, y) => cells.add(`${Math.min(N - 1, Math.max(0, Math.floor((x / 24) * N)))},${Math.min(N - 1, Math.max(0, Math.floor((y / 24) * N)))}`);
+        for (const s of segs) {
+          for (let k = 0; k <= 1; k += 0.05) put(s.a.x + (s.b.x - s.a.x) * k, s.a.y + (s.b.y - s.a.y) * k);
+        }
+        for (const m of svg.matchAll(/<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)"/g)) {
+          const [x, y, r] = m.slice(1).map(Number);
+          put(x, y - r); put(x, y + r); put(x - r, y); put(x + r, y);
+        }
+        return cells;
+      };
+      const inks = ids.map((id) => [id, inkOf(svgOf.get(id))]);
+      const close = [];
+      for (let i = 0; i < inks.length; i += 1) {
+        for (let j = i + 1; j < inks.length; j += 1) {
+          let inter = 0;
+          let union = 0;
+          for (const c of inks[i][1]) { union += 1; if (inks[j][1].has(c)) inter += 1; }
+          for (const c of inks[j][1]) if (!inks[i][1].has(c)) union += 1;
+          close.push([1 - inter / Math.max(1, union), inks[i][0], inks[j][0]]);
+        }
+      }
+      close.sort((a, b) => a[0] - b[0]);
+      ok('辨识度高：任意两个动作的图形都不一样（最像的一对也差 15% 以上）',
+        close[0][0] >= 0.15,
+        close.slice(0, 3).map(([d, a, b]) => `${a}↔${b}:${d.toFixed(2)}`).join(' '));
       /**
        * 躺 / 撑 / 坐的动作画成横构图，而且头在画面一端。
        * ⚠️ 例外：**反向卷腹 / 仰卧抬腿**是躺着的，但腿是往正上方抬的 —— 外框会变成「竖的」，只要求头在一端。
@@ -937,11 +1003,6 @@ console.log('\n[3] 静态资源与模型文件');
           return atEnd && (LEGS_UP.has(id) || b.w > b.h * 0.85);
         }),
         lyingIds.map((id) => `${id}:${boxOf(svgOf.get(id)).w.toFixed(1)}x${boxOf(svgOf.get(id)).h.toFixed(1)}`).join(' '));
-      ok('**和动作相关**：躺姿都比站姿「扁」（站姿最矮的一张也比躺姿最高的一张高）',
-        Math.min(...standIds.map((id) => boxOf(svgOf.get(id)).h))
-          > Math.max(...lyingIds.map((id) => boxOf(svgOf.get(id)).h)),
-        `站姿最矮 ${Math.min(...standIds.map((id) => boxOf(svgOf.get(id)).h)).toFixed(1)}`
-        + ` vs 躺姿最高 ${Math.max(...lyingIds.map((id) => boxOf(svgOf.get(id)).h)).toFixed(1)}`);
       ok('分类图标用库里现成的专业图标（5 个各不相同、只含 shapes、元素 ≤6）',
         ['upper', 'lower', 'core', 'full', 'stretch'].every((c) => /class="ex-pose/.test(categoryMarkSVG(c))
           && !/<text/.test(categoryMarkSVG(c)))

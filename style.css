@@ -1540,8 +1540,10 @@ kbd {
  * 描边加粗到 3（四肢变成实心身体）+ 头填实（和身体连成剪影）+ 用满 20×20 活动区。
  * 网格 / 圆头圆角 / currentColor 和界面图标完全一致 —— 同一族里的「内容」那一层。
  */
-.ex-pose--solid { stroke-width: 3; }
+.ex-pose--solid { stroke-width: 1.8; }
 .ex-pose--solid circle { fill: currentColor; }
+/* 手撑地 / 落脚处的「地面记号」：比肢体细一点，一眼看出是记号不是肢体 */
+.ex-pose--solid .icon-mark { stroke-width: 1; }
 /* 界面按钮上的图标（主页 / 成绩 / 运动设定 / 开始） */
 .ui-icon {
   width: 1.1em;
