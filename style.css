@@ -1430,34 +1430,37 @@ kbd {
  * 上一屏在 `.menu-ghost` 里滑出并淡出，新一屏在 `.menu-grid` 里滑入并淡入；
  * 标题 / 说明 / 页码 / 底部提示跟着一起淡。
  * 方向按「翻页」的直觉：+1（下一页）= 老的往左走、新的从右边进来；-1（上一页 / 返回）反过来。
+ *
+ * 时长与位移量由 app.js 的 `MENU_ANIM_OUT_MS`（320ms）/ `MENU_ANIM_IN_MS`（500ms）对齐 ——
+ * 用户反馈「太快了，让人能清楚的看到」，所以放慢到一整次换屏约 0.8 秒，并把滑行距离加到 52%。
  */
 @keyframes menuSlideOutLeft {
-  from { opacity: 1; transform: translate(-50%, -50%); }
-  to { opacity: 0; transform: translate(-50%, -50%) translateX(-42%); }
+  from { opacity: 1; transform: translate(-50%, -50%) translateX(0); }
+  to { opacity: 0; transform: translate(-50%, -50%) translateX(-52%); }
 }
 @keyframes menuSlideOutRight {
-  from { opacity: 1; transform: translate(-50%, -50%); }
-  to { opacity: 0; transform: translate(-50%, -50%) translateX(42%); }
+  from { opacity: 1; transform: translate(-50%, -50%) translateX(0); }
+  to { opacity: 0; transform: translate(-50%, -50%) translateX(52%); }
 }
 @keyframes menuSlideInRight {
-  from { opacity: 0; transform: translate(-50%, -50%) translateX(42%); }
-  to { opacity: 1; transform: translate(-50%, -50%); }
+  from { opacity: 0; transform: translate(-50%, -50%) translateX(52%); }
+  to { opacity: 1; transform: translate(-50%, -50%) translateX(0); }
 }
 @keyframes menuSlideInLeft {
-  from { opacity: 0; transform: translate(-50%, -50%) translateX(-42%); }
-  to { opacity: 1; transform: translate(-50%, -50%); }
+  from { opacity: 0; transform: translate(-50%, -50%) translateX(-52%); }
+  to { opacity: 1; transform: translate(-50%, -50%) translateX(0); }
 }
 @keyframes menuFadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes menuFadeOut { from { opacity: 1; } to { opacity: 0; } }
-.menu-ghost.menu-anim-out-next > .menu-ring { animation: menuSlideOutLeft 160ms ease-in forwards; }
-.menu-ghost.menu-anim-out-prev > .menu-ring { animation: menuSlideOutRight 160ms ease-in forwards; }
-.menu-grid.menu-anim-in-next > .menu-ring { animation: menuSlideInRight 240ms ease-out both; }
-.menu-grid.menu-anim-in-prev > .menu-ring { animation: menuSlideInLeft 240ms ease-out both; }
+.menu-ghost.menu-anim-out-next > .menu-ring { animation: menuSlideOutLeft 320ms cubic-bezier(0.4, 0, 1, 1) forwards; }
+.menu-ghost.menu-anim-out-prev > .menu-ring { animation: menuSlideOutRight 320ms cubic-bezier(0.4, 0, 1, 1) forwards; }
+.menu-grid.menu-anim-in-next > .menu-ring { animation: menuSlideInRight 500ms cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+.menu-grid.menu-anim-in-prev > .menu-ring { animation: menuSlideInLeft 500ms cubic-bezier(0.22, 0.61, 0.36, 1) both; }
 .menu-head.menu-anim-in-next, .menu-head.menu-anim-in-prev,
-.menu-foot.menu-anim-in-next, .menu-foot.menu-anim-in-prev { animation: menuFadeIn 240ms ease-out both; }
+.menu-foot.menu-anim-in-next, .menu-foot.menu-anim-in-prev { animation: menuFadeIn 500ms cubic-bezier(0.22, 0.61, 0.36, 1) both; }
 /* 回网页首页：菜单整体淡出（主页那边同时淡入，见 app.js 的 menuBackHome） */
-.gesture-menu.menu-anim-out-home { animation: menuFadeOut 160ms ease-in forwards; }
-.home.menu-anim-in-home { animation: menuFadeIn 260ms ease-out both; }
+.gesture-menu.menu-anim-out-home { animation: menuFadeOut 320ms ease-in forwards; }
+.home.menu-anim-in-home { animation: menuFadeIn 500ms cubic-bezier(0.22, 0.61, 0.36, 1) both; }
 @media (prefers-reduced-motion: reduce) {
   .menu-ghost.menu-anim-out-next > .menu-ring, .menu-ghost.menu-anim-out-prev > .menu-ring,
   .menu-grid.menu-anim-in-next > .menu-ring, .menu-grid.menu-anim-in-prev > .menu-ring,

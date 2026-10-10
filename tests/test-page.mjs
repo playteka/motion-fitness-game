@@ -732,7 +732,13 @@ console.log('\n[3] 静态资源与模型文件');
       && /function menuBackHome\(\)/.test(app)                                       // 回网页首页：菜单淡出 + 主页淡入
       && /home\.classList\.add\('menu-anim-in-home'\)/.test(app)
       && /\.home\.menu-anim-in-home \{ animation: menuFadeIn/.test(css)
-      && /MENU_ANIM_OUT_MS = 160;/.test(app) && /MENU_ANIM_IN_MS = 240;/.test(app));
+      && /const MENU_ANIM_OUT_MS = (\d+);/.test(app) && /const MENU_ANIM_IN_MS = (\d+);/.test(app)
+      && Number(/const MENU_ANIM_OUT_MS = (\d+)/.exec(app)[1]) >= 280
+      && Number(/const MENU_ANIM_IN_MS = (\d+)/.exec(app)[1]) >= 450);
+    ok('动画放慢到「看得清」的程度，而且和 CSS 里的时长一致（滑出 320ms / 滑入 500ms）',
+      new RegExp(`menuSlideOutLeft ${Number(/const MENU_ANIM_OUT_MS = (\d+)/.exec(app)[1])}ms`).test(css)
+      && new RegExp(`menuSlideInRight ${Number(/const MENU_ANIM_IN_MS = (\d+)/.exec(app)[1])}ms`).test(css)
+      && /menuSlideInLeft 500ms cubic-bezier/.test(css) && /translateX\(-52%\)/.test(css));
     ok('菜单里不摆「一组结束」的两个圆环（offerSetChoices 认得菜单模式）',
       /if \(state\.homeMode \|\| state\.menuMode \|\| !state\.detector\) return;/.test(app));
     ok('菜单里按 Esc = 回网页首页（键盘用户的退路）',
