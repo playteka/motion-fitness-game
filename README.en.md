@@ -542,9 +542,9 @@ The search box at the top finds exercises by name directly (type “push” or �
 - **Paging and going back both slide and fade** (the user asked: “paging and going back should both use a sliding fade-in / fade-out
   animation”):
   - on a screen change the rings of the **previous screen are cloned into a “ghost” layer** (`#menuGridGhost`), which **slides out and
-    fades** (320 ms), while the new screen's rings **slide in and fade in** (500 ms); the title, lead, page line and footer hint fade too —
-    **about half a second in total** (the user reported “too fast — slow it down so the slide is clearly visible”, so the timings went from
-    160 / 240 ms to 320 / 500 ms and the travel from 42% to 52%);
+    fades** (500 ms), while the new screen's rings **slide in and fade in** (800 ms); the title, lead, page line and footer hint fade too —
+    **about 0.8 s in total** (the user reported twice that it was “too fast, I want to clearly see the slide”, so the timings went from
+    160 / 240 ms to 320 / 500 ms and now to **500 / 800 ms**, with the travel at 52%);
   - the direction follows the paging metaphor: **next page / one level deeper = the old screen leaves to the left and the new one enters
     from the right**; **previous page / back = the opposite** (a “walking back” feel);
   - the **real DOM is rebuilt immediately** (only the clone is animated), so state and display never drift apart and rapid paging cannot
