@@ -34,6 +34,9 @@ const STORE = {
   records: 'mfg.records.v1',
 };
 
+/** 当前设置版本（v2 = 「火柴人」默认关闭、老存档迁移一次） */
+const SETTINGS_VERSION = 2;
+
 const DEFAULT_SETTINGS = {
   modelKey: 'lite',
   mirror: true,
@@ -50,6 +53,8 @@ const DEFAULT_SETTINGS = {
    */
   showAngles: true,
   showSkeleton: false,
+  /** 设置版本：用来做一次性迁移（见 loadSettings；v2 起「火柴人」默认关闭） */
+  settingsVersion: SETTINGS_VERSION,
   debug: false,
   /**
    * 「记录调试数据」（用户要求）：打开后把每一帧的关节点 + 全部判定指标写进 logs/ 里的 jsonl 文件。
@@ -177,7 +182,19 @@ function captureConsole() {
 function loadSettings() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE.settings) || '{}');
-    return { ...DEFAULT_SETTINGS, ...raw };
+    const merged = { ...DEFAULT_SETTINGS, ...raw };
+    /**
+     * 一次性迁移（用户反馈：「火柴人依然还是在呀，请把火柴人默认设为关闭」）：
+     *
+     * v1 时期「火柴人」的默认值是**开**，所以老存档里那个 `showSkeleton: true` 很可能只是当年的默认值、
+     * 并不是用户自己选的 —— 直接把新默认（关）盖上去；之后用户自己再打开时存档已经是 v2，不会再被覆盖。
+     * 「关节角度」不动：它新旧默认都是开，存档里的值就是用户真实的选择。
+     */
+    if (Number(raw.settingsVersion || 1) < SETTINGS_VERSION) {
+      merged.showSkeleton = DEFAULT_SETTINGS.showSkeleton;
+    }
+    merged.settingsVersion = SETTINGS_VERSION;
+    return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
   }

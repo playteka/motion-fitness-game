@@ -1044,6 +1044,12 @@ console.log('\n[3] 静态资源与模型文件');
       /showAngles: true,\n  showSkeleton: false,/.test(app)
       && /id="btnSkeleton" type="button" aria-pressed="false"/.test(html)
       && /id="btnAngles" type="button" aria-pressed="true"/.test(html));
+    // 用户反馈「火柴人依然还是在呀」→ 老存档里存着旧的默认值 true，要迁移一次
+    ok('老存档迁移：v1 存档里的 showSkeleton 被新默认（关）覆盖，之后用户自己打开不再被盖',
+      /const SETTINGS_VERSION = 2;/.test(app)
+      && /settingsVersion: SETTINGS_VERSION,/.test(app)
+      && /if \(Number\(raw\.settingsVersion \|\| 1\) < SETTINGS_VERSION\) \{\n      merged\.showSkeleton = DEFAULT_SETTINGS\.showSkeleton;\n    \}/.test(app)
+      && /merged\.settingsVersion = SETTINGS_VERSION;/.test(app));
     /* 用户要求：「在出现圆环选择的情况下，用户手掌的位置出现一个小的猫爪图标」 */
     ok('手掌位置的猫爪指针：手绘 paw 图标（5 个元素 / 实心 / currentColor）+ 菜单里那一层 + 每帧跟手',
       /'paw': '<path d="M12 20\.5c/.test(read('src/icons.js'))
