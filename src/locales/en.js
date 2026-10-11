@@ -764,9 +764,9 @@ export default {
     next: 'Next',
     page: 'Page {n} / {total} · {count} items',
     // The footer hint differs per level: “Back” means the web page at level 1 and the categories at level 2;
-    // paging is “both hands swipe twice”.
-    hint: 'Hold 3 s to select · both hands swipe up twice = previous page, down twice = next page · “Back” returns to the web page',
-    hintIn: 'Hold 3 s to select · both hands swipe up twice = previous page, down twice = next page · “Back” returns to the categories',
+    // paging is shown as the two arrow rings only (the two-hand swipe shortcut still works, it is just no longer printed).
+    hint: 'Hold 3 s to select · the two arrow rings on top: left = previous page, right = next page · “Back” returns to the web page',
+    hintIn: 'Hold 3 s to select · the two arrow rings on top: left = previous page, right = next page · “Back” returns to the categories',
     item: '{name} (hold 3 s)',
     picked: 'Starting: {name}',
     needCamera: 'This browser/device cannot use a camera, so gesture control is unavailable — pick an exercise from the library below instead',

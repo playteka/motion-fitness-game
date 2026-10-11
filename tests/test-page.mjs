@@ -710,8 +710,10 @@ console.log('\n[3] 静态资源与模型文件');
       /id="menuFoot"/.test(html)
       && /foot\.textContent = state\.menuLevel === 0 \? t\('menu\.hint'\) : t\('menu\.hintIn'\)/.test(app)
       && typeof LOCALES.zh.menu.hintIn === 'string' && typeof LOCALES.en.menu.hintIn === 'string'
-      && /双手同时向上挥两次/.test(LOCALES.zh.menu.hint)
-      && /swipe up twice/.test(LOCALES.en.menu.hint));
+      // 用户要求：把「双手同时向上挥两次 / 向下挥两次」这类提示文字去掉（翻页已经改成图标圆环）
+      && /箭头圆环/.test(LOCALES.zh.menu.hint) && /arrow rings/.test(LOCALES.en.menu.hint)
+      && !/挥/.test(LOCALES.zh.menu.hint + LOCALES.zh.menu.hintIn)
+      && !/swipe/i.test(LOCALES.en.menu.hint + LOCALES.en.menu.hintIn));
     /* 用户要求：「翻页以及返回都要采用滑动的淡入淡出动画效果。」 */
     ok('翻页 / 返回改成**整屏滑动**：两张屏（menu-screen / menu-ghost）+ 四张位移关键帧 + 从两侧进出',
       /id="menuScreen"/.test(html) && /id="menuGridGhost"/.test(html) && /class="menu-ghost"/.test(html)
