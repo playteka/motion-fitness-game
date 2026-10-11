@@ -1033,7 +1033,10 @@ console.log('\n[3] 静态资源与模型文件');
       /\.ring-label--icon \{ font-size: calc\(var\(--ring-px\) \* 0\.62\); line-height: 0; \}/.test(css)
       // 和菜单里那三颗导航圆环同一比例（62%），所以粗细尺寸一致
       && /const iconSize = clamp\(d \* 0\.62, 30, 78\);/.test(app)
-      && /\.ring-label--icon \.ex-pose \{ width: 1em; height: 1em; \}/.test(css));
+      && /\.ring-label--icon \.ex-pose \{ width: 1em; height: 1em; \}/.test(css)
+      // ⚠️ 左下角那颗要单独再写一条：`.corner-ring .ring-label` 优先级更高，否则图标又被压回 19px
+      && /\.corner-ring \.ring-label--icon \{ font-size: calc\(var\(--ring-px\) \* 0\.62\); \}/.test(css)
+      && css.indexOf('.corner-ring .ring-label--icon') > css.indexOf('.corner-ring .ring-label {'));
     ok('主页的分类标题也用**线条图标**（和菜单 / 视频画面同一张），不是 emoji',
       /const catIcon = categoryMarkSVG\(cat\.id\) \|\| cat\.icon;/.test(app)
       && /<h3 class="cat-head"><span class="cat-icon">\$\{catIcon\}<\/span>/.test(app)

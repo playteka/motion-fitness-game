@@ -995,6 +995,12 @@ kbd {
 .ring-label--icon { font-size: calc(var(--ring-px) * 0.62); line-height: 0; }
 .ring-label--icon .ex-pose { width: 1em; height: 1em; }
 .corner-ring .ring-label { font-size: clamp(13px, 1.35vw, 19px); }
+/**
+ * ⚠️ 左下角那个「退出」圆环要单独再写一条：`.corner-ring .ring-label`（两段选择器）在下面、
+ * 优先级比上面那条单类 `.ring-label--icon` 高，否则它的 19px 会把图标尺寸压回去
+ * （用户反馈「运动视频界面里面左下角的退出图标依然很小」就是这个原因）。
+ */
+.corner-ring .ring-label--icon { font-size: calc(var(--ring-px) * 0.62); }
 .corner-ring .ring-timer { font-size: clamp(12px, 1.1vw, 15px); }
 
 /* 小屏：两个圆环一起收（同一个变量），所以永远还是等大 */
