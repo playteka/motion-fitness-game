@@ -17,7 +17,7 @@ import {
   exerciseSpecs, specCondition, specStages, stageHolds, stageText, stagePoints, stageIndexForStep, SPEC_METRICS,
 } from './specs.js';
 import { getStepPlan } from './steps.js';
-import { iconSVG, uniqueStages, categoryMarkSVG, navPoseSVG } from './icons.js';
+import { iconSVG, uniqueStages, categoryMarkSVG, navPoseSVG, libIconSVG } from './icons.js';
 import { PoseLogger } from './pose-log.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
@@ -1335,6 +1335,27 @@ function stageSize() {
   return { w: 1280, h: 720 };
 }
 
+/**
+ * 圆环里的标签：**只画图标、不写字**（用户要求：「把圆环中的文字退出和再试一次都改为图标表示，
+ * 退出图标可以和返回图标一致，『再试一次』需要设计一个新的图标」）。
+ *
+ *   - 退出 = 和「返回」同一颗线条箭头（Lucide \`corner-up-left\`，和手势菜单里那颗完全一致）；
+ *   - 再试一次 = 新加的 \`ui:retry\`（Lucide \`rotate-ccw\`，逆时针圆箭头，通用的「重来」符号）。
+ *
+ * 文字含义移到按钮的 \`title\` / \`aria-label\` 上 —— 鼠标悬停和读屏仍然知道是「退出」还是「再做一次」。
+ */
+function setRingIcon(labelEl, btnEl, kind, text) {
+  const key = kind === 'retry' ? 'ui:retry' : 'back';
+  if (labelEl) {
+    labelEl.innerHTML = libIconSVG(key, 'ex-pose');
+    labelEl.classList?.add('ring-label--icon');
+  }
+  if (btnEl) {
+    btnEl.setAttribute('title', text);
+    btnEl.setAttribute('aria-label', text);
+  }
+}
+
 /** 摆好两个圆环的位置（一处定义：位置和大小都来自 GESTURE_RINGS / RING_SIZE） */
 function layoutGestureRings() {
   for (const key of Object.keys(GESTURE_RINGS)) {
@@ -1384,8 +1405,7 @@ function showGestureRings({ speak = true } = {}) {
     const st = gestureState[key];
     st.p = 0; st.since = 0; st.lastInside = 0; st.done = false;
     el?.classList.remove('dwelling', 'done');
-    const label = $(key === 'exit' ? 'ringExitLabel' : 'ringRetryLabel');
-    if (label) label.textContent = t(GESTURE_RINGS[key].labelKey);
+    setRingIcon($(key === 'exit' ? 'ringExitLabel' : 'ringRetryLabel'), el, key, t(GESTURE_RINGS[key].labelKey));
     const timer = $(GESTURE_RINGS[key].timerId);
     if (timer) timer.textContent = '';
     paintRing(key, 0);
@@ -1494,7 +1514,8 @@ function showCornerExit() {
   st.p = 0; st.since = 0; st.at = 0; st.lastInside = 0; st.done = false;
   ringEl('corner')?.classList.remove('dwelling', 'done', 'near');
   const label = cornerLabelEl();
-  if (label) label.textContent = t('ui.gestureExit');
+  // 圆环里只画图标（和「返回」同一颗线条箭头），文字在 title / aria-label 上
+  setRingIcon(label, ringEl('corner'), 'exit', t('ui.gestureExit'));
   const timer = $('ringQuickExitTimer');
   if (timer) timer.textContent = '';
   paintRing('corner', 0);
@@ -2419,10 +2440,8 @@ function updateMenu(landmarks, now) {
  */
 function syncCornerLabel() {
   const txt = t('ui.gestureExit');
-  const label = cornerLabelEl();
-  if (label) label.textContent = txt;
-  const btn = ringEl('corner');
-  if (btn) { btn.setAttribute('title', txt); btn.setAttribute('aria-label', txt); }
+  // 圆环里只画图标（和「返回」同一颗），文字放到 title / aria-label 上
+  setRingIcon(cornerLabelEl(), ringEl('corner'), 'exit', txt);
 }
 
 /** 进手势菜单（首页「开始」按钮，或者从训练里退出） */
@@ -4786,6 +4805,7 @@ window.__mfg = {
   setPoseLogUi, anyModalOpen, videoStateActive,
   // 全手势操作：首页「开始」按钮 + 视频界面里的手势菜单（两级 + 分页 + 翻页圆环）
   startGestureMode, openMenu, closeMenu, selectFromMenu, renderMenu, layoutMenu, renderMenuPage,
+  libIconSVG, setRingIcon,
   updateMenu, flipMenuPage, menuPageInfo, menuPerPage, menuHasPages, menuNavLayout, menuCols,
   menuRingLayout, menuItems, menuItemEl, menuCategoryName, paintMenuRing, requestStageFullscreen,
   tickCornerExit, syncCornerLabel,

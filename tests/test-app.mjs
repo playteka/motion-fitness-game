@@ -1915,10 +1915,17 @@ console.log('\n[8c] 一组结束后的手势圆环');
   api.stopSession('goal');
   ok('一组做完后出现两个手势圆环', shown() === true
     && elements.get('gestureRings').hidden === false);
-  ok('左圆环写「退出」、右圆环写「再做一次」',
-    elements.get('ringExitLabel').textContent === '退出'
-    && elements.get('ringRetryLabel').textContent === '再做一次',
-    `${elements.get('ringExitLabel').textContent} / ${elements.get('ringRetryLabel').textContent}`);
+  // 用户要求：「把圆环中的文字退出和再试一次都改为图标表示，退出图标可以和返回图标一致，
+  // 『再试一次』需要设计一个新的图标」→ 圆环里只有线条图标，文字含义在 title / aria-label 上
+  ok('两个圆环都是**图标**（退出 = 和「返回」同一颗箭头；再试一次 = 新设计的重来图标），文字在 title/aria-label 上',
+    /class="ex-pose"/.test(elements.get('ringExitLabel').innerHTML)
+    && /class="ex-pose"/.test(elements.get('ringRetryLabel').innerHTML)
+    && elements.get('ringExitLabel').innerHTML === api.libIconSVG('back', 'ex-pose')
+    && elements.get('ringRetryLabel').innerHTML === api.libIconSVG('ui:retry', 'ex-pose')
+    && !/退出|再做一次/.test(elements.get('ringExitLabel').innerHTML + elements.get('ringRetryLabel').innerHTML)
+    && elements.get('ringExit').attributes['aria-label'] === '退出'
+    && elements.get('ringRetry').attributes['aria-label'] === '再做一次',
+    `${elements.get('ringExitLabel').innerHTML.length}B / ${elements.get('ringRetryLabel').innerHTML.length}B`);
   ok('画面上给出「手掌放进圆环保持 3 秒」的提示',
     elements.get('gestureHint').hidden === false
     && elements.get('gestureHint').textContent.includes('3 秒'),
@@ -2034,8 +2041,8 @@ console.log('\n[8d] 每个动作做完一组都有两个圆环');
     api.state.detector.holdMs = 1000;
     api.stopSession('goal');
     if (!ringsShown()) bad.push(`${ex.id}:没显示`);
-    if (elements.get('ringExitLabel').textContent !== '退出'
-      || elements.get('ringRetryLabel').textContent !== '再做一次') bad.push(`${ex.id}:文案`);
+    if (elements.get('ringExitLabel').innerHTML !== api.libIconSVG('back', 'ex-pose')
+      || elements.get('ringRetryLabel').innerHTML !== api.libIconSVG('ui:retry', 'ex-pose')) bad.push(`${ex.id}:图标`);
     // 结束之后再跑几帧校准（卧姿类动作这时人不在站立轮廓里）：圆环不能被收掉
     api.state.afterSet = true;
     api.calibrationStep({ ok: false }, 90000);
@@ -2204,8 +2211,11 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     ringBtn().style.left === `${c.x}px` && ringBtn().style.top === `${c.y}px`
     && ringBtn().style.width === `${px()}px` && ringBtn().style.height === `${px()}px`,
     JSON.stringify(ringBtn().style));
-  ok('圆环里写「退出」', elements.get('ringQuickExitLabel').textContent === '退出',
-    elements.get('ringQuickExitLabel').textContent);
+  ok('左下角圆环里也是**图标**（和「返回」同一颗），文字在 aria-label 上',
+    /class="ex-pose"/.test(elements.get('ringQuickExitLabel').innerHTML)
+    && elements.get('ringQuickExitLabel').innerHTML === api.libIconSVG('back', 'ex-pose')
+    && elements.get('ringQuickExit').attributes['aria-label'] === '退出',
+    elements.get('ringQuickExitLabel').innerHTML.length + 'B');
   // 动画与「一组结束后」的圆环完全同一套：同样的 SVG / ring-fill / 同样的 3 秒
   ok('用的是同一套圆环动画（ring-btn + ring-svg + ring-fill）',
     ringBtn().className.includes('ring-btn') && !!ringBtn().querySelector?.('.ring-fill'));
@@ -2583,9 +2593,10 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
   ok('菜单里左下角那个「退出」圆环不再显示（菜单模式不摆它）',
     cornerShown() === false && api.gestureState.cornerVisible === false,
     `shown=${cornerShown()}`);
-  ok('左下角圆环的文案始终是「退出（回菜单）」（只有训练界面用它了）',
-    elements.get('ringQuickExitLabel').textContent === '退出',
-    elements.get('ringQuickExitLabel').textContent);
+  ok('左下角圆环的图标始终是「退出」那颗箭头，含义仍在 aria-label（只有训练界面用它了）',
+    /class="ex-pose"/.test(elements.get('ringQuickExitLabel').innerHTML)
+    && elements.get('ringQuickExit').attributes['aria-label'] === '退出',
+    elements.get('ringQuickExit').attributes['aria-label']);
   // 菜单里回网页首页走的是顶部常驻那颗「↩ 返回」（不参与翻页）
   {
     const backIt = api.menuNavLayout(api.stageSize()).find((it) => it.kind === 'back');
