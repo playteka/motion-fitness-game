@@ -7,6 +7,10 @@
 
 - **改代码 → 本地提交（`git commit`）即可**，`git push` 会让沙箱弹审批框，用户每次都要点一下，很烦。
 - 只有用户**明确说**「push / 推到 github / 提交到远端」时才 `git push`。
+- **不要主动重试**：推送失败（断网 / 连接被重置）就如实报告「本地已提交，未推送」并停手，
+  不要自动重试、也不要下一轮顺手补推 —— 等用户再开口。
+- **一次授权只管一次**：用户说「推送」只推**当时已有的**提交；之后新做的改动默认留在本地，
+  想要再推要用户再说一次（用户 2026-xx 再次强调：「不要每次修改都 push 到 github，除非我要求你这么做」）。
 - 需要 push 时：`git -c http.version=HTTP/1.1 push origin main`，并且要带
   `sandbox_permissions: danger-full-access`（沙箱会拦 git 的凭据助手），提交信息用
   `git commit -F 临时文件`（PowerShell 里中文/引号会出问题），临时文件提交前 `git reset -q` 掉、用完删掉。

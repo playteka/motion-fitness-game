@@ -1428,10 +1428,10 @@ kbd {
  * 手势菜单换屏（翻页 / 返回）的**整屏滑动**。
  *
  * 用户要求：「把淡入淡出的效果改为完整的滑动效果，比如从主菜单进入核心运动菜单，
- * 则主菜单的所有圆环全部向左滑出，核心运动的圆环则从右面滑入，形成一个整行滑动的效果。」
+ * 则主菜单的所有圆环全部向左滑出，核心运动的圆环则从右面滑入界面，形成一个整行滑动的效果。」
  *
  * 做法：上一屏（标题 + 圆环 + 底部提示）被克隆到 `.menu-ghost` 里整块平移出去，
- * 新一屏（`.menu-screen`）从另一侧整块平移进来；**两边用同一个时长、同一个距离**，
+ * 新一屏（`.menu-screen`）从另一侧整块平移进来；**两边同距同时长**，
  * 所以看起来就是「一整行从右往左推过去」（传送带），不再是原地淡入淡出。
  * 距离与时长由 app.js 按舞台宽度算好写成 `--menu-slide-x` / `--menu-anim-*`。
  */
@@ -1453,7 +1453,10 @@ kbd {
 .gesture-menu.menu-anim-out-home { animation: menuFadeOut 320ms ease-in forwards; }
 .home.menu-anim-in-home { animation: menuFadeIn 500ms cubic-bezier(0.22, 0.61, 0.36, 1) both; }
 @media (prefers-reduced-motion: reduce) {
-  .criteria-seg.current { animation: none; }
+  .menu-ghost.menu-anim-out-next, .menu-ghost.menu-anim-out-prev,
+  .menu-screen.menu-anim-in-next, .menu-screen.menu-anim-in-prev,
+  .gesture-menu.menu-anim-out-home, .home.menu-anim-in-home { animation: none; }
+}
 .menu-head {
   position: absolute;
   top: 8px;
