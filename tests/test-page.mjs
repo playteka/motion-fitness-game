@@ -1030,7 +1030,9 @@ console.log('\n[3] 静态资源与模型文件');
       && /setRingIcon\(\$\(key === 'exit' \? 'ringExitLabel' : 'ringRetryLabel'\), el, key, t\(GESTURE_RINGS\[key\]\.labelKey\)\);/.test(app)
       && /setRingIcon\(cornerLabelEl\(\), ringEl\('corner'\), 'exit', txt\)/.test(app));
     ok('图标态的圆环标签放大居中（CSS），文字含义仍在 title / aria-label',
-      /\.ring-label--icon \{ font-size: clamp\(30px, 3\.6vw, 52px\); line-height: 0; \}/.test(css)
+      /\.ring-label--icon \{ font-size: calc\(var\(--ring-px\) \* 0\.62\); line-height: 0; \}/.test(css)
+      // 和菜单里那三颗导航圆环同一比例（62%），所以粗细尺寸一致
+      && /const iconSize = clamp\(d \* 0\.62, 30, 78\);/.test(app)
       && /\.ring-label--icon \.ex-pose \{ width: 1em; height: 1em; \}/.test(css));
     ok('主页的分类标题也用**线条图标**（和菜单 / 视频画面同一张），不是 emoji',
       /const catIcon = categoryMarkSVG\(cat\.id\) \|\| cat\.icon;/.test(app)

@@ -987,7 +987,12 @@ kbd {
  * 圆环里只放图标时（退出 / 再试一次）：图标画大一点、居中，文字含义在 title / aria-label 上
  * —— 用户要求「把圆环中的文字退出和再试一次都改为图标表示」。
  */
-.ring-label--icon { font-size: clamp(30px, 3.6vw, 52px); line-height: 0; }
+/**
+ * 图标大小跟着**圆环直径**走（62%，和手势菜单里那三颗导航圆环同一比例），
+ * 描边仍是整套统一的 `stroke 2`、viewBox 24 —— 图标变大，线条在屏幕上自然跟着变粗，
+ * 于是运动界面里的「退出 / 再试一次」和主选择界面里的图标**粗细尺寸一致**。
+ */
+.ring-label--icon { font-size: calc(var(--ring-px) * 0.62); line-height: 0; }
 .ring-label--icon .ex-pose { width: 1em; height: 1em; }
 .corner-ring .ring-label { font-size: clamp(13px, 1.35vw, 19px); }
 .corner-ring .ring-timer { font-size: clamp(12px, 1.1vw, 15px); }
