@@ -175,6 +175,11 @@
               <button class="menu-page" id="menuPage" type="button" hidden></button>
             </div>
             <div class="menu-grid" id="menuGrid"></div>
+            <!-- 手掌指针（猫爪）：出现在手掌当前的位置，让用户知道自己的手在哪儿（不跟着换屏滑动） -->
+            <div class="paw-layer" id="pawLayer" aria-hidden="true">
+              <span class="paw" id="pawL"></span>
+              <span class="paw" id="pawR"></span>
+            </div>
             <!-- 换屏动画用的「残影」层：翻页 / 返回时把上一屏的圆环克隆到这里滑出去，
                  真实的那一屏立刻重建（状态与 DOM 始终同步），见 app.js 的 animateMenuSwap -->
             <div class="menu-ghost" id="menuGridGhost"></div>
@@ -351,7 +356,7 @@
           <h3 class="modal-group-title" data-i18n="settings.cameraGroup"></h3>
           <div class="toggle-grid">
             <button class="toggle" id="btnMirror" type="button" aria-pressed="true" data-i18n="ui.mirror"></button>
-            <button class="toggle" id="btnSkeleton" type="button" aria-pressed="true" data-i18n="ui.skeleton"></button>
+            <button class="toggle" id="btnSkeleton" type="button" aria-pressed="false" data-i18n="ui.skeleton"></button>
             <button class="toggle" id="btnAngles" type="button" aria-pressed="true" data-i18n="ui.angles"></button>
             <button class="toggle" id="btnDebug" type="button" aria-pressed="false" data-i18n="ui.debug"></button>
           </div>

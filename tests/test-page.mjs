@@ -1039,10 +1039,26 @@ console.log('\n[3] 静态资源与模型文件');
       // ⚠️ 左下角那颗要单独再写一条：`.corner-ring .ring-label` 优先级更高，否则图标又被压回 19px
       && /\.corner-ring \.ring-label--icon \{ font-size: calc\(var\(--ring-px\) \* 0\.62\); \}/.test(css)
       && css.indexOf('.corner-ring .ring-label--icon') > css.indexOf('.corner-ring .ring-label {'));
+    /* 用户要求：「缺省情况下『火柴人』保持关闭，除非用户主动打开。关节角度缺省情况下保持打开，除非用户主动关闭。」 */
+    ok('缺省值：火柴人**关闭**、关节角度**打开**（HTML 里两个按钮的初始 aria-pressed 也一致）',
+      /showAngles: true,\n  showSkeleton: false,/.test(app)
+      && /id="btnSkeleton" type="button" aria-pressed="false"/.test(html)
+      && /id="btnAngles" type="button" aria-pressed="true"/.test(html));
+    /* 用户要求：「在出现圆环选择的情况下，用户手掌的位置出现一个小的猫爪图标」 */
+    ok('手掌位置的猫爪指针：手绘 paw 图标（5 个元素 / 实心 / currentColor）+ 菜单里那一层 + 每帧跟手',
+      /'paw': '<path d="M12 20\.5c/.test(read('src/icons.js'))
+      && /export function pawSVG\(\)/.test(read('src/icons.js'))
+      && /<div class="paw-layer" id="pawLayer"/.test(html) && /id="pawL"/.test(html) && /id="pawR"/.test(html)
+      && /function renderPaws\(palms\)/.test(app)
+      && /const show = state\.menuMode && !state\.homeMode;/.test(app)
+      && /el\.style\.left = /.test(app) && /el\.classList\.add\('on'\)/.test(app)
+      && /renderPaws\(palms\);/.test(app)                       // updateMenu 每帧调
+      && /\.paw-layer \{ position: absolute; inset: 0; pointer-events: none; z-index: 5; \}/.test(css)
+      && /\.paw\.on \{ opacity: 0\.92;/.test(css));
     ok('主页的分类标题也用**线条图标**（和菜单 / 视频画面同一张），不是 emoji',
       /const catIcon = categoryMarkSVG\(cat\.id\) \|\| cat\.icon;/.test(app)
       && /<h3 class="cat-head"><span class="cat-icon">\$\{catIcon\}<\/span>/.test(app)
-      && /import \{ iconSVG, uniqueStages, categoryMarkSVG, navPoseSVG, libIconSVG \}/.test(app));
+      && /import \{ iconSVG, uniqueStages, categoryMarkSVG, navPoseSVG, libIconSVG, pawSVG \}/.test(app));
     ok('现成图标的来源与许可写在源码里（Lucide ISC / Tabler MIT），换图标时查得到出处',
         /Lucide 1\.55（ISC 许可）/.test(read('src/icons.js')) && /Tabler Icons 3\.49 outline（MIT）/.test(read('src/icons.js')));
       /* 用户要求：「返回，上一页，下一页不要显示文字了，显示图标即可」 */

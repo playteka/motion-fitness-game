@@ -414,6 +414,17 @@ const LIB_ICON_PATHS = {
   back: '<path d="M20 20v-7a4 4 0 0 0-4-4H4"/><path d="M9 14 4 9l5-5"/>',
   prev: '<path d="m15 18-6-6 6-6"/>',
   next: '<path d="m9 18 6-6-6-6"/>',
+  /**
+   * 猫爪（用户要求：「在出现圆环选择的情况下，用户手掌的位置出现一个小的猫爪图标，
+   * 便于用户知道自己的手掌在哪里」）。
+   *
+   * 库里没有猫爪，所以按 ui-icon-design 的规格自己画：24 网格 / 5 个元素（1 个掌垫 + 4 个脚趾）/
+   * 坐标落在整数或 .5 上 / 颜色 currentColor；爪垫是**实心**的（小尺寸下实心比描边清楚），
+   * 所以它不去套 `.ex-pose` 那套描边样式。
+   */
+  'paw': '<path d="M12 20.5c-2.2 0-4-.8-5-2-.9-1.1-1.3-2.5-1-3.8.4-1.6 1.6-2.8 3-3.6 1.2-.7 2.2-1.1 3-1.1s1.8.4 3 1.1c1.4.8 2.6 2 3 3.6.3 1.3-.1 2.7-1 3.8-1 1.2-2.8 2-5 2z"/>'
+    + '<circle cx="5.5" cy="9" r="2"/><circle cx="9.5" cy="5.5" r="2"/>'
+    + '<circle cx="14.5" cy="5.5" r="2"/><circle cx="18.5" cy="9" r="2"/>',
   // ---- 界面按钮（不再是 emoji）----
   'ui:home': '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/>'
     + '<path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
@@ -448,6 +459,13 @@ export function libIconSVG(key, cls = 'ex-pose') {
   const paths = LIB_ICON_PATHS[key];
   if (!paths) return '';
   return `<svg class="${cls}" viewBox="0 0 ${APP_ICON_BOX} ${APP_ICON_BOX}" aria-hidden="true">${paths}</svg>`;
+}
+
+/** 猫爪（手掌位置的指针）：实心、颜色走 currentColor */
+export function pawSVG() {
+  const paths = LIB_ICON_PATHS.paw;
+  if (!paths) return '';
+  return `<svg class="paw-svg" viewBox="0 0 ${APP_ICON_BOX} ${APP_ICON_BOX}" fill="currentColor" aria-hidden="true">${paths}</svg>`;
 }
 
 /** 分类图标（上肢 / 下肢 / 核心 / 全身 / 拉伸）：用现成的专业图标 */

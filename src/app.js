@@ -17,7 +17,7 @@ import {
   exerciseSpecs, specCondition, specStages, stageHolds, stageText, stagePoints, stageIndexForStep, SPEC_METRICS,
 } from './specs.js';
 import { getStepPlan } from './steps.js';
-import { iconSVG, uniqueStages, categoryMarkSVG, navPoseSVG, libIconSVG } from './icons.js';
+import { iconSVG, uniqueStages, categoryMarkSVG, navPoseSVG, libIconSVG, pawSVG } from './icons.js';
 import { PoseLogger } from './pose-log.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
@@ -42,8 +42,14 @@ const DEFAULT_SETTINGS = {
   music: true,
   musicTrack: DEFAULT_TRACK,   // 背景音乐选哪首（见 audio.js 的 TRACKS）
   // 判据只有宽松档（用户明确要求取消严格模式），所以设置里没有 strict 这个开关
+  /**
+   * 缺省值（用户要求）：
+   *   - **「火柴人」默认关闭**（`showSkeleton: false`）—— 除非用户主动打开（工具栏那个开关 / 按 S）；
+   *   - **「关节角度」默认打开**（`showAngles: true`）—— 除非用户主动关闭。
+   * 注意 HTML 里那两个按钮的 `aria-pressed` 只是初始占位，真正的状态由 `syncToggles()` 按这里的设置刷新。
+   */
   showAngles: true,
-  showSkeleton: true,
+  showSkeleton: false,
   debug: false,
   /**
    * 「记录调试数据」（用户要求）：打开后把每一帧的关节点 + 全部判定指标写进 logs/ 里的 jsonl 文件。
@@ -2335,11 +2341,39 @@ function updateMenuSwipe(palms, layout, size, now, speed) {
  *      那一格不会自己开始攒 3 秒；把手抬出来再放进去才认。
  * 另外：手离开后进度退得比别的圆环快（`MENU_DRAIN_MS`），蹭一下不会留下半格进度。
  */
+/**
+ * 手掌指针（猫爪）：把手掌当前位置画成一个小猫爪，看得见手在哪儿。
+ *
+ * 用户要求：「在出现圆环选择的情况下，用户手掌的位置出现一个小的猫爪图标，便于用户知道自己的手掌在哪里。」
+ *   - 只在**手势菜单**里显示（`state.menuMode`）；手掌没被识别到就淡出，不挡视线；
+ *   - 坐标直接用识别到的手掌中心（和圆环判定用的是同一份舞台像素，所以「爪子在哪」＝「程序认为手在哪」）；
+ *   - 猫爪层是 `.menu-screen` 的**兄弟节点**，所以翻页滑动时它不跟着动（手没动，爪子就不该动）。
+ */
+function renderPaws(palms) {
+  const layer = $('pawLayer');
+  if (!layer) return;
+  const show = state.menuMode && !state.homeMode;
+  layer.hidden = !show;
+  if (!show) return;
+  for (const side of ['L', 'R']) {
+    const el = $(side === 'L' ? 'pawL' : 'pawR');
+    if (!el) continue;
+    const p = (palms || []).find((h) => h && h.side === side);
+    if (!p) { el.classList.remove('on'); continue; }
+    if (!el.innerHTML) el.innerHTML = pawSVG();
+    el.style.left = `${Math.round(p.x)}px`;
+    el.style.top = `${Math.round(p.y)}px`;
+    el.classList.add('on');
+  }
+}
+
 function updateMenu(landmarks, now) {
   if (!state.menuMode) return null;
   const size = stageSize();
   const st = gestureState.menu;
   const palms = palmPoints(landmarks, size.w, size.h, state.settings.mirror);
+  // 手掌指针（猫爪）：跟着手掌走，让人看得见自己的手在哪儿（用户要求）
+  renderPaws(palms);
   // 选项圆环 + 顶部常驻的导航圆环（返回 / 上一页 / 下一页）一起判：取**最近**的那一个
   const layout = [...menuRingLayout(size), ...menuNavLayout(size)];
 
@@ -2485,6 +2519,7 @@ function openMenu({ silent = false } = {}) {
 
 /** 离开菜单（选中动作 / 回首页时调用）：收起覆盖层与 menu-mode 样式 */
 function closeMenu() {
+  renderPaws([]);
   state.menuMode = false;
   const menu = $('gestureMenu');
   if (menu) menu.hidden = true;
@@ -4805,7 +4840,7 @@ window.__mfg = {
   setPoseLogUi, anyModalOpen, videoStateActive,
   // 全手势操作：首页「开始」按钮 + 视频界面里的手势菜单（两级 + 分页 + 翻页圆环）
   startGestureMode, openMenu, closeMenu, selectFromMenu, renderMenu, layoutMenu, renderMenuPage,
-  libIconSVG, setRingIcon,
+  libIconSVG, setRingIcon, pawSVG, renderPaws,
   updateMenu, flipMenuPage, menuPageInfo, menuPerPage, menuHasPages, menuNavLayout, menuCols,
   menuRingLayout, menuItems, menuItemEl, menuCategoryName, paintMenuRing, requestStageFullscreen,
   tickCornerExit, syncCornerLabel,

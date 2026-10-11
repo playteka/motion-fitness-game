@@ -1439,6 +1439,25 @@ kbd {
  * 所以标题与底部提示改成绝对定位的浮层（不吃鼠标），网格仍然从 (0,0) 开始。
  */
 .menu-grid { position: absolute; inset: 0; }
+/**
+ * 手掌指针（猫爪）：出现在手掌当前的位置，让用户知道自己的手在哪儿
+ * —— 用户要求「在出现圆环选择的情况下，用户手掌的位置出现一个小的猫爪图标」。
+ * 这一层是 `.menu-screen` 的兄弟节点，所以换屏滑动时它不会跟着动。
+ */
+.paw-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.paw-layer[hidden] { display: none; }
+.paw {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%) scale(0.86);
+  color: #ffe9a8;
+  opacity: 0;
+  transition: opacity 140ms ease, transform 140ms ease;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.75));
+}
+.paw.on { opacity: 0.92; transform: translate(-50%, -50%) scale(1); }
+.paw-svg { display: block; width: 100%; height: 100%; }
 /* 换屏动画用的「残影」层（翻页 / 返回时上一屏的圆环克隆到这里滑出去） */
 .menu-ghost { position: absolute; inset: 0; pointer-events: none; }
 /**
