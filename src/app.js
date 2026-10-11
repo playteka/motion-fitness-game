@@ -232,7 +232,15 @@ function buildHome() {
     block.className = 'cat-block';
     block.dataset.cat = cat.id;
     const count = t('home.count', { n: list.length });
-    block.innerHTML = `<h3 class="cat-head"><span class="cat-icon">${cat.icon}</span>`
+    /**
+     * 分类的图标也换成**线条图标**（和手势菜单里、视频画面上是同一张）。
+     *
+     * 用户要求：「把网页主页上的『上肢』『下肢』这种分类的图标进行更换，保持和视频画面中的线条风格的图标一致。」
+     * 以前这里直接印 `cat.icon`（emoji 💪🦵🔥🤸🧘），和菜单里那套 24 网格线条图标不是一回事 —— 现在统一走
+     * `categoryMarkSVG()`（Lucide / Tabler 现成图标），取不到才退回 emoji。
+     */
+    const catIcon = categoryMarkSVG(cat.id) || cat.icon;
+    block.innerHTML = `<h3 class="cat-head"><span class="cat-icon">${catIcon}</span>`
       + `<span>${cat.name}</span><span class="cat-count">${count}</span></h3>`;
     if (!list.length) {
       const p = document.createElement('p');

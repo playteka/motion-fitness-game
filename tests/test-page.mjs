@@ -1019,7 +1019,11 @@ console.log('\n[3] 静态资源与模型文件');
       ok('界面按钮的图标也换成线条图标（主页 / 成绩 / 设定 / 开始），HTML 里没有 emoji 图标了',
         !/[\u{1F300}-\u{1FAFF}]/u.test(html)
         && (html.match(/class="ui-icon"/g) || []).length >= 4);
-      ok('现成图标的来源与许可写在源码里（Lucide ISC / Tabler MIT），换图标时查得到出处',
+      ok('主页的分类标题也用**线条图标**（和菜单 / 视频画面同一张），不是 emoji',
+      /const catIcon = categoryMarkSVG\(cat\.id\) \|\| cat\.icon;/.test(app)
+      && /<h3 class="cat-head"><span class="cat-icon">\$\{catIcon\}<\/span>/.test(app)
+      && /import \{ iconSVG, uniqueStages, categoryMarkSVG, navPoseSVG \}/.test(app));
+    ok('现成图标的来源与许可写在源码里（Lucide ISC / Tabler MIT），换图标时查得到出处',
         /Lucide 1\.55（ISC 许可）/.test(read('src/icons.js')) && /Tabler Icons 3\.49 outline（MIT）/.test(read('src/icons.js')));
       /* 用户要求：「返回，上一页，下一页不要显示文字了，显示图标即可」 */
       ok('导航圆环只画图标、不生成文字节点（动作 / 分类仍然有名字），无障碍名称保留在 aria-label 上',
