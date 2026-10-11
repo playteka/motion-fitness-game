@@ -4878,19 +4878,19 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       !!ghost && typeof ghost.className === 'string' && api.menuPageInfo().pages === 2);
 
     api.flipMenuPage(1);
-    ok('翻到下一页：新一屏立刻换好（DOM 与状态同步，不等动画），并带上「从右边滑入 + 淡入」的类',
+    ok('翻到下一页：新一屏立刻换好（DOM 与状态同步，不等动画），并带上「整屏从右边滑进来」的类',
       api.state.menuPage === 1
-      && grid.classList.contains('menu-anim-in-next')
-      && !grid.classList.contains('menu-anim-in-prev')
+      && elements.get('menuScreen').classList.contains('menu-anim-in-next')
+      && !elements.get('menuScreen').classList.contains('menu-anim-in-prev')
       && ghost.classList.contains('menu-anim-out-next'),
       `page=${api.state.menuPage} grid=${grid.className}`);
     ok('残影层里是上一屏圆环的克隆（滑出去的就是刚才那一屏）',
-      ghost.children.length > 0, `${ghost.children.length} 个克隆`);
+      ghost.children.length >= 3, `${ghost.children.length} 个克隆（标题 + 圆环 + 提示）`);
 
     clock2 = api.gestureState.menuAnim.until + 100;
     api.flipMenuPage(-1);
-    ok('翻回上一页：方向反过来（从左边滑入）',
-      api.state.menuPage === 0 && grid.classList.contains('menu-anim-in-prev')
+    ok('翻回上一页：方向反过来（整屏从左边滑回来）',
+      api.state.menuPage === 0 && elements.get('menuScreen').classList.contains('menu-anim-in-prev')
       && ghost.classList.contains('menu-anim-out-prev'),
       `page=${api.state.menuPage} grid=${grid.className}`);
 
@@ -4902,13 +4902,13 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     clock2 = api.gestureState.menuAnim.until + 100;
     const catCore = api.menuItems().find((it) => it.kind === 'category');
     api.selectFromMenu(catCore.id);
-    ok('进下一层（选分类）：向右滑入 + 淡入（和「下一页」同方向）',
-      api.state.menuLevel === 1 && grid.classList.contains('menu-anim-in-next'),
+    ok('进下一层（选分类）：整屏从右边滑入（和「下一页」同方向）',
+      api.state.menuLevel === 1 && elements.get('menuScreen').classList.contains('menu-anim-in-next'),
       `level=${api.state.menuLevel} grid=${grid.className}`);
     clock2 = api.gestureState.menuAnim.until + 100;
     api.selectFromMenu('back');
-    ok('「返回」上一层：方向反过来（向左滑入），层级也回到第一级',
-      api.state.menuLevel === 0 && grid.classList.contains('menu-anim-in-prev'),
+    ok('「返回」上一层：整屏反向滑回，层级也回到第一级',
+      api.state.menuLevel === 0 && elements.get('menuScreen').classList.contains('menu-anim-in-prev'),
       `level=${api.state.menuLevel} grid=${grid.className}`);
     clock2 = api.gestureState.menuAnim.until + 100;
     api.menuBackHome();
@@ -4919,8 +4919,8 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       `home=${api.state.homeMode} homeCls=${elements.get('homeView').className}`);
     clock2 = api.gestureState.menuAnim.until + 100;
     api.openMenu({ silent: true });
-    ok('从动作退回菜单 / 刚进菜单：菜单从左边滑入 + 淡入',
-      api.state.menuMode === true && grid.classList.contains('menu-anim-in-prev'),
+    ok('从动作退回菜单 / 刚进菜单：菜单整屏从左边滑入',
+      api.state.menuMode === true && elements.get('menuScreen').classList.contains('menu-anim-in-prev'),
       `menu=${api.state.menuMode} grid=${grid.className}`);
 
     perf.now = savedNow;

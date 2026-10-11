@@ -1425,49 +1425,35 @@ kbd {
 /* 换屏动画用的「残影」层（翻页 / 返回时上一屏的圆环克隆到这里滑出去） */
 .menu-ghost { position: absolute; inset: 0; pointer-events: none; }
 /**
- * 手势菜单换屏（翻页 / 返回）的**滑动 + 淡入淡出**（用户要求：「翻页以及返回都要采用滑动的淡入淡出动画效果」）。
+ * 手势菜单换屏（翻页 / 返回）的**整屏滑动**。
  *
- * 上一屏在 `.menu-ghost` 里滑出并淡出，新一屏在 `.menu-grid` 里滑入并淡入；
- * 标题 / 说明 / 页码 / 底部提示跟着一起淡。
- * 方向按「翻页」的直觉：+1（下一页）= 老的往左走、新的从右边进来；-1（上一页 / 返回）反过来。
+ * 用户要求：「把淡入淡出的效果改为完整的滑动效果，比如从主菜单进入核心运动菜单，
+ * 则主菜单的所有圆环全部向左滑出，核心运动的圆环则从右面滑入，形成一个整行滑动的效果。」
  *
- * 时长与位移量由 app.js 的 `MENU_ANIM_OUT_MS`（500ms）/ `MENU_ANIM_IN_MS`（800ms）对齐 ——
- * 用户反馈了两次「太快了，让人能清楚的看到」，所以放慢到一整次换屏约 0.8 秒，滑行距离 52%。
+ * 做法：上一屏（标题 + 圆环 + 底部提示）被克隆到 `.menu-ghost` 里整块平移出去，
+ * 新一屏（`.menu-screen`）从另一侧整块平移进来；**两边用同一个时长、同一个距离**，
+ * 所以看起来就是「一整行从右往左推过去」（传送带），不再是原地淡入淡出。
+ * 距离与时长由 app.js 按舞台宽度算好写成 `--menu-slide-x` / `--menu-anim-*`。
  */
-@keyframes menuSlideOutLeft {
-  from { opacity: 1; transform: translate(-50%, -50%) translateX(0); }
-  to { opacity: 0; transform: translate(-50%, -50%) translateX(-52%); }
-}
-@keyframes menuSlideOutRight {
-  from { opacity: 1; transform: translate(-50%, -50%) translateX(0); }
-  to { opacity: 0; transform: translate(-50%, -50%) translateX(52%); }
-}
-@keyframes menuSlideInRight {
-  from { opacity: 0; transform: translate(-50%, -50%) translateX(52%); }
-  to { opacity: 1; transform: translate(-50%, -50%) translateX(0); }
-}
-@keyframes menuSlideInLeft {
-  from { opacity: 0; transform: translate(-50%, -50%) translateX(-52%); }
-  to { opacity: 1; transform: translate(-50%, -50%) translateX(0); }
-}
+.menu-screen { position: absolute; inset: 0; will-change: transform; }
+.menu-ghost { position: absolute; inset: 0; pointer-events: none; will-change: transform; }
+@keyframes menuScreenOutLeft { from { transform: translateX(0); } to { transform: translateX(calc(-1 * var(--menu-slide-x))); } }
+@keyframes menuScreenOutRight { from { transform: translateX(0); } to { transform: translateX(var(--menu-slide-x)); } }
+@keyframes menuScreenInFromRight { from { transform: translateX(var(--menu-slide-x)); } to { transform: translateX(0); } }
+@keyframes menuScreenInFromLeft { from { transform: translateX(calc(-1 * var(--menu-slide-x))); } to { transform: translateX(0); } }
 @keyframes menuFadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes menuFadeOut { from { opacity: 1; } to { opacity: 0; } }
-.menu-ghost.menu-anim-out-next > .menu-ring { animation: menuSlideOutLeft 500ms cubic-bezier(0.33, 0, 0.67, 1) forwards; }
-.menu-ghost.menu-anim-out-prev > .menu-ring { animation: menuSlideOutRight 500ms cubic-bezier(0.33, 0, 0.67, 1) forwards; }
-.menu-grid.menu-anim-in-next > .menu-ring { animation: menuSlideInRight 800ms cubic-bezier(0.16, 0.7, 0.3, 1) both; }
-.menu-grid.menu-anim-in-prev > .menu-ring { animation: menuSlideInLeft 800ms cubic-bezier(0.16, 0.7, 0.3, 1) both; }
-.menu-head.menu-anim-in-next, .menu-head.menu-anim-in-prev,
-.menu-foot.menu-anim-in-next, .menu-foot.menu-anim-in-prev { animation: menuFadeIn 800ms cubic-bezier(0.16, 0.7, 0.3, 1) both; }
+/* 下一页 / 进下一层：老的一整屏往左推走，新的一整屏从右边推进来 */
+.menu-ghost.menu-anim-out-next { animation: menuScreenOutLeft var(--menu-anim-out, 560ms) cubic-bezier(0.32, 0, 0.67, 0) forwards; }
+.menu-screen.menu-anim-in-next { animation: menuScreenInFromRight var(--menu-anim-in, 560ms) cubic-bezier(0.32, 0, 0.67, 0) both; }
+/* 上一页 / 返回：方向反过来 */
+.menu-ghost.menu-anim-out-prev { animation: menuScreenOutRight var(--menu-anim-out, 560ms) cubic-bezier(0.32, 0, 0.67, 0) forwards; }
+.menu-screen.menu-anim-in-prev { animation: menuScreenInFromLeft var(--menu-anim-in, 560ms) cubic-bezier(0.32, 0, 0.67, 0) both; }
 /* 回网页首页：菜单整体淡出（主页那边同时淡入，见 app.js 的 menuBackHome） */
-.gesture-menu.menu-anim-out-home { animation: menuFadeOut 500ms ease-in forwards; }
-.home.menu-anim-in-home { animation: menuFadeIn 800ms cubic-bezier(0.16, 0.7, 0.3, 1) both; }
+.gesture-menu.menu-anim-out-home { animation: menuFadeOut 320ms ease-in forwards; }
+.home.menu-anim-in-home { animation: menuFadeIn 500ms cubic-bezier(0.22, 0.61, 0.36, 1) both; }
 @media (prefers-reduced-motion: reduce) {
-  .menu-ghost.menu-anim-out-next > .menu-ring, .menu-ghost.menu-anim-out-prev > .menu-ring,
-  .menu-grid.menu-anim-in-next > .menu-ring, .menu-grid.menu-anim-in-prev > .menu-ring,
-  .menu-head.menu-anim-in-next, .menu-head.menu-anim-in-prev,
-  .menu-foot.menu-anim-in-next, .menu-foot.menu-anim-in-prev,
-  .gesture-menu.menu-anim-out-home, .home.menu-anim-in-home { animation: none; }
-}
+  .criteria-seg.current { animation: none; }
 .menu-head {
   position: absolute;
   top: 8px;

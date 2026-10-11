@@ -713,35 +713,36 @@ console.log('\n[3] 静态资源与模型文件');
       && /双手同时向上挥两次/.test(LOCALES.zh.menu.hint)
       && /swipe up twice/.test(LOCALES.en.menu.hint));
     /* 用户要求：「翻页以及返回都要采用滑动的淡入淡出动画效果。」 */
-    ok('翻页 / 返回的「滑动 + 淡入淡出」：残影层 + 滑出滑入四组关键帧 + 方向类',
-      /id="menuGridGhost"/.test(html) && /class="menu-ghost"/.test(html)
-      && /\.menu-ghost \{ position: absolute; inset: 0; pointer-events: none; \}/.test(css)
-      && /@keyframes menuSlideOutLeft/.test(css) && /@keyframes menuSlideOutRight/.test(css)
-      && /@keyframes menuSlideInLeft/.test(css) && /@keyframes menuSlideInRight/.test(css)
-      && /@keyframes menuFadeIn/.test(css) && /@keyframes menuFadeOut/.test(css)
-      && /\.menu-ghost\.menu-anim-out-next > \.menu-ring \{ animation: menuSlideOutLeft/.test(css)
-      && /\.menu-grid\.menu-anim-in-next > \.menu-ring \{ animation: menuSlideInRight/.test(css)
-      && /\.menu-grid\.menu-anim-in-prev > \.menu-ring \{ animation: menuSlideInLeft/.test(css)
-      && /menu-head\.menu-anim-in-next/.test(css) && /menu-foot\.menu-anim-in-prev/.test(css));
+    ok('翻页 / 返回改成**整屏滑动**：两张屏（menu-screen / menu-ghost）+ 四张位移关键帧 + 从两侧进出',
+      /id="menuScreen"/.test(html) && /id="menuGridGhost"/.test(html) && /class="menu-ghost"/.test(html)
+      && /\.menu-screen \{ position: absolute; inset: 0; will-change: transform; \}/.test(css)
+      && /\.menu-ghost \{ position: absolute; inset: 0; pointer-events: none; will-change: transform; \}/.test(css)
+      && /@keyframes menuScreenOutLeft/.test(css) && /@keyframes menuScreenInFromRight/.test(css)
+      && /@keyframes menuScreenOutRight/.test(css) && /@keyframes menuScreenInFromLeft/.test(css)
+      && /\.menu-ghost\.menu-anim-out-next \{ animation: menuScreenOutLeft var\(--menu-anim-out/.test(css)
+      && /\.menu-screen\.menu-anim-in-next \{ animation: menuScreenInFromRight var\(--menu-anim-in/.test(css)
+      && /\.menu-ghost\.menu-anim-out-prev \{ animation: menuScreenOutRight/.test(css)
+      && /\.menu-screen\.menu-anim-in-prev \{ animation: menuScreenInFromLeft/.test(css));
+    // 用户要求「改为完整的滑动效果」：关键帧里只剩位移，没有 opacity（淡入淡出只留给回首页那一路）
+    ok('「完整的滑动」= 位移关键帧里不再有 opacity',
+      !/opacity/.test(css.slice(css.indexOf('@keyframes menuScreenOutLeft'), css.indexOf('@keyframes menuFadeIn'))));
     ok('滑动动画在「减少动态效果」偏好下自动关掉',
-      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.menu-grid\.menu-anim-in-next > \.menu-ring[\s\S]*?animation: none;/.test(css));
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.menu-screen\.menu-anim-in-prev[\s\S]*?animation: none;/.test(css));
     ok('翻页 / 返回 / 进下一层 / 退回菜单都接了这套动画，而且真实 DOM 立刻重建（状态与界面同步）',
       /function animateMenuSwap\(dir, rebuild\)/.test(app)
-      && /const copy = typeof child\.cloneNode === 'function' \? child\.cloneNode\(true\) : null;/.test(app)
+      && /for \(const el of \[head, grid, foot\]\)/.test(app)                     // 整屏克隆（标题 + 圆环 + 提示）
       && /rebuild\(\);                                     \/\/ ② 真实那一屏马上换好（同步）/.test(app)
-      && /animateMenuSwap\(dir, \(\) => \{\s*\n\s*buildMenu\(\);/.test(app)          // 翻页
-      && /animateMenuSwap\(-1, \(\) => renderMenu\(\)\);/.test(app)                  // 返回上一层
-      && /animateMenuSwap\(1, \(\) => renderMenu\(\)\);/.test(app)                   // 进下一层
-      && /function menuBackHome\(\)/.test(app)                                       // 回网页首页：菜单淡出 + 主页淡入
-      && /home\.classList\.add\('menu-anim-in-home'\)/.test(app)
-      && /\.home\.menu-anim-in-home \{ animation: menuFadeIn/.test(css)
-      && /const MENU_ANIM_OUT_MS = (\d+);/.test(app) && /const MENU_ANIM_IN_MS = (\d+);/.test(app)
+      && /animateMenuSwap\(dir, \(\) => \{\s*\n\s*buildMenu\(\);/.test(app)
+      && /animateMenuSwap\(-1, \(\) => renderMenu\(\)\);/.test(app)
+      && /animateMenuSwap\(1, \(\) => renderMenu\(\)\);/.test(app)
+      && /function menuBackHome\(\)/.test(app));
+    ok('滑行距离按舞台算（最里面那颗也滑出画面）、时长写成 CSS 变量、进出同长',
+      /function menuSlideDistance\(size\)/.test(app) && /menuSlideDistance\(size\)/.test(app)
+      && /--menu-slide-x/.test(app) && /--menu-anim-out/.test(app) && /--menu-anim-in/.test(app)
+      && /var\(--menu-anim-out/.test(css) && /var\(--menu-anim-in/.test(css)
+      && /const MENU_ANIM_OUT_MS = (\d+);/.test(app)
       && Number(/const MENU_ANIM_OUT_MS = (\d+)/.exec(app)[1]) >= 450
-      && Number(/const MENU_ANIM_IN_MS = (\d+)/.exec(app)[1]) >= 700);
-    ok('动画放慢到「看得清」的程度，而且和 CSS 里的时长一致（滑出 500ms / 滑入 800ms）',
-      new RegExp(`menuSlideOutLeft ${Number(/const MENU_ANIM_OUT_MS = (\d+)/.exec(app)[1])}ms`).test(css)
-      && new RegExp(`menuSlideInRight ${Number(/const MENU_ANIM_IN_MS = (\d+)/.exec(app)[1])}ms`).test(css)
-      && /menuSlideInLeft 800ms cubic-bezier/.test(css) && /translateX\(-52%\)/.test(css));
+      && /const MENU_ANIM_OUT_MS = (\d+)/.exec(app)[1] === /const MENU_ANIM_IN_MS = (\d+)/.exec(app)[1]);
     ok('菜单里不摆「一组结束」的两个圆环（offerSetChoices 认得菜单模式）',
       /if \(state\.homeMode \|\| state\.menuMode \|\| !state\.detector\) return;/.test(app));
     ok('菜单里按 Esc = 回网页首页（键盘用户的退路）',

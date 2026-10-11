@@ -118,10 +118,10 @@ function buildStand({
   if (box) {
     // 奥运图标那一路的画法：**一条台面 + 两条短立柱**（画成实心矩形，在细描边下会糊成一根粗杠）
     const bw = 8.6;
-    const bh = 3.4;
+    const bh = 2.4;
     const x0 = STAND_HIP_X - bw / 2;
     const x1 = STAND_HIP_X + bw / 2;
-    const top = STAND_FLOOR + 1.2;
+    const top = STAND_FLOOR + 0.4;   // 别顶出 32 方框（进度条上的小图也用这个构建器）
     drawn.push(
       seg({ x: x0, y: top }, { x: x1, y: top }),
       seg({ x: x0, y: top }, { x: x0, y: top + bh }),

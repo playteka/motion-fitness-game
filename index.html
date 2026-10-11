@@ -166,6 +166,8 @@
                第一级 5 个分类 → 第二级是该分类的动作 +「返回」；一页只放一行 4 个，圆环因此做得很大。
                菜单项由 app.js 按动作库动态生成，位置 / 直径 / 字号都在那边按舞台尺寸算好写进行内样式。 -->
           <div class="gesture-menu" id="gestureMenu" hidden>
+            <!-- 「整屏」：翻页 / 返回时这一块整体滑动（标题 + 圆环 + 底部提示一起走） -->
+            <div class="menu-screen" id="menuScreen">
             <div class="menu-head" id="menuHead">
               <div class="menu-title" id="menuTitle" data-i18n="menu.title"></div>
               <div class="menu-lead" id="menuLead" data-i18n="menu.lead"></div>
@@ -178,6 +180,7 @@
             <div class="menu-ghost" id="menuGridGhost"></div>
             <!-- 底部提示随层级换（第一级的「↩ 返回」= 回网页首页、第二级 = 回分类），文案见 renderMenu -->
             <div class="menu-foot" id="menuFoot" data-i18n="menu.hint"></div>
+            </div>
           </div>
 
           <!-- 左下角常驻的「退出」圆环：手或脚伸进圆环停 3 秒 → 退出这一组并退出全屏。

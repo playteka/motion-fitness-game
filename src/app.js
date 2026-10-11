@@ -1038,6 +1038,17 @@ const gestureState = {
 };
 
 /**
+ * 换屏滑动要走的距离（像素）。
+ *
+ * 「整行滑动」要求最靠里的那一颗（居中的「返回」）也完全滑出画面，
+ * 所以距离 = 半个舞台宽 + 圆环半径 + 余量；所有元素**平移同样的距离**，看起来才是一整行刚性移动。
+ */
+function menuSlideDistance(size) {
+  const g = menuBandGeom(size);
+  return Math.round(size.w / 2 + g.dia / 2 + 28);
+}
+
+/**
  * 调试数据记录器（见 src/pose-log.js）。
  *
  * 用户要求：「请在我测试的时候记录下关节点和一些关键数据……在运动设置里面增加一个『记录调试数据』
@@ -1749,8 +1760,8 @@ const MENU_DRAIN_MS = 700;
  * 再放到 **500 / 800ms**（一整次换屏 ≈0.8 秒，滑出的残影和新一屏的滑入都看得清清楚楚）。
  * 按住翻页圆环是每 5 秒翻一页（`MENU_NAV_HOLD_MS`），比一次动画长得多，所以连续翻页每一页都播得完。
  */
-const MENU_ANIM_OUT_MS = 500;
-const MENU_ANIM_IN_MS = 800;
+const MENU_ANIM_OUT_MS = 560;
+const MENU_ANIM_IN_MS = 560;
 /* ---- 「双手同时挥两次」翻页（用户要求） ---- */
 /** 一次挥动的行程：舞台高度的 16%（1280×720 上约 115px），两边手都要挥够这个量 */
 const MENU_SWIPE_TRAVEL = 0.16;
@@ -2055,31 +2066,44 @@ function renderMenuPage() {
 }
 
 /**
- * 菜单换屏的**滑动 + 淡入淡出**（用户要求：「翻页以及返回都要采用滑动的淡入淡出动画效果」）。
+/**
+ * 菜单换屏的**整屏滑动**（用户要求：「把淡入淡出的效果改为完整的滑动效果，比如从主菜单进入核心运动菜单，
+ * 则主菜单的所有圆环全部向左滑出，核心运动的圆环则从右面滑入界面，形成一个整行滑动的效果」）。
  *
  * 做法（关键是**真实 DOM 立刻重建**，动画只做在「残影」上，状态与界面永远同步、测试也不用等动画）：
- *   1. 把当前这一屏的圆环**克隆**进 `.menu-ghost` 残影层，让它按方向滑出并淡出；
- *   2. 立刻 `rebuild()` 真实的那一屏；
- *   3. 给新的圆环（以及标题 / 说明 / 页码 / 底部提示）加滑入 + 淡入的动画。
+ *   1. 把当前这一屏（标题 / 说明 / 页码 + 所有圆环 + 底部提示）**克隆**进 `.menu-ghost`，
+ *      整块按方向平移出去（平移距离由 `menuSlideDistance` 按舞台宽度算，保证最里面那颗也滑出画面）；
+ *   2. 立刻 `rebuild()` 真实的那一屏（同步）；
+ *   3. 给 `.menu-screen` 加反方向的入场动画 —— 两边**同距同时长**，观感就是「一整行推过去」。
  *
- * 方向：`dir >= 0`（下一页）= 老的往左走、新的从右边进来；`dir < 0`（上一页 / 返回）反过来。
+ * 方向：`dir >= 0`（下一页 / 进下一层）= 老的一屏往左推走、新的一屏从右边推进来；`dir < 0`（上一页 / 返回）反过来。
  * 动画没播完又触发一次：直接换，不叠加（免得连续翻页时一片乱飞）。
  */
 function animateMenuSwap(dir, rebuild) {
+  const screen = $('menuScreen');
   const grid = $('menuGrid');
-  const ghost = $('menuGridGhost');
   const head = $('menuHead');
   const foot = $('menuFoot');
+  const ghost = $('menuGridGhost');
+  const root = $('gestureMenu');
   const anim = gestureState.menuAnim;
   const cls = dir >= 0 ? 'next' : 'prev';
   const now = performance.now();
   const fresh = now >= anim.until;
 
-  if (fresh && ghost && grid) {                  // ① 上一屏滑出去（克隆件，不影响真实状态）
+  if (fresh && ghost && grid) {                  // ① 上一屏整块滑出去（克隆件，不影响真实状态）
+    const size = stageSize();
+    // 滑动距离 / 时长写成 CSS 变量：CSS 里只管动画，具体数字由这里按舞台尺寸给
+    root?.style?.setProperty?.('--menu-slide-x', `${menuSlideDistance(size)}px`);
+    root?.style?.setProperty?.('--menu-anim-out', `${MENU_ANIM_OUT_MS}ms`);
+    root?.style?.setProperty?.('--menu-anim-in', `${MENU_ANIM_IN_MS}ms`);
     ghost.innerHTML = '';
-    for (const child of [...(grid.children || [])]) {
-      const copy = typeof child.cloneNode === 'function' ? child.cloneNode(true) : null;
-      if (copy) ghost.appendChild(copy);
+    for (const el of [head, grid, foot]) {
+      const copy = typeof el?.cloneNode === 'function' ? el.cloneNode(true) : null;
+      if (copy) {
+        copy.removeAttribute?.('id');            // 克隆件不留 id（免得页面上出现两个同名元素）
+        ghost.appendChild(copy);
+      }
     }
     ghost.className = `menu-ghost menu-anim-out-${cls}`;
     clearTimeout(anim.ghostTimer);
@@ -2091,22 +2115,21 @@ function animateMenuSwap(dir, rebuild) {
 
   rebuild();                                     // ② 真实那一屏马上换好（同步）
 
-  if (fresh) {                                   // ③ 新一屏滑进来
-    for (const el of [grid, head, foot]) {
-      if (!el?.classList) continue;
+  if (fresh) {                                   // ③ 新一屏从另一侧整块推进来
+    const el = screen || grid;
+    if (el?.classList) {
       el.classList.remove('menu-anim-in-next', 'menu-anim-in-prev');   // 两个方向互斥，别叠在一起
       void el.offsetWidth;                       // 强制重排，同一个类名也能重放动画
       el.classList.add(`menu-anim-in-${cls}`);
     }
     clearTimeout(anim.inTimer);
     anim.inTimer = setTimeout(() => {
-      for (const el of [grid, head, foot]) el?.classList?.remove(`menu-anim-in-${cls}`);
+      el?.classList?.remove(`menu-anim-in-${cls}`);
     }, MENU_ANIM_IN_MS);
     anim.until = now + MENU_ANIM_IN_MS + 40;
   }
 }
 
-/** 回网页首页：菜单淡出 + 主页淡入（异步那 160ms 只影响观感，`showHome()` 仍然立刻生效） */
 function menuBackHome() {
   const anim = gestureState.menuAnim;
   const menu = $('gestureMenu');
