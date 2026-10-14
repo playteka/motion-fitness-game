@@ -17,7 +17,7 @@ import { GATES, GATE_LIMITS, inLimit, PoseHoldDetector } from '../src/engines.js
 import { specStages, stageHolds } from '../src/specs.js';
 import { EXERCISES } from '../src/catalog.js';
 import {
-  Calibrator, OUTLINE, LYING, outlinePath, outlineBounds, outlineKind,
+  Calibrator, OUTLINE, LYING, outlinePath, outlineBounds, outlineKind, requiredView,
 } from '../src/calibration.js';
 import { t, setLang } from '../src/i18n.js';
 import {
@@ -826,6 +826,133 @@ console.log('\n[3] 俯卧撑计数（只判肘角）');
     det.validReps === 0 && det.partialReps > 0, `有效 ${det.validReps} / 半程 ${det.partialReps}`);
   ok('这种情况会给「幅度再大一点」，不会静默吞掉',
     r.cues.some((c) => c.code === 'moreRange'), r.cues.map((c) => c.code).join(','));
+}
+
+/* ------------------------------------------------------------------ *
+ * 跪姿俯卧撑（**退阶俯卧撑**，用户要求新增）
+ *
+ * 判据与标准俯卧撑**完全是同一套**（通用屈伸引擎、只判肘角），只有两点不同：
+ *   ① 门槛整体放宽（计次线 155° vs 标准 148°）；
+ *   ② 门控换成 `kneelPushup` —— 标准俯卧撑的 `proneUpright` 要求「躯干接近水平 ≥32°」，
+ *      而跪姿时大腿折向地面、上身立得更直，照搬那条会**永远进不了姿势**（下面有断言钉住这一点）。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[3b] 跪姿俯卧撑（退阶俯卧撑）');
+{
+  /**
+   * 跪撑：膝盖着地、髋部较高、双手撑在肩下方。
+   * 用 supinePose 拼（`thighUp` 175 = 大腿几乎竖直向下 → 膝盖落到地面；`torsoUp` 20 = 上身立着）。
+   */
+  const kneelPose = (elbow) => supinePose({
+    hip: { x: 0.78, y: 0.62 }, thighUp: 175, knee: 100, torsoUp: 20, armDown: 0, elbow,
+  });
+  /** 一次跪姿俯卧撑：肘角从 topElbow 弯到 botElbow 再回来 */
+  const kneelMix = (botElbow, topElbow = 170) => (p) => kneelPose(lerp(topElbow, botElbow, Math.sin(Math.PI * p)));
+
+  const meta = EXERCISES.find((x) => x.id === 'kneePushup');
+  const std = EXERCISES.find((x) => x.id === 'pushup');
+  const line = (m) => m.params.up - m.params.looseP * (m.params.up - m.params.down);
+
+  ok('跪姿俯卧撑走的是通用屈伸引擎（和标准俯卧撑同一套识别器）',
+    fresh('kneePushup').constructor.name === 'BendRepDetector'
+    && fresh('kneePushup').metricName === 'elbow', fresh('kneePushup').metricName);
+  ok('门槛比标准俯卧撑**松**：计次线 155° vs 148°（弯不到那么深也算一次）',
+    Math.abs(line(meta) - 155) < 1e-9 && Math.abs(line(std) - 147.5) < 1e-9 && line(meta) > line(std),
+    `跪姿 ${line(meta)}° / 标准 ${line(std)}°`);
+
+  {
+    const det = fresh('kneePushup');
+    const r = makeRunner(det);
+    r.run(repeat(kneelMix(100), 2000, 3));
+    ok('3 次跪姿俯卧撑 = 3 次', det.validReps === 3, `实际 ${det.validReps}`);
+    ok('跪姿：无半程误记', det.partialReps === 0, `实际 ${det.partialReps}`);
+  }
+  {
+    // 角度的边界：152° 已经越过计次线（155°）→ 要计上；160° 没过线 → 一次都不计
+    const over = fresh('kneePushup');
+    makeRunner(over).run(repeat(kneelMix(152), 2000, 3));
+    atLeast('肘只弯到 152°（过计次线）的浅跪姿俯卧撑也要计次', over.validReps, 3);
+    const under = fresh('kneePushup');
+    makeRunner(under).run(repeat(kneelMix(160), 2000, 3));
+    ok('肘只到 160°（没过计次线）：一次都不计', under.validReps === 0, `实际 ${under.validReps}`);
+  }
+  {
+    /**
+     * **门控**：跪撑要过得了，而不是靠「躯干接近水平」。
+     * 这里直接拿合成帧喂两个门控对比 —— 跪姿的 `torsoIncl` 只有 20°，
+     * 标准俯卧撑那条 `proneUpright`（要求 ≥32°）会把它拦住（用户反馈过的老坑）。
+     */
+    const frameOf = (lm) => computeFrame(
+      toMetric(lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT), null, 0, false, null,
+    );
+    const kneel = frameOf(kneelPose(170));
+    const stand = frameOf(standingPose({ knee: 178, lean: 6, armDown: 0, ankleX: 1.0, view: 'side' }));
+    const plank = frameOf(pronePose({ hip: { x: 0.9, y: 0.7 }, bodyTilt: 63, elbow: 172, armDown: 6 }));
+    ok('跪撑（躯干只有 20°，但大腿折下去、膝盖着地、手在肩下）能进新门控',
+      GATES.kneelPushup(kneel) === true, `torsoIncl=${kneel.torsoIncl.toFixed(1)} hip=${kneel.hipAngle.toFixed(1)}`);
+    ok('标准俯卧撑那条门控（要求躯干 ≥32°）反而会把跪撑拦住 —— 这就是必须另开一条门控的原因',
+      GATES.proneUpright(kneel) === false, `torsoIncl=${kneel.torsoIncl.toFixed(1)}`);
+    ok('站立与标准俯撑都不会被误判成跪撑',
+      GATES.kneelPushup(stand) === false && GATES.kneelPushup(plank) === false,
+      `站姿 hip=${stand.hipAngle.toFixed(1)} / 俯撑 hip=${plank.hipAngle.toFixed(1)}`);
+    ok('跪撑的门控数值与判定用的是同一张表',
+      GATE_LIMITS.kneelPushup.hip[1] === 158 && GATE_LIMITS.kneelPushup.hipAboveKnee[0] === 0.25
+      && GATE_LIMITS.kneelPushup.armRaised[1] === 0.45, JSON.stringify(GATE_LIMITS.kneelPushup));
+
+    const det = fresh('kneePushup');
+    const r = makeRunner(det);
+    r.run([{ pose: standingIdle, ms: 3000 }]);
+    ok('站着不会被误判成跪姿俯卧撑（不计次 + 门控没过）',
+      det.validReps === 0 && det.active === false, `有效 ${det.validReps}, active=${det.active}`);
+    ok('没进跪撑姿势时给出准备提示（走 status.need.kneelPushup）',
+      typeof det.standby === 'string' && det.standby.length > 0, String(det.standby));
+  }
+  {
+    /**
+     * 计次时机与标准俯卧撑一致：**推回起始位那一帧**才计（数出来的一定是完整的一下一上）。
+     */
+    const cycleMs = 2000;
+    const per = Math.round(cycleMs / DT);
+    const det = fresh('kneePushup');
+    const sm = new LandmarkSmoother();
+    const pose = kneelMix(140);
+    let t = 0;
+    const marks = [];
+    let crossed = false;
+    for (let i = 0; i < per * 3; i += 1) {
+      const f = computeFrame(toMetric(sm.apply(pose((i % per) / per), t / 1000), ASPECT), null, t, false, null);
+      const evs = det.update(f, t);
+      if (Number.isFinite(det.progress) && det.progress >= det.looseP) crossed = true;
+      if (evs.some((e) => e.type === 'rep' && e.valid)) {
+        marks.push({ back: det.progress <= det.backP + 1e-9, crossed });
+        crossed = false;
+      }
+      t += DT;
+    }
+    atLeast('跪姿俯卧撑：3 个循环计到 3 次', marks.length, 3);
+    ok('跪姿俯卧撑：计次那一刻人已经**推回起始位**（进度掉回 backP 以内）',
+      marks.length >= 3 && marks.every((m) => m.back), JSON.stringify(marks));
+    ok('跪姿俯卧撑：每一轮都真的沉过计次线（不是空计）',
+      marks.length >= 3 && marks.every((m) => m.crossed));
+  }
+  {
+    // 机位文案（用户要求）：侧对摄像头 + 膝盖着地 + 双手撑在肩下方
+    setLang('zh', { persist: false });
+    const zhHint = t('ex.kneePushup.cameraHint');
+    const zhName = t('ex.kneePushup.name');
+    setLang('en', { persist: false });
+    const enHint = t('ex.kneePushup.cameraHint');
+    const enName = t('ex.kneePushup.name');
+    setLang('zh', { persist: false });
+    ok('机位提示写着「侧对摄像头 + 膝盖着地」（中英都有）',
+      /侧对摄像头/.test(zhHint) && /膝盖着地/.test(zhHint)
+      && /sideways/i.test(enHint) && /knees? on the floor|knees on/i.test(enHint),
+      `${zhHint} | ${enHint}`);
+    ok('动作名写成「跪姿俯卧撑 / Knee Push-up」', zhName === '跪姿俯卧撑' && enName === 'Knee Push-up',
+      `${zhName} | ${enName}`);
+    ok('机位是「侧对镜头」（和标准俯卧撑一样，判定靠肘角）',
+      requiredView('kneePushup') === 'side', requiredView('kneePushup'));
+  }
 }
 
 
@@ -2010,6 +2137,7 @@ function calibOnce(cal, lm, now) {
       squatJump: 'front',
       jumpingJack: 'front',
       burpee: 'front',
+      kneePushup: 'pushup',
       lunge: 'side',
       lungeBack: 'side',
       buttKick: 'side',

@@ -12,7 +12,7 @@ fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
 
 const groups = [
-  ['动作姿势图（19，手绘）', EXERCISES.map((ex) => [ex.id, localizedExercise(ex.id).name, exercisePoseSVG(ex.id)])],
+  [`动作姿势图（${EXERCISES.length}，手绘）`, EXERCISES.map((ex) => [ex.id, localizedExercise(ex.id).name, exercisePoseSVG(ex.id)])],
   ['分类（5，Lucide / Tabler 现成图标）', CATEGORIES.map((c) => [c.id, localizedExercise('') && c.id, categoryMarkSVG(c.id)])],
   ['导航（3，Lucide 现成图标）', [['back', '返回', navPoseSVG('back')], ['prev', '上一页', navPoseSVG('prev')], ['next', '下一页', navPoseSVG('next')]]],
   ['界面按钮（10，Lucide 现成图标）', ['ui:brand', '品牌', 'ui:home', '回主页', 'ui:trophy', '最佳成绩', 'ui:history', '运动记录', 'ui:search', '搜索', 'ui:hand', '手势开始', 'ui:camera', '摄像头', 'ui:settings', '设定', 'ui:maximize', '全屏', 'ui:close', '关闭']

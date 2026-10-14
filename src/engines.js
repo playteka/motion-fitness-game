@@ -102,6 +102,31 @@ export const GATE_LIMITS = {
     torsoIncl: [32, null],
     armRaised: [null, 0.45],
   },
+  /**
+   * 跪撑（**跪姿俯卧撑**：退阶俯卧撑）。
+   *
+   * 为什么不复用 `proneUpright`：那一条要求「躯干接近水平（`torsoIncl ≥ 32°`）」。
+   * 跪姿时大腿折向地面、上身可以立得比较直（跪得越正 `torsoIncl` 越小），
+   * 于是**跪得越标准反而越进不了门控**，画面上一直提示「还没进入这个动作的姿势」——
+   * 和当初 `prone` 依赖地面线踩的是同一类坑。
+   *
+   * 这里换成三条**与地面线、与躯干水平度都无关**的判据（全部是「身体自己跟自己比」的量）：
+   *   - `hip ∈ [50, 158]`：跪撑时**大腿与躯干折起来**（实测跪姿 ≈ 115°~155°）；
+   *     站立与俯撑（平板 / 标准俯卧撑）腿和躯干基本在一条线上（侧拍 ≈ 172°、俯撑 = 180°），
+   *     正面站姿因为透视也还有 ≈161°，都落在区间外、会被挡住；
+   *   - `hipAboveKnee ≥ 0.25`：髋明显高于膝 → **膝盖确实跪在地上**（躺 / 趴着 ≈ 0 或负）；
+   *   - `armRaised ≤ 0.45`：手撑在肩下方（不是把手臂举过头顶，那是开合跳那类动作）。
+   *
+   * ⚠️ 取舍（有意为之）：深蹲到底时「髋角折起来 + 髋高于膝」也落在这个区间里，
+   * 所以理论上站着深蹲的人也能进门控 —— 但那时肘角不会来回弯（判据只认肘角），
+   * 实测不会误计；反过来，**加了「膝离地高度」这类以校准地面线为基准的条件**，
+   * 就会重蹈 prone / supine 那几次「地面线一偏就永远进不了姿势」的覆辙，所以这里不用它。
+   */
+  kneelPushup: {
+    hip: [50, 158],
+    hipAboveKnee: [0.25, null],
+    armRaised: [null, 0.45],
+  },
   /** 仰卧屈膝（臀桥 / 卷腹）：肩离地高度放宽到 0.95，卷腹卷高了也算 */
   supine: {
     torsoIncl: [36, null],
@@ -232,6 +257,10 @@ export const GATES = {
   /** 俯撑（**不看地面线**：俯卧撑 / 登山者）—— 见 GATE_LIMITS.proneUpright 的说明 */
   proneUpright: (f) => inLimit(f.torsoIncl, GATE_LIMITS.proneUpright.torsoIncl)
     && inLimit(f.armRaised, GATE_LIMITS.proneUpright.armRaised),
+  /** 跪撑（跪姿俯卧撑）—— **不要求躯干接近水平**，见 GATE_LIMITS.kneelPushup 的说明 */
+  kneelPushup: (f) => inLimit(f.hipAngle, GATE_LIMITS.kneelPushup.hip)
+    && inLimit(f.hipAboveKnee, GATE_LIMITS.kneelPushup.hipAboveKnee)
+    && inLimit(f.armRaised, GATE_LIMITS.kneelPushup.armRaised),
   /** 手撑在椅子/台阶上的俯撑（上斜俯卧撑） */
   proneHigh: (f) => f.torsoIncl > 20 && f.shoulderClear > 0.10 && f.wristClearMin < 1.5,
   /** 俯卧在地面（超人式 / 青蛙趴 / 婴儿式） */
@@ -302,6 +331,7 @@ export const GATE_HINT = {
   stand: 'stand', standWide: 'stand', standUpright: 'stand', standOneLeg: 'stand', standWall: 'stand',
   standHeelUp: 'stand', standArmCross: 'stand', standFold: 'stand',
   prone: 'prone', proneHigh: 'prone', proneFloor: 'prone', proneLift: 'prone', proneUpright: 'prone',
+  kneelPushup: 'kneelPushup',
   supine: 'supine', supineLow: 'supine', supineFlat: 'supine', hollow: 'supine', crab: 'supine',
   quadruped: 'quadruped', bearCrawl: 'quadruped',
   kneel: 'kneel', kneelFold: 'kneel', childPose: 'kneel', wristStretch: 'kneel',

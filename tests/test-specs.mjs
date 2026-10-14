@@ -70,8 +70,8 @@ console.log('\n[1] 每个动作都有技术指标');
       JSON.stringify([...new Set(items.map((it) => it.op))]));
     ok(`${id}：带指标的条目一定带比较符`, items.every((it) => !it.metricKey || it.op || it.textKey));
   }
-  ok('动作库里 18 个动作都有指标（弓步跳、宽距/窄距俯卧撑、侧平板支撑已删除、新增勾腿跳）',
-    ALL.length === 18 && ALL.every((id) => itemsOf(id).length > 0), `实际 ${ALL.length}`);
+  ok('动作库里 19 个动作都有指标（弓步跳、宽距/窄距俯卧撑、侧平板支撑已删除、新增勾腿跳与跪姿俯卧撑）',
+    ALL.length === 19 && ALL.every((id) => itemsOf(id).length > 0), `实际 ${ALL.length}`);
 }
 
 /* ------------------------------------------------------------------ *
@@ -178,6 +178,75 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
     JSON.stringify(itemsOf('pushup').map((it) => it.metricKey)));
   ok('俯卧撑：弹窗里的画幅/晃动/最短一轮这些辅助项也只剩必要的几条',
     itemsOf('pushup').length <= 12, String(itemsOf('pushup').length));
+
+  // ===== 跪姿俯卧撑（**退阶俯卧撑**，用户要求新增）=====
+  // 判据和标准俯卧撑**同一套**（通用屈伸引擎、只判肘角），只有门槛与门控不同：
+  // 计次线 155°（标准 148°）、满分深度 133°；门控换成 kneelPushup（**不要求躯干接近水平**）。
+  {
+    const knee = createDetector('kneePushup');
+    const at = (p) => roundFor(knee.up - p * (knee.up - knee.down), 'deg');
+    ok('跪姿俯卧撑：走通用屈伸引擎（和标准俯卧撑同一个识别器，只判肘角）',
+      knee.constructor.name === 'BendRepDetector' && knee.metricName === 'elbow', knee.metricName);
+    ok('跪姿俯卧撑：计次线 = 引擎的 looseP（155°），而且**比标准俯卧撑松**',
+      findItem('kneePushup', 'spec.countLine').value === at(knee.looseP)
+      && findItem('kneePushup', 'spec.countLine').value > findItem('pushup', 'spec.countLine').value,
+      `${findItem('kneePushup', 'spec.countLine').value}° vs 标准 ${findItem('pushup', 'spec.countLine').value}°`);
+    ok('跪姿俯卧撑：满分深度 / 起始位 / 晃动线也全部来自引擎自己的进度阈值',
+      findItem('kneePushup', 'spec.bottomLine').value === at(knee.bottomP)
+      && findItem('kneePushup', 'spec.backLine').value === at(knee.backP)
+      && findItem('kneePushup', 'spec.wobble').value === at(knee.ignoreP),
+      JSON.stringify([at(knee.bottomP), at(knee.backP), at(knee.ignoreP)]));
+    ok('跪姿俯卧撑：几条线的先后关系不能反（回位 < 开始 < 晃动 < 计次 < 满分深度）',
+      knee.backP < knee.enterP && knee.enterP < knee.ignoreP
+      && knee.ignoreP < knee.looseP && knee.looseP < knee.bottomP,
+      JSON.stringify([knee.backP, knee.enterP, knee.ignoreP, knee.looseP, knee.bottomP]));
+    ok('跪姿俯卧撑：门控是 kneelPushup（髋角 + 膝盖着地 + 手没举过肩），**没有**「躯干接近水平」那一条',
+      EXERCISE_MAP.kneePushup.params.gate === 'kneelPushup'
+      && !itemsOf('kneePushup').some((it) => it.metricKey === 'metric.torsoIncl')
+      && itemsOf('kneePushup').filter((it) => it.labelKey === 'spec.pose.kneelPushup').length === 3,
+      JSON.stringify(itemsOf('kneePushup').map((it) => it.metricKey)));
+    const kneeStages = specStages('kneePushup');
+    ok('跪姿俯卧撑：四格 = 跪撑 → 开始下沉 → 到计次线 → 回到起始位（最后一格 = 计次那一刻）',
+      kneeStages.length === 4 && kneeStages[0].kind === 'gate' && kneeStages[0].metric === 'hip'
+      && kneeStages[1].metric === 'elbow' && kneeStages[2].metric === 'elbow'
+      && kneeStages[3].kind === 'finish' && kneeStages[3].metric === 'progress',
+      JSON.stringify(kneeStages.map((s) => `${s.metric}:${s.kind}`)));
+    ok('跪姿俯卧撑：进度条第一格是「跪撑」（短标签不是通用的站立 / 俯撑）',
+      kneeStages[0].shortKey === 'spec.short.kneelPushup', kneeStages[0].shortKey);
+    ok('跪姿俯卧撑：计次那一格的静态值就是 155°',
+      kneeStages[2].value === 155 && kneeStages[2].op === 'lte', JSON.stringify(kneeStages[2].value));
+    // 分数的分配（5 / 7 / 14 / 8 + 满轮 6 = 40）：四步都落在格子上
+    const pts = stagePoints('kneePushup');
+    ok('跪姿俯卧撑：分数 5 / 7 / 14 / 8 + 满轮 6 = 40 全落在四格上',
+      pts.length === 4 && pts[0].points === 5 && pts[1].points === 7
+      && pts[2].points === 14 && pts[3].points === 8 && pts[3].bonus === 6
+      && pts.reduce((a, x) => a + x.points + x.bonus, 0) === 40,
+      JSON.stringify(pts));
+    /**
+     * **用真实帧走一遍进度条**（和俯卧撑同一套口径）：
+     * 跪撑姿势下第一格要亮；站着时连第一格都不亮（门控没过）。
+     */
+    {
+      const { supinePose } = await import('./synthetic-pose.mjs');
+      const kneelLm = supinePose({
+        hip: { x: 0.78, y: 0.62 }, thighUp: 175, knee: 100, torsoUp: 20, armDown: 0, elbow: 170,
+      });
+      const kneelFrame = computeFrame(
+        toMetric(kneelLm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT), null, 0, false, null,
+      );
+      ok('跪姿俯卧撑：跪撑姿势下第一格「跪撑」的数值判据成立（帧上的髋角 155° 落在门控区间里）',
+        stageHolds(kneeStages[0], kneelFrame, {}) === true,
+        `hip=${kneelFrame.hipAngle.toFixed(1)} hipAboveKnee=${kneelFrame.hipAboveKnee.toFixed(2)}`);
+      const kneeDet = createDetector('kneePushup');
+      kneeDet.update(kneelFrame, 0);
+      ok('跪姿俯卧撑：识别器自己也判定「已经在跪撑姿势里」（gateOk，进度条第一格靠它点亮）',
+        kneeDet.gateOk === true && kneeDet.active === true, `gateOk=${kneeDet.gateOk} active=${kneeDet.active}`);
+      ok('跪姿俯卧撑：站着时连第一格都不亮',
+        stageHolds(kneeStages[0],
+          { ok: true, hipAngle: 172, hipAboveKnee: 1.0, armRaised: -1.0 },
+          createDetector('kneePushup')) === false);
+    }
+  }
 
   // 用户要求：**不再使用「髋部抬起高度」**，顶点改成「髋角 ≈180° + 膝角 ≈90°」
   ok('臀桥：顶点线 = BRIDGE.topAngle（髋角，≈180°）',

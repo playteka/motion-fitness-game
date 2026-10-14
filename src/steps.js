@@ -254,6 +254,48 @@ export const STEP_PLANS = {
     ],
   },
 
+  /* 跪姿俯卧撑（退阶俯卧撑）：判据和标准俯卧撑**同一套**（只判肘角、四步全问识别器自己的进度），
+     只是门槛更松（见 catalog.js 里 kneePushup 那一条）。所以这一步的检查也都问 `d.progress`，
+     和识别器的计次线是同一把尺子，不会出现「这条线界面说到了、识别器却没计」。 */
+  kneePushup: {
+    perCycle: true,
+    repBonus: 6,
+    steps: [
+      {
+        id: 'setup',
+        labelKey: 'steps.kneePushup.setup.label',
+        points: 5,
+        // 跪撑到位 + 手臂大致撑直（跪姿**不要求躯干接近水平**，所以不问 torsoIncl）
+        check: (f, d) => !!d.gateOk && Number.isFinite(f.elbowAngle) && f.elbowAngle >= 150,
+        hint: (f, d) => (d.gateOk ? H('steps.kneePushup.setup.straight') : H('steps.kneePushup.setup.pose')),
+      },
+      {
+        id: 'lower',
+        labelKey: 'steps.kneePushup.lower.label',
+        points: 7,
+        // 开始下沉：进度 40%（= 比自己的顶位弯下去约 30°）
+        check: (f, d) => Number.isFinite(d.progress) && d.progress >= 0.40,
+        hint: (f, d) => (d.progress < 0.40 ? H('steps.kneePushup.lower.hint') : null),
+      },
+      {
+        id: 'depth',
+        labelKey: 'steps.kneePushup.depth.label',
+        points: 14,
+        // 压到位：进度 = 引擎的满分深度线 bottomP（约 133°）
+        check: (f, d) => Number.isFinite(d.progress) && d.progress >= 0.50,
+        hint: (f, d) => (d.progress < 0.50 ? H('steps.kneePushup.depth.hint', { deg: Math.round(f.elbowAngle) }) : null),
+      },
+      {
+        id: 'press',
+        labelKey: 'steps.kneePushup.press.label',
+        points: 8,
+        // 「推起还原」= 识别器结算这一轮的那一帧（进度掉回 backP 以内），两边同一个条件
+        check: (f, d) => Number.isFinite(d.progress) && Number.isFinite(d.backP) && d.progress <= d.backP,
+        hint: (f, d) => (d.progress > d.backP ? H('steps.kneePushup.press.hint') : null),
+      },
+    ],
+  },
+
   /* ---------------- 臀桥（计数） ----------------
      判据只有**关节角**（用户要求去掉「髋部抬起高度」）：顶点 = 髋角 ≈180°（≥170°）且 膝角 ≈90°（55°~130°），
      落回 = 髋角回到自己躺平读数 +12° 以内。这里的每一步都问同一个髋角，和识别器同一套。 */

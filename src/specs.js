@@ -858,6 +858,8 @@ const SHORT_LABEL = {
   // 短标签仍写「俯撑」——否则得分步骤（`STEP_STAGE.pushup.setup: 'prone'`）找不到这一格，
   // 那 5 分会凭空消失。
   'spec.pose.proneUpright': 'spec.short.prone',
+  // 跪姿俯卧撑：第一格是「跪撑」（膝盖着地、手撑在肩下），不能写成通用的「俯撑」
+  'spec.pose.kneelPushup': 'spec.short.kneelPushup',
   'spec.pose.supine': 'spec.short.supine',
   'spec.pose.supineLow': 'spec.short.supine',
   'spec.pose.supineFlat': 'spec.short.supine',
@@ -1205,6 +1207,8 @@ const STEP_STAGE = {
     stance: 'stance', split: 'start', stride: 'start', sink: 'count', backknee: 'both', return: 'back',
   },
   pushup: { setup: 'prone', press: 'back', lower: 'start', depth: 'count' },
+  // 跪姿俯卧撑（退阶俯卧撑）：四步和标准俯卧撑同构，只是第一格是「跪撑」（见 catalog.js 的 kneePushup）
+  kneePushup: { setup: 'kneelPushup', lower: 'start', depth: 'count', press: 'back' },
   bridge: { setup: 'supine', lift: 'count', top: 'count', lower: 'down' },
   repStand: { stance: 'stand', lower: 'start', bottom: 'count', up: 'back' },
   // 开合跳只画三格（`skipEnter`，用户要求）：并拢站好（stance）→ 跳开（open 属于这一格）

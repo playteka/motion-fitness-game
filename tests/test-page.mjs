@@ -436,8 +436,8 @@ console.log('\n[3] 静态资源与模型文件');
     ok('不标角度的动作（开合跳 / 波比跳 / 站立体前屈）不会多出一个躯干数字',
       clean.length > 0 && clean.every((id) => !new RegExp(`\\b${id}:`).test(focusBlock)), clean.join(', '));
     // 宽距 / 窄距俯卧撑已删除（18 → 16）；坐姿体前屈按用户反馈「没有显示角度」补上（16 → 17）；
-    // 侧平板支撑删除（17 → 16）；之后又按用户要求删掉了一个动作（16 → 15）
-    ok('躯干倾角覆盖了全部「角度判定」的动作（15 个）', judged.length === 15, String(judged.length));
+    // 侧平板支撑删除（17 → 16）；之后又按用户要求删掉了一个动作（16 → 15）、加了跪姿俯卧撑（15 → 16）
+    ok('躯干倾角覆盖了全部「角度判定」的动作（16 个）', judged.length === 16, String(judged.length));
     ok('坐姿体前屈：标「髋」+「躯干」（它判的就是前折幅度，用户反馈过没有数字）',
       /seatedForwardFold:\s*\['hip'\]/.test(focusBlock), focusBlock.slice(-120));
   }
@@ -646,7 +646,7 @@ console.log('\n[3] 静态资源与模型文件');
       /flipMenuPage\(\(e\.key === 'ArrowRight'/.test(app)
       && /\$\('menuPage'\)\?\.addEventListener\('click', \(\) => flipMenuPage\(1\)\)/.test(app)
       && /if \(it\.kind === 'prev' \|\| it\.kind === 'next'\) flipMenuPage\(it\.dir\)/.test(app));
-    ok('圆环直径上限 ≥300px（不再是 18 个挤一屏的小圆环）',
+    ok('圆环直径上限 ≥300px（不再是 19 个挤一屏的小圆环）',
       /const MENU_RING_MAX = (\d+)/.test(app)
       && Number(/const MENU_RING_MAX = (\d+)/.exec(app)[1]) >= 300,
       String(/const MENU_RING_MAX = (\d+)/.exec(app)?.[1]));
@@ -850,9 +850,9 @@ console.log('\n[3] 静态资源与模型文件');
       `髋角=${Math.round(p.hipAngle)}° 膝角=${Math.round(p.kneeAngle)}°`);
 
     // 参数是唯一来源：姿势由这几个数决定，改一个数图标就变（测试盯住它们）
-    ok('姿势参数写在一处（EXERCISE_POSES 一张表：18 个动作各自那一帧）',
+    ok('姿势参数写在一处（EXERCISE_POSES 一张表：19 个动作各自那一帧）',
       /const EXERCISE_POSES = \{/.test(read('src/icons.js'))
-      && (read('src/icons.js').match(/^  [a-zA-Z]+: \(\) => build/gm) || []).length === 18);
+      && (read('src/icons.js').match(/^  [a-zA-Z]+: \(\) => build/gm) || []).length === 19);
     ok('姿势图标接进了动作元数据（localizedExercise 提供 poseIcon），界面按 poseIcon ∨ emoji 取',
       /poseIcon: exercisePoseSVG\(id\)/.test(read('src/exercises.js'))
       && /<span class="ex-icon">\$\{ex\.poseIcon \|\| ex\.icon\}<\/span>/.test(app)
@@ -893,7 +893,7 @@ console.log('\n[3] 静态资源与模型文件');
       const allShared = [...ids.map((id) => svgOf.get(id)),
         ...['upper', 'lower', 'core', 'full', 'stretch'].map((c) => categoryMarkSVG(c)),
         ...['back', 'prev', 'next'].map((k) => navPoseSVG(k))];
-      ok('18 个动作**全部**有自己的线条姿势图标（一整套里没有 emoji 当图标）',
+      ok('19 个动作**全部**有自己的线条姿势图标（一整套里没有 emoji 当图标）',
         ids.every((id) => /class="ex-pose/.test(svgOf.get(id)) && boxOf(svgOf.get(id)).el >= 4
           && boxOf(svgOf.get(id)).heads === 1),
         ids.map((id) => `${id}:${boxOf(svgOf.get(id)).el}`).join(' '));
@@ -908,7 +908,7 @@ console.log('\n[3] 静态资源与模型文件');
         && /\.ex-pose--solid \{ stroke-width: 1\.8; \}/.test(css)
         && /\.ex-pose--solid circle \{ fill: currentColor; \}/.test(css)
         && /APP_POSE_SCALE/.test(read('src/icons.js')));
-      ok('18 张图**两两不同**（每个动作都有自己的样子，不会两张一样）',
+      ok('19 张图**两两不同**（每个动作都有自己的样子，不会两张一样）',
         new Set([...svgOf.values()]).size === ids.length,
         `${new Set([...svgOf.values()]).size} / ${ids.length}`);
       ok('skill 规格：全部是 24×24 网格、只含 shapes、没有 <text> / emoji',
@@ -1086,7 +1086,8 @@ console.log('\n[4] 动作库与界面一致性');
   const { CATEGORIES } = await import('../src/catalog.js');
   // 动作库就是约定的动作清单（用户明确给定清单，多一个少一个都算回归）
   const EXPECT = {
-    upper: ['pushup'],
+    // 用户要求新增「跪姿俯卧撑」（退阶俯卧撑）：上肢从 1 个变 2 个
+    upper: ['pushup', 'kneePushup'],
     // 用户要求：臀桥从「下肢」移到「核心」（下肢 5 个、核心 6 个）
     lower: ['squat', 'squatSumo', 'lunge', 'lungeBack', 'buttKick'],
     core: ['bridge', 'plank', 'deadBug', 'crunch', 'reverseCrunch', 'lyingLegRaise'],
@@ -1094,7 +1095,7 @@ console.log('\n[4] 动作库与界面一致性');
     stretch: ['standingForwardFold', 'seatedForwardFold'],
   };
   const expectIds = [...new Set(Object.values(EXPECT).flat())];
-  ok('动作库就是约定的 18 个动作（弓步跳、宽距/窄距俯卧撑、侧平板支撑已删除；新增勾腿跳；深蹲跳移到全身；臀桥移到核心）',
+  ok('动作库就是约定的 19 个动作（弓步跳、宽距/窄距俯卧撑、侧平板支撑已删除；新增勾腿跳与跪姿俯卧撑；深蹲跳移到全身；臀桥移到核心）',
     EXERCISES.map((x) => x.id).sort().join(',') === expectIds.sort().join(','),
     `实际 ${EXERCISES.length} 个：${EXERCISES.map((x) => x.id).join(',')}`);
   for (const [cat, ids] of Object.entries(EXPECT)) {

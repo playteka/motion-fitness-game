@@ -592,6 +592,27 @@ console.log('\n[1b] 运动设定弹窗');
     ok('平板支撑：列出每秒加分（+1/秒）', holdRaw.includes('+1/秒'), holdRaw.slice(-300));
   }
 
+  // ===== 跪姿俯卧撑（退阶俯卧撑，用户要求新增）：弹窗里必须能列出它的四格与更松的门槛 =====
+  {
+    api.selectExercise('kneePushup');
+    const kneeHtml = elements.get('exerciseSpecs').innerHTML;
+    const kneeRaw = kneeHtml.replace(/<svg[\s\S]*?<\/svg>/g, '');
+    ok('跪姿俯卧撑：弹窗里有四格关键帧（跪撑 → 开始下沉 → 到计次线 → 回到起始位）',
+      (kneeHtml.match(/spec-row spec-kf/g) || []).length === 4
+      && kneeRaw.includes('跪撑') && kneeRaw.includes('回到自己起始位附近'),
+      `${(kneeHtml.match(/spec-row spec-kf/g) || []).length} 格`);
+    ok('跪姿俯卧撑：计次线（≤155°）与满分深度（≤133°）都列在关键帧上',
+      kneeRaw.includes('155') && kneeRaw.includes('133'), kneeRaw.slice(0, 400));
+    ok('跪姿俯卧撑：门控写的是「跪撑」（髋角 50°–158° + 髋比膝高 + 手没举过肩），没有「躯干倾角 ≥ 32°」',
+      kneeRaw.includes('跪撑') && kneeRaw.includes('髋比膝高') && kneeRaw.includes('50') && kneeRaw.includes('158')
+      && !kneeRaw.includes('躯干倾角 ≥ 32'), kneeRaw.slice(0, 400));
+    ok('跪姿俯卧撑：分数的分配与 stagePoints 一致（5 / 7 / 14 / 8 + 满轮 6 = 40）',
+      ['+5', '+7', '+14', '+8'].every((x) => kneeRaw.includes(x))
+      && kneeRaw.includes('+6 整轮满分') && kneeRaw.includes('每轮 40 分'),
+      kneeRaw.slice(0, 200));
+    api.selectExercise('pushup');
+  }
+
   api.selectExercise('lunge');
   // 用户要求「后面几个关键帧对膝盖弯曲的要求更大」：计次 152° → 138°、双腿 158° → 146°
   ok('切到箭步蹲后指标跟着换（计次线 138°）',
@@ -3639,7 +3660,7 @@ console.log(`\n[14] 虚线轮廓：识别成功就隐藏（真实主循环，全
   }
 
   const all = EXERCISES.map((e) => e.id).join(',');
-  ok(`这一段覆盖了全部动作（${EXERCISES.length} 个）`, EXERCISES.length === 18, all);
+  ok(`这一段覆盖了全部动作（${EXERCISES.length} 个）`, EXERCISES.length === 19, all);
   ok('每个动作都真的进入了计数状态（不是空跑）', reachedRunning === EXERCISES.length,
     `实际 ${reachedRunning}/${EXERCISES.length}`);
   ok('没识别到人体时，画面里画「找人」的虚线轮廓（亮蓝）', bad.search.length === 0,

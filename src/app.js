@@ -2042,7 +2042,7 @@ function menuItemEl(it) {
   btn.setAttribute('aria-label', label);
   btn.setAttribute('title', label);
   /**
-   * 图标：有「人体姿势」线条图的动作用它（18 个动作 + 5 个分类都是），
+   * 图标：有「人体姿势」线条图的动作用它（19 个动作 + 5 个分类都是），
    * 导航圆环用线条箭头。姿势图的颜色走 currentColor —— 和文字一样是白色，一眼看得清。
    */
   const iconHtml = it.poseIcon || it.icon;

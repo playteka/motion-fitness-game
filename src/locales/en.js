@@ -217,6 +217,7 @@ export default {
       // Crunch: the starting pose is "lie down with knees bent" (different from the bridge / leg raise start)
       crunchLying: 'Lie on the mat with your knees bent: trunk flat (tilt about 90°), knees bent to about 90°, feet planted',
       quadruped: 'Get on all fours: hands and knees on the floor',
+      kneelPushup: 'Set up the kneel: knees on the floor, hands right under your shoulders',
       kneel: 'Kneel down: knees on the floor, torso tall',
       seated: 'Sit down on the mat and set up for the move',
       side: 'Lie on your side toward the camera, resting on your forearm',
@@ -379,6 +380,19 @@ export default {
       howto: ['Hands slightly wider than your shoulders, body in one straight line', 'Brace your core and bend your elbows to lower down', 'Elbows to 90° or less with your chest close to the floor', 'Press back up — fully straight arms count as one rep'],
       tips: ['Keep your body in one straight line the whole time', 'Don’t let your hips sag or pike up', 'Keep your wrists directly under your shoulders'],
     },
+    /**
+     * Knee Push-up (a regression of the push-up, added at the user's request): the counting line is
+     * looser than the standard push-up (155° vs 148°) and it does **not** require a near-horizontal
+     * trunk (in a kneel the thighs fold to the floor and the torso sits more upright) — see kneePushup
+     * in catalog.js.
+     */
+    kneePushup: {
+      name: 'Knee Push-up',
+      cameraHint: 'Turn sideways to the camera, knees on the floor, hands under your shoulders',
+      goal: 'Start from a kneel, bend your elbows to lower down, then press back up',
+      howto: ['Kneel on the mat with your hands slightly wider than your shoulders and right under them', 'Your knees are the pivot — keep one straight line from knees to shoulders (don’t pike your hips up)', 'Bend your elbows to lower your chest toward the floor, then press back up — that counts as one rep'],
+      tips: ['This is the easier version: build up here first if a full push-up is too much, and keep it slow', 'Control both the lowering and the press — no bouncing off momentum', 'Keep your wrists under your shoulders rather than rolled onto the outer palm'],
+    },
     bridge: {
       name: 'Glute Bridge',
       cameraHint: 'Turn sideways to the camera, lying on your back with knees bent and feet planted',
@@ -511,6 +525,17 @@ export default {
       lower: { label: 'Brace your core and bend your elbows to lower down', hint: 'Start lowering: bend your elbows and bring your chest toward the floor' },
       depth: { label: 'Elbows to 118° or less, chest close to the floor (top-scoring step)', hint: 'A little deeper — your elbow angle is about {deg}°' },
       press: { label: 'Press back up to fully straight arms', hint: 'Push hard and straighten your arms all the way' },
+    },
+    /* Knee push-up (the easier version): the same four steps as the push-up, with looser lines */
+    kneePushup: {
+      setup: {
+        label: 'Kneel and prop: hands under your shoulders, knees on the floor',
+        pose: 'Get into the kneel first: knees on the floor, hands right under your shoulders',
+        straight: 'Straighten your arms and keep one line from your knees to your shoulders',
+      },
+      lower: { label: 'Bend your elbows and lower your chest', hint: 'Start lowering: bend your elbows and bring your chest toward the floor' },
+      depth: { label: 'Elbows to about 133°, chest close to the floor (top-scoring step)', hint: 'A little deeper — your elbow angle is about {deg}°' },
+      press: { label: 'Press back up until your arms are straight again', hint: 'Push up until your arms are straight again' },
     },
     bridge: {
       setup: {
@@ -954,6 +979,8 @@ export default {
       standUpright: 'Standing upright (no floor line needed)',
       // Push-up / mountain climber gate: same idea as the upright stance, avoiding the floor line
       proneUpright: 'Push-up position (no floor line needed)',
+      // Knee push-up: a kneel with the hands propped — it does NOT require a near-horizontal trunk
+      kneelPushup: 'Kneeling prop position (knees down, trunk may stay upright)',
       standWide: 'Standing, legs apart',
       prone: 'Push-up position',
       supine: 'Lying on your back, knees bent',
@@ -994,6 +1021,8 @@ export default {
     /* Judgement progress bar: each icon's short label is used in the hover tooltip */
     short: {
       stance: 'Stance',
+      // Knee push-up: the first segment is the kneeling prop (not the generic stand / prone)
+      kneelPushup: 'Kneel',
       stand: 'Stand',
       start: 'Start',
       count: 'Count',

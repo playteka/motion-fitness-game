@@ -308,7 +308,7 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const ankleGap = Math.abs(P(LM.L_ANKLE).x - P(LM.R_ANKLE).x);
   const valgus = view === 'front' && ankleGap > 0.02 ? 1 - kneeGap / ankleGap : 0;
 
-  // ---- 多动作库（18 个动作）共用的姿势判据量 ----
+  // ---- 多动作库（19 个动作）共用的姿势判据量 ----
   // 地面参考线 groundRef 已经在上面定义（校准地面优先、否则用脚踝最低点）。
   // 有了它才能判断「脚离地（跳起来了）」「人是坐着还是站着」「悬垂」这类问题 ——
   // 只靠脚踝自己算出来的地面会跟着人一起上下动，跳起来时永远看不出离地。

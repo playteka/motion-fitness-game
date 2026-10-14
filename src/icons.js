@@ -323,6 +323,24 @@ function buildLie({
 const STRAIGHT_KNEE = 174;
 
 /**
+ * **跪撑**（跪姿俯卧撑：门控格 / 动作图标共用）：掌撑地、髋部较高、**膝盖落在地面线上**。
+ *
+ * 用现成的 `buildLie` 拼（不另写构建器）：
+ *   - `support: true`：把「手」按在地面线上，肩高由肘角算；
+ *   - 身体朝 **-x** 折过去：`tilt` 取负值（上身往前倾、髋留在后面），
+ *     于是 `thighDir = tilt − hip` 把大腿摆成**几乎竖直向下** → 膝盖落到地面；
+ *   - 膝角 ≈95° 让小腿顺着地面往后放平 —— 画出来就是「跪在垫子上撑着」。
+ * ⚠️ 负的角度是为了配合 `buildLie` 的折叠方向（它的小腿只能朝一个方向折，
+ * 详见 tests/probe_icon.mjs 那种栅格化核对）；改动前先看图标长什么样，别凭数字猜。
+ */
+function kneelPushupPose(elbow = 176) {
+  return {
+    builder: 'lie',
+    params: { tilt: -82, hip: -267, knee: 95, elbow, face: 'down', support: true },
+  };
+}
+
+/**
  * 开合跳 / 立姿开合类（正面）：**双腿按开合角张开、手臂按上举角摆动**。
  *
  * 判据是「双腿开合幅度」（legSpread = 膝间距与踝间距里更大的那个），所以画出来的就是那个开合幅度：
@@ -550,6 +568,13 @@ export function poseFor(stage, ctx = {}) {
     if (isSpreadMetric(ctx.metric)) {
       return { builder: 'jack', params: { legAngle: 5, armAngle: 152 }, criterion: { spread: 0 } };
     }
+    /**
+     * 跪姿俯卧撑的起始格「**跪撑**」：掌撑地、髋部较高、膝盖落在地面线上。
+     *
+     * 不能落到下面的通用 prone 分支 —— 那画的是标准俯卧撑的直臂俯撑（身体绷直、腿伸直），
+     * 而跪姿的要点恰恰是**大腿折下去、膝盖着地**（识别的门控判的也是这个，见 engines.js 的 kneelPushup）。
+     */
+    if (ctx.plan === 'kneePushup') return kneelPushupPose();
     // 仰卧抬腿这类「躺平、腿伸直」的动作：起始格必须画**躺平 + 腿伸直**（≈180°），
     // 而不是躺着屈膝的姿势（那是臀桥 / 卷腹的起始位，两个动作的判据完全不同）
     if (ctx.metric === 'hip' && isSupineGate(ctx.gate)) {
@@ -699,6 +724,15 @@ export function poseFor(stage, ctx = {}) {
     }
     case 'elbow': {
       const drawn = amplify(value, 1.2, 6);
+      // 跪姿俯卧撑：几格都画**跪撑**（只是肘角不同），和标准俯卧撑的直臂俯撑分开
+      if (ctx.plan === 'kneePushup') {
+        return {
+          builder: 'lie',
+          params: { ...kneelPushupPose().params, elbow: drawn },
+          criterion: { elbow: value },
+          drawn: { elbow: drawn },
+        };
+      }
       return posture === 'prone'
         ? { builder: 'lie', params: { tilt: 90, hip: 178, knee: 172, elbow: drawn, face: 'down', support: true }, criterion: { elbow: value }, drawn: { elbow: drawn } }
         : { builder: 'stand', params: { elbow: drawn, armDown: 6 }, criterion: { elbow: value }, drawn: { elbow: drawn } };
@@ -959,20 +993,20 @@ function poseSVG(lines, circles, cls, text = null) {
 }
 
 /**
- * 动作的「人体姿势」图标 —— **18 个动作全部手绘**（用户要求「图标全面重新设计，
+ * 动作的「人体姿势」图标 —— **19 个动作全部手绘**（用户要求「图标全面重新设计，
  * 保持风格的一致性，同时和运动动作有相关性」）。
  *
  * 为什么手绘：按 ui-icon-design skill 的第 2 步先在离线库里检索过 ——
  * Lucide / Tabler 只有通用的健身符号（`dumbbell` / `exercise-ball` / `flame` / `person-standing` …），
  * **没有**具体动作（squat / plank / lunge / crunch / bridge 检索命中 0），
- * 所以这 18 张按 skill 第 3 步的规格自己画；分类图标和导航箭头则用库里的现成图标（见上面）。
+ * 所以这 19 张按 skill 第 3 步的规格自己画；分类图标和导航箭头则用库里的现成图标（见上面）。
  *
  * 设计规则（三条，测试盯着）：
  *   1. **同一个画法**：全部由 `buildStand`（侧视站姿/蹲/箭步蹲）、
- *      `buildLie`（躺 / 撑 / 坐）、`buildJack`（正面开合）、`buildKick`（勾腿）四个构建器画出来，
+ *      `buildLie`（躺 / 撑 / 坐 / **跪撑**）、`buildJack`（正面开合）、`buildKick`（勾腿）四个构建器画出来，
  *      再统一映射到 skill 规定的 **24×24 网格 / 20×20 活动区 / 坐标落在 .5 上**；
  *   2. **姿势就是这个动作的姿势**：每个动作挑**最有辨识度的那一帧**，参数集中写在这一张表里；
- *   3. **互相不重复**：18 张图两两不同（测试逐个比对）。
+ *   3. **互相不重复**：19 张图两两不同（测试逐个比对）。
  */
 const EXERCISE_POSES = {
   /* ---- 上肢 ---- */
@@ -980,6 +1014,8 @@ const EXERCISE_POSES = {
   pushup: () => buildLie({
     tilt: 90, hip: 176, knee: 156, elbow: 62, face: 'down', support: true, handMark: true,
   }),
+  // 跪姿俯卧撑（退阶）：**跪撑**（掌撑地、髋部较高、膝盖落在地面线上），肘角取「压到最深」那一帧
+  kneePushup: () => buildLie(kneelPushupPose(96).params),
 
   /* ---- 下肢 ---- */
   // 自重深蹲：蹲到底 + 上身前倾 + 双手前平举（手在膝盖前面，不贴着腿）
@@ -1143,7 +1179,7 @@ function appIconSVG(lines, circles, solid = false) {
 }
 
 /**
- * 动作的姿势图标（18 个动作都有；万一漏了返回空串，界面会退回图标字符）。
+ * 动作的姿势图标（19 个动作都有；万一漏了返回空串，界面会退回图标字符）。
  *
  * **「实心象形图」而不是细线条**（用户要求：「运动类的图标重新设计一下，要设计得更大气、上档次一些」）：
  *   - 骨架描边加粗到 `3`（`.ex-pose--solid`）—— 四肢因此变成**实心的身体**，不再是根火柴棍；
