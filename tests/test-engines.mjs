@@ -191,7 +191,7 @@ const liftPose = (lm, dy) => lm.map((p) => ({ ...p, y: p.y - dy }));
 const AIR_DY = 0.07;
 
 /**
- * 跳跃类（深蹲跳 / 箭步跳 / 跳箱）一次循环：下蹲 → 蹬伸。
+ * 跳跃类（深蹲跳 / 箭步跳）一次循环：下蹲 → 蹬伸。
  * air = true 时在蹬伸段整具骨架抬离地面，air = false 时脚不离地。
  */
 function jumpCycle(air, { view = 'front', kneeMin = 95, dy = AIR_DY } = {}) {
@@ -325,7 +325,6 @@ console.log('\n[0] 引擎与目录');
     squatSumo: BendRepDetector,
     lungeBack: BendRepDetector,
     reverseCrunch: BendRepDetector, lyingLegRaise: BendRepDetector, squatJump: BendRepDetector,
-    // 跳箱按用户要求改成手写识别器（画面里画一个箱子，跳过箱顶才算一次），不再走 bend 引擎
     deadBug: AltRepDetector, mountainClimber: AltRepDetector,
     burpee: SequenceRepDetector,
     standingForwardFold: PoseHoldDetector, seatedForwardFold: PoseHoldDetector,
@@ -338,12 +337,11 @@ console.log('\n[0] 引擎与目录');
     [BendRepDetector, AltRepDetector, TwistRepDetector, SequenceRepDetector, PoseHoldDetector]
       .every((C) => typeof C.prototype.update === 'function' && typeof C.prototype.snapshot === 'function'));
   // 俯卧撑按用户要求「大幅度简化计次标准」改回通用屈伸引擎（只判肘角），不再手写识别器
-  ok('六个手写识别器（含跳箱）没有被通用引擎顶掉',
-    ['squat', 'lunge', 'bridge', 'plank', 'crunch', 'boxJump']
+  ok('五个手写识别器没有被通用引擎顶掉',
+    ['squat', 'lunge', 'bridge', 'plank', 'crunch']
       .every((id) => !(createDetector(id) instanceof BendRepDetector)
         && !(createDetector(id) instanceof AltRepDetector)
-        && !(createDetector(id) instanceof PoseHoldDetector))
-    && createDetector('boxJump').constructor.name === 'BoxJumpDetector');
+        && !(createDetector(id) instanceof PoseHoldDetector)));
   ok('俯卧撑现在是通用屈伸引擎（手写识别器已删除）',
     createDetector('pushup') instanceof BendRepDetector
     && EXERCISE_MAP.pushup.engine === 'bend'
@@ -994,141 +992,6 @@ console.log('\n[5] bend 引擎：跳跃（离地）');
   noCalib.run(repeatFrames(onFloor.map((s) => ({ ...s, f: frame(0, GROUND, false) })), 3));
   ok('没有地面线时退回滚动基准：同一姿势不会一直累加次数',
     noCalib.det.validReps === 0, `有效 ${noCalib.det.validReps}`);
-}{
-  /* ------------------------------------------------------------------ *
-   * 跳箱（用户要求：「要在视频画面中画出一个箱子让用户跳跃，当用户跳过这个箱子则计一次」）
-   *
-   * 这一组刻意用**合成骨架 + 校准地面线**（不是手搓帧）：箱子的高度是按**用户自己的膝高**
-   * 算出来的（`BOXJUMP.boxKneeFrac`），只有真骨架才能算出真实的膝高、真实的箱高。
-   * ------------------------------------------------------------------ */
-  const BOX_GROUND = 0.95;
-  /** 合成骨架 → 真实帧，地面线固定用校准值（真机上就是校准出来的那条线） */
-  const boxFrame = (lm) => computeFrame(
-    toMetric(lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT),
-    { groundY: BOX_GROUND }, 0, false, null,
-  );
-  /** 站立（脚踩在 BOX_GROUND 上）；k 用来模拟「站得更远 / 人更小」，cx 用来挪人的位置 */
-  const boxStand = ({ k = 1, ankleX = 1.0 } = {}) => {
-    const lm = standingPose({ knee: 178, lean: 6, armDown: 0, ankleX, view: 'front' });
-    return k === 1 ? lm : lm.map((p) => ({ ...p, y: BOX_GROUND - (BOX_GROUND - p.y) * k }));
-  };
-  /** 屈膝蓄力那一帧（膝角 100°） */
-  const boxCrouch = () => standingPose({ knee: 100, lean: 17, armDown: 35, ankleX: 1.0, view: 'front' });
-  /**
-   * 跳一次（**物理上像样**的弧线）：站立 → 屈膝蓄力 → 起跳飞过 → 落地。
-   * 离地高度走一段正弦弧（0 → dy → 0），所以「起跳 → 越过箱顶」真真切切占了一段时间 ——
-   * 真人也是这样（跳 25cm 到最高点约 0.23 秒，见 BOXJUMP.minRepMs 的说明）。
-   */
-  const boxJumpCycle = (dy, { airMs = 500, hold = false } = {}) => [
-    { pose: boxStand(), ms: 300 },
-    { pose: boxCrouch(), ms: 220 },
-    {
-      pose: (p) => liftPose(
-        standPoseMid(p),
-        hold ? dy : dy * Math.sin(Math.PI * p),
-      ),
-      ms: airMs,
-    },
-    // 落地：屈膝缓冲（膝角 ~140°），这正是要领里「屈膝缓冲落地」那一步要看的
-    { pose: standingPose({ knee: 140, lean: 14, armDown: 20, ankleX: 1.0, view: 'front' }), ms: 250 },
-    { pose: boxStand(), ms: 300 },
-  ];
-  /** 腾空时的腿：膝盖在蹬伸（100° → 178°） */
-  const standPoseMid = (p) => {
-    const knee = 100 + 78 * p;
-    return standingPose({ knee, lean: 6 + (178 - knee) * 0.14, ankleX: 1.0, view: 'front' });
-  };
-
-  const boxRun = (det, segs) => {
-    const r = makeFrameRunner(det);
-    let last = null;
-    r.run(segs.map((s) => ({
-      ...s,
-      f: (p) => {
-        last = boxFrame(typeof s.pose === 'function' ? s.pose(p) : s.pose);
-        return last;
-      },
-    })));
-    // 手搓帧驱动器不保存「最后一帧」，这里自己留一份（箱子的横向位置要对人）
-    return Object.assign(r, { get lastFrame() { return last; } });
-  };
-  const boxWave = (dy, count, opts) => Array.from({ length: count }, () => boxJumpCycle(dy, opts)).flat();
-
-  // ① 站一会儿，让识别器量出「站着时的膝高」→ 箱高
-  const det0 = createDetector('boxJump');
-  const r0 = boxRun(det0, [{ pose: boxStand({ ankleX: 0.5 }), ms: 700 }]);
-  const kneeY = r0.det.baseKnee;
-  ok('跳箱：站着时量出了膝高（箱子高度就按它算）',
-    Number.isFinite(kneeY) && kneeY > 0.15 && kneeY < 0.35, `膝高=${Number(kneeY).toFixed(3)}`);
-  ok('跳箱：箱高 = 0.55 × 膝高（约 25cm 的箱子），并夹在上下限之间',
-    Math.abs(det0.boxLine - Math.max(0.05, Math.min(0.20, kneeY * 0.55))) < 1e-6 && det0.boxLine < 0.20,
-    `箱高=${det0.boxLine.toFixed(3)} 膝高×0.55=${(kneeY * 0.55).toFixed(3)}`);
-  ok('跳箱：画面上那个箱子贴在地面线上，箱顶 = 判定线（同一帧同一个数）',
-    !!det0.box && Math.abs(det0.box.baseY - BOX_GROUND) < 1e-6
-    && Math.abs(det0.box.h - det0.boxLine) < 1e-6
-    && Number.isFinite(det0.box.cx) && det0.box.w > 0.05 && det0.box.w < 0.4,
-    JSON.stringify(det0.box));
-  ok('跳箱：箱子的宽度按肩宽定、横向就摆在人的正前方（箱子跟着人走）',
-    det0.box.w >= 0.12 - 1e-9 && det0.box.w <= 0.34 + 1e-9
-    && Math.abs(det0.box.cx - r0.lastFrame.centerXFrac) < 0.06,
-    `w=${det0.box.w.toFixed(2)} cx=${det0.box.cx.toFixed(2)} 人中线=${r0.lastFrame.centerXFrac.toFixed(2)}`);
-
-  // ② 跳得比箱顶高 → 一次一个；计次发生在**越过箱顶那一帧**（不是落地之后）
-  {
-    const det = createDetector('boxJump');
-    const r = boxRun(det, [{ pose: boxStand(), ms: 400 }, ...boxWave(det0.boxLine * 1.35, 3)]);
-    ok('跳箱：脚越过箱顶 = 3 次', det.validReps === 3, `实际 ${det.validReps}`);
-    const reps = r.reps.filter((e) => e.valid);
-    ok('跳箱：计次在腾空时就发生了（峰值离地 ≥ 箱高，不像旧引擎那样等落地才补）',
-      reps.length === 3 && reps.every((e) => e.lift >= e.boxH),
-      JSON.stringify(reps.map((e) => `${Number(e.lift).toFixed(3)}/${Number(e.boxH).toFixed(3)}`)));
-    ok('跳箱：跳够了不再提示「跳得不够高」', !hasCue(r, 'boxLow'), cuesOf(r).join(','));
-    ok('跳箱：越过箱顶之后又落回地面 → 「屈膝缓冲落地」那一步的要领分拿到',
-      r.reps.length === 3 && det.landed === true
-      && det.stepStatus().some((s) => s.id === 'land'),
-      JSON.stringify(det.stepStatus()));
-  }
-
-  // ③ 没跳够（只到箱高的 60%）→ 一次都不计，并提示再跳高一点
-  {
-    const det = createDetector('boxJump');
-    const r = boxRun(det, [{ pose: boxStand(), ms: 400 }, ...boxWave(det0.boxLine * 0.6, 3)]);
-    ok('跳箱：只跳到箱高的 60% → 0 次', det.validReps === 0, `实际 ${det.validReps}`);
-    ok('跳箱：跳过箱子但没过顶 → 提示「再跳高一点」',
-      hasCue(r, 'boxLow'), cuesOf(r).join(','));
-    ok('跳箱：没过顶时诊断里写着「差多少」',
-      det.diag().some((d) => d.key === 'debug.diag.reject' && d.reject.code === 'boxLow'),
-      JSON.stringify(det.diag()));
-  }
-
-  // ④ 站在箱子前不动 → 一次都不计（不踮脚、不抖动）
-  {
-    const det = createDetector('boxJump');
-    boxRun(det, [{ pose: boxStand(), ms: 2500 }]);
-    ok('跳箱：站在箱子前不动 = 0 次', det.validReps === 0 && det.partialReps === 0,
-      `有效 ${det.validReps} / 半程 ${det.partialReps}`);
-  }
-
-  // ⑤ 跳过箱顶之后**必须落回地面**才允许下一次：一直悬在箱顶上面不会连刷
-  {
-    const det = createDetector('boxJump');
-    boxRun(det, [
-      { pose: boxStand(), ms: 400 },
-      ...boxJumpCycle(det0.boxLine * 1.35),
-      { pose: liftPose(boxStand(), det0.boxLine * 1.35), ms: 1500 },
-    ]);
-    ok('跳箱：越过箱顶后挂在上面不落地 → 只计一次（不连刷）',
-      det.validReps === 1, `实际 ${det.validReps}`);
-  }
-
-  // ⑥ 箱子高度跟着人走：站得更远（人更小）→ 箱子也按比例变矮
-  {
-    const detFar = createDetector('boxJump');
-    const rFar = boxRun(detFar, [{ pose: boxStand({ k: 0.7 }), ms: 700 }]);
-    ok('跳箱：站得更远（人小一圈）时箱子按比例变矮（不会永远跳不过去）',
-      Math.abs(rFar.det.baseKnee - kneeY * 0.7) < 0.02 && detFar.boxLine < det0.boxLine,
-      `远机位箱高=${detFar.boxLine.toFixed(3)} vs 近机位=${det0.boxLine.toFixed(3)}`);
-  }
 }
 {
   // 离地基线是「最近 3 秒身体最低点」：站着一动不动永远不会被判成离地

@@ -70,8 +70,8 @@ console.log('\n[1] 每个动作都有技术指标');
       JSON.stringify([...new Set(items.map((it) => it.op))]));
     ok(`${id}：带指标的条目一定带比较符`, items.every((it) => !it.metricKey || it.op || it.textKey));
   }
-  ok('动作库里 19 个动作都有指标（弓步跳、宽距/窄距俯卧撑、侧平板支撑已删除、新增勾腿跳）',
-    ALL.length === 19 && ALL.every((id) => itemsOf(id).length > 0), `实际 ${ALL.length}`);
+  ok('动作库里 18 个动作都有指标（弓步跳、宽距/窄距俯卧撑、侧平板支撑已删除、新增勾腿跳）',
+    ALL.length === 18 && ALL.every((id) => itemsOf(id).length > 0), `实际 ${ALL.length}`);
 }
 
 /* ------------------------------------------------------------------ *
@@ -81,11 +81,9 @@ console.log('\n[1] 每个动作都有技术指标');
 console.log('\n[2] 通用引擎类：数值等于 (up, down) 与进度阈值算出来的那条线');
 {
   const bendIds = EXERCISES.filter((e) => e.engine === 'bend').map((e) => e.id);
-  // 卷腹、跳箱后来都改成了手写识别器（CrunchDetector / BoxJumpDetector）→ 屈伸族只剩 6 个
+  // 卷腹后来改成了手写识别器（CrunchDetector）→ 屈伸族只剩通用引擎那一批
   ok('有屈伸类动作可测', bendIds.length >= 6, `实际 ${bendIds.length}`);
   ok('卷腹已经不在通用屈伸族里（它有自己的识别器）', !bendIds.includes('crunch'), bendIds.join(','));
-  ok('跳箱也不在通用屈伸族里（画面里要画箱子，见 BoxJumpDetector）',
-    !bendIds.includes('boxJump'), bendIds.join(','));
   for (const id of bendIds) {
     const p = EXERCISE_MAP[id].params || {};
     const up = Number.isFinite(p.up) ? p.up : 170;

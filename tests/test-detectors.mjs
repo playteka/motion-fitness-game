@@ -2010,7 +2010,6 @@ function calibOnce(cal, lm, now) {
       squatJump: 'front',
       jumpingJack: 'front',
       burpee: 'front',
-      boxJump: 'front',
       lunge: 'side',
       lungeBack: 'side',
       buttKick: 'side',

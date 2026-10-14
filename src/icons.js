@@ -64,11 +64,10 @@ const seg = (a, b) => ({ a, b });
  * @param o.elbow     肘角
  * @param o.armDown   上臂相对向下的角度
  * @param o.airborne  跳起来（整幅图离地）
- * @param o.box       脚下画一个**箱子**（跳箱那一格：人要跳过它）
  */
 function buildStand({
   knee = 176, thighFwd = null, backKnee = null, stride = 0, lean = 6,
-  armDown = 0, elbow = 172, airborne = false, box = false, lift = 1.8,
+  armDown = 0, elbow = 172, airborne = false, lift = 1.8,
 } = {}) {
   const lines = [];
   const circles = [];
@@ -110,28 +109,10 @@ function buildStand({
     y: (p.y - lowest) * STAND_SCALE + STAND_FLOOR - (airborne ? lift : 0),
   });
   const drawn = lines.map((l) => seg(shift(l.a), shift(l.b)));
-  /**
-   * 跳箱那一格：脚下画一个**箱子**（四条边，已经是图标坐标，不参与上面的平移缩放）。
-   * 人已经腾空（`airborne` 把脚抬到了地面线上方），箱子就摆在原本脚底的位置上 ——
-   * 一眼就能看出「这一格是要跳过那个箱子」。
-   */
-  if (box) {
-    // 奥运图标那一路的画法：**一条台面 + 两条短立柱**（画成实心矩形，在细描边下会糊成一根粗杠）
-    const bw = 8.6;
-    const bh = 2.4;
-    const x0 = STAND_HIP_X - bw / 2;
-    const x1 = STAND_HIP_X + bw / 2;
-    const top = STAND_FLOOR + 0.4;   // 别顶出 32 方框（进度条上的小图也用这个构建器）
-    drawn.push(
-      seg({ x: x0, y: top }, { x: x1, y: top }),
-      seg({ x: x0, y: top }, { x: x0, y: top + bh }),
-      seg({ x: x1, y: top }, { x: x1, y: top + bh }),
-    );
-  }
   return {
     lines: drawn,
     circles: circles.map((c) => ({ ...shift(c), r: c.r * STAND_SCALE })),
-    floor: STAND_FLOOR,          // 这一套骨架的「落点线」（脚底 / 箱底所在的那一行）
+    floor: STAND_FLOOR,          // 这一套骨架的「落点线」（脚底所在的那一行）
   };
 }
 
@@ -723,13 +704,10 @@ export function poseFor(stage, ctx = {}) {
         : { builder: 'stand', params: { elbow: drawn, armDown: 6 }, criterion: { elbow: value }, drawn: { elbow: drawn } };
     }
     case 'lift':
-      // 跳箱那一格（`boxCleared` / `boxLine`）：人腾空到箱子上面，脚下画着那个箱子
+      // 离地高度那一格：人腾空起来
       return {
         builder: 'stand',
-        params: {
-          knee: 150, lean: 10, armDown: -25, elbow: 168, airborne: true,
-          ...(stage.detFlag === 'boxCleared' || stage.valueFrom === 'boxLine' ? { box: true } : {}),
-        },
+        params: { knee: 150, lean: 10, armDown: -25, elbow: 168, airborne: true },
       };
     case 'shoulderDrop':
       // 肩膀沉到接近地面：撑地姿势下肘弯得越多、身体越低（物理上就是这么回事）
@@ -981,20 +959,20 @@ function poseSVG(lines, circles, cls, text = null) {
 }
 
 /**
- * 动作的「人体姿势」图标 —— **19 个动作全部手绘**（用户要求「图标全面重新设计，
+ * 动作的「人体姿势」图标 —— **18 个动作全部手绘**（用户要求「图标全面重新设计，
  * 保持风格的一致性，同时和运动动作有相关性」）。
  *
  * 为什么手绘：按 ui-icon-design skill 的第 2 步先在离线库里检索过 ——
  * Lucide / Tabler 只有通用的健身符号（`dumbbell` / `exercise-ball` / `flame` / `person-standing` …），
  * **没有**具体动作（squat / plank / lunge / crunch / bridge 检索命中 0），
- * 所以这 19 张按 skill 第 3 步的规格自己画；分类图标和导航箭头则用库里的现成图标（见上面）。
+ * 所以这 18 张按 skill 第 3 步的规格自己画；分类图标和导航箭头则用库里的现成图标（见上面）。
  *
  * 设计规则（三条，测试盯着）：
- *   1. **同一个画法**：全部由 `buildStand`（侧视站姿/蹲/箭步蹲，跳箱还会画出箱子）、
+ *   1. **同一个画法**：全部由 `buildStand`（侧视站姿/蹲/箭步蹲）、
  *      `buildLie`（躺 / 撑 / 坐）、`buildJack`（正面开合）、`buildKick`（勾腿）四个构建器画出来，
  *      再统一映射到 skill 规定的 **24×24 网格 / 20×20 活动区 / 坐标落在 .5 上**；
  *   2. **姿势就是这个动作的姿势**：每个动作挑**最有辨识度的那一帧**，参数集中写在这一张表里；
- *   3. **互相不重复**：19 张图两两不同（测试逐个比对）。
+ *   3. **互相不重复**：18 张图两两不同（测试逐个比对）。
  */
 const EXERCISE_POSES = {
   /* ---- 上肢 ---- */
@@ -1055,10 +1033,6 @@ const EXERCISE_POSES = {
   }),
   // 开合跳：正面、双腿张开、**双手举成宽 V**（手臂让开脑袋）
   jumpingJack: () => buildJack({ legAngle: 30, armAngle: 26 }),
-  // 跳箱：**腾空得比箱顶高**（lift 4.4），箱子画在脚下
-  boxJump: () => buildStand({
-    knee: 138, lean: 10, armDown: -18, elbow: 168, airborne: true, box: true, lift: 3.0,
-  }),
 
   /* ---- 拉伸 ---- */
   // 站立体前屈：膝盖基本伸直、上身折下去、双手垂向脚面
@@ -1087,7 +1061,7 @@ const APP_PAD = (APP_ICON_BOX - APP_LIVE) / 2;
  *   那会让深蹲和跳跃一样高，反而不像）；
  * - `APP_POSE_FLOOR_Y`：姿势的「落点线」（脚 / 手 / 接触点落在这一行）；
  * - `APP_GROUND_Y`：地面线（所有图标共用），和落点线之间留出空隙 ——
- *   腾空的动作（深蹲跳 / 波比跳 / 跳箱）和地面的距离就是这个空隙，一眼看得出「离地」。
+ *   腾空的动作（深蹲跳 / 波比跳）和地面的距离就是这个空隙，一眼看得出「离地」。
  */
 const APP_POSE_SCALE = 0.53;
 const APP_POSE_FLOOR_Y = 17.5;
@@ -1169,7 +1143,7 @@ function appIconSVG(lines, circles, solid = false) {
 }
 
 /**
- * 动作的姿势图标（19 个动作都有；万一漏了返回空串，界面会退回图标字符）。
+ * 动作的姿势图标（18 个动作都有；万一漏了返回空串，界面会退回图标字符）。
  *
  * **「实心象形图」而不是细线条**（用户要求：「运动类的图标重新设计一下，要设计得更大气、上档次一些」）：
  *   - 骨架描边加粗到 `3`（`.ex-pose--solid`）—— 四肢因此变成**实心的身体**，不再是根火柴棍；

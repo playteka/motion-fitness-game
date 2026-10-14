@@ -308,7 +308,7 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
   const ankleGap = Math.abs(P(LM.L_ANKLE).x - P(LM.R_ANKLE).x);
   const valgus = view === 'front' && ankleGap > 0.02 ? 1 - kneeGap / ankleGap : 0;
 
-  // ---- 多动作库（22 个动作）共用的姿势判据量 ----
+  // ---- 多动作库（18 个动作）共用的姿势判据量 ----
   // 地面参考线 groundRef 已经在上面定义（校准地面优先、否则用脚踝最低点）。
   // 有了它才能判断「脚离地（跳起来了）」「人是坐着还是站着」「悬垂」这类问题 ——
   // 只靠脚踝自己算出来的地面会跟着人一起上下动，跳起来时永远看不出离地。
@@ -440,7 +440,6 @@ export function computeFrame(metric, calib, now, use3d = false, world = null) {
     groundY,
     /**
      * 画面宽高比（= 宽 / 高）：把「画面高为单位」的长度换算成「画面宽比例」时要用它。
-     * 跳箱的箱子在画面上有宽度，识别器要把宽度摆正、还要把人挡住箱子的一半时用它。
      */
     aspect,
     shoulderWidth: shoulderW,

@@ -320,10 +320,6 @@ export default {
     no: '✗',
     count: 'Rep diagnosis',
     diag: {
-      // Box jump: box height / how high you are now / how high the last jump went (the "did not clear it" reason uses cue.boxLow)
-      boxLine: 'Box top (height)',
-      liftNow: 'Off floor / box',
-      jumpPeak: 'Last peak',
       stage: 'Stage',
       steps: 'Steps',
       counts: 'Valid/partial',
@@ -460,12 +456,6 @@ export default {
       name: 'Burpee',
       cameraHint: 'Face the camera and leave room in front of you and above you',
       goal: 'Squat and plant your hands → jump back to a plank → pull your legs in and stand → jump up',
-    },
-    boxJump: {
-      name: 'Box Jump',
-      // The user asked for a box drawn on the video that you have to jump over
-      cameraHint: 'Face the camera — a box is drawn on the video for you',
-      goal: 'Load your knees and jump over the box on screen (feet above its top edge) — that is one rep',
     },
     standingForwardFold: {
       name: 'Standing Forward Fold',
@@ -664,25 +654,6 @@ export default {
         hint: 'Pull your legs in, stand up and finish the rep',
       },
     },
-    /* Box jump: three keyframes (stand → load → clear the box top), so its own step list */
-    boxJump: {
-      setup: {
-        label: 'Stand up, facing the box on screen',
-        hint: 'Stand tall so the box sits in front of your feet (it follows you)',
-      },
-      load: {
-        label: 'Bend your knees and swing your arms back',
-        hint: 'Load your knees before you take off — it buys you height',
-      },
-      clear: {
-        label: 'Jump the box: feet above its top edge (biggest points)',
-        hint: 'Get your whole body above the box — your soles must clear its top edge',
-      },
-      land: {
-        label: 'Land with soft knees and stand steady',
-        hint: 'Cushion the landing with bent knees — don’t land stiff-legged',
-      },
-    },
     jump: {
       stance: {
         label: 'Stand up and get ready to jump',
@@ -857,8 +828,6 @@ export default {
     rise: 'Hip lift height',
     clear: 'How far your body leaves the floor',
     flight: 'Both feet off the floor (jump)',
-    // Box jump: a box is drawn on screen and you have to clear its top edge
-    box: 'Jumping over the box on screen (feet above its top edge)',
     twist: 'Torso rotation',
     sequence: 'Order of the whole sequence',
     arm: 'Single-arm raise',
@@ -974,9 +943,6 @@ export default {
     // Crunch (the user's model): (1) lie down with knees bent (2) trunk tilt shrinks (3) shoulder-hip distance ≈70-80%, or the head leaves the floor
     crunchLying: 'Lie down with knees bent (starting pose)',
     crunchTilt: 'Trunk tilt shrinks (curling up)',
-    // Box jump (the box is drawn on screen): load the knees → clear the box top
-    boxLoad: 'Knee load (knee angle)',
-    boxTop: 'Clear the box top (foot height)',
     crunchShrink: 'Shoulder-hip distance down to 70%-80% of lying',
     crunchHead: 'Head off the floor',
     crunchHands: 'Do not pull on your neck (recommended)',
@@ -1027,9 +993,6 @@ export default {
     seqWindow: 'Time limit for the whole sequence',
     /* Judgement progress bar: each icon's short label is used in the hover tooltip */
     short: {
-      // Box jump: the bar reads "Load" / "Over the box"
-      boxLoad: 'Load',
-      boxTop: 'Over the box',
       stance: 'Stance',
       stand: 'Stand',
       start: 'Start',
@@ -1098,16 +1061,6 @@ export default {
       crunchTilt: '**“Curling up” is judged by how many degrees you lose against your own lying pose** (≥ {drop}°), not by a fixed angle —'
         + ' the lying baseline follows your own readings (the largest value among frames with trunk tilt ≥ {floor}°),'
         + ' so a slightly off camera or a soft mat still works.',
-      boxLoad: '**Knee load** before take-off: bending your knees to at least this angle counts as loaded'
-        + ' (you can still count a rep by bouncing straight up, you just lose these points).',
-      boxTop: '**Clear the box top**: the box drawn on the video is what you jump over, and its top edge is this line —'
-        + ' **your soles (the lowest point of your body) above the box top** counts one rep, announced the moment you clear it.'
-        + ' The box height is not hard-coded: it is “{frac} × your own standing knee height” (a box of roughly 25 cm),'
-        + ' so standing further away or being shorter is not a disadvantage, and the box top you see is the very line judged here'
-        + ' (clamped to {min}–{max}, in frame heights).',
-      boxTempo: 'At least this much time between two reps (a very small guard that only filters one- or two-frame glitches):'
-        + ' a real 25 cm jump takes only about 0.23 s, so a bigger threshold would swallow real jumps.'
-        + ' Accidental counts are prevented physically instead: you must rise from the floor, and you must land again before the next rep.',
       crunchShrink: '**The shoulder-to-hip length**: as you curl, the trunk folds and this length shrinks noticeably —'
         + ' it starts around {start} and **{count}** already counts as a rep (the user measured about {full} in practice; this line keeps a margin).'
         + ' The denominator is *your own lying length*, so body type, distance from the camera and camera angle do not matter.',
@@ -1177,11 +1130,6 @@ export default {
     },
   },
 
-  /* Box jump: the box drawn on the video (its face carries this text, see render.js drawBox) */
-  box: {
-    label: 'JUMP OVER',
-  },
-
   cue: {
     depth: 'A bit more range — go deeper next time',
     tempo: 'Slow down and keep the rhythm',
@@ -1190,7 +1138,6 @@ export default {
     notSeated: 'Sit up first: sideways to the camera, sitting tall with your legs straight (hip angle about 90°, trunk vertical), then fold forward',
     moreRange: 'Bigger range — move all the way for it to count',
     needJump: 'You need to jump: both feet off the floor to count',
-    boxLow: 'Jump higher: your feet have to clear the box top (you are at {pct}%)',
     tooFast: 'Slow down — that was too fast',
     keepStraight: 'Keep your body in one straight line — no sagging, no piking',
     sag: 'Your lower back is sagging: tighten your abs and lift your hips in line with your body',
@@ -1224,12 +1171,6 @@ export default {
     sequence: {
       howto: ['Stand up, then squat down and put your hands on the floor', 'Jump both feet back into a plank (add a push-up if you like)', 'Pull your legs in, stand up and finish with a jump'],
       tips: ['Land with bent knees to absorb the impact', 'If you’re tired, skip the push-up part', 'The whole sequence has to flow for it to count as one rep'],
-    },
-    boxJump: {
-      howto: ['Face the camera — a box is drawn on the video, right in front of your feet (it follows you)',
-        'Bend your knees, swing your arms back to load, then drive hard off the ground',
-        'Get your whole body above the box: soles past its top edge counts one rep, then land and go again'],
-      tips: ['Load your knees first instead of yanking with your back', 'Land on the balls of your feet with your knees tracking over your toes', 'The box is sized from your own knee height — if you cannot clear it, move the camera a little closer'],
     },
     jump: {
       howto: ['Stand up, bend your knees and swing your arms back to load', 'Drive off the ground and jump — both feet leave the floor', 'Land with soft knees and stand steady before the next rep'],

@@ -2042,7 +2042,7 @@ function menuItemEl(it) {
   btn.setAttribute('aria-label', label);
   btn.setAttribute('title', label);
   /**
-   * 图标：有「人体姿势」线条图的动作用它（19 个动作 + 5 个分类都是），
+   * 图标：有「人体姿势」线条图的动作用它（18 个动作 + 5 个分类都是），
    * 导航圆环用线条箭头。姿势图的颜色走 currentColor —— 和文字一样是白色，一眼看得清。
    */
   const iconHtml = it.poseIcon || it.icon;
@@ -4197,15 +4197,6 @@ function loop() {
   renderDebug(frame, outline);
 
   /**
-   * 跳箱的**箱子**：几何由识别器自己算（`trackBox`）——箱顶就是判定线，一处定义不会漂移。
-   * 每帧都调、不只在计数时调：校准 / 3-2-1 倒计时 / 暂停时箱子都要在画面上摆着，
-   * 用户才能看着箱子调整站位（用户要求「在视频画面中画出一个箱子让用户跳跃」）。
-   */
-  const box = (!state.homeMode && state.exerciseId === 'boxJump' && det?.trackBox)
-    ? det.trackBox(frame, now)
-    : null;
-
-  /**
    * 调试数据记录（用户要求）：把这一帧的**原始关键点 + 平滑后关键点 + 全部指标 + 识别器内部状态**
    * 写进 logs/ 里的文件。放在这里（识别器跑完、进度条算完）才能一次记全：
    * 「计不上」到底是关键点没识别到、平滑把动作磨平了、还是判定线本身没到。
@@ -4228,7 +4219,6 @@ function loop() {
     : (!det || det.active ? (now - state.lastCueAt < 2000 ? 'warn' : 'ok') : 'warn');
   renderer.draw({
     landmarks, frame, exerciseId: state.exerciseId, status, outline,
-    box, boxLabel: box ? t('box.label') : '',
   });
 
   updateHud();

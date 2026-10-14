@@ -60,8 +60,6 @@ const DET_FIELDS = [
   'atBottom', 'topLine2',
   // 卷腹
   'torsoShrink', 'headUp', 'curlLine', 'shrinkLine', 'lying',
-  // 跳箱
-  'boxLine', 'boxCleared', 'landed', 'crouchPct', 'peakLift', 'lastJump', 'box',
   // 计时类
   'holdMs', 'holding', 'okMs',
   // 次数
@@ -110,7 +108,7 @@ function detState(det) {
     else if (typeof v === 'boolean') out[k] = v;
     else if (typeof v === 'string') out[k] = v.slice(0, 24);
     else if (typeof v === 'object') {
-      // 小对象（跳箱的箱子几何 / 上一次跳跃的结果 / 挂起的那一对腿）：只抄几个关键字段
+      // 小对象（挂起的那一对腿这类）：只抄几个关键字段
       const small = {};
       for (const [kk, vv] of Object.entries(v)) {
         if (typeof vv === 'number') small[kk] = num(vv, 3);
