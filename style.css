@@ -65,6 +65,99 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ------------------------------------------------------------------ *
+ * 网页主页专用配色：**高饱和深色渐变**（用户要求「整个网站的 web 主页的底色不好，太暗了，
+ * 请改为鲜明的颜色，使得所有的网页看起来更为年轻，有活力」）。
+ *
+ * 为什么挂在 `body.is-home` 这个类上，而不是改 `:root` 里的 `--bg` / `--bg-2`：
+ *   运动/摄像头那一页（`#workoutView` / `#stage`）、弹窗、HUD、判定进度条、手势圆环
+ *   **全部保持原来的深色** —— 视频上的关节线、HUD 与进度条必须继续看得清。
+ *   `is-home` 只由 app.js 在「主页」这一屏加上（showHome / showWorkout），
+ *   所以渐变只作用于主页那一屏（含它上方的品牌栏与顶栏图标按钮），切进动作页立刻回到原底色。
+ *
+ * 对比度（底线：正文 / 按钮文字 ≥ 4.5:1，大字号标题 ≥ 3:1；实测见下面的数值）：
+ *   底色是「高饱和但仍然够深」的三段渐变，最亮处 luminance ≈ 0.10，
+ *   浅色文字 `--home-text: #f2f8ff` 在最亮处仍有 **≈ 6.4:1**（`--text` 也有 6.0:1），
+ *   叠上卡片/输入框那层白之后最坏是 **5.2:1** —— 都高于 4.5:1。
+ *   次要文字在全站是 `--muted: #8fa1bb`，在更亮的底上只有 2.2~2.6:1（不合格），
+ *   所以主页作用域内换成 `--home-muted: #e3ecfa`：铺在底上 5.7:1、叠在卡片上 5.1:1、
+ *   叠在输入框/按钮上 4.8:1 —— 全部达标。
+ *   整屏只有 CSS 渐变：没有位图、没有写死颜色的 SVG、也没有新增动画（不涉及 prefers-reduced-motion）。
+ * ------------------------------------------------------------------ */
+body.is-home {
+  /* 渐变三段：深紫 → 青蓝 → 薄荷深绿 */
+  --home-bg-1: #2b0f6b;
+  --home-bg-2: #0c4a6e;
+  --home-bg-3: #0d5f57;
+  /* 三团光晕：品牌青 / 品牌蓝 / 与起点同色系的紫（低透明度，只负责「亮起来」，不冲淡文字对比度） */
+  --home-glow-1: rgba(52, 229, 196, 0.15);
+  --home-glow-2: rgba(56, 189, 248, 0.13);
+  --home-glow-3: rgba(167, 139, 250, 0.14);
+  /* 卡片 / 描边在主页上略提亮一档，层次在更亮的底上仍然清楚（弹窗与动作页不受影响） */
+  --home-card: rgba(255, 255, 255, 0.055);
+  --home-card-2: rgba(255, 255, 255, 0.08);
+  --home-line: rgba(255, 255, 255, 0.18);
+  --home-text: #f2f8ff;
+  --home-muted: #e3ecfa;
+  background:
+    radial-gradient(1150px 620px at 6% -14%, var(--home-glow-3), transparent 62%),
+    radial-gradient(980px 540px at 102% 2%, var(--home-glow-2), transparent 58%),
+    radial-gradient(900px 520px at 46% 112%, var(--home-glow-1), transparent 56%),
+    linear-gradient(158deg, var(--home-bg-1) 0%, var(--home-bg-2) 50%, var(--home-bg-3) 100%);
+  /* 渐变钉在视口上：页面滚动时底色不会跟着跳（长列表往下滚也一直是同一张底） */
+  background-attachment: fixed;
+  color: var(--home-text);
+}
+/* 主页上的次要文字：底色变亮了，这些字跟着提亮，保住 4.5:1
+   （首页大按钮里那行说明文字例外：它压在一层更亮的按钮底上，见文件末尾那条 --home-text） */
+body.is-home .brand-text p,
+body.is-home .brand-text .ver,
+body.is-home .home-sub,
+body.is-home .ex-card .ex-meta,
+body.is-home .cat-count,
+body.is-home .home .empty { color: var(--home-muted); }
+/* 主页上的卡片 / 描边 / 按钮：比全站更深一档的卡片提亮一点（同样是主页专属，动作页不动） */
+body.is-home .ex-card {
+  background: var(--home-card);
+  border-color: var(--home-line);
+  color: var(--home-text);
+}
+/* 悬停 / 选中仍然是品牌青。⚠️ 这两条必须跟着写：`body.is-home .ex-card` 的特异性比
+   `.ex-card:hover` / `.ex-card.active` 高，不写就会把「hover 变青、选中变青」一起盖掉。 */
+body.is-home .ex-card:hover,
+body.is-home .ex-card:focus-visible {
+  background: var(--home-card-2);
+  border-color: rgba(52, 229, 196, 0.55);
+}
+body.is-home .ex-card.active {
+  border-color: rgba(52, 229, 196, 0.75);
+  box-shadow: 0 0 0 1px rgba(52, 229, 196, 0.4) inset;
+}
+/* 顶栏那几个图标按钮（⚠️ 只限顶栏：弹窗右上角的关闭按钮也用 `.icon-btn`，那些必须保持原样） */
+body.is-home .topbar .icon-btn:hover,
+body.is-home .topbar .icon-btn:focus-visible { border-color: rgba(56, 189, 248, 0.7); }
+body.is-home .search-field,
+body.is-home .cat-count,
+body.is-home .topbar .icon-btn,
+body.is-home .brand-text .ver {
+  background: var(--home-card-2);
+  border-color: var(--home-line);
+}
+body.is-home .search-field input,
+body.is-home .search-field input::placeholder,
+body.is-home .topbar .icon-btn { color: var(--home-text); }
+body.is-home .cat-head { color: var(--home-text); }
+/* 首页的大「开始」按钮：底更亮了，把它也提亮一点（仍然是这一屏最显眼的一块）。
+   ⚠️ 叠加的白别调太高：按钮里的说明文字是 13px 正文，压在「底 + 这层白」上，
+   0.18 / 0.16 时最坏 4.7:1（更高就会掉到 4.5:1 以下），所以说明文字同时改用 --home-text。 */
+body.is-home .start-gesture {
+  border-color: rgba(125, 211, 252, 0.62);
+  background: linear-gradient(120deg, rgba(56, 189, 248, 0.18), rgba(52, 229, 196, 0.16));
+}
+body.is-home .start-gesture:hover { border-color: #7dd3fc; }
+body.is-home .start-gesture-sub { color: var(--home-text); }
+
+
 h1, h2, h3 { margin: 0; font-weight: 700; }
 kbd {
   background: rgba(255, 255, 255, 0.1);

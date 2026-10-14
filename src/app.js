@@ -451,6 +451,9 @@ function showHome({ syncRoute = true } = {}) {
   renderCalibration(null);
   $('homeView').hidden = false;
   $('workoutView').hidden = true;
+  // 主页那一屏专用的高饱和渐变底（见 style.css 的 body.is-home）：
+  // 运动/摄像头页、弹窗、HUD、进度条都用原来的深色底，所以这个类只在这里加、showWorkout 里去掉。
+  document.body.classList.add('is-home');
   $('btnHome').hidden = true;
   $('btnExercise').hidden = true;   // 运动设定只在动作页出现
   closeSettings();
@@ -466,6 +469,8 @@ function showWorkout() {
   state.homeMode = false;
   applyMusic();          // 回到动作页再把背景音乐接上（用户选择保留着）
   resumeCameraFromHome(); // 摄像头之前被主页关掉了就自动重开
+  // 动作页回到全站默认的深色底（主页那层高饱和渐变只属于主页那一屏，见 style.css 的 body.is-home）
+  document.body.classList.remove('is-home');
   $('homeView').hidden = true;
   $('workoutView').hidden = false;
   $('btnHome').hidden = false;

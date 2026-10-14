@@ -459,6 +459,15 @@ the default target, and the **judging basis** (what that exercise is judged by).
 The search box at the top finds exercises by name directly (type “push” or “plank”, for example).
 
 - Tap that big button → the **full gesture flow** (next section): camera on → video-frame fullscreen → gesture menu → pick with your hand.
+- **The home page sits on a “high-saturation dark gradient”** (the user asked to replace the old, too-dark page background with vivid
+  colours so the whole site feels younger and livelier): a three-stop gradient of deep violet → cyan-blue → deep mint plus three
+  brand-coloured glows (`--home-bg-1/2/3` and `--home-glow-1/2/3`, all scoped to `body.is-home`). The gradient is **pinned to the
+  viewport** (it does not jump while scrolling), and the cards, strokes and top-bar icon buttons are brightened one notch
+  (`--home-card` / `--home-card-2` / `--home-line`).
+  **It applies to the home screen only**: nothing in `:root` (`--bg` / `--bg-2`) was touched, and the workout/camera page, the modals,
+  the HUD, the judgement bar and the gesture rings all keep the original dark look (the joint lines over the video have to stay readable).
+  The text stays light, and because the background is brighter the secondary text is raised from `--muted` to `--home-muted`:
+  body text is 5.2:1 in the worst spot and secondary text 4.8:1 (both ≥ 4.5:1; large headings ≥ 3:1).
 - Click any card → you go to its **exercise page** (camera + form-step checklist + scoring + goal setting + records) — the direct path for
   mouse users, still there. The exercise page has its own address: `#/ex/<id>` (for example `#/ex/bridge`), so **a refresh keeps you on the
   same exercise**, **the browser Back button returns to the home page**, and you can bookmark the link.
@@ -1884,7 +1893,7 @@ npm run test:app               # integration test that loads the real app.js wit
 ```
 motion-fitness-game/
 ├─ index.html            page structure (all copy goes through data-i18n)
-├─ style.css             dark UI styling
+├─ style.css             dark UI styling (the home screen has its own saturated gradient, see body.is-home)
 ├─ preview-server.js     zero-dependency local server (http://127.0.0.1:4174)
 ├─ src/
 │  ├─ i18n.js            ★ i18n core (t / setLang / applyI18n)
