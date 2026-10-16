@@ -2,6 +2,7 @@
 // 用法：node preview-server.js  然后浏览器打开 http://127.0.0.1:4174
 // 必须通过 http 打开：file:// 会拦截摄像头与 wasm 模型加载。
 import http from 'node:http';
+import os from 'node:os';   // 打印局域网地址用（HOST=0.0.0.0 时给手机照抄）
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -128,9 +129,31 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+/**
+ * 监听地址：默认**只监听本机回环**（安全），需要让同一 Wi-Fi 下的手机访问时，
+ * 用环境变量打开：`$env:HOST='0.0.0.0'; node preview-server.js`
+ *
+ * ⚠️ 手机即使打开了页面，**摄像头也用不了** —— 浏览器只在 `https://` 或 `localhost` 下允许
+ * `getUserMedia`（secure context 规则，不是本项目的限制）。手机要练动作得走 HTTPS（隧道或自签证书）。
+ */
+const HOST = process.env.HOST || '127.0.0.1';
+
+server.listen(PORT, HOST, () => {
   console.log(`体感健身游戏预览地址： http://127.0.0.1:${PORT}`);
   console.log(`Motion Fitness is running at: http://127.0.0.1:${PORT}`);
+  if (HOST === '0.0.0.0') {
+    // 打印局域网地址，手机直接照这个开（同一 Wi-Fi 下；防火墙要放行 Node 入站）
+    for (const [name, list] of Object.entries(os.networkInterfaces())) {
+      for (const ni of list || []) {
+        if (ni.family === 'IPv4' && !ni.internal) {
+          console.log(`局域网（手机同 Wi-Fi 打开）： http://${ni.address}:${PORT}   [${name}]`);
+          console.log(`LAN (open on your phone):      http://${ni.address}:${PORT}   [${name}]`);
+        }
+      }
+    }
+    console.log('⚠️ 手机上只能用来看界面 / 动作库 / 成绩：摄像头需要 https，http 会被浏览器拦下');
+    console.log('⚠️ On a phone this is browse-only: the camera needs https.');
+  }
   console.log('（用 Chrome / Edge 打开，首次点“开启摄像头”并允许权限）');
   console.log('(Open it in Chrome / Edge, click "Start camera" and allow the permission)');
 });
