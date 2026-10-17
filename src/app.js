@@ -1376,7 +1376,13 @@ function touchPoints(landmarks, stageW, stageH, mirror) {
 
 /** 只有手掌（「一组结束」那两个圆环用；左下角的退出圆环改用 touchSamples 逐点判，手或脚都算） */
 function palmPoints(landmarks, stageW, stageH, mirror) {
-  return touchPoints(landmarks, stageW, stageH, mirror).slice(0, 2);
+  /**
+   * ⚠️ 只按 `kind === 'hand'` 挑，**不能写成 `slice(0, 2)`**：
+   * `touchPoints` 回来的是 `[手·左, 手·右, 脚·左, 脚·右]` 里「识别到的那些」，
+   * 一只手没识别到时数组会前移 —— 以前「脚·左」就顶进了第一个位置（side 还叫 L），
+   * 于是「一组结束」的两个圆环和猫爪指针都会把**一只脚**当成手掌来画。
+   */
+  return touchPoints(landmarks, stageW, stageH, mirror).filter((p) => p.kind === 'hand');
 }
 
 /** 舞台的像素尺寸（没有布局信息时按 16:9 的默认值兜底，测试桩里也能跑） */
@@ -2549,20 +2555,34 @@ function updateMenuSwipe(palms, layout, size, now, speed) {
  * 手掌指针（猫爪）：把手掌当前位置画成一个小猫爪，看得见手在哪儿。
  *
  * 用户要求：「在出现圆环选择的情况下，用户手掌的位置出现一个小的猫爪图标，便于用户知道自己的手掌在哪里。」
- *   - 只在**手势菜单**里显示（`state.menuMode`）；手掌没被识别到就淡出，不挡视线；
+ * 后来又要求：「在每个运动的窗口里面，如果手掌进入或者靠近类似『退出』这样的圆环，则像菜单界面一样出现猫爪。」
+ *   - **手势菜单**里照旧显示（`state.menuMode`）；**运动界面**里也显示 —— 进了训练
+ *     （`running` / `paused` / `countdown`）或者「一组结束」的两个圆环 / 左下角退出圆环正摆着
+ *     （`gestureState.visible` / `cornerVisible`）时，只要有手掌被识别到就画；
+ *   - **主页（`state.homeMode`）与没有手掌时必须藏起来**，不能残留在画面上（整层 `hidden` + 去掉 `on`）；
  *   - 坐标直接用识别到的手掌中心（和圆环判定用的是同一份舞台像素，所以「爪子在哪」＝「程序认为手在哪」）；
- *   - 猫爪层是 `.menu-screen` 的**兄弟节点**，所以翻页滑动时它不跟着动（手没动，爪子就不该动）。
+ *   - 猫爪层是 `#stage` 下、**`.menu-screen` 之外**的一层（菜单与运动界面共用），所以翻页滑动时它不跟着动。
  */
+function pawsWanted() {
+  if (state.homeMode) return false;                  // 主页：一律不画（摄像头也关着）
+  if (state.menuMode) return true;                   // 手势菜单：照旧（有没有手由 palms 决定）
+  // 运动界面：进了训练（含 3-2-1 倒计时 / 暂停），或者「一组结束」/ 左下角的圆环正摆着
+  if (state.session === 'running' || state.session === 'paused'
+    || state.session === 'countdown') return true;
+  return !!(gestureState.visible || gestureState.cornerVisible);
+}
+
 function renderPaws(palms) {
   const layer = $('pawLayer');
   if (!layer) return;
-  const show = state.menuMode && !state.homeMode;
+  const list = (palms || []).filter(Boolean);
+  // 没有手掌时整层收起来（不是只去掉 on）：手一离开画面爪子就该消失，不给「残影」
+  const show = pawsWanted() && list.length > 0;
   layer.hidden = !show;
-  if (!show) return;
   for (const side of ['L', 'R']) {
     const el = $(side === 'L' ? 'pawL' : 'pawR');
     if (!el) continue;
-    const p = (palms || []).find((h) => h && h.side === side);
+    const p = show ? list.find((h) => h && h.side === side) : null;
     if (!p) { el.classList.remove('on'); continue; }
     if (!el.innerHTML) el.innerHTML = pawSVG();
     el.style.left = `${Math.round(p.x)}px`;
@@ -2571,13 +2591,23 @@ function renderPaws(palms) {
   }
 }
 
+/**
+ * 猫爪指针的每帧接线：从关键点算出**舞台像素**里的手掌中心（`stageSize()` + 镜像设置，
+ * 和圆环判定用的是同一份），再交给 `renderPaws`。
+ *
+ * 主循环的两条路径（手势菜单 / 运动界面）都调它 —— 以前只在 `updateMenu` 里调，
+ * 所以运动界面里根本看不见猫爪（用户这次要的正是那一屏）。
+ */
+function updatePaws(landmarks) {
+  const size = stageSize();
+  renderPaws(palmPoints(landmarks, size.w, size.h, state.settings.mirror));
+}
+
 function updateMenu(landmarks, now) {
   if (!state.menuMode) return null;
   const size = stageSize();
   const st = gestureState.menu;
   const palms = palmPoints(landmarks, size.w, size.h, state.settings.mirror);
-  // 手掌指针（猫爪）：跟着手掌走，让人看得见自己的手在哪儿（用户要求）
-  renderPaws(palms);
   // 选项圆环 + 顶部常驻的导航圆环（返回 / 上一页 / 下一页）一起判：取**最近**的那一个
   const layout = [...menuRingLayout(size), ...menuNavLayout(size)];
 
@@ -4396,6 +4426,8 @@ function loop() {
     renderer.draw({ landmarks, frame, exerciseId: state.exerciseId, status: 'ok', outline: null });
     const act = updateMenu(res ? res.landmarks : null, now);
     tickCornerExit(res ? res.landmarks : null, now);
+    // 手掌指针（猫爪）：菜单与运动界面共用同一层，两条路径每帧各画一次
+    updatePaws(res ? res.landmarks : null);
     if (state.loopCount % 15 === 0) { updatePipelineStatus(); renderRecBadge(); }
     if (act && state.menuMode) {
       if (act.kind === 'page') flipMenuPage(act.dir);
@@ -4469,6 +4501,9 @@ function loop() {
   // 左下角常驻的「退出」圆环：手或脚进去停满 3 秒 → 训练里回手势菜单、菜单里回网页首页
   // （显示与否由摄像头开着没有决定，见 syncCornerExit）
   tickCornerExit(res ? res.landmarks : null, now);
+  // 手掌指针（猫爪）：运动界面里也跟手（「一组结束」/ 左下角退出圆环摆着时，
+  // 手一伸进画面就能看见自己的手在哪 —— 用户要求「像菜单界面一样出现猫爪」）
+  updatePaws(res ? res.landmarks : null);
 
   // 实时指标（调试用）
   renderDebug(frame, outline);
@@ -5327,7 +5362,7 @@ window.__mfg = {
   setPoseLogUi, anyModalOpen, videoStateActive,
   // 全手势操作：首页「开始」按钮 + 视频界面里的手势菜单（两级 + 分页 + 翻页圆环）
   startGestureMode, openMenu, closeMenu, selectFromMenu, renderMenu, layoutMenu, renderMenuPage,
-  libIconSVG, setRingIcon, pawSVG, renderPaws,
+  libIconSVG, setRingIcon, pawSVG, renderPaws, pawsWanted, updatePaws,
   updateMenu, flipMenuPage, menuPageInfo, menuPerPage, menuHasPages, menuNavLayout, menuCols,
   menuRingLayout, menuItems, menuItemEl, menuCategoryName, paintMenuRing, requestStageFullscreen,
   // 全屏降级链：标准 requestFullscreen → webkitRequestFullscreen → iPhone 的 CSS 伪全屏

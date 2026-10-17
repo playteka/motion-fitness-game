@@ -2725,6 +2725,147 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
 }
 
 /* ------------------------------------------------------------------ *
+ * [8e3] 运动界面里的猫爪指针
+ *
+ * 用户要求（原话）：「在每个运动的窗口里面，如果手掌进入或者靠近类似『退出』这样的圆环，
+ * 则像菜单界面一样出现猫爪」。以前 `renderPaws` 的判据只有「手势菜单」，猫爪层也塞在
+ * `#gestureMenu` 里，所以运动那一屏根本看不到它。这一节钉住新的行为：
+ *   - 训练中 / 圆环摆着时有手掌 → 猫爪跟手（坐标就是判定用的同一份舞台像素，镜像也一致）；
+ *   - 两只手各一个，没识别到的那只手不带 on；
+ *   - 没有手掌、回主页 → 整层隐藏，不残留；
+ *   - 手势菜单里照旧显示（没被这次改动弄坏）。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8e3] 运动界面里的猫爪指针');
+{
+  const api = windowStub.__mfg;
+  const { LM } = await import('../src/geometry.js');
+  const { standingPose: sp3 } = await import('./synthetic-pose.mjs');
+
+  const layer = () => elements.get('pawLayer');
+  const pawL = () => elements.get('pawL');
+  const pawR = () => elements.get('pawR');
+  const handsOn = () => ['L', 'R'].filter((s) => (s === 'L' ? pawL() : pawR()).classList.contains('on'));
+
+  /**
+   * 骨架：只把指定那只手（腕 + 食指 + 小指 + 拇指）放到 (x, y)（归一化坐标），
+   * 另一只手整只藏起来（visibility 0 → 看不见，就等于「没识别到」）。
+   */
+  const handAt = (side, x, y) => {
+    const lm = sp3({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility: 1 }));
+    const hands = {
+      L: [LM.L_WRIST, LM.L_INDEX, LM.L_PINKY, LM.L_THUMB],
+      R: [LM.R_WRIST, LM.R_INDEX, LM.R_PINKY, LM.R_THUMB],
+    };
+    for (const s of ['L', 'R']) {
+      for (const i of hands[s]) {
+        lm[i] = s === side
+          ? { x, y, z: 0, visibility: 1 }
+          : { x: 0.5, y: 0.5, z: 0, visibility: 0 };
+      }
+    }
+    return lm;
+  };
+  /** 两只手掌都放到同一个点（两只猫爪应当各就各位） */
+  const bothHandsAt = (x, y) => {
+    const lm = handAt('L', x, y);
+    for (const i of [LM.R_WRIST, LM.R_INDEX, LM.R_PINKY, LM.R_THUMB]) {
+      lm[i] = { x, y, z: 0, visibility: 1 };
+    }
+    return lm;
+  };
+
+  const before = api.camera.stream;
+  const fakeCam = { getTracks: () => [] };
+  api.state.settings.mirror = false;
+  api.openExercise('squat');
+  api.state.session = 'running';         // 训练中（左下角退出圆环这时摆着）
+  // ⚠️ 顺序：「进动作页」会异步重开摄像头，所以**进完再**塞桩流、再 sync（和 [8e] 同一个做法）
+  api.camera.stream = fakeCam;
+  api.syncCornerExit();
+  const { w: SW3, h: SH3 } = api.stageSize();
+  const c3 = api.ringCenter('corner', SW3, SH3);
+  const centre = { x: c3.x / SW3, y: c3.y / SH3 };
+
+  ok('训练界面里允许画猫爪（左下角退出圆环摆着，pawsWanted = true）',
+    api.gestureState.cornerVisible === true && api.pawsWanted() === true);
+
+  // ===== 手掌进入左下角退出圆环 → 猫爪出现在手掌坐标上 =====
+  api.updatePaws(handAt('L', centre.x, centre.y));
+  ok('手掌伸进左下角退出圆环：左边那只猫爪出现在手掌坐标上并带 on',
+    layer().hidden === false && pawL().classList.contains('on')
+    && pawL().style.left === `${Math.round(c3.x)}px` && pawL().style.top === `${Math.round(c3.y)}px`,
+    `${pawL().style.left}/${pawL().style.top} vs ${c3.x}/${c3.y}`);
+  ok('没识别到的那只手（右手）不带 on', pawR().classList.contains('on') === false
+    && handsOn().length === 1, handsOn().join(','));
+  ok('猫爪里画的是 pawSVG（和手势菜单里同一颗图标）',
+    /<svg/.test(pawL().innerHTML) && pawL().innerHTML === api.pawSVG());
+
+  // ===== 两只手各一个，各跟各的 =====
+  api.updatePaws(bothHandsAt(centre.x, centre.y));
+  ok('两只手各一个猫爪，都在各自的手掌坐标上',
+    pawL().classList.contains('on') && pawR().classList.contains('on')
+    && pawL().style.left === `${Math.round(c3.x)}px` && pawR().style.left === `${Math.round(c3.x)}px`
+    && pawR().style.top === `${Math.round(c3.y)}px`);
+
+  // ===== 用户口径是「进入**或者靠近**」：还没进圆环也照样看得见爪子 =====
+  const hit3 = api.ringHitRadius('corner', { w: SW3, h: SH3 });
+  const near3 = { x: c3.x + hit3 * 1.4, y: c3.y };   // 判定半径的 1.4 倍处：靠近、但没进去
+  api.updatePaws(handAt('R', near3.x / SW3, near3.y / SH3));
+  ok('手掌只是在退出圆环附近（判定半径 1.4 倍处，没进去）也显示猫爪',
+    layer().hidden === false && pawR().classList.contains('on')
+    && pawR().style.left === `${Math.round(near3.x)}px` && handsOn().length === 1,
+    `hidden=${layer().hidden} on=${handsOn().join(',')} left=${pawR().style.left}/${Math.round(near3.x)}px top=${pawR().style.top}/${Math.round(near3.y)}px`);
+
+  // ===== 镜像设置要一致（和圆环判定同一份舞台像素） =====
+  api.state.settings.mirror = true;
+  api.updatePaws(bothHandsAt(0.2, 0.7));
+  ok('镜像预览下猫爪坐标也跟着镜像（与圆圈判定同一套坐标）',
+    pawL().style.left === `${Math.round((1 - 0.2) * SW3)}px`
+    && pawL().style.top === `${Math.round(0.7 * SH3)}px`,
+    `${pawL().style.left}/${pawL().style.top}`);
+  api.state.settings.mirror = false;
+
+  // ===== 没有手掌 → 整层藏起来（不是只去掉 on） =====
+  api.updatePaws(null);
+  ok('没有识别到手掌时猫爪隐藏（整层 hidden + 两只都不带 on）',
+    layer().hidden === true && handsOn().length === 0);
+  api.updatePaws(handAt('L', centre.x, centre.y));
+  ok('手重新伸进画面又能画出来（藏了之后能恢复）',
+    layer().hidden === false && pawL().classList.contains('on'));
+
+  // ===== 回主页 → 必须隐藏，不能残留 =====
+  api.showHome();
+  api.updatePaws(bothHandsAt(0.5, 0.5));
+  ok('回主页后猫爪必须隐藏（不能残留在画面上）',
+    api.state.homeMode === true && layer().hidden === true && handsOn().length === 0);
+
+  // ===== 什么都没显示（不在训练、圆环也没摆着）→ 不画 =====
+  api.openExercise('squat');
+  api.camera.stream = null;            // 摄像头关着：退出圆环不摆
+  api.syncCornerExit();
+  api.hideGestureRings();
+  api.state.session = 'idle';
+  ok('不在训练、圆环也没摆着时 pawsWanted = false（不该乱画）',
+    api.gestureState.cornerVisible === false && api.gestureState.visible === false
+    && api.pawsWanted() === false);
+  api.updatePaws(bothHandsAt(0.5, 0.5));
+  ok('这种情况下即使递进来一双手也不画', layer().hidden === true && handsOn().length === 0);
+
+  // ===== 手势菜单里照旧显示（这次改动不能把它弄坏） =====
+  api.camera.stream = fakeCam;
+  api.openMenu({ silent: true });
+  api.updatePaws(bothHandsAt(0.5, 0.5));
+  ok('手势菜单里照旧显示猫爪（菜单那一屏没被这次改动破坏）',
+    api.state.menuMode === true && layer().hidden === false
+    && pawL().classList.contains('on') && pawR().classList.contains('on'));
+
+  api.closeMenu();
+  api.showHome();
+  api.camera.stream = before;
+}
+
+/* ------------------------------------------------------------------ *
  * 开合跳（新增在「全身」分类里）
  * ------------------------------------------------------------------ */
 

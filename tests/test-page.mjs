@@ -25,6 +25,29 @@ setLang('zh', { persist: false });
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
+/**
+ * 扫一遍 HTML，算出某个 id 元素的**祖先 id 链**（从外到内，末尾是直接父级；找不到返回 null）。
+ *
+ * 用处：有些 DOM 断言（例如「猫爪层必须在 `#stage` 下、不能又塞回 `#gestureMenu` 里，
+ * 否则换屏滑动时它会跟着动」）只看字符串先后顺序是猜的 —— 这里先剥掉注释，
+ * 再按标签闭合关系真的算一遍。自闭合标签（`<path/>`）与 HTML 空元素（input / br / img…）不入栈。
+ */
+function ancestorIds(source, id) {
+  const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+    'link', 'meta', 'param', 'source', 'track', 'wbr']);
+  const clean = String(source).replace(/<!--[\s\S]*?-->/g, '');
+  const stack = [];
+  for (const m of clean.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9-]*)([^>]*?)(\/?)>/g)) {
+    const [, closing, tag, attrs, selfClose] = m;
+    if (closing) { stack.pop(); continue; }
+    const idm = attrs.match(/\bid="([^"]+)"/);
+    if (idm && idm[1] === id) return stack.map((s) => s.id).filter(Boolean);
+    if (selfClose || VOID.has(tag.toLowerCase())) continue;
+    stack.push({ tag: tag.toLowerCase(), id: idm ? idm[1] : '' });
+  }
+  return null;
+}
+
 let passed = 0;
 const failures = [];
 function ok(name, cond, detail = '') {
@@ -1061,17 +1084,42 @@ console.log('\n[3] 静态资源与模型文件');
       && /settingsVersion: SETTINGS_VERSION,/.test(app)
       && /if \(Number\(raw\.settingsVersion \|\| 1\) < SETTINGS_VERSION\) \{\n      merged\.showSkeleton = DEFAULT_SETTINGS\.showSkeleton;\n    \}/.test(app)
       && /merged\.settingsVersion = SETTINGS_VERSION;/.test(app));
-    /* 用户要求：「在出现圆环选择的情况下，用户手掌的位置出现一个小的猫爪图标」 */
-    ok('手掌位置的猫爪指针：手绘 paw 图标（5 个元素 / 实心 / currentColor）+ 菜单里那一层 + 每帧跟手',
+    /* 用户要求：「在出现圆环选择的情况下，用户手掌的位置出现一个小的猫爪图标」；
+       后来又要求「每个运动窗口里手掌进入 / 靠近类似『退出』的圆环时，也像菜单界面一样出现猫爪」 */
+    ok('手掌位置的猫爪指针：手绘 paw 图标（5 个元素 / 实心 / currentColor）+ 菜单与运动界面共用一层 + 每帧跟手',
       /'paw': '<path d="M12 20\.5c/.test(read('src/icons.js'))
       && /export function pawSVG\(\)/.test(read('src/icons.js'))
       && /<div class="paw-layer" id="pawLayer"/.test(html) && /id="pawL"/.test(html) && /id="pawR"/.test(html)
       && /function renderPaws\(palms\)/.test(app)
-      && /const show = state\.menuMode && !state\.homeMode;/.test(app)
+      // 判据：菜单里照旧；运动界面（训练三态 / 圆环正摆着）也画，主页一律不画
+      && /function pawsWanted\(\) \{/.test(app)
+      && /if \(state\.homeMode\) return false;/.test(app)
+      && /if \(state\.menuMode\) return true;/.test(app)
+      && /if \(state\.session === 'running' \|\| state\.session === 'paused'/.test(app)
+      && /return !!\(gestureState\.visible \|\| gestureState\.cornerVisible\);/.test(app)
+      // 没有手掌时整层藏起来（不是只去掉 on），手离开画面不给「残影」
+      && /const show = pawsWanted\(\) && list\.length > 0;/.test(app)
+      && /layer\.hidden = !show;/.test(app)
       && /el\.style\.left = /.test(app) && /el\.classList\.add\('on'\)/.test(app)
-      && /renderPaws\(palms\);/.test(app)                       // updateMenu 每帧调
-      && /\.paw-layer \{ position: absolute; inset: 0; pointer-events: none; z-index: 5; \}/.test(css)
-      && /\.paw\.on \{ opacity: 0\.92;/.test(css));
+      // 主循环的两条路径（菜单 / 运动界面）各调一次，不再只挂在 updateMenu 里
+      && /function updatePaws\(landmarks\) \{/.test(app)
+      && (app.match(/updatePaws\(res \? res\.landmarks : null\);/g) || []).length === 2
+      && !/renderPaws\(palms\);/.test(app)
+      && /\.paw-layer \{ position: absolute; inset: 0; pointer-events: none; z-index: 8; \}/.test(css)
+      && /\.paw\.on \{ opacity: 0\.88;/.test(css));
+    const pawTree = ancestorIds(html, 'pawLayer') || [];
+    ok('#pawLayer 是 #stage 的直接子节点（不在 #gestureMenu / .menu-screen 里，所以换屏滑动时它不跟着动）',
+      pawTree[pawTree.length - 1] === 'stage'
+      && !pawTree.includes('gestureMenu') && !pawTree.includes('menuScreen'),
+      JSON.stringify(pawTree));
+    /* 尺寸定案（用户看过效果后）：「确实大得过头了，改为比圆环略小一点」→
+       宽高 = `--ring-px × 0.85`（圆环 104~140px → 猫爪约 88~119px），跟圆环一处定义、任何窗口都不写死 px。 */
+    ok('猫爪尺寸 = 圆环直径的 85%（`--ring-px × 0.85`，不再写死 px / clamp），不透明度 0.88 仍然不挡点击',
+      /\.paw \{\n  position: absolute;\n  \/\* 尺寸 = 圆环直径的 85%[\s\S]*?\n  width: calc\(var\(--ring-px\) \* 0\.85\);\n  height: calc\(var\(--ring-px\) \* 0\.85\);/.test(css)
+      && !/width: clamp\(120px, 13vw, 176px\)/.test(css)
+      && /\.paw\.on \{ opacity: 0\.88; transform: translate\(-50%, -50%\) scale\(1\); \}/.test(css)
+      && /pointer-events: none;\n\}\n\.paw\.on/.test(css)             // 尺寸再变也不许挡点击
+      && /--ring-px: clamp\(104px, 10\.5vw, 140px\);/.test(css));    // 同一处定义，窄屏另有覆盖
     ok('主页的分类标题也用**线条图标**（和菜单 / 视频画面同一张），不是 emoji',
       /const catIcon = categoryMarkSVG\(cat\.id\) \|\| cat\.icon;/.test(app)
       && /<h3 class="cat-head"><span class="cat-icon">\$\{catIcon\}<\/span>/.test(app)
