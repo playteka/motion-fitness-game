@@ -453,8 +453,19 @@ console.log('\n[3] 静态资源与模型文件');
   ok('全屏按钮用 .stage-btn 样式（贴在右下角）',
     /<button[^>]*id="btnFullscreen"[^>]*class="stage-btn"|<button[^>]*class="stage-btn"[^>]*id="btnFullscreen"/.test(html));
   const app = read('src/app.js');
-  ok('点击后请求的是视频框全屏（$(\'stage\').requestFullscreen）',
-    /\$\('stage'\)\.requestFullscreen/.test(app));
+  ok('点击后请求的是视频框全屏（走 requestStageFullscreen → stage.requestFullscreen）',
+    /function toggleStageFullscreen\(\)/.test(app)
+    && /\$\('btnFullscreen'\)\.addEventListener\('click', \(\) => toggleStageFullscreen\(\)\)/.test(app)
+    && /stage\.requestFullscreen\(\)/.test(app));
+  ok('降级链里还有老 WebKit 的 webkitRequestFullscreen（旧 Safari / 旧 Chromium）',
+    /stage\.webkitRequestFullscreen\(\)/.test(app)
+    && /pickFullscreenMode/.test(app));
+  ok('没有元素级全屏时退到 CSS 伪全屏，而且不再把全屏按钮藏起来',
+    /PSEUDO_FS_CLASS = 'pseudo-fullscreen'/.test(app)
+    && !/btn\.hidden = typeof \$\('stage'\)\.requestFullscreen !== 'function'/.test(app)
+    && /btn\.hidden = pickFullscreenMode\(fullscreenCaps\(\)\) === 'none'/.test(app));
+  ok('index.html 里不再有第二套内联伪全屏脚本（否则和 app.js 双 toggle，点一下等于没点）',
+    !/<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?pseudo-fullscreen/.test(html));
   ok('不再对 document.documentElement 请求全屏（那会整页放大）',
     !/documentElement\.requestFullscreen/.test(app));
   ok('样式里有视频框全屏规则 .stage:fullscreen', /\.stage:fullscreen\s*\{/.test(css));

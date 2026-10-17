@@ -419,16 +419,23 @@ function applyMusic() {
  * 所以这里顺手把按钮状态和舞台尺寸自己同步一次。
  */
 function exitFullscreen() {
+  // 伪全屏（iPhone 那条路）没有原生状态可查，先把类摘掉
+  const wasPseudo = typeof pseudoFullscreenOn === 'function' && pseudoFullscreenOn();
+  if (wasPseudo && typeof setPseudoFullscreen === 'function') setPseudoFullscreen(false);
   try {
-    const el = document.fullscreenElement;
-    if (!el) return false;
-    const p = document.exitFullscreen?.();
+    const doc = typeof document !== 'undefined' ? document : null;
+    const el = doc && (doc.fullscreenElement || doc.webkitFullscreenElement);
+    if (!el) {
+      if (wasPseudo) { $('btnFullscreen')?.setAttribute('aria-pressed', 'false'); onStageResize(); }
+      return wasPseudo;
+    }
+    const p = (doc.exitFullscreen || doc.webkitExitFullscreen)?.call(doc);
     if (p && typeof p.catch === 'function') p.catch(() => { /* 退出全屏被拒：忽略 */ });
     $('btnFullscreen')?.setAttribute('aria-pressed', 'false');
     onStageResize();
     return true;
   } catch {
-    return false;   // 老浏览器抛异常也不能拦住回主页
+    return wasPseudo;   // 老浏览器抛异常也不能拦住回主页
   }
 }
 
@@ -2610,18 +2617,108 @@ function startGestureMode() {
   audio.say(t('menu.title'), { rate: 1.05 });
 }
 
-/** 申请「视频框」全屏（和右上角那个全屏按钮同一个动作） */
+/* ------------------------------------------------------------------ *
+ * 全屏降级链：iPhone 也要能「全屏」
+ *
+ * 用户实测「Safari 和 Chrome 都无法进入全屏模式」——原因是 **iOS Safari 没有元素级
+ * Fullscreen API**（`requestFullscreen` 在 iPhone 上不存在，只有 iPad 有），
+ * 所以「点了没反应」。这里按能力依次降级：
+ *
+ *   ① 标准 `element.requestFullscreen()`      → PC / Android / iPad
+ *   ② 老 WebKit `webkitRequestFullscreen()`   → 旧 Safari / 旧 Chromium
+ *   ③ **CSS 伪全屏**（`.pseudo-fullscreen`）  → iPhone 的兜底：`#stage` 固定铺满视口，
+ *      页面其余部分与滚动被锁住；**我们自己画的 HUD / 判定进度条 / 圆环全都保留**
+ *      （这正是 `<video>.webkitEnterFullscreen()` 做不到的：它只放大视频，叠加层全丢）。
+ *
+ * `pickFullscreenMode` 是纯函数（喂一组能力就返回走哪条路），所以测试能直接钉住降级顺序。
+ * ------------------------------------------------------------------ */
+
+/** 伪全屏的类名：`#stage` 与 `body` 同时挂着（样式见 style.css） */
+const PSEUDO_FS_CLASS = 'pseudo-fullscreen';
+
+/**
+ * 按能力挑一条全屏路径（纯函数）。
+ * @param {{requestFullscreen?:boolean, webkitRequestFullscreen?:boolean, pseudo?:boolean}} caps
+ * @returns {'standard'|'webkit'|'pseudo'|'none'}
+ */
+function pickFullscreenMode(caps = {}) {
+  if (caps.requestFullscreen) return 'standard';
+  if (caps.webkitRequestFullscreen) return 'webkit';
+  if (caps.pseudo !== false) return 'pseudo';   // 伪全屏没有前置条件，永远可用
+  return 'none';
+}
+
+/** 当前环境到底有哪些全屏能力（读真实 DOM；`pseudo` 恒为 true） */
+function fullscreenCaps() {
+  const stage = $('stage');
+  const doc = typeof document !== 'undefined' ? document : null;
+  return {
+    requestFullscreen: typeof stage?.requestFullscreen === 'function',
+    webkitRequestFullscreen: typeof stage?.webkitRequestFullscreen === 'function',
+    fullscreenElement: !!(doc && (doc.fullscreenElement || doc.webkitFullscreenElement)),
+  };
+}
+
+/** CSS 伪全屏现在开着吗 */
+function pseudoFullscreenOn() {
+  const stage = $('stage');
+  return !!(stage && stage.classList && stage.classList.contains(PSEUDO_FS_CLASS));
+}
+
+/**
+ * 开 / 关 CSS 伪全屏：`#stage` 与 `body` 两个类一起切（只改定位与滚动，不动任何子元素），
+ * 切完重摆一次圆环 / 菜单 —— 舞台尺寸变了，它们必须跟着变。
+ */
+function setPseudoFullscreen(on) {
+  const stage = $('stage');
+  if (stage && stage.classList) stage.classList.toggle(PSEUDO_FS_CLASS, !!on);
+  if (typeof document !== 'undefined' && document.body && document.body.classList) {
+    document.body.classList.toggle(PSEUDO_FS_CLASS, !!on);
+  }
+  $('btnFullscreen')?.setAttribute('aria-pressed', String(!!on));
+  if (typeof onStageResize === 'function') onStageResize();
+  return !!on;
+}
+
+/**
+ * 申请「视频框」全屏（右上角那个按钮、首页大按钮、`F` 键都走这里）。
+ * 返回 true = 「已经进入某种全屏」（原生或伪全屏）。
+ */
 function requestStageFullscreen() {
   const stage = $('stage');
-  if (!stage || document.fullscreenElement || typeof stage.requestFullscreen !== 'function') return false;
+  if (!stage) return false;
+  const caps = fullscreenCaps();
+  if (caps.fullscreenElement) {                       // 已经是原生全屏了，别重复申请
+    $('btnFullscreen')?.setAttribute('aria-pressed', 'true');
+    return true;
+  }
+  const mode = pickFullscreenMode(caps);
+  if (mode === 'pseudo') return setPseudoFullscreen(true);
   try {
-    const p = stage.requestFullscreen();
-    if (p && typeof p.catch === 'function') p.catch(() => {});
+    const p = mode === 'webkit' ? stage.webkitRequestFullscreen() : stage.requestFullscreen();
+    // 原生申请被拒（例如权限策略）时不要停在「半全屏」，直接落到伪全屏兜底
+    if (p && typeof p.catch === 'function') p.catch(() => setPseudoFullscreen(true));
     $('btnFullscreen')?.setAttribute('aria-pressed', 'true');
     return true;
   } catch {
+    return setPseudoFullscreen(true);
+  }
+}
+
+/** 现在处于任何一种全屏（原生 or 伪）吗 */
+function stageFullscreenOn() {
+  const caps = fullscreenCaps();
+  return !!caps.fullscreenElement || pseudoFullscreenOn();
+}
+
+/** 同一个按钮：不在全屏就进、在就出（返回 true = 现在处于全屏） */
+function toggleStageFullscreen() {
+  if (stageFullscreenOn()) {
+    exitFullscreen();
     return false;
   }
+  requestStageFullscreen();
+  return stageFullscreenOn();
 }
 
 /** 左下角退出圆环的每帧维护（菜单与训练页共用）：对齐显隐 → 更新进度 → 触发 */
@@ -4530,13 +4627,21 @@ function changeLang(code) {
  * ------------------------------------------------------------------ */
 
 /**
- * 环境不支持元素全屏时（例如 iPhone 的 Safari），把右下角的全屏按钮藏起来，
- * 免得用户点了没反应。
+ * 全屏按钮的显隐与初始状态。
+ *
+ * ⚠️ 这里**不再**在「没有元素级全屏」时藏按钮：iPhone 恰恰是唯一必须要这颗按钮的机器
+ * （原生 API 不存在 → 只能走 CSS 伪全屏）。只有连伪全屏都不可用的环境（理论上不存在）才藏。
  */
 function syncFullscreenSupport() {
   const btn = $('btnFullscreen');
   if (!btn) return;
-  btn.hidden = typeof $('stage').requestFullscreen !== 'function';
+  /*
+   * ⚠️ 这里以前是「没有 requestFullscreen 就把按钮藏起来」，结果 **iPhone 上按钮直接消失** ——
+   * 而 iPhone 恰恰是唯一需要这颗按钮的机器（原生 API 没有，只能靠 CSS 伪全屏）。
+   * 现在只要还有伪全屏兜底，按钮就永远显示：点了必有反应。
+   */
+  btn.hidden = pickFullscreenMode(fullscreenCaps()) === 'none';
+  btn.setAttribute('aria-pressed', String(stageFullscreenOn()));
 }
 
 function bindUI() {
@@ -4713,18 +4818,30 @@ function bindUI() {
 
   // 全屏只放大「视频框」(#stage)，不是整个 HTML 页面：
   // 整页全屏会把侧栏、要领清单、成绩卡一起放大，反而看不清动作。
-  $('btnFullscreen').addEventListener('click', () => {
-    if (document.fullscreenElement) document.exitFullscreen?.();
-    else requestStageFullscreen();
-  });
+  // 同一条链也负责 **iPhone 的 CSS 伪全屏**（没有元素级 API 时自动降级），
+  // 所以这一个按钮在手机上一样「点了有反应」：再点一次就退出。
+  $('btnFullscreen').addEventListener('click', () => toggleStageFullscreen());
 
   // 首页那个大「开始」按钮：全手势操作的入口（开摄像头 → 全屏 → 手势菜单）
   $('btnStartGesture')?.addEventListener('click', () => startGestureMode());
   // 页码按钮：鼠标 / 触屏用户的翻页办法（手势是向上 / 向下挥手）
   $('menuPage')?.addEventListener('click', () => flipMenuPage(1));
-  document.addEventListener('fullscreenchange', () => {
-    $('btnFullscreen').setAttribute('aria-pressed', String(!!document.fullscreenElement));
-  });
+  // 原生全屏的状态变化（标准 API 与老 WebKit 的事件名不一样，两个都听）；
+  // 伪全屏不走事件，按钮状态由 setPseudoFullscreen 自己维护。
+  const onFsChange = () => {
+    $('btnFullscreen').setAttribute('aria-pressed', String(stageFullscreenOn()));
+    onStageResize();
+  };
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+  // 转屏：伪全屏是「按当前视口钉住」的，转屏后尺寸全变，直接退出让用户自己再点（也避免半屏错位）
+  const onOrient = () => {
+    if (pseudoFullscreenOn()) exitFullscreen();
+    onStageResize();
+  };
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('orientationchange', onOrient);
+  }
   syncFullscreenSupport();
 
   $('camSel').addEventListener('change', async (e) => {
@@ -4799,11 +4916,13 @@ function bindUI() {
       return;
     }
     if (e.key === 'Escape') {
-      // 弹窗优先关闭；手势菜单里按 Esc = 回网页首页（和左下角圆环同一个动作）；其次是结束本组
+      // 弹窗优先关闭；手势菜单里按 Esc = 回网页首页（和左下角圆环同一个动作）；
+      // iPhone 的 CSS 伪全屏里 Esc = 先退出全屏（再按一次才是结束这一组）；最后是结束本组
       if (recordsModalOpen()) { closeRecordsModal(); return; }
       if (exerciseSettingsOpen()) { closeExerciseSettings(); return; }
       if (settingsOpen()) { closeSettings(); return; }
-      if (state.menuMode) { showHome(); return; }
+      if (state.menuMode) { showHome(); return; }   // showHome 里会把全屏（含伪全屏）一起退出
+      if (pseudoFullscreenOn()) { exitFullscreen(); return; }
       stopSession('user');
       return;
     }
@@ -4998,6 +5117,9 @@ window.__mfg = {
   libIconSVG, setRingIcon, pawSVG, renderPaws,
   updateMenu, flipMenuPage, menuPageInfo, menuPerPage, menuHasPages, menuNavLayout, menuCols,
   menuRingLayout, menuItems, menuItemEl, menuCategoryName, paintMenuRing, requestStageFullscreen,
+  // 全屏降级链：标准 requestFullscreen → webkitRequestFullscreen → iPhone 的 CSS 伪全屏
+  pickFullscreenMode, fullscreenCaps, pseudoFullscreenOn, setPseudoFullscreen, exitFullscreen,
+  stageFullscreenOn, toggleStageFullscreen, PSEUDO_FS_CLASS,
   tickCornerExit, syncCornerLabel,
   MENU_COLS, MENU_ROWS, MENU_HIT_RATIO, MENU_START_RATIO, MENU_NAV_HIT_RATIO, MENU_RING_MAX,
   MENU_NAV_HOLD_MS, MENU_ANNOUNCE_P, MENU_CELL_MIN_PX,

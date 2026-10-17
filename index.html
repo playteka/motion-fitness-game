@@ -487,29 +487,10 @@
     </div>
   </div>
 
+  <!-- 全屏降级链在 src/app.js 里（一条链管三种环境）：标准 requestFullscreen →
+       老 WebKit webkitRequestFullscreen → **iPhone 的 CSS 伪全屏**（没有元素级 API 时的兜底，
+       #stage 铺满视口、HUD / 判定进度条 / 圆环全部保留）。这里不再放内联脚本：
+       两处都挂同一个按钮会「双 toggle」，点一下等于没点。 -->
   <script type="module" src="src/app.js"></script>
-  <script>
-    /* iPhone fullscreen fallback: iOS Safari has no element Fullscreen API (iPad only),
-       so the fullscreen button does nothing there. This only takes over when no native
-       capability exists: it toggles a CSS pseudo-fullscreen on #stage, which keeps our own
-       HUD / judgement bar / gesture rings (unlike video.webkitEnterFullscreen()).
-       Browsers with native support never enter this branch. */
-    (function () {
-      var canNative = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled
-        || document.documentElement.webkitRequestFullscreen);
-      if (canNative) return;
-      function stageEl() { return document.getElementById('stage'); }
-      function isOn() { var s = stageEl(); return !!(s && s.classList.contains('pseudo-fullscreen')); }
-      function paint(on) {
-        var s = stageEl();
-        if (s) s.classList.toggle('pseudo-fullscreen', on);
-        document.body.classList.toggle('pseudo-fullscreen', on);
-      }
-      var btn = document.getElementById('btnFullscreen');
-      if (btn) btn.addEventListener('click', function () { paint(!isOn()); });
-      window.addEventListener('orientationchange', function () { if (isOn()) paint(false); });
-      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isOn()) paint(false); });
-    })();
-  </script>
 </body>
 </html>

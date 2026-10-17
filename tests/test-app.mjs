@@ -1139,14 +1139,60 @@ console.log('\n[6] 火柴人开关');
     && (fsBtn.attributes['data-i18n-title'] || '') === 'ui.fullscreen',
     JSON.stringify({ aria: fsBtn.attributes['data-i18n-aria'], title: fsBtn.attributes['data-i18n-title'] }));
 
-  // 不支持元素全屏的环境（例如 iPhone 的 Safari）要藏起来，而不是点了没反应
+  // iPhone 也是「必须有反应」：没有元素级全屏 → 走 CSS 伪全屏，所以按钮**不再藏起来**
   const savedRequestFullscreen = stageEl.requestFullscreen;
   delete stageEl.requestFullscreen;
   api.syncFullscreenSupport();
-  ok('环境不支持元素全屏时藏起全屏按钮', fsBtn.hidden === true);
+  ok('没有 requestFullscreen 的环境（iPhone）仍然显示全屏按钮（否则点了没反应）',
+    fsBtn.hidden === false, String(fsBtn.hidden));
   stageEl.requestFullscreen = savedRequestFullscreen;
   api.syncFullscreenSupport();
-  ok('支持元素全屏时按钮恢复显示', fsBtn.hidden === false);
+  ok('支持元素全屏时按钮照常显示', fsBtn.hidden === false);
+
+  /* ===== 全屏降级链（纯函数 + 真的切换） =====
+     用户原话：「我在 iPhone 上测试……Safari 和 Chrome 都不能打开，也无法进入全屏模式」。
+     iPhone 没有元素级 Fullscreen API，所以第三条路必须是 CSS 伪全屏，而且叠加层不能丢。 */
+  ok('能力探测的降级顺序：标准 → 老 WebKit → 伪全屏 → 都没有才放弃',
+    api.pickFullscreenMode({ requestFullscreen: true, webkitRequestFullscreen: true }) === 'standard'
+    && api.pickFullscreenMode({ webkitRequestFullscreen: true }) === 'webkit'
+    && api.pickFullscreenMode({}) === 'pseudo'
+    && api.pickFullscreenMode({ pseudo: false }) === 'none',
+    [api.pickFullscreenMode({ requestFullscreen: true }), api.pickFullscreenMode({ webkitRequestFullscreen: true }),
+      api.pickFullscreenMode({}), api.pickFullscreenMode({ pseudo: false })].join(','));
+  {
+    delete stageEl.requestFullscreen;             // 模拟 iPhone：没有元素级全屏
+    api.setPseudoFullscreen(false);
+    const entered = api.requestStageFullscreen();
+    ok('iPhone（无 requestFullscreen）申请全屏 → 进入 CSS 伪全屏',
+      entered === true && api.pseudoFullscreenOn() === true
+      && stageEl.classList.contains('pseudo-fullscreen')
+      && documentStub.body.classList.contains('pseudo-fullscreen'),
+      `entered=${entered} stage=${stageEl.className} body=${documentStub.body.className}`);
+    ok('伪全屏只是改 #stage 的定位/类名：HUD 与判定进度条元素一个都没被动过',
+      elements.get('hud').classList.contains('pseudo-fullscreen') === false
+      && elements.get('criteriaBar').classList.contains('pseudo-fullscreen') === false);
+    ok('伪全屏时按钮状态同步成「已全屏」', fsBtn.attributes['aria-pressed'] === 'true');
+    // ⚠️ Esc 会顺手撤掉「首次交互解锁音频」那个一次性监听器 —— 和别处的用例一样
+    //    把三种事件的监听器列表原样还原，别污染后面 [10] 的声音自检。
+    const fsKeySnapshot = {};
+    for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
+      fsKeySnapshot[ev] = [...(documentStub._listeners[ev] || [])];
+    }
+    documentStub.dispatch('keydown', { key: 'Escape' });
+    for (const [ev, list] of Object.entries(fsKeySnapshot)) documentStub._listeners[ev] = list;
+    ok('伪全屏里按 Esc 能退出（再按一次才是结束本组）',
+      api.pseudoFullscreenOn() === false && fsBtn.attributes['aria-pressed'] === 'false');
+    api.setPseudoFullscreen(true);
+    fsBtn.dispatch('click');
+    ok('再点一次全屏按钮 → 退出伪全屏', api.pseudoFullscreenOn() === false);
+    fsBtn.dispatch('click');
+    ok('再点一次 → 又进伪全屏（同一个按钮来回切）', api.pseudoFullscreenOn() === true);
+    stageEl.requestFullscreen = savedRequestFullscreen;
+    api.syncFullscreenSupport();
+    api.setPseudoFullscreen(false);
+    ok('恢复成有原生全屏的环境后，伪全屏不再被触发',
+      api.pickFullscreenMode(api.fullscreenCaps()) === 'standard' && api.pseudoFullscreenOn() === false);
+  }
 
   // 用户要求：「做完一个运动退出的时候不仅要退回到主页，也要退出全屏模式」。
   // 全屏是**视频框**的全屏，留在主页上只会把整页放大、还留着全屏状态，所以回主页时必须退出。
