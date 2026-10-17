@@ -114,7 +114,38 @@ export default {
     maskModelFail: '姿态模型加载失败',
     maskUnsupportedTitle: '当前浏览器不支持摄像头',
     maskUnsupportedText: '请使用最新版 Chrome / Edge / Safari，并通过 http(s) 打开本页面。',
+    // 非安全上下文（http + 局域网 IP）专用文案：手机上打不开摄像头**九成**是这个原因
+    maskInsecureTitle: '这个地址不安全，浏览器不给摄像头',
+    maskInsecureText: '手机浏览器只在 https（或 localhost）下允许开摄像头。请把地址换成 https:// 再打开 —— 生成自签证书或走隧道，见 README「手机浏览器使用」。',
     unknownError: '未知错误',
+  },
+
+  /* ---------------- 摄像头诊断面板（打不开时列出客观事实） ---------------- */
+  diag: {
+    title: '摄像头诊断（为什么打不开）',
+    lead: '下面是浏览器此刻报出来的事实，对照最后一行「处置建议」排查最快：',
+    yes: '是',
+    no: '否',
+    unknown: '—',
+    secure: '安全上下文 isSecureContext',
+    protocol: '页面协议 location.protocol',
+    mediaDevices: 'navigator.mediaDevices',
+    getUserMedia: 'mediaDevices.getUserMedia',
+    error: 'getUserMedia 错误',
+    video: '画面尺寸 videoWidth × videoHeight',
+    attrs: 'video 属性',
+    noError: '（没有报错）',
+    advice: '处置建议',
+    adviceInsecure: '这个页面不是安全上下文：手机必须用 https 打开（自签证书或隧道都行）。http + 局域网 IP 会被浏览器一律拒绝，换哪个浏览器都一样。',
+    adviceNoMedia: '这个浏览器没有 mediaDevices：用最新版 Chrome / Edge / Safari，并确认是 https（或 localhost）。',
+    adviceNotAllowed: '权限被拒绝了：点地址栏左侧的锁 / 站点设置，把「摄像头」改回「允许」再刷新；iPhone 还要看 设置 → Safari → 摄像头 是不是「询问」或「允许」。',
+    adviceNotFound: '没找到摄像头：确认设备真的有摄像头、也没被别的 App 独占（先关掉相机 / 视频通话），再刷新重试。',
+    adviceSecurity: '被安全策略拦下：页面不是 https，或摄像头被系统 / 企业策略禁用。换成 https 再试。',
+    adviceOverconstrained: '分辨率 / 帧率这类条件太苛刻：本页会自动降级重试；一直失败就换个浏览器，或在设置里换一个镜头。',
+    adviceNotReadable: '摄像头被占用或读不出来：关掉其它正在用摄像头的程序（会议 / 相机 / 另一个标签页），再点「重试」。',
+    adviceAbort: '请求被中断：多半是页面切到后台或连接断了，回到前台重新点「开启摄像头」。',
+    adviceType: '浏览器不接受这次调用：最常见的原因就是非安全上下文（http），换 https 打开。',
+    adviceUnknown: '按上面的客观事实排查：先看 isSecureContext 和 location.protocol —— 手机上的问题九成出在这里。',
   },
 
   /* ---------------- 运动前校准 ---------------- */

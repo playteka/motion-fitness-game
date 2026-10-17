@@ -114,7 +114,38 @@ export default {
     maskModelFail: 'Couldn’t load the pose model',
     maskUnsupportedTitle: 'This browser doesn’t support the camera',
     maskUnsupportedText: 'Please use the latest Chrome / Edge / Safari and open this page over http(s).',
+    // Shown when the page is not a secure context (http + LAN IP): the usual reason a phone can’t open the camera
+    maskInsecureTitle: 'This address is not secure, so the camera is blocked',
+    maskInsecureText: 'Mobile browsers only allow the camera over https (or localhost). Re-open the page on https:// — either a self-signed certificate or a tunnel, see “Using it on a phone” in the README.',
     unknownError: 'Unknown error',
+  },
+
+  /* ---------------- Camera diagnostics panel (lists the facts when it won’t open) ---------------- */
+  diag: {
+    title: 'Camera diagnostics (why it won’t open)',
+    lead: 'These are the facts the browser reports right now — match them against the last line, “What to do”:',
+    yes: 'yes',
+    no: 'no',
+    unknown: '—',
+    secure: 'Secure context isSecureContext',
+    protocol: 'Page protocol location.protocol',
+    mediaDevices: 'navigator.mediaDevices',
+    getUserMedia: 'mediaDevices.getUserMedia',
+    error: 'getUserMedia error',
+    video: 'Video size videoWidth × videoHeight',
+    attrs: 'video attributes',
+    noError: '(no error)',
+    advice: 'What to do',
+    adviceInsecure: 'This page is not a secure context: a phone must open it over https (self-signed certificate or a tunnel). http + a LAN IP is refused by every browser.',
+    adviceNoMedia: 'This browser has no mediaDevices: use the latest Chrome / Edge / Safari and make sure the page is https (or localhost).',
+    adviceNotAllowed: 'Permission was denied: open the lock / site settings next to the address bar, set “Camera” back to “Allow” and reload; on iPhone also check Settings → Safari → Camera.',
+    adviceNotFound: 'No camera found: make sure the device really has one and that no other app holds it (close the camera / video-call app first), then reload and retry.',
+    adviceSecurity: 'Blocked by a security policy: the page is not https, or the camera is disabled by the system / company policy. Try https.',
+    adviceOverconstrained: 'The resolution / frame-rate constraints were too strict: this page retries with a fallback; if it keeps failing, try another browser or pick a different lens in Settings.',
+    adviceNotReadable: 'The camera is busy or unreadable: close other apps that use the camera (meetings / camera / another tab) and press “Retry”.',
+    adviceAbort: 'The request was interrupted: usually the page went to the background or the connection dropped — come back and press “Start camera” again.',
+    adviceType: 'The browser rejects this call: the most common reason is a non-secure context (http) — open it over https.',
+    adviceUnknown: 'Work through the facts above: check isSecureContext and location.protocol first — on a phone that is the cause nine times out of ten.',
   },
 
   /* ---------------- Pre-workout calibration ---------------- */
