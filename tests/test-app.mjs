@@ -4629,9 +4629,10 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       return el.style.left === `${it.cx}px` && el.style.top === `${it.cy}px`
         && el.style.width === `${it.r * 2}px` && !!name;
     }), JSON.stringify({ left: layout[0].cx, r: layout[0].r }));
-  ok('分类那几格还写着「N 个动作」（右上角「返回」不参与选项，没有那行小字）',
-    /个动作/.test(grid.children[0].innerHTML)
-    && layout.every((it) => it.sub.includes('个动作'))
+  // 用户要求：「对于『上肢』『下肢』这样的大类下面，不要显示『x 个动作』这样的提示了，删掉」
+  ok('一级菜单的分类格子**不再有「N 个动作」那行小字**（只剩图标和名字）',
+    !/个动作/.test(grid.children[0].innerHTML)
+    && layout.every((it) => it.sub === '')
     && api.menuBackItem(api.stageSize()).sub === '',
     grid.children[0].innerHTML.slice(0, 140));
   {

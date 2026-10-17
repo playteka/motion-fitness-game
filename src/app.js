@@ -2326,7 +2326,11 @@ function menuItems() {
        * emoji 还留着当兜底（万一某个分类没画）。
        */
       poseIcon: categoryMarkSVG(c.id),
-      sub: t('menu.catCount', { n: localizedByCategory(c.id).length }),
+      /**
+       * 一级菜单的分类格子**不再显示「N 个动作」**（用户要求：「对于『上肢』『下肢』这样的大类下面，
+       * 不要显示『x 个动作』这样的提示了，删掉」）—— 空字串，圆环里就只剩图标和名字。
+       */
+      sub: '',
     }));
   }
   return localizedByCategory(state.menuCategory).map((ex) => ({
