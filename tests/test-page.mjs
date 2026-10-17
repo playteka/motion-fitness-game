@@ -260,21 +260,35 @@ console.log('\n[3] 静态资源与模型文件');
       && (ringSrc.match(/key === 'corner' \? RING_TOUCH_TOL : 1/g) || []).length >= 2);
   }
 
-  /* ---- 新版 HUD 版面（用户四条要求）----
-     ① 左上角名称放大、后面紧跟本组目标（`20 次` / `45 秒`）；
-     ② 进度圆环挪到「计次的位置」，环里包着次数/秒数；
-     ③ 分数仍然在圆环下方；
-     ④ 「退出」圆环从左下角挪到右上角（绘制与判定同一份坐标，见 test-app 的真实渲染断言）。 */
+  /* ---- 新版 HUD 版面（用户三条要求，外加「退出圆环仍在右上角」这条约束）----
+     ① **运动名称在画面顶部正中**（.hud-top，长名字单行省略、两侧给退出圆环让位）；
+     ② **本组目标在计数圆环正上方**，与**圆心纵向对齐**（`20 次` / `45 秒`）；
+     ③ **计分在圆环下方**，同样与圆心纵向对齐 —— 三者同在一个居中列（.hud-stack）；
+     ④ 「退出」圆环仍在右上角（绘制与判定同一份坐标，见 test-app 的真实渲染断言）。 */
   {
     const src = read('src/app.js');
-    // ① 名称 + 目标：同一个 .hud-badge 胶囊里，目标紧跟在名称后面
+    // ① 用户要求「把运动名称放到画面顶部的中央」→ 名称搬进 .hud-top，左上角胶囊里只剩图标
     const badge = /<div class="hud-badge">([\s\S]*?)<\/div>/.exec(html)?.[1] || '';
-    ok('HUD 胶囊里同时有运动名称（#hudName）与本组目标（#hudTarget），目标紧跟在名称后面',
-      badge.includes('id="hudName"') && badge.includes('id="hudTarget"')
-      && badge.indexOf('id="hudName"') < badge.indexOf('id="hudTarget"'), badge.slice(0, 160));
+    const topBlock = /<div class="hud-top">([\s\S]*?)<\/div>/.exec(html)?.[1] || '';
+    ok('运动名称在**画面顶部正中**的标题容器（.hud-top）里',
+      topBlock.includes('id="hudName"'), topBlock.slice(0, 120));
+    ok('名称已经搬出左上角胶囊（.hud-badge 里只剩动作图标，名称 / 目标都不在胶囊里）',
+      badge.includes('id="hudIcon"') && !badge.includes('id="hudName"') && !badge.includes('id="hudTarget"'),
+      badge.slice(0, 120));
+    const topRule = /\.hud-top\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    ok('顶部标题 absolute + left: 50% + translateX(-50%)：真正居中画面（不是左栏里的居中）',
+      /position:\s*absolute/.test(topRule) && /left:\s*50%/.test(topRule)
+      && /transform:\s*translateX\(-50%\)/.test(topRule), topRule.trim().slice(0, 160));
+    ok('顶部标题给右上角的退出圆环让位（max-width 两侧各扣「圆环直径 + 间隙 + 右侧安全区」）',
+      /width:\s*max-content/.test(topRule)
+      && /max-width:\s*calc\(100%\s*-\s*2\s*\*\s*\(var\(--ring-px\)\s*\+\s*24px\s*\+\s*var\(--safe-right\)\)\)/.test(topRule),
+      topRule.trim().slice(0, 200));
     const nameRule = /#hudName\s*\{([^}]*)\}/.exec(css)?.[1] || '';
     ok('运动名称**明显放大**（≥20px，比原来的 13.5px 大一档，又不至于把 HUD 挤爆）',
       /font-size:\s*clamp\(20px/.test(nameRule), nameRule.trim());
+    ok('长名称**单行省略**（不换行 → 标题不会长高去压下面的目标 / 圆环）',
+      /text-overflow:\s*ellipsis/.test(nameRule) && /white-space:\s*nowrap/.test(nameRule)
+      && /overflow:\s*hidden/.test(nameRule), nameRule.trim().slice(0, 120));
     const targetRule = /\.hud-target\s*\{([^}]*)\}/.exec(css)?.[1] || '';
     const nameSize = /font-size:\s*([^;]+);/.exec(nameRule)?.[1]?.trim() || '';
     const targetSize = /font-size:\s*([^;]+);/.exec(targetRule)?.[1]?.trim() || '';
@@ -283,16 +297,31 @@ console.log('\n[3] 静态资源与模型文件');
       !!nameSize && nameSize === targetSize
       && /color:\s*var\(--muted\)/.test(targetRule) && /white-space:\s*nowrap/.test(targetRule),
       `name=${nameSize} target=${targetSize}`);
+    ok('目标这一行不带左右外边距（否则会偏半格，就不是「与圆心对齐」了）',
+      /margin:\s*0\s+0\s+6px/.test(targetRule) && !/margin-left/.test(targetRule),
+      targetRule.trim().slice(0, 100));
 
-    // ② 进度圆环在左栏、环里包着 #hudValue（DOM 层级真的嵌套，不是靠先后顺序猜的）
+    // ② 目标 / 圆环 / 计分：**同一个居中列**（目标在环上方、计分在环下方）
     const valueAnc = ancestorIds(html, 'hudValue') || [];
     const scoreAnc = ancestorIds(html, 'hudScore') || [];
     const hudLeftBlock = /<div class="hud-left">([\s\S]*?)<div class="score-pop"/.exec(html)?.[1] || '';
+    const stackBlock = /<div class="hud-stack"[^>]*>([\s\S]*?)<div class="hud-sub"/.exec(html)?.[1] || '';
     ok('#hudValue 真的在进度圆环（#hudRing）**里面**',
       valueAnc.includes('hudRing'), valueAnc.join('>'));
     ok('进度圆环挪进了左侧 HUD 栏（#hudRing 在 .hud-left 里，不再是右上角那个独立块）',
       hudLeftBlock.includes('id="hudRing"') && hudLeftBlock.includes('id="hudValue"'),
       hudLeftBlock.slice(0, 100));
+    ok('目标 / 圆环 / 计分**三行在同一个居中列**（.hud-stack）里',
+      stackBlock.includes('id="hudTarget"') && stackBlock.includes('id="hudRing"')
+      && stackBlock.includes('id="hudScore"'), stackBlock.slice(0, 120));
+    ok('目标在圆环**之前**（正上方）、计分在圆环**之后**（下方），名称不在这一列里',
+      stackBlock.indexOf('id="hudTarget"') < stackBlock.indexOf('id="hudRing"')
+      && stackBlock.indexOf('id="hudRing"') < stackBlock.indexOf('id="hudScore"')
+      && !stackBlock.includes('id="hudName"'), stackBlock.slice(0, 160));
+    const stackRule = /\.hud-stack\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    ok('这一列是 flex 竖排 + align-items: center（三行共用一根中线 = 圆心那条竖线）',
+      /display:\s*flex/.test(stackRule) && /flex-direction:\s*column/.test(stackRule)
+      && /align-items:\s*center/.test(stackRule), stackRule.trim());
     const centerRule = /\.hud-ring-center\s*\{([^}]*)\}/.exec(css)?.[1] || '';
     ok('环里的数字绝对居中（inset: 0 + 纵向排 + 居中），单位跟着在数字下面',
       /inset:\s*0/.test(centerRule) && /flex-direction:\s*column/.test(centerRule)

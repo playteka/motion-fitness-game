@@ -3699,6 +3699,53 @@ function hudRingPx() {
   return ringPx('hud');
 }
 
+/** `.hud` 的内边距（`padding: 16px 18px`）—— 列的左 / 上边缘与它同源，改一处两边一起动 */
+const HUD_COLUMN_PAD_X = 18;
+const HUD_COLUMN_PAD_TOP = 16;
+
+/**
+ * HUD 左栏那一列（**目标 / 圆环 / 计分**）的几何 —— 用户两条要求的「一处定义」：
+ *   「把**目标次数**放在计数圆环的上方，和圆心纵向对齐」；
+ *   「**计分**也与圆心纵向对齐」。
+ *
+ * 版面本身是 CSS 做的（`.hud-stack` = flex 列 + `align-items: center`），所以这里只算**同一条中线**：
+ *   · 列的左边缘 = `.hud` 的左内边距（18px） + 左边安全区；
+ *   · 列宽 = 最宽的那一行 —— 正常就是圆环直径（`--ring-px`）；目标 `20 次` / 秒数、分数都比环窄，
+ *     真更宽时整列一起变宽，三行仍然共用同一根竖线；
+ *   · 于是三行的中心 x **恒等于** `left + colW / 2`，圆环的圆心也正好在这一根线上。
+ *
+ * 纯函数（只读「CSS 算出来的圆环直径 + 舞台尺寸」），测试能直接调它断言「三者中心 x 相同」；
+ * `?probe=1` 的 JSON 里也带上这几个数 —— 用户反馈「版面看着不对」时能直接读出当时的实际坐标。
+ */
+function hudColumnGeom(size = stageSize(), opts = {}) {
+  const safe = safeAreaInsets();
+  const ringPx = Number(opts.ringPx ?? hudRingPx()) || 0;
+  const left = HUD_COLUMN_PAD_X + safe.left;
+  const top = HUD_COLUMN_PAD_TOP + safe.top;
+  // 目标 / 分数两行的宽度（可选，传进来才算）：不知道就当「比圆环窄」，列宽由圆环决定
+  const targetW = Number(opts.targetW) || 0;
+  const scoreW = Number(opts.scoreW) || 0;
+  // 列宽 = 最宽那一行；`align-items: center` 让每一行都在这个宽度里居中 → 同一根竖线
+  const colW = Math.max(ringPx, targetW, scoreW);
+  const cx = left + colW / 2;
+  return {
+    left,          // 列的左边缘（正常就是圆环的左边缘）
+    top,           // 图标那一行的上边缘（= .hud 的上内边距 + 上安全区）
+    ringPx,        // 圆环直径（= CSS 的 --ring-px）
+    colW,          // 这一列的宽度（最宽那一行）
+    cx,            // ★ 目标 / 圆环 / 计分**共用**的中心 x
+    width: size.w, // 舞台宽度（只用来核对「右侧还留得下退出圆环」）
+    rows: {
+      // 目标在环**上方**（DOM 里也在 #hudRing 之前）
+      target: { w: targetW, cx },
+      // 圆环居中：左边缘 = cx − 直径/2
+      ring: { w: ringPx, cx, left: cx - ringPx / 2, right: cx + ringPx / 2 },
+      // 计分在环**下方**（DOM 里在 #hudRing 之后）
+      score: { w: scoreW, cx },
+    },
+  };
+}
+
 /**
  * 把 `#hudValue` 的字号调到「刚好放进圆环内径」（用户要求：数字变大时动态缩小，不出圈）。
  *
@@ -5656,6 +5703,8 @@ function installProbe() {
     const res = performance.getEntriesByType('resource')
       .filter((r) => /\.wasm|\.task|vision_bundle/.test(r.name))
       .map((r) => ({ file: r.name.split('/').pop(), status: r.responseStatus || 0, kb: Math.round((r.transferSize || r.decodedBodySize || 0) / 1024) }));
+    // HUD 那一列（目标 / 圆环 / 计分）的几何：三者共用一根中线，圆环直径也在这里 —— 版面「看着不对」时直接读
+    const hudCol = hudColumnGeom(stageSize());
     const info = {
       error: document.documentElement.dataset.error || null,
       lang: getLang(),
@@ -5678,6 +5727,12 @@ function installProbe() {
       startDisabled: $('btnStart').disabled,
       hudValue: $('hudValue').textContent,
       hudName: $('hudName').textContent,
+      // 目标 / 圆环 / 计分共用的中心 x（+ 圆环直径），与测试断言的是同一个函数算出来的数
+      hudColumn: {
+        cx: Math.round(hudCol.cx),
+        ringPx: Math.round(hudCol.ringPx),
+        left: Math.round(hudCol.left),
+      },
       camStatus: $('camStatus').textContent,
       camError: state.camError,
       maskTitle: $('maskTitle').textContent,
@@ -5788,6 +5843,8 @@ window.__mfg = {
   // HUD 进度圆环里的字号自适应（纯函数，测试直接调）：
   //   hudRingInnerPx(ringPx) → 内径；hudTextWidth(text, fontSize) → 估算宽；hudValueFontSize(ringPx, text) → 字号
   hudRingInnerPx, hudTextWidth, hudValueFontSize, syncHudValueSize, hudRingPx,
+  // HUD 那一列（目标 / 圆环 / 计分）共用的中心线：纯函数，测试断言「三者中心 x 相同」直接调它
+  hudColumnGeom, HUD_COLUMN_PAD_X, HUD_COLUMN_PAD_TOP,
   HUD_RING_INNER_RATIO, HUD_DIGIT_EM, HUD_VALUE_PAD,
   TOUCH_VIS_MIN, FOOT_VIS_MIN, FOOT_TIP_FROM_HEEL, FOOT_TIP_FROM_SHIN, distToSegment, pointsInRing,
   // 手/脚「一部分进入即触发」用的外延点参数与退出圆环的宽容度（测试要按它们构造真实肢体）

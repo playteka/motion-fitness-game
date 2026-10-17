@@ -882,23 +882,60 @@ console.log('\n[3] 动作 → 计分 → 音效与界面');
   ok('HUD 分数与检测器一致',
     elements.get('hudScore').textContent === `${det.score} 分`,
     `${elements.get('hudScore').textContent} vs ${det.score}`);
-  // 用户要求（新版 HUD）：名称放大 + 目标紧随其后；次数/秒数放进进度圆环；分数仍在圆环下方
+  // 用户要求（新版 HUD 三条）：
+  //   · **运动名称**在**画面顶部正中**（不再在左上角胶囊里）；
+  //   · **目标次数**在计数圆环的**正上方**，与**圆心纵向对齐**；
+  //   · **计分**在圆环下方，同样与圆心纵向对齐 —— 三者同在一个居中列。
   {
-    const hudLeft = /id="hudName"([\s\S]*?)id="hudSub"/.exec(html)?.[1] || '';
-    ok('分数（#hudScore）和次数（#hudValue）在同一个 hud-left 区块里',
-      hudLeft.includes('id="hudValue"') && hudLeft.includes('id="hudScore"'), hudLeft.slice(0, 120));
+    const hudBlock = /class="hud-top"([\s\S]*?)id="hudSub"/.exec(html)?.[1] || '';
+    ok('顶部标题（.hud-top）和左栏（#hudRing / #hudScore）都在同一个 .hud 里',
+      hudBlock.includes('id="hudName"') && hudBlock.includes('id="hudRing"')
+      && hudBlock.includes('id="hudScore"'), hudBlock.slice(0, 120));
     ok('次数（#hudValue）在进度圆环（#hudRing）里面',
       html.indexOf('id="hudRing"') < html.indexOf('id="hudValue"')
       && html.indexOf('id="hudValue"') < html.indexOf('id="hudScore"'));
-    ok('分数就排在圆环下方（圆环 → 分数 → 提示）',
-      html.indexOf('id="hudRing"') < html.indexOf('id="hudScore"')
-      && html.indexOf('id="hudScore"') < html.indexOf('id="hudSub"'),
-      hudLeft.slice(0, 200));
-    ok('名称后面紧跟本组目标（同一个胶囊里，名称 → 目标）',
-      html.indexOf('id="hudName"') < html.indexOf('id="hudTarget"')
-      && html.indexOf('id="hudTarget"') < html.indexOf('id="hudRing"'));
-    ok('旧的百分比文字（#ringText）已经去掉（环里只放次数/秒数）',
-      !/id="ringText"/.test(html));
+    ok('目标在圆环**之前**、计分在圆环**之后**（DOM 顺序 = 上 → 中 → 下，分数仍在环下）',
+      html.indexOf('id="hudTarget"') < html.indexOf('id="hudRing"')
+      && html.indexOf('id="hudRing"') < html.indexOf('id="hudScore"')
+      && html.indexOf('id="hudScore"') < html.indexOf('id="hudSub"'), hudBlock.slice(0, 200));
+    ok('旧的百分比文字（#ringText）已经去掉（环里只放数字）', !/id="ringText"/.test(html));
+
+    // 真实渲染后的**文案**：目标只有「N 次 / N 秒」（数字来自 state.target，单位来自动作自己），
+    // 名称是另一个元素（不再像以前那样和目标挤在同一个胶囊里）。
+    const targetText = elements.get('hudTarget').textContent;
+    const nameText = elements.get('hudName').textContent;
+    ok('目标文案仍然是「N 次」（数字来自 state.target，不是写死的）',
+      targetText === `${api.state.target} 次`, targetText);
+    ok('名称（#hudName）有自己的文案，且不含目标数字（名称 / 目标已经是两个元素）',
+      nameText.trim().length > 0 && !nameText.includes(String(api.state.target)), nameText);
+
+    // 三者的**中心 x**：同一舞台尺寸下必须完全相同（= 圆心那条竖线）。
+    // 桩 DOM 没有真实布局，数值来自 app.js 的纯函数 hudColumnGeom()（就是 CSS 那个居中列的模型，
+    // ?probe=1 的 JSON 里读的也是同一个函数）。
+    const g = api.hudColumnGeom(api.stageSize());
+    ok('目标 / 圆环 / 计分三者的中心 x 完全相同（同一个居中列的同一根竖线）',
+      g.rows.target.cx === g.rows.ring.cx && g.rows.ring.cx === g.rows.score.cx
+      && g.rows.ring.cx === g.cx,
+      `target=${g.rows.target.cx} ring=${g.rows.ring.cx} score=${g.rows.score.cx}`);
+    ok('这根竖线就是圆心：cx = 左内边距 + 圆环直径 / 2（列宽 = 圆环直径 = --ring-px）',
+      Math.abs(g.cx - (g.left + g.ringPx / 2)) < 1e-9
+      && g.ringPx === api.hudRingPx() && g.left === api.HUD_COLUMN_PAD_X,
+      `cx=${g.cx} left=${g.left} ring=${g.ringPx}`);
+    ok('圆环自己也对称地挂在同一根竖线上（left / right 的中点 = cx）',
+      Math.abs((g.rows.ring.left + g.rows.ring.right) / 2 - g.cx) < 1e-9);
+    // 目标文案比圆环还宽时（长文案 / 大字号）：整列一起变宽，三者**仍然**共用同一根竖线
+    const wide = api.hudColumnGeom(api.stageSize(), { targetW: g.ringPx + 60, scoreW: g.ringPx - 20 });
+    ok('目标比圆环还宽时，圆环仍然居中在同一根竖线上（三者中心 x 依旧相等）',
+      wide.colW === g.ringPx + 60
+      && wide.rows.target.cx === wide.rows.ring.cx && wide.rows.ring.cx === wide.rows.score.cx
+      && Math.abs(wide.rows.ring.left - (wide.cx - wide.ringPx / 2)) < 1e-9,
+      `colW=${wide.colW} cx=${wide.cx}`);
+    // 舞台尺寸变了（手机横屏 / 全屏 / 窄屏）也不改这根竖线：列贴左内边距摆，不按舞台宽度换算
+    ok('换舞台尺寸（844×390 / 1920×1080 / 560×320）三者仍然对齐、竖线位置不变',
+      [{ w: 844, h: 390 }, { w: 1920, h: 1080 }, { w: 560, h: 320 }].every((s) => {
+        const q = api.hudColumnGeom(s);
+        return q.cx === g.cx && q.rows.target.cx === q.rows.ring.cx && q.rows.ring.cx === q.rows.score.cx;
+      }));
   }
 
   // 现在流程是「校准 → 开始 → 计数」：校准阶段不计数、不计分

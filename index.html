@@ -114,31 +114,43 @@
           </div>
 
           <!-- HUD（用户要求）：
-               · 左上角 = 运动名称（放大）+ 紧跟其后的本组目标（「20 次」/「45 秒」，弱化一档）；
-               · 名称下面就是**进度圆环**（原来显示次数/秒数的位置），圆环里包着计次/计时的大数字
-                 —— 数字字号由 app.js 的 hudValueFontSize(ringPx, text) 按位数算，
+               · **画面顶部正中** = 运动名称（#hudName，与目标同一档字号的大标题）；
+                 两侧各留出「退出圆环直径 + 间隙」，长名字单行省略 —— 绝不钻进右上角的退出圆环；
+               · 左上角只剩动作图标（#hudIcon）；
+               · 图标下面是一根**居中列**（.hud-stack，flex 列 + align-items: center）：
+                 **本组目标**（「20 次」/「45 秒」）→ **进度圆环** → **分数**，从上到下就是这三个，
+                 三者的中心 x 完全相同（= 圆心那条竖线）；
+               · 圆环里包着计次/计时的大数字 —— 数字字号由 app.js 的 hudValueFontSize(ringPx, text) 按位数算，
                  读到 100 / 1000 / 100 秒以上时自动缩小，永远不出圈；
-               · 分数仍然紧贴在**圆环下方**（金色胶囊），位置关系不变；
                · 进度百分比不再单独写字：圆环本身就是进度（环里只放数字）。
                右上角那个位置让给常驻的「退出」圆环（#cornerExit），见下方。 -->
           <div class="hud" id="hud" hidden>
+            <!-- 顶部居中：运动名称（用户要求「把运动名称放到画面顶部的中央」） -->
+            <div class="hud-top">
+              <span id="hudName"></span>
+            </div>
             <div class="hud-left">
               <div class="hud-badge">
-                <span id="hudIcon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.596 12.768a2 2 0 1 0 2.829-2.829l-1.768-1.767a2 2 0 0 0 2.828-2.829l-2.828-2.828a2 2 0 0 0-2.829 2.828l-1.767-1.768a2 2 0 1 0-2.829 2.829z"/><path d="m2.5 21.5 1.4-1.4"/><path d="m20.1 3.9 1.4-1.4"/><path d="M5.343 21.485a2 2 0 1 0 2.829-2.828l1.767 1.768a2 2 0 1 0 2.829-2.829l-6.364-6.364a2 2 0 1 0-2.829 2.829l1.768 1.767a2 2 0 0 0-2.828 2.829z"/><path d="m9.6 14.4 4.8-4.8"/></svg></span><span class="hud-title"><span id="hudName"></span><span class="hud-target" id="hudTarget"></span></span>
+                <span id="hudIcon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.596 12.768a2 2 0 1 0 2.829-2.829l-1.768-1.767a2 2 0 0 0 2.828-2.829l-2.828-2.828a2 2 0 0 0-2.829 2.828l-1.767-1.768a2 2 0 1 0-2.829 2.829z"/><path d="m2.5 21.5 1.4-1.4"/><path d="m20.1 3.9 1.4-1.4"/><path d="M5.343 21.485a2 2 0 1 0 2.829-2.828l1.767 1.768a2 2 0 1 0 2.829-2.829l-6.364-6.364a2 2 0 1 0-2.829 2.829l1.768 1.767a2 2 0 0 0-2.828 2.829z"/><path d="m9.6 14.4 4.8-4.8"/></svg></span>
               </div>
-              <!-- 进度圆环（= 计次的位置）：环里是次数 / 秒数，字号由 JS 按环内径动态收放 -->
-              <div class="hud-ring" id="hudRing">
-                <svg viewBox="0 0 120 120" aria-hidden="true">
-                  <circle class="ring-bg" cx="60" cy="60" r="52"></circle>
-                  <circle class="ring-fg" id="ringFg" cx="60" cy="60" r="52"></circle>
-                </svg>
-                <div class="hud-ring-center">
-                  <span class="hud-value" id="hudValue">0</span>
-                  <span class="hud-unit" id="hudUnit"></span>
+              <!-- 目标 / 圆环 / 计分：**同一个居中列**（三者的中心 x 完全相同） -->
+              <div class="hud-stack">
+                <!-- 本组目标（「20 次」/「45 秒」）：在计数圆环**正上方**，与圆心纵向对齐 -->
+                <div class="hud-target" id="hudTarget"></div>
+                <!-- 进度圆环（= 计次的位置）：环里是次数 / 秒数，字号由 JS 按环内径动态收放 -->
+                <div class="hud-ring" id="hudRing">
+                  <svg viewBox="0 0 120 120" aria-hidden="true">
+                    <circle class="ring-bg" cx="60" cy="60" r="52"></circle>
+                    <circle class="ring-fg" id="ringFg" cx="60" cy="60" r="52"></circle>
+                  </svg>
+                  <div class="hud-ring-center">
+                    <span class="hud-value" id="hudValue">0</span>
+                    <span class="hud-unit" id="hudUnit"></span>
+                  </div>
                 </div>
+                <!-- 分数：紧贴圆环下方（用户要求「计分依然放在圆环的下方」），并与圆心纵向对齐 -->
+                <div class="hud-score" id="hudScore">0</div>
               </div>
-              <!-- 分数：紧贴圆环下方（用户要求「计分依然放在圆环的下方，保持不变」，并且用另一种颜色） -->
-              <div class="hud-score" id="hudScore">0</div>
               <div class="hud-sub" id="hudSub"></div>
               <div class="hud-extra" id="hudExtra"></div>
             </div>

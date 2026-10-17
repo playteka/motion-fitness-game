@@ -503,11 +503,15 @@ kbd {
 }
 .hud[hidden] { display: none; }
 /**
- * 左上角这一列：名称胶囊 → 进度圆环（环里包着次数/秒数）→ 分数 → 提示。
+ * 左上角这一列：动作图标 → 目标 / 圆环 / 计分那一列 → 提示。
  *
  * `max-width` 是给**右上角的常驻退出圆环**让位（用户要求：「退出圆环从左上角移到右上角，
  * 移动后要保证它不压住新的进度圆环 / HUD 内容」）：右边界永远停在「圆环左边缘再往左 30px」，
- * 所以哪怕动作名很长（英文的 "Standing Forward Fold"）也只会换行，不会钻到圆环底下。
+ * 所以哪怕文案很长也只会换行，不会钻到圆环底下。
+ *
+ * 注意 `align-items: flex-start`：这一列里 `.hud-stack` 的**左边缘**和图标 / 提示对齐，
+ * 而圆环是这一列里最宽的一行（`--ring-px`），所以圆环的左边缘 == 列的左边缘，
+ * 目标与分数的中心 == 圆心 == 列的左边缘 + `--ring-px / 2`（几何见 app.js 的 `hudColumnGeom()`）。
  */
 .hud-left {
   display: flex;
@@ -515,11 +519,58 @@ kbd {
   align-items: flex-start;
   max-width: calc(100% - var(--ring-px) - 48px);
 }
+/**
+ * **画面顶部正中**的标题条 —— 运动名称（用户要求：「把运动名称放到画面顶部的中央」）。
+ *
+ * 横向是**真正的画面中线**：`left: 50%` + `translateX(-50%)`（不是「左栏里的居中」）。
+ * `width: max-content` 是必需的：绝对定位只给了 `left: 50%` 时，自动宽度会按「到右边界还剩多少」
+ * （= 半个舞台）去收缩，长名字会被提前截断、而且不是对称缩进；写死 `max-content` 再由
+ * `max-width` 收口，才是「以中线为中心、两侧同时缩进」。
+ *
+ * 避让右上角那颗常驻的退出圆环（`#ringQuickExit`，圆心 / 直径由 app.js 的 `exitRingLayout()` 一处给）：
+ *   `max-width = 100% − 2 × (--ring-px + 24px + --safe-right)`
+ *   → 标题右边缘 = 舞台宽 − --ring-px − 24px − safe-right，
+ *   → 退出圆环左边缘 = 舞台宽 − safe-right − 18px − --ring-px，
+ *   两者**恒差 6px**，任何视口宽度 / 刘海 / 伪全屏下都不会压到圆环。
+ * （`--safe-right` 也一起扣，是为了让「居中的标题」在带刘海的横屏上仍然对称地躲开圆环。）
+ * 还放不下就由 `#hudName` **单行省略** —— 标题永远只占一行，不会长高去压下面的目标 / 圆环。
+ */
+.hud-top {
+  position: absolute;
+  top: calc(var(--safe-top) + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+  width: max-content;
+  max-width: calc(100% - 2 * (var(--ring-px) + 24px + var(--safe-right)));
+  pointer-events: none;
+}
+/**
+ * 运动名称（用户两轮要求：「左上角的运动名称可以适当放大」→「字体再放大一些」→
+ * 现在挪到顶部正中，字号**沿用这一档**）。
+ *
+ * 与 `.hud-target` 必须是**同一个 clamp**（用户要求「动作名称和运动目标次数或时长，字体调整为一样大小」，
+ * 测试逐字比对两处的 font-size）。
+ */
+#hudName {
+  font-size: clamp(20px, 2.05vw, 28px);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+  /* 太长时**单行省略**：绝不让标题换行长高去压目标 / 圆环 */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* 没有胶囊底了，压在可能很亮的视频上 —— 用深色投影保住可读性 */
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9), 0 6px 26px rgba(0, 0, 0, 0.55);
+}
+/* 左上角那颗动作图标（名称已经搬到顶部正中，这里只剩图标；深色 scrim 不变） */
 .hud-badge {
   display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;               /* 名称 + 目标：窄屏放不下就换行，绝不溢出胶囊 */
-  gap: 6px 8px;
   max-width: 100%;
   background: rgba(9, 16, 26, 0.72);
   border: 1px solid var(--line);
@@ -529,51 +580,44 @@ kbd {
   font-weight: 600;
 }
 /**
- * 运动名称（用户要求「左上角的运动名称可以适当放大」→ 再要求「字体再放大一些」）：13.5px → 20~28px，
- * 用 clamp 跟着视口走，小屏仍然能整句塞进胶囊（放不下就换行，不裁切）。
+ * 目标 / 圆环 / 计分这一列 —— 用户两条要求：
+ *   「把**目标次数**放在计数圆环的上方，和圆心纵向对齐」；
+ *   「**计分**也与圆心纵向对齐」。
+ *
+ * 做法：三者放进**同一个** flex 列 + `align-items: center`：
+ *   · 列宽 = 最宽的那一行（正常就是圆环直径 `--ring-px`）；
+ *   · 每一行都在这条列宽里居中 → 三者的中心 x 恒等于「列左边缘 + 列宽 / 2」= **圆心那条竖线**。
+ * 所以 `.hud-target` / `.hud-score` 上**不许有左右外边距**（会偏半格，见 `.hud-target`）。
+ * 同一份几何在 app.js 的 `hudColumnGeom()` 里也是纯函数（probe 的 JSON 与测试都读它）。
  */
-#hudName {
-  font-size: clamp(20px, 2.05vw, 28px);
-  font-weight: 800;
-  line-height: 1.2;
-  letter-spacing: 0.2px;
+.hud-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 100%;
 }
 /**
- * 名称后面紧跟的「本组目标」（`20 次` / `45 秒`）。
+ * 圆环**正上方**的「本组目标」（计数类 `20 次`、计时 / 限时类 `45 秒`）。
  *
  * 用户要求「动作名称和运动目标次数或时长，**字体调整为一样大小**」→ 与 `#hudName` 用**同一档字号**；
- * 层级只靠颜色区分（次要色 + 稍轻的字重），不再靠小一号字号，所以两行读起来是一句话。
- * 不换行（`20 次` 不该被拆成两行）。
+ * 层级只靠颜色区分（次要色），不再靠小一号字号。
+ * `margin` 的左右必须是 0：这一行靠 `.hud-stack` 的 `align-items: center` 与圆心对齐，
+ * 任何左侧外边距都会把它往右推半格（以前「紧跟名称」用的 `margin-left: 6px` 已经删掉）。
  */
 .hud-target {
-  margin-left: 6px;
+  margin: 0 0 6px;
   font-size: clamp(20px, 2.05vw, 28px);
   font-weight: 800;
   color: var(--muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
 }
-.hud-value {
-  /* 兜底字号；运行时由 app.js 的 syncHudValueSize() 按圆环内径 + 位数写行内 font-size */
-  font-size: 64px;
-  font-weight: 800;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 6px 30px rgba(0, 0, 0, 0.6);
-  transition: transform 0.12s ease;
-}
-/* 跳动时只轻轻放大（1.16 会让 4 位数在圆环里临时出圈） */
-.hud-value.pop { transform: scale(1.08); }
-.hud-unit { font-size: clamp(10px, 0.95vw, 13px); color: var(--muted); font-weight: 600; line-height: 1; }
-.hud-sub { color: #cfe4f7; font-size: 13.5px; margin-top: 3px; opacity: 0.9; }
-.hud-extra { color: var(--muted); font-size: 12.5px; margin-top: 6px; min-height: 18px; }
-
-/* 进度圆环：位置从右上角挪到了「计次的位置」（名称下方、分数上方），尺寸仍是共用变量 */
+/* 进度圆环：名称下面、分数上方，尺寸仍是共用变量；`align-items: center` 保证环心在那一列的中线上 */
 .hud-ring {
   position: relative;
   width: var(--ring-px);
   height: var(--ring-px);
-  margin-top: 2px;
 }
 .hud-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
 /* 环心：次数 / 秒数 + 单位，绝对居中，永远不参与点击 */
@@ -598,11 +642,26 @@ kbd {
   transition: stroke-dashoffset 0.25s ease, stroke 0.25s ease;
   filter: drop-shadow(0 0 6px rgba(52, 229, 196, 0.5));
 }
+.hud-value {
+  /* 兜底字号；运行时由 app.js 的 syncHudValueSize() 按圆环内径 + 位数写行内 font-size */
+  font-size: 64px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 6px 30px rgba(0, 0, 0, 0.6);
+  transition: transform 0.12s ease;
+}
+/* 跳动时只轻轻放大（1.16 会让 4 位数在圆环里临时出圈） */
+.hud-value.pop { transform: scale(1.08); }
+.hud-unit { font-size: clamp(10px, 0.95vw, 13px); color: var(--muted); font-weight: 600; line-height: 1; }
+.hud-sub { color: #cfe4f7; font-size: 13.5px; margin-top: 3px; opacity: 0.9; }
+.hud-extra { color: var(--muted); font-size: 12.5px; margin-top: 6px; min-height: 18px; }
 /* 分数：紧贴**圆环下方**、单独一种颜色（金色）——
-   用户要求「计分依然放在圆环的下方，保持不变」 */
+   用户要求「计分依然放在圆环的下方，保持不变」，并且「与圆心纵向对齐」
+   → 它在 `.hud-stack` 里（环之后的那一行），左右外边距为 0，由列宽居中到圆心那条竖线 */
 .hud-score {
   display: inline-block;
-  margin-top: 8px;
+  margin: 8px 0 0;
   padding: 2px 13px;
   border-radius: 999px;
   background: rgba(9, 16, 26, 0.6);
