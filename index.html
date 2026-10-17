@@ -2,9 +2,16 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1" />
   <title>Motion Fitness</title>
   <link rel="stylesheet" href="style.css" />
+    <!-- 手机支持：PWA（添加到主屏后无浏览器栏，是 iOS 上最接近真全屏的正规做法）+ 伪全屏兜底 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="体感健身">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#0b1017">
+    <link rel="manifest" href="manifest.json">
 </head>
 <body>
   <div class="app">
@@ -85,6 +92,16 @@
               <p id="maskText" data-i18n="ui.maskText"></p>
               <button class="primary-btn" id="btnStartCam" type="button" data-i18n="ui.startCam"></button>
               <p class="mask-hint" data-i18n="ui.maskHint"></p>
+              <!-- 摄像头诊断面板（手机 / PC 通用，可折叠）：
+                   打不开摄像头时列出浏览器此刻的客观事实（isSecureContext / 协议 / mediaDevices /
+                   getUserMedia 报错 / 画面尺寸 / video 属性）+ 一句对应的中文处置建议。
+                   内容由 app.js 的 renderCameraDiag() 填，PC 上同样是这块小面板，不占地方。 -->
+              <details class="cam-diag" id="camDiag" hidden>
+                <summary data-i18n="diag.title"></summary>
+                <p class="cam-diag-lead" data-i18n="diag.lead"></p>
+                <ul class="cam-diag-list" id="camDiagList"></ul>
+                <p class="cam-diag-advice" id="camDiagAdvice"></p>
+              </details>
             </div>
           </div>
 
@@ -471,5 +488,29 @@
   </div>
 
   <script type="module" src="src/app.js"></script>
+  <script>
+    /*
+     * iPhone 全屏兜底（用户反馈「Safari 和 Chrome 都无法进入全屏模式」）：
+     * iOS Safari 没有元素级 Fullscreen API（只有 iPad 有），全屏按钮点了没反应。
+     * 这里只在**没有原生全屏能力**时接管：切 #stage 的 CSS 伪全屏（页面其余部分被盖住，
+     * HUD / 判定进度条 / 圆环都保留）。有原生能力的浏览器完全不进这段逻辑，行为不变。
+     */
+    (function () {
+      var canNative = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled
+        || document.documentElement.webkitRequestFullscreen);
+      if (canNative) return;
+      function stageEl() { return document.getElementById('stage'); }
+      function isOn() { var s = stageEl(); return !!(s && s.classList.contains('pseudo-fullscreen')); }
+      function paint(on) {
+        var s = stageEl();
+        if (s) s.classList.toggle('pseudo-fullscreen', on);
+        document.body.classList.toggle('pseudo-fullscreen', on);
+      }
+      var btn = document.getElementById('btnFullscreen');
+      if (btn) btn.addEventListener('click', function () { paint(!isOn()); });
+      window.addEventListener('orientationchange', function () { if (isOn()) paint(false); });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isOn()) paint(false); });
+    })();
+  </script>
 </body>
 </html>

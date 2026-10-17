@@ -357,6 +357,52 @@ kbd {
 .mask-inner p { color: var(--muted); font-size: 13.5px; margin: 0 0 16px; }
 .mask-hint { margin-top: 14px !important; font-size: 12.5px !important; color: #6f819c !important; }
 
+/* ---------- 摄像头诊断面板（打不开时列出客观事实，可折叠） ----------
+   手机上打不开摄像头时，用户最需要的是「一眼看出卡在哪」：isSecureContext / 协议 /
+   mediaDevices / getUserMedia 报错 / 画面尺寸 / video 属性，最后一句处置建议。
+   默认收起来（<details> 原生折叠），PC 上同样能看到，不打扰；失败行标红。 */
+.cam-diag {
+  margin-top: 14px;
+  text-align: left;
+  background: rgba(9, 16, 26, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  max-height: 40vh;
+  overflow: auto;
+}
+.cam-diag[hidden] { display: none; }
+.cam-diag summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #cfe4f7;
+  /* 折叠标题也是个点击目标：手机上要够 44px 才好按 */
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.cam-diag-lead { color: var(--muted) !important; margin: 4px 0 8px !important; font-size: 12px !important; }
+.cam-diag-list { list-style: none; margin: 0; padding: 0; }
+.cam-diag-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  border-top: 1px dashed rgba(255, 255, 255, 0.07);
+  /* 事实行里全是英文标识符 / 长错误串，允许断行，别把面板撑爆 */
+  overflow-wrap: anywhere;
+}
+.cam-diag-k { color: var(--muted); flex: 0 0 auto; }
+.cam-diag-v { color: #e8f1fb; flex: 1 1 auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cam-diag-row.is-bad .cam-diag-v { color: var(--bad); font-weight: 600; }
+.cam-diag-advice {
+  margin: 10px 0 0 !important;
+  color: #ffe9b8 !important;
+  font-size: 12.5px !important;
+  line-height: 1.55;
+}
+
 /* ---------- HUD ---------- */
 
 .hud {
@@ -1915,4 +1961,23 @@ kbd {
   .exercise-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .ex-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   .search-field { min-width: 0; width: 100%; }
+}
+
+/**
+ * iPhone 伪全屏（用户反馈：「iPhone 上 Safari 和 Chrome 都无法进入全屏模式」）。
+ *
+ * iOS Safari **没有元素级 Fullscreen API**（requestFullscreen 在 iPhone 上不存在，只有 iPad 有），
+ * 所以没有原生全屏可用时改走这一套：#stage 固定铺满视口，页面其余部分被盖住，
+ * 我们自己的 HUD / 判定进度条 / 圆环全部保留（这正是 <video>.webkitEnterFullscreen() 做不到的）。
+ * 类由 index.html 末尾那段内联兜底脚本切换（只在没有原生全屏能力时才生效）。
+ */
+body.pseudo-fullscreen { overflow: hidden; }
+#stage.pseudo-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  z-index: 9999;
+  border-radius: 0;
+  background: #070c15;
 }
