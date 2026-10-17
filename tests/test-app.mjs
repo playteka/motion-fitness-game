@@ -883,14 +883,15 @@ console.log('\n[3] 动作 → 计分 → 音效与界面');
     elements.get('hudScore').textContent === `${det.score} 分`,
     `${elements.get('hudScore').textContent} vs ${det.score}`);
   // 用户要求（新版 HUD 三条）：
-  //   · **运动名称**在**画面顶部正中**（不再在左上角胶囊里）；
+  //   · **运动名称**在**左上角**（和动作图标同一行胶囊），**排在目标次数上面**；
   //   · **目标次数**在计数圆环的**正上方**，与**圆心纵向对齐**；
-  //   · **计分**在圆环下方，同样与圆心纵向对齐 —— 三者同在一个居中列。
+  //   · **计分**在圆环下方，同样与圆心纵向对齐 —— 这三者同在一个居中列（名称不在那条中线上）。
   {
-    const hudBlock = /class="hud-top"([\s\S]*?)id="hudSub"/.exec(html)?.[1] || '';
-    ok('顶部标题（.hud-top）和左栏（#hudRing / #hudScore）都在同一个 .hud 里',
-      hudBlock.includes('id="hudName"') && hudBlock.includes('id="hudRing"')
-      && hudBlock.includes('id="hudScore"'), hudBlock.slice(0, 120));
+    const hudBlock = /class="hud-left"([\s\S]*?)id="hudSub"/.exec(html)?.[1] || '';
+    ok('名称 / 目标 / 圆环 / 计分都在同一个左栏（.hud-left）里，名称排在目标**前面**（左上角、目标次数上面）',
+      hudBlock.includes('id="hudName"') && hudBlock.includes('id="hudTarget"')
+      && hudBlock.indexOf('id="hudName"') < hudBlock.indexOf('id="hudTarget"')
+      && hudBlock.includes('id="hudRing"') && hudBlock.includes('id="hudScore"'), hudBlock.slice(0, 120));
     ok('次数（#hudValue）在进度圆环（#hudRing）里面',
       html.indexOf('id="hudRing"') < html.indexOf('id="hudValue"')
       && html.indexOf('id="hudValue"') < html.indexOf('id="hudScore"'));
@@ -913,6 +914,8 @@ console.log('\n[3] 动作 → 计分 → 音效与界面');
     // 桩 DOM 没有真实布局，数值来自 app.js 的纯函数 hudColumnGeom()（就是 CSS 那个居中列的模型，
     // ?probe=1 的 JSON 里读的也是同一个函数）。
     const g = api.hudColumnGeom(api.stageSize());
+    ok('hudColumnGeom() 只管 **目标 / 圆环 / 计分** 三者（名称不在这条中线上）',
+      Object.keys(g.rows).join(',') === 'target,ring,score');
     ok('目标 / 圆环 / 计分三者的中心 x 完全相同（同一个居中列的同一根竖线）',
       g.rows.target.cx === g.rows.ring.cx && g.rows.ring.cx === g.rows.score.cx
       && g.rows.ring.cx === g.cx,

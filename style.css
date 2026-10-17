@@ -503,15 +503,15 @@ kbd {
 }
 .hud[hidden] { display: none; }
 /**
- * 左上角这一列：动作图标 → 目标 / 圆环 / 计分那一列 → 提示。
+ * 左上角这一列：**名称那一行胶囊** → 目标 / 圆环 / 计分那一列 → 提示，全部靠左（`align-items: flex-start`）。
  *
  * `max-width` 是给**右上角的常驻退出圆环**让位（用户要求：「退出圆环从左上角移到右上角，
- * 移动后要保证它不压住新的进度圆环 / HUD 内容」）：右边界永远停在「圆环左边缘再往左 30px」，
- * 所以哪怕文案很长也只会换行，不会钻到圆环底下。
+ * 移动后要保证它不压住新的进度圆环 / HUD 内容」）：右边界永远停在「退出圆环左边缘再往左 30px」，
+ * 所以哪怕动作名很长（英文的 "Standing Forward Fold"）也只会**单行省略**，不会钻到圆环底下。
  *
- * 注意 `align-items: flex-start`：这一列里 `.hud-stack` 的**左边缘**和图标 / 提示对齐，
- * 而圆环是这一列里最宽的一行（`--ring-px`），所以圆环的左边缘 == 列的左边缘，
- * 目标与分数的中心 == 圆心 == 列的左边缘 + `--ring-px / 2`（几何见 app.js 的 `hudColumnGeom()`）。
+ * 注意这一列的宽度关系：`.hud-stack` 里圆环是**最宽**的那一行（`--ring-px`），
+ * 于是圆环的左边缘 == 这一列的左边缘，目标与分数的中心 == 圆心 == 列的左边缘 + `--ring-px / 2`
+ * （几何见 app.js 的 `hudColumnGeom()`）。**名称不参与这条中线**：它在上面那行胶囊里、与图标一起靠左。
  */
 .hud-left {
   display: flex;
@@ -520,57 +520,35 @@ kbd {
   max-width: calc(100% - var(--ring-px) - 48px);
 }
 /**
- * **画面顶部正中**的标题条 —— 运动名称（用户要求：「把运动名称放到画面顶部的中央」）。
- *
- * 横向是**真正的画面中线**：`left: 50%` + `translateX(-50%)`（不是「左栏里的居中」）。
- * `width: max-content` 是必需的：绝对定位只给了 `left: 50%` 时，自动宽度会按「到右边界还剩多少」
- * （= 半个舞台）去收缩，长名字会被提前截断、而且不是对称缩进；写死 `max-content` 再由
- * `max-width` 收口，才是「以中线为中心、两侧同时缩进」。
- *
- * 避让右上角那颗常驻的退出圆环（`#ringQuickExit`，圆心 / 直径由 app.js 的 `exitRingLayout()` 一处给）：
- *   `max-width = 100% − 2 × (--ring-px + 24px + --safe-right)`
- *   → 标题右边缘 = 舞台宽 − --ring-px − 24px − safe-right，
- *   → 退出圆环左边缘 = 舞台宽 − safe-right − 18px − --ring-px，
- *   两者**恒差 6px**，任何视口宽度 / 刘海 / 伪全屏下都不会压到圆环。
- * （`--safe-right` 也一起扣，是为了让「居中的标题」在带刘海的横屏上仍然对称地躲开圆环。）
- * 还放不下就由 `#hudName` **单行省略** —— 标题永远只占一行，不会长高去压下面的目标 / 圆环。
- */
-.hud-top {
-  position: absolute;
-  top: calc(var(--safe-top) + 14px);
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  justify-content: center;
-  width: max-content;
-  max-width: calc(100% - 2 * (var(--ring-px) + 24px + var(--safe-right)));
-  pointer-events: none;
-}
-/**
- * 运动名称（用户两轮要求：「左上角的运动名称可以适当放大」→「字体再放大一些」→
- * 现在挪到顶部正中，字号**沿用这一档**）。
+ * 运动名称（用户两轮要求：「左上角的运动名称可以适当放大」→「字体再放大一些」，
+ * 后来一度挪到顶部正中，最后又要求「**还是把运动的名称放在左上角，在目标次数的上面**」→ 回到这一行胶囊里）。
  *
  * 与 `.hud-target` 必须是**同一个 clamp**（用户要求「动作名称和运动目标次数或时长，字体调整为一样大小」，
  * 测试逐字比对两处的 font-size）。
+ * 太长时**单行省略**（`min-width: 0` 让它在胶囊里能被压窄）：名称永远只占一行，
+ * 既不会换行把 HUD 撑高，也不会被截成两行去顶目标 / 圆环。
  */
 #hudName {
   font-size: clamp(20px, 2.05vw, 28px);
   font-weight: 800;
   line-height: 1.2;
   letter-spacing: 0.2px;
-  /* 太长时**单行省略**：绝不让标题换行长高去压目标 / 圆环 */
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  /* 没有胶囊底了，压在可能很亮的视频上 —— 用深色投影保住可读性 */
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9), 0 6px 26px rgba(0, 0, 0, 0.55);
 }
-/* 左上角那颗动作图标（名称已经搬到顶部正中，这里只剩图标；深色 scrim 不变） */
+/**
+ * 左上角那一行：动作图标 + 运动名称（深色 scrim 是压视频用的，别去掉）。
+ * 名称靠左、图标不缩（`flex: 0 0 auto`），宽度上限由外面的 `.hud-left` 给，
+ * 所以名称再长也只是省略号，不会顶到右上角的退出圆环。
+ */
 .hud-badge {
   display: inline-flex;
   align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
   max-width: 100%;
   background: rgba(9, 16, 26, 0.72);
   border: 1px solid var(--line);
@@ -579,14 +557,17 @@ kbd {
   font-size: 13.5px;
   font-weight: 600;
 }
+.hud-badge > #hudIcon { flex: 0 0 auto; }
 /**
  * 目标 / 圆环 / 计分这一列 —— 用户两条要求：
  *   「把**目标次数**放在计数圆环的上方，和圆心纵向对齐」；
  *   「**计分**也与圆心纵向对齐」。
  *
- * 做法：三者放进**同一个** flex 列 + `align-items: center`：
+ * 做法：这三者放进**同一个** flex 列 + `align-items: center`：
  *   · 列宽 = 最宽的那一行（正常就是圆环直径 `--ring-px`）；
  *   · 每一行都在这条列宽里居中 → 三者的中心 x 恒等于「列左边缘 + 列宽 / 2」= **圆心那条竖线**。
+ * ⚠️ **名称不在这一列里**（它在上面那行胶囊里、靠左）：`hudColumnGeom()` 也**只管这三者**，
+ *    名称不参与那条中线 —— 用户要的是「名称在左上角、在目标次数上面」。
  * 所以 `.hud-target` / `.hud-score` 上**不许有左右外边距**（会偏半格，见 `.hud-target`）。
  * 同一份几何在 app.js 的 `hudColumnGeom()` 里也是纯函数（probe 的 JSON 与测试都读它）。
  */
@@ -613,7 +594,7 @@ kbd {
   font-variant-numeric: tabular-nums;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
 }
-/* 进度圆环：名称下面、分数上方，尺寸仍是共用变量；`align-items: center` 保证环心在那一列的中线上 */
+/* 进度圆环：目标下面、分数上方，尺寸仍是共用变量；`align-items: center` 保证环心在那一列的中线上 */
 .hud-ring {
   position: relative;
   width: var(--ring-px);

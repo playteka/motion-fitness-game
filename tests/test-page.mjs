@@ -260,35 +260,42 @@ console.log('\n[3] 静态资源与模型文件');
       && (ringSrc.match(/key === 'corner' \? RING_TOUCH_TOL : 1/g) || []).length >= 2);
   }
 
-  /* ---- 新版 HUD 版面（用户三条要求，外加「退出圆环仍在右上角」这条约束）----
-     ① **运动名称在画面顶部正中**（.hud-top，长名字单行省略、两侧给退出圆环让位）；
+  /* ---- 新版 HUD 版面（用户要求，含「名称回到左上角」这一笔）----
+     ① **运动名称在左上角**（和动作图标同一行胶囊），**排在目标次数上面**、靠左 —— 不参与下面那条中线；
      ② **本组目标在计数圆环正上方**，与**圆心纵向对齐**（`20 次` / `45 秒`）；
-     ③ **计分在圆环下方**，同样与圆心纵向对齐 —— 三者同在一个居中列（.hud-stack）；
+     ③ **计分在圆环下方**，同样与圆心纵向对齐 —— 目标 / 环 / 分三者同在一个居中列（.hud-stack）；
      ④ 「退出」圆环仍在右上角（绘制与判定同一份坐标，见 test-app 的真实渲染断言）。 */
   {
     const src = read('src/app.js');
-    // ① 用户要求「把运动名称放到画面顶部的中央」→ 名称搬进 .hud-top，左上角胶囊里只剩图标
+    // ① 用户改主意：「还是把运动的名称放在左上角，在目标次数的上面」→ 回到左栏顶部那行胶囊（图标 + 名称）
     const badge = /<div class="hud-badge">([\s\S]*?)<\/div>/.exec(html)?.[1] || '';
-    const topBlock = /<div class="hud-top">([\s\S]*?)<\/div>/.exec(html)?.[1] || '';
-    ok('运动名称在**画面顶部正中**的标题容器（.hud-top）里',
-      topBlock.includes('id="hudName"'), topBlock.slice(0, 120));
-    ok('名称已经搬出左上角胶囊（.hud-badge 里只剩动作图标，名称 / 目标都不在胶囊里）',
-      badge.includes('id="hudIcon"') && !badge.includes('id="hudName"') && !badge.includes('id="hudTarget"'),
-      badge.slice(0, 120));
-    const topRule = /\.hud-top\s*\{([^}]*)\}/.exec(css)?.[1] || '';
-    ok('顶部标题 absolute + left: 50% + translateX(-50%)：真正居中画面（不是左栏里的居中）',
-      /position:\s*absolute/.test(topRule) && /left:\s*50%/.test(topRule)
-      && /transform:\s*translateX\(-50%\)/.test(topRule), topRule.trim().slice(0, 160));
-    ok('顶部标题给右上角的退出圆环让位（max-width 两侧各扣「圆环直径 + 间隙 + 右侧安全区」）',
-      /width:\s*max-content/.test(topRule)
-      && /max-width:\s*calc\(100%\s*-\s*2\s*\*\s*\(var\(--ring-px\)\s*\+\s*24px\s*\+\s*var\(--safe-right\)\)\)/.test(topRule),
-      topRule.trim().slice(0, 200));
+    const hudLeftBlock = /<div class="hud-left">([\s\S]*?)<div class="score-pop"/.exec(html)?.[1] || '';
+    const badgeRule = /\.hud-badge\s*\{([^}]*)\}/.exec(css)?.[1] || '';
     const nameRule = /#hudName\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    ok('运动名称回到了**左上角那一行胶囊**里（.hud-badge 同时有动作图标与名称）',
+      badge.includes('id="hudIcon"') && badge.includes('id="hudName"'), badge.slice(0, 120));
+    ok('名称在左侧 HUD 栏里、**排在目标次数之前**（DOM：名称 → 目标 → 环 → 分）',
+      hudLeftBlock.includes('id="hudName"')
+      && html.indexOf('id="hudName"') < html.indexOf('id="hudTarget"')
+      && html.indexOf('id="hudTarget"') < html.indexOf('id="hudRing"')
+      && html.indexOf('id="hudRing"') < html.indexOf('id="hudScore"'),
+      `${html.indexOf('id="hudName"')} < ${html.indexOf('id="hudTarget"')} < ${html.indexOf('id="hudRing"')}`);
+    ok('上一轮那个顶部居中容器（.hud-top）已经彻底删掉（html 与 css 里都没有残留的死样式）',
+      !/class="hud-top"/.test(html) && !/\.hud-top\s*\{/.test(css));
+    const leftRule = /\.hud-left\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    ok('名称**靠左**（左上角，不是画面居中）：左栏 align-items: flex-start，名称自己不带任何居中偏移',
+      /align-items:\s*flex-start/.test(leftRule)
+      && !/left:\s*50%/.test(nameRule) && !/translateX/.test(nameRule),
+      `left=${leftRule.trim().slice(0, 70)} | name=${nameRule.trim().slice(0, 70)}`);
+    ok('名称与图标同一行（胶囊 inline-flex + 图标不缩），名称可以被压窄后单行省略',
+      /display:\s*inline-flex/.test(badgeRule) && /align-items:\s*center/.test(badgeRule)
+      && /\.hud-badge > #hudIcon\s*\{\s*flex:\s*0 0 auto/.test(css), badgeRule.trim().slice(0, 120));
     ok('运动名称**明显放大**（≥20px，比原来的 13.5px 大一档，又不至于把 HUD 挤爆）',
       /font-size:\s*clamp\(20px/.test(nameRule), nameRule.trim());
-    ok('长名称**单行省略**（不换行 → 标题不会长高去压下面的目标 / 圆环）',
+    ok('长名称**单行省略**（不换行 → 不把 HUD 撑高，也不会顶到右上角的退出圆环）',
       /text-overflow:\s*ellipsis/.test(nameRule) && /white-space:\s*nowrap/.test(nameRule)
-      && /overflow:\s*hidden/.test(nameRule), nameRule.trim().slice(0, 120));
+      && /overflow:\s*hidden/.test(nameRule) && /max-width:\s*100%/.test(nameRule),
+      nameRule.trim().slice(0, 140));
     const targetRule = /\.hud-target\s*\{([^}]*)\}/.exec(css)?.[1] || '';
     const nameSize = /font-size:\s*([^;]+);/.exec(nameRule)?.[1]?.trim() || '';
     const targetSize = /font-size:\s*([^;]+);/.exec(targetRule)?.[1]?.trim() || '';
@@ -304,7 +311,6 @@ console.log('\n[3] 静态资源与模型文件');
     // ② 目标 / 圆环 / 计分：**同一个居中列**（目标在环上方、计分在环下方）
     const valueAnc = ancestorIds(html, 'hudValue') || [];
     const scoreAnc = ancestorIds(html, 'hudScore') || [];
-    const hudLeftBlock = /<div class="hud-left">([\s\S]*?)<div class="score-pop"/.exec(html)?.[1] || '';
     const stackBlock = /<div class="hud-stack"[^>]*>([\s\S]*?)<div class="hud-sub"/.exec(html)?.[1] || '';
     ok('#hudValue 真的在进度圆环（#hudRing）**里面**',
       valueAnc.includes('hudRing'), valueAnc.join('>'));
@@ -341,7 +347,7 @@ console.log('\n[3] 静态资源与模型文件');
       && /safe\.top \+ CORNER_RING_TOP_PX/.test(src)
       && !/stageH - safe\.bottom - CORNER_RING_BOTTOM_PX/.test(src));
     const hudLeftRule = /\.hud-left\s*\{([^}]*)\}/.exec(css)?.[1] || '';
-    ok('HUD 左栏给右上角的退出圆环留出了位置（max-width 扣掉 --ring-px + 间隙，长名称只换行不钻到环底下）',
+    ok('HUD 左栏给右上角的退出圆环留出了位置（max-width 扣掉 --ring-px + 间隙，长名称只单行省略、不钻到环底下）',
       /max-width:\s*calc\(100%\s*-\s*var\(--ring-px\)\s*-\s*48px\)/.test(hudLeftRule), hudLeftRule.trim());
 
     // 数字自动适配：纯函数 + 运行时写行内字号 + resize / 数字变化都重算
