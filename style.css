@@ -66,26 +66,38 @@ body {
 }
 
 /* ------------------------------------------------------------------ *
- * 网页主页专用配色：**高饱和深色渐变**（用户要求「整个网站的 web 主页的底色不好，太暗了，
- * 请改为鲜明的颜色，使得所有的网页看起来更为年轻，有活力」）。
+ * 主页 **与动作页** 共用配色：**高饱和深色渐变**。
  *
- * 为什么挂在 `body.is-home` 这个类上，而不是改 `:root` 里的 `--bg` / `--bg-2`：
- *   运动/摄像头那一页（`#workoutView` / `#stage`）、弹窗、HUD、判定进度条、手势圆环
- *   **全部保持原来的深色** —— 视频上的关节线、HUD 与进度条必须继续看得清。
- *   `is-home` 只由 app.js 在「主页」这一屏加上（showHome / showWorkout），
- *   所以渐变只作用于主页那一屏（含它上方的品牌栏与顶栏图标按钮），切进动作页立刻回到原底色。
+ * 用户要求：「整个网站的 web 主页的底色不好，太暗了，请改为鲜明的颜色，使得所有的网页看起来
+ * 更为年轻，有活力」；后来又明确「在『深蹲』『开合跳』所有这样的**运动页面**，**背景**要改为
+ * 主页那套『紫 / 青 / 薄荷渐变』色」。所以渐变不再只属于主页 —— 动作页（`#workoutView`）的
+ * 整页铺底、视频框外围的 letterbox、侧栏、顶栏、按钮全部跟着换成同一套。
  *
- * 对比度（底线：正文 / 按钮文字 ≥ 4.5:1，大字号标题 ≥ 3:1；实测见下面的数值）：
- *   底色是「高饱和但仍然够深」的三段渐变，最亮处 luminance ≈ 0.10，
- *   浅色文字 `--home-text: #f2f8ff` 在最亮处仍有 **≈ 6.4:1**（`--text` 也有 6.0:1），
- *   叠上卡片/输入框那层白之后最坏是 **5.2:1** —— 都高于 4.5:1。
- *   次要文字在全站是 `--muted: #8fa1bb`，在更亮的底上只有 2.2~2.6:1（不合格），
- *   所以主页作用域内换成 `--home-muted: #e3ecfa`：铺在底上 5.7:1、叠在卡片上 5.1:1、
- *   叠在输入框/按钮上 4.8:1 —— 全部达标。
- *   整屏只有 CSS 渐变：没有位图、没有写死颜色的 SVG、也没有新增动画（不涉及 prefers-reduced-motion）。
+ * **一处定义**：下面 `body.is-home, body.in-workout` 是**唯一**一份渐变数值 —— `--home-*`
+ * 与四层 background（1 层 linear + 3 层 radial 光晕）都只写在这里，两个页面都只引用它。
+ * `is-home` 由 app.js 的 showHome() 加、showWorkout() 去；`in-workout` 反过来加/去，
+ * 两者**互斥**，所以两个页面共用同一张底、切屏时不会同时挂着两个类。
+ * 主页的卡片 / 搜索框等仍用下面 `body.is-home ...` 那几条；动作页的外壳（letterbox / 侧栏 /
+ * 顶栏 / 按钮）走下面「动作页外壳」那一节，同样只引用这里的 --home-* 变量。
+ *
+ * ⚠️ **视频区不算外壳**：`#stage` 里放 video 的那块必须保持中性深色 `#05090f`（见 `.stage`），
+ * 因为上面还要叠关节线 / HUD / 圆环 / 判定进度条 —— 彩色底会直接毁掉对比度。
+ * 压在视频上的 HUD 胶囊、判定进度条容器、全屏按钮也**不改底色**、继续用各自的深色半透明
+ * scrim（见 `.hud-badge` / `.criteria-bar` / `.stage-btn`），也不给 `<video>` 加任何滤镜，
+ * 这样文字在「视频可能很亮 + 周围是彩色渐变」时仍然 ≥4.5:1。
+ *
+ * 对比度（底线：正文 / 按钮文字 ≥ 4.5:1，大字号标题 ≥ 3:1；下面是按真实四层背景采样实测的值）：
+ *   最亮处 luminance ≈ 0.09；`--home-text: #f2f8ff` 在底上 **7.0:1**、叠上卡片白 **6.2:1**；
+ *   `--home-muted: #e3ecfa` 底上 6.3:1、卡片上 5.5:1、卡片再叠一档白 5.2:1。
+ *   全站次要色 `--muted: #8fa1bb` 在亮底上只有 2.5~2.9:1（不合格），动作页外壳作用域内
+ *   统一改引用 `--home-muted`；另外几处写死颜色的次要字（#bfd4ea / #cfe0f2 / #9fd8ff / #6f819c）
+ *   在亮底上只有 1.9~4.3:1，也在「动作页外壳」一节逐条提到 --home-text / --home-muted /
+ *   --home-accent。整屏只有 CSS 渐变：没有位图、没有写死颜色的 SVG、也没有新增动画
+ *   （不涉及 prefers-reduced-motion）。
  * ------------------------------------------------------------------ */
-body.is-home {
-  /* 渐变三段：深紫 → 青蓝 → 薄荷深绿 */
+body.is-home,
+body.in-workout {
+  /* 渐变三段：深紫 → 青蓝 → 薄荷深绿（主页与动作页共用，只此一份数值） */
   --home-bg-1: #2b0f6b;
   --home-bg-2: #0c4a6e;
   --home-bg-3: #0d5f57;
@@ -93,12 +105,14 @@ body.is-home {
   --home-glow-1: rgba(52, 229, 196, 0.15);
   --home-glow-2: rgba(56, 189, 248, 0.13);
   --home-glow-3: rgba(167, 139, 250, 0.14);
-  /* 卡片 / 描边在主页上略提亮一档，层次在更亮的底上仍然清楚（弹窗与动作页不受影响） */
+  /* 卡片 / 描边在亮底上略提亮一档，层次仍然清楚（弹窗保持原来的深色，不受影响） */
   --home-card: rgba(255, 255, 255, 0.055);
   --home-card-2: rgba(255, 255, 255, 0.08);
   --home-line: rgba(255, 255, 255, 0.18);
   --home-text: #f2f8ff;
   --home-muted: #e3ecfa;
+  /* 亮底上的品牌青：`--accent` 铺在卡片上只有 4.1:1，用它当强调文字才够 4.5:1（5.0:1） */
+  --home-accent: #7cf5dc;
   background:
     radial-gradient(1150px 620px at 6% -14%, var(--home-glow-3), transparent 62%),
     radial-gradient(980px 540px at 102% 2%, var(--home-glow-2), transparent 58%),
@@ -156,6 +170,65 @@ body.is-home .start-gesture {
 }
 body.is-home .start-gesture:hover { border-color: #7dd3fc; }
 body.is-home .start-gesture-sub { color: var(--home-text); }
+
+/* ================================================================== *
+ * 动作页外壳：**和主页同一套高饱和深色**（深蹲 / 开合跳……这些运动页面）
+ *
+ * 页面本身的渐变铺底已经由上面的 `body.is-home, body.in-workout` 给到（同一份变量）。
+ * 这一节只补「外壳」：视频框外围的 letterbox（`.stage-card`）、侧栏卡片（`.card`）、顶栏
+ * 图标按钮、开始 / 暂停 / 复位这些按钮的底色与描边 —— 全部改引用 --home-*，
+ * 不再出现第二份颜色数值。
+ *
+ * ⚠️ 作用域只到 `body.in-workout .topbar` 与 `body.in-workout #workoutView`：
+ *   弹窗（#settingsModal / #exerciseModal / 记录弹窗）和竖屏遮罩都不在里面，
+ *   所以它们继续是原来的深色。
+ * ⚠️ **压在视频上的叠加层故意不在这里改色**（`.hud` / `.hud-badge` / `.hud-score` /
+ *   `.criteria-bar` / `.stage-btn` / `.pose-hint`）：它们各自的深色半透明 scrim 就是为了
+ *   「视频可能很亮 + 周围是彩色渐变」时也保住对比度，改成彩色底反而会掉到 4.5:1 以下。
+ *   同理，`#stage` / `<video>` 也不加任何背景色或滤镜。
+ * ================================================================== */
+
+/* 令牌重映射：卡片 / 描边 / 次要文字在动作页外壳范围内换成主页那一档。
+   这样 `.card` / `.stage-card` / `.ghost-btn` / `.field` / `.mini-btn` 等既有规则
+   不用一条条重写，颜色只来自上面那份 --home-* 定义（--accent 等品牌色不动）。 */
+body.in-workout .topbar,
+body.in-workout #workoutView {
+  --card: var(--home-card);
+  --card-2: var(--home-card-2);
+  --line: var(--home-line);
+  --muted: var(--home-muted);
+}
+
+/* 外壳里几处**写死颜色**的次要文字：在亮底上只有 1.9~4.3:1，统一提亮到主页那一档。
+   （用 --muted 的那批已经跟着上面的令牌重映射走了，这里只补写死的。）
+   ⚠️ 全部挂 `#workoutView`：弹窗是它的兄弟节点（不在里面），所以「运动设定」弹窗里的
+   同名类（.card-title 等）仍然保持原来的深色配色。 */
+body.in-workout #workoutView .card-title,
+body.in-workout #workoutView .howto-list,
+body.in-workout #workoutView .camera-hint { color: var(--home-text); }   /* #bfd4ea 3.1:1 / #cfe0f2 4.3:1 / #9fd8ff 3.8:1 → 6.2:1 */
+body.in-workout #workoutView .calib-lead { color: var(--home-muted); }    /* #9fd8ff 4.3:1 → 5.5:1 */
+body.in-workout #workoutView .calib-badge { color: var(--home-text); }    /* #9fd8ff 在蓝色底上 3.5:1 → 5.0:1 */
+body.in-workout #workoutView .step-pts { color: var(--home-muted); }      /* #6f819c 在深色条上 2.3:1 → 7.4:1 */
+body.in-workout #workoutView .target-readout { color: var(--home-accent); }  /* --accent 4.1:1 → 5.0:1 */
+body.in-workout #workoutView .summary-note { color: var(--home-accent); }    /* --accent 4.1:1 → 5.0:1 */
+body.in-workout #workoutView .card.muted { opacity: 1; }                  /* 0.75 会把 --home-muted 压到 4.5 以下 */
+body.in-workout #workoutView .calib-item.soft { opacity: 1; }             /* 0.72 同上 */
+/* 要领清单的状态色：绿 / 琥珀在原深底上是 6+ ，铺在亮卡上会掉到 3.5~3.8，这里各提亮一档 */
+body.in-workout #workoutView .step-item.done .step-pts { color: #bbf7d0; }
+body.in-workout #workoutView .step-item.current .step-pts { color: #fef3c7; }
+body.in-workout #workoutView .cue-line.warn { color: #fde68a; }
+body.in-workout #workoutView .cue-line.good { color: #bbf7d0; }
+/* 要领分数那个小药丸：原来的「青色字 + 青色半透明底」在亮底上只有 2.5:1，
+   改成品牌色实底 + 深字（和 `.primary-btn` 同一套做法，9.6:1）。 */
+body.in-workout #workoutView .score-badge {
+  background: linear-gradient(135deg, rgba(52, 229, 196, 0.92), rgba(56, 189, 248, 0.88));
+  border-color: rgba(52, 229, 196, 0.9);
+  color: #04211c;
+  box-shadow: 0 6px 18px rgba(52, 229, 196, 0.22);
+}
+/* 「运动设定」那行小按钮的 hover：原来的红 / 青在亮卡上不够 4.5:1 */
+body.in-workout #workoutView .mini-btn:hover { color: #fecaca; }
+body.in-workout #workoutView .card-title-row .mini-btn:hover { color: var(--home-accent); }
 
 
 h1, h2, h3 { margin: 0; font-weight: 700; }

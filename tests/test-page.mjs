@@ -1474,6 +1474,76 @@ console.log('\n[8] 手机浏览器支持：布局、触摸与性能档');
     && /state\.session === 'running' && !state\.wakeLock\) requestWakeLock\(\)/.test(app));
 }
 
+/* ------------------------------------------------------------------ *
+ * 9. 动作页与主页共用配色（用户要求「在深蹲 / 开合跳所有这样的运动页面，背景要改为主页那套
+ *    紫 / 青 / 薄荷渐变色」）—— 渐变只定义一次，视频区保持中性深色
+ * ------------------------------------------------------------------ */
+
+console.log('\n[9] 动作页与主页共用同一套渐变（视频区保持中性深色）');
+{
+  const css = read('style.css');
+  // 注释里也会提到变量名 / 选择器（解释「为什么」），断言只看真正的代码
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const app = read('src/app.js');
+
+  // --- 一处定义：--home-* 只出现一次，并且写在与主页共用的那个块里 ---
+  const tokens = ['--home-bg-1', '--home-bg-2', '--home-bg-3', '--home-glow-1', '--home-glow-2',
+    '--home-glow-3', '--home-card', '--home-card-2', '--home-line', '--home-text', '--home-muted', '--home-accent'];
+  const counts = tokens.map((k) => [k, (code.match(new RegExp(k + ':', 'g')) || []).length]);
+  ok('配色变量一处定义：12 个 --home-* 在 style.css 里各只定义一次（没有第二份数值）',
+    counts.every(([, n]) => n === 1), counts.map(([k, n]) => `${k}:${n}`).join(' '));
+
+  const shared = /body\.is-home,\s*\nbody\.in-workout\s*\{([\s\S]*?)\n\}/.exec(code)?.[1] || '';
+  ok('主页与动作页共用同一个声明块（body.is-home, body.in-workout）',
+    shared.length > 0 && tokens.every((k) => shared.includes(k + ':')),
+    shared ? shared.replace(/\s+/g, ' ').slice(0, 90) : '没找到共用块');
+
+  // --- 渐变写法：深紫 → 青蓝 → 薄荷 + 三层品牌色光晕，钉在视口上 ---
+  ok('动作页背景就是主页那套渐变（3 层 radial 光晕 + 1 层 linear 三段 + background-attachment: fixed）',
+    (shared.match(/radial-gradient\(/g) || []).length === 3
+    && /linear-gradient\(158deg,\s*var\(--home-bg-1\)\s*0%/.test(shared)
+    && /var\(--home-bg-2\)\s*50%/.test(shared)
+    && /var\(--home-bg-3\)\s*100%/.test(shared)
+    && /background-attachment:\s*fixed/.test(shared));
+
+  // --- 动作页挂牌类 + 只重映射令牌，不复制颜色数值 ---
+  const remap = /body\.in-workout \.topbar,\s*\nbody\.in-workout #workoutView\s*\{([\s\S]*?)\n\}/.exec(code)?.[1] || '';
+  ok('动作页外壳走 body.in-workout，并把卡片 / 描边 / 次要文字重映射到 --home-*（不另抄数值）',
+    /--card:\s*var\(--home-card\)/.test(remap)
+    && /--card-2:\s*var\(--home-card-2\)/.test(remap)
+    && /--line:\s*var\(--home-line\)/.test(remap)
+    && /--muted:\s*var\(--home-muted\)/.test(remap));
+  ok('动作页里写死颜色的次要文字也提到 --home-* 档（保住 4.5:1，且只改 #workoutView，不串到弹窗）',
+    /body\.in-workout #workoutView \.card-title[\s\S]{0,200}?color:\s*var\(--home-text\)/.test(code)
+    && /body\.in-workout #workoutView \.step-pts[\s\S]{0,80}?color:\s*var\(--home-muted\)/.test(code)
+    && /body\.in-workout #workoutView \.target-readout[^{]*\{[^}]*color:\s*var\(--home-accent\)/.test(code)
+    && /body\.in-workout #workoutView \.score-badge[^{]*\{[^}]*color:\s*#04211c/.test(code)
+    && (code.match(/body\.in-workout \.card-title/g) || []).length === 0);
+
+  // --- 硬约束：视频区（#stage 里放 video 的那块）仍然是中性深色 ---
+  const stage = /^\.stage\s*\{([\s\S]*?)\n\}/m.exec(code)?.[1] || '';
+  ok('视频区仍是中性深色底（.stage 的 #05090f，没被渐变顶掉）',
+    /background:\s*#05090f/.test(stage) && !/--home-/.test(stage));
+  ok('动作页配色不碰 #stage / video / HUD / 判定条 / 全屏按钮（叠加层保留自己的深色 scrim）', (() => {
+    const selectors = [...code.matchAll(/([^{}]*body\.in-workout[^{}]*)\{/g)].map((m) => m[1]);
+    const leak = selectors.filter((s) => /(?:#stage\b|\bvideo\b|\.stage(?!-)|\.hud(?!-)|\.criteria-bar|\.pose-hint|\.score-pop)/.test(s));
+    return leak.length === 0;
+  })(), '被动作页配色串味的叠加层选择器');
+  ok('压在视频上的三块仍用深色半透明 scrim（HUD 胶囊 / 判定条 / 全屏按钮）',
+    /\.hud-badge\s*\{[^}]*background:\s*rgba\(9, 16, 26, 0\.72\)/.test(code)
+    && /\.criteria-bar\s*\{[^}]*background:\s*rgba\(8, 15, 26, 0\.72\)/.test(code)
+    && /\.stage-btn\s*\{[^}]*background:\s*rgba\(8, 15, 26, 0\.6\)/.test(code)
+    && !/body\.in-workout[^{]*\{[^}]*filter:/.test(code));
+
+  // --- showHome / showWorkout 成对开关（行为侧另由 test-app.mjs 跑真实 app.js） ---
+  const showHomeFn = /function showHome\([\s\S]*?\n\}/.exec(app)?.[0] || '';
+  const showWorkoutFn = /function showWorkout\([\s\S]*?\n\}/.exec(app)?.[0] || '';
+  ok('showHome() 加 is-home、摘 in-workout（回主页时两个类互斥）',
+    /classList\.add\('is-home'\)/.test(showHomeFn) && /classList\.remove\('in-workout'\)/.test(showHomeFn));
+  ok('showWorkout() 加 in-workout、摘 is-home（进动作页也铺同一套渐变）',
+    /classList\.add\('in-workout'\)/.test(showWorkoutFn) && /classList\.remove\('is-home'\)/.test(showWorkoutFn));
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
 if (failures.length) {
   console.log('失败项：');

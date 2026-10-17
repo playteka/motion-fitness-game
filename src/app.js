@@ -471,9 +471,11 @@ function showHome({ syncRoute = true } = {}) {
   renderCalibration(null);
   $('homeView').hidden = false;
   $('workoutView').hidden = true;
-  // 主页那一屏专用的高饱和渐变底（见 style.css 的 body.is-home）：
-  // 运动/摄像头页、弹窗、HUD、进度条都用原来的深色底，所以这个类只在这里加、showWorkout 里去掉。
+  // 主页那一屏的高饱和渐变底（见 style.css 的 `body.is-home, body.in-workout`）：
+  // 动作页也用**同一套**配色（同一份 --home-* 定义），只是挂牌类不同；
+  // 两个类互斥 —— 这里保证「回主页」时不会同时挂着动作页那个类。
   document.body.classList.add('is-home');
+  document.body.classList.remove('in-workout');
   $('btnHome').hidden = true;
   $('btnExercise').hidden = true;   // 运动设定只在动作页出现
   closeSettings();
@@ -491,7 +493,10 @@ function showWorkout() {
   state.homeMode = false;
   applyMusic();          // 回到动作页再把背景音乐接上（用户选择保留着）
   resumeCameraFromHome(); // 摄像头之前被主页关掉了就自动重开
-  // 动作页回到全站默认的深色底（主页那层高饱和渐变只属于主页那一屏，见 style.css 的 body.is-home）
+  // 动作页也铺**主页那套**高饱和渐变（同一份 --home-* 定义，见 style.css 顶部那条共用规则）：
+  // 只把「视频区」留成中性深色（.stage 的 #05090f），叠加层各自保留深色 scrim。
+  // 与 `is-home` 互斥：进动作页就把主页那个类摘掉。
+  document.body.classList.add('in-workout');
   document.body.classList.remove('is-home');
   $('homeView').hidden = true;
   $('workoutView').hidden = false;

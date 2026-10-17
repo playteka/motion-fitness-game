@@ -286,6 +286,10 @@ if (app) {
     `实际 ${documentStub.querySelectorAll('.cat-block').length}`);
   ok('boot 后停在主页（动作页隐藏）', elements.get('homeView').hidden === false
     && elements.get('workoutView').hidden === true);
+  ok('boot 停在主页时 body 挂着 is-home（没有动作页那个类）',
+    documentStub.body.classList.contains('is-home')
+    && !documentStub.body.classList.contains('in-workout'),
+    String(documentStub.body.className));
   ok('设置弹窗默认关闭', elements.get('settingsModal').hidden === true);
   ok('主页上不校准也不计数（浏览动作时不会偷偷开始一组）',
     api.state.homeMode === true && api.state.session === 'idle',
@@ -300,10 +304,18 @@ if (app) {
     api.state.homeMode === false && elements.get('workoutView').hidden === false
     && api.state.exerciseId === 'bridge' && api.state.session === 'calibrating',
     `homeMode=${api.state.homeMode} session=${api.state.session} ex=${api.state.exerciseId}`);
+  ok('动作页 body 挂 in-workout 且摘掉 is-home（两个类互斥、共用同一套渐变）',
+    documentStub.body.classList.contains('in-workout')
+    && !documentStub.body.classList.contains('is-home'),
+    String(documentStub.body.className));
   api.showHome();
   ok('返回主页：回到 idle 且动作页隐藏',
     api.state.homeMode === true && elements.get('workoutView').hidden === true,
     `homeMode=${api.state.homeMode}`);
+  ok('回主页 body 换回 is-home 且摘掉 in-workout（成对开关）',
+    documentStub.body.classList.contains('is-home')
+    && !documentStub.body.classList.contains('in-workout'),
+    String(documentStub.body.className));
   // 地址栏路由：#/ex/<id> 能在刷新后直接进同一个动作；后退能回主页
   api.openExercise('crunch');
   ok('进动作页会写地址栏路由（#/ex/<id>）',
