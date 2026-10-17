@@ -1298,8 +1298,9 @@ const gestureState = {
 /**
  * 换屏滑动要走的距离（像素）。
  *
- * 「整行滑动」要求最靠里的那一颗（居中的「返回」）也完全滑出画面，
+ * 「整行滑动」要求最靠里的那一颗（画面中线上那一格）也完全滑出画面，
  * 所以距离 = 半个舞台宽 + 圆环半径 + 余量；所有元素**平移同样的距离**，看起来才是一整行刚性移动。
+ * （右上角那颗「返回」不在这条滑动带上 —— 它常驻在 `.menu-screen` 之外。）
  */
 function menuSlideDistance(size) {
   const g = menuBandGeom(size);
@@ -1352,6 +1353,18 @@ function ringPx(key) {
   const el = ringEl(key);
   const w = el?.clientWidth || 0;
   if (w > 0) return w;
+  /**
+   * 自己量不到（元素还藏着）→ 量那块专门用来读 `--ring-px` 的**探针**（`#ringSizeProbe`，宽高 =
+   * `var(--ring-px)`，含 720 / 560px 两条小屏覆盖，`visibility: hidden` 仍然有布局）。
+   *
+   * 为什么需要探针：菜单里那颗「↩ 返回」圆环要和**动作页的退出圆环**一样大，而退出圆环在菜单里
+   * 是 `display: none`（`clientWidth = 0`）。以前退回到「按视口宽度套 clamp 参数」的公式，
+   * 它只对宽屏成立 —— 小屏那两条 `--ring-px` 覆盖（84 / 72px）它并不知道，于是菜单里那颗会
+   * 比动作页那颗大一圈。量探针拿到的就是 CSS 真正算出来的直径，任何窗口都同数。
+   */
+  const probe = $('ringSizeProbe');
+  const pw = probe?.clientWidth || 0;
+  if (pw > 0) return pw;
   const vw = (typeof window !== 'undefined' && window.innerWidth) || stageSize().w;
   return Math.round(clamp(vw * RING_PX_FALLBACK.vw, RING_PX_FALLBACK.min, RING_PX_FALLBACK.max));
 }
@@ -1380,6 +1393,49 @@ function ringCenter(key, stageW, stageH) {
 function ringHitRadius(key, size) {
   if (key === 'corner') return ringPx('corner') * RING_HIT_RATIO;
   return RING_HIT * size.w;
+}
+
+/**
+ * **右上角「退出 / 返回」圆环的完整几何**（用户要求：「把菜单界面中的退出圆环始终放在右上角，
+ * 且各界面退出圆环的位置和大小都保持一致。」）
+ *
+ * 两处「退出 / 返回」圆环**共用这一份**：
+ *   - 动作页那颗常驻的「退出」圆环（`#ringQuickExit`，容器 `#cornerExit`）；
+ *   - 手势菜单右上角那颗常驻的「↩ 返回」圆环（`#menuBack`，容器 `#menuCornerExit`）。
+ *
+ * 来源只有这两个函数：
+ *   - 圆心 = `ringCenter('corner', …)`（右边距 18px / 上边距 16px + safe-area，**唯一的坐标定义**）；
+ *   - 直径 = `ringPx('corner')`（= CSS 的 `--ring-px`，**唯一的尺寸定义**）。
+ *
+ * 派生量也都在这里，谁都不许另写一套：
+ *   - `hit`   = `ringHitRadius('corner', …) × RING_TOUCH_TOL` —— 和动作页那颗**实际生效**的
+ *               判定圈同一个数（菜单里的「返回」不再用别的判定口径）；
+ *   - `start` = 半径 × `MENU_START_RATIO` —— 菜单的「起手」迟滞，和菜单里其它圆环同一个口径；
+ *   - `iconSize` = 直径 × 0.62 —— 和 CSS 的 `.corner-ring .ring-label--icon`
+ *               （`calc(var(--ring-px) * 0.62)`）同一个比例。
+ *
+ * 为什么「所在容器不同」不会带来偏移：两个容器都铺满舞台（`inset: 0`），`stageSize()` 量的就是
+ * 舞台像素，`ringCenter('corner', …)` 给的也是舞台像素 —— 所以两者的屏幕坐标是**同一个数**，
+ * 不存在「菜单里再换算一次」的等价偏移。
+ *
+ * ⚠️ 位置与尺寸**只有这一处**：`layoutExitRing()` 用它摆两个元素，`menuBackItem()` 用它给菜单的
+ * 判定提供 cx/cy/半径 —— 绘制与判定同源。
+ *
+ * （`MENU_START_RATIO` 的 `const` 在本文件靠后，运行时才取；`exitRingLayout` 只在 boot 之后被调用。）
+ */
+function exitRingLayout(size = stageSize()) {
+  const px = ringPx('corner');
+  const r = px / 2;
+  const c = ringCenter('corner', size.w, size.h);
+  return {
+    cx: c.x,
+    cy: c.y,
+    px,
+    r,
+    hit: ringHitRadius('corner', size) * RING_TOUCH_TOL,
+    start: r * MENU_START_RATIO,
+    iconSize: px * 0.62,
+  };
 }
 
 /**
@@ -1788,22 +1844,29 @@ function layoutGestureRings() {
   layoutCornerRing();
 }
 
-/** 右上角退出圆环的位置（右上角、HUD 名称胶囊同一水平线；全屏/横竖屏切换后要重摆） */
-function layoutCornerRing() {
-  const el = ringEl('corner');
+/**
+ * 把一颗「退出 / 返回」圆环摆到右上角（**唯一摆法**）。
+ *
+ * 动作页的退出圆环（`layoutCornerRing`）和手势菜单的返回圆环（`layoutMenu` 末尾）都调它，
+ * 位置 / 直径全部来自 `exitRingLayout()` —— 所以两者在屏幕上同坐标、同尺寸。
+ */
+function layoutExitRing(el, size = stageSize()) {
   if (!el) return;
-  const size = stageSize();
   // ⚠️ 先清掉行内尺寸再量：行内 px 会盖住 CSS 的 `--ring-px`，如果不清，
   // 上一次量到的旧尺寸会被一直沿用 —— 窗口一改大小（或跨过小屏断点）圆环就不跟着变了，
   // 于是又和 HUD 那个进度圆环不一样大（这正是用户反馈的那个「看起来小一圈」）。
   el.style.width = '';
   el.style.height = '';
-  const px = ringPx('corner');
-  const c = ringCenter('corner', size.w, size.h);
-  el.style.left = `${c.x}px`;
-  el.style.top = `${c.y}px`;
-  el.style.width = `${px}px`;
-  el.style.height = `${px}px`;
+  const g = exitRingLayout(size);
+  el.style.left = `${g.cx}px`;
+  el.style.top = `${g.cy}px`;
+  el.style.width = `${g.px}px`;
+  el.style.height = `${g.px}px`;
+}
+
+/** 右上角退出圆环的位置（右上角、HUD 名称胶囊同一水平线；全屏/横竖屏切换后要重摆） */
+function layoutCornerRing() {
+  layoutExitRing(ringEl('corner'));
 }
 
 function ringEl(key) {
@@ -2164,7 +2227,7 @@ const MENU_CELL_MIN_PX = 170;
  * 想触发必须真的停在那一格上，代价是「按住连翻」变慢（每 `MENU_NAV_HOLD_MS` 一页）。
  */
 /**
- * 导航圆环（返回 / 上一页 / 下一页）的蓄力时间：**5 秒**。
+ * 「上一页 / 下一页」与右上角那颗「↩ 返回」的蓄力时间：**5 秒**。
  *
  * 用户反馈：「因为返回、上一页、下一页始终在相同的位置，容易在返回之后持续返回，
  * 这几个圆环的沙漏时间我觉得可以增加到 5 秒。」
@@ -2177,7 +2240,7 @@ const MENU_CELL_MIN_PX = 170;
  *     那一条仍然是快的，圆环只是兜底 + 鼠标 / 键盘（页码、← / →）也有。
  */
 const MENU_NAV_HOLD_MS = 5000;
-/** 三个导航圆环的 kind：都用上面那个 5 秒蓄力（返回 / 上一页 / 下一页） */
+/** 这三颗圆环（右上角「返回」/ 上一页 / 下一页）都用上面那个 5 秒蓄力 */
 const MENU_NAV_KINDS = { back: 1, prev: 1, next: 1 };
 /** 悬停多久开始念这一格的名字（先让人看清自己指着哪一个，再决定要不要停 3 秒） */
 const MENU_ANNOUNCE_P = 0.28;
@@ -2231,8 +2294,10 @@ const MENU_SWIPE_QUIET_MS = 130;
  *   第一级 `menuLevel === 0`：5 个分类（上肢 / 下肢 / 核心 / 全身 / 拉伸）；
  *   第二级 `menuLevel === 1`：当前分类下的动作。
  *
- * 「↩ 返回」**不在这里**了（用户要求「固定在画面上，不参与翻页」）——见 `menuNavLayout()`：
- * 它和「◀ 上一页 / 下一页 ▶」一起常驻在画面顶部，所以每页专心放 5 个选项。
+ * 「↩ 返回」**不在这里**了（用户要求「固定在画面上，不参与翻页」）——它现在和动作页那颗
+ * 「退出」圆环一样**常驻在右上角**（见 `menuBackItem()` / `exitRingLayout()`，同一个位置、同一个
+ * `--ring-px` 直径）；「◀ 上一页 / 下一页 ▶」仍然在选项行正上方那一条带子里（`menuNavLayout()`）。
+ * 所以每页专心放 5 个选项。
  */
 function menuItems() {
   if (state.menuLevel === 0) {
@@ -2322,8 +2387,8 @@ function menuBandGeom(size) {
  * ⚠️ 列数只看屏幕宽度（不看这一页有几个），格子的高度按**最满的一页**算（`menuBandGeom`），
  * 这样**每一页的圆环都一样大、都在同一行高度上**，最后一页不满就整行居中（offset）。
  *
- * 导航圆环（返回 / 上一页 / 下一页）**不占这里的宽度** —— 它们在选项**上方**那一条带子里
- * （见 `menuNavLayout()`），所以 5 个选项能把整幅宽度用满。
+ * 导航圆环（上一页 / 下一页）**不占这里的宽度** —— 它们在选项**上方**那一条带子里
+ * （见 `menuNavLayout()`）；「↩ 返回」则被摘到了右上角（`menuBackItem()`），所以 5 个选项能把整幅宽度用满。
  */
 function menuRingLayout(size) {
   const info = menuPageInfo(size);
@@ -2355,19 +2420,21 @@ function menuRingLayout(size) {
 }
 
 /**
- * 常驻的**导航圆环**：选项那一行**正上方、居中并排的三个圆环** ——
- * `[◀ 上一页] [↩ 返回] [下一页 ▶]`（只有一页时中间那颗「返回」单独居中）。
+ * 常驻的**翻页圆环**：选项那一行**正上方**、以舞台中线为轴左右对称的两颗 ——
+ * `[◀ 上一页] [下一页 ▶]`。
  *
- * 用户要求（几轮反馈累积）：「『返回』固定在画面上、不参与翻页」→「都太小了、位置太偏，
- * 上一页和下一页放到 5 个圆环上方，返回在左上角可以、但可以更大」→
- * 「干脆把返回和上一页下一页这三个圆环都放在一起，并且都放在中间，整体这三个圆环还可以更大一点点」。
- * 于是：
- *   - 三个导航圆环**并排居中**（关于画面中线对称），「返回」夹在两个翻页圆环中间；
- *   - 尺寸再放大一档（`min(宽,高) × 18.5%`，1280×720 上 Ø133px，封顶 200px），
- *     图标与名字都在圆圈里（见 style.css 的 `.menu-ring--back/--prev/--next`）；
- *   - 只有真有第二页时「上一页 / 下一页」才出现 —— 只有一页时「返回」自己居中，位置不跳。
+ * ⚠️ 用户最新要求（「上一页和下一页的位置不要动，仅仅移动退出圆环」）：
+ * 这两颗的 **cx / cy / 直径 / 字号 / 蓄力时间一律维持原样** —— 公式与参数一个字都没改，
+ * 只是把原来夹在中间那颗「↩ 返回」摘出去放到右上角（见 `menuBackItem()`）。
+ * 所以：
+ *   - 直径仍是 `min(宽,高) × 18.5%`（下限 96 / 窄屏 64，封顶 200），**不跟** `--ring-px` 走；
+ *   - 「上一页」在中线左侧 `step`、「下一页」在右侧 `step`（`step = 直径 + 间距`），
+ *     和改动前「三颗并排居中」时前后两颗的坐标**逐像素一致**（那时 mid = 1，i = 0 / 2 →
+ *     `w/2 ∓ step`）；中间那颗的槽位空着，而不是把两颗挤向中间。
  *
- * 三个都在**标题之下、选项之上**那一条带子里，判定圈和选项圆环不会重叠。
+ * 历史（别走回头路）：曾经是 `[上一页] [返回] [下一页]` 三颗并排居中（「返回」在中间）；
+ * 用户后来的要求是「退出 / 返回圆环在所有界面都固定在右上角、大小一致」，于是「返回」被摘到
+ * 右上角，和动作页的退出圆环共用 `exitRingLayout()`。
  */
 function menuNavLayout(size) {
   const narrow = size.w < 620;
@@ -2385,18 +2452,17 @@ function menuNavLayout(size) {
   const optTopEdge = g.top + (g.cellH - g.dia) / 2;
   const headerBottom = size.h * 0.14;
   const cy = clamp((headerBottom + optTopEdge) / 2, r + 4, optTopEdge - 6 - r);
-  /** 三个圆环的顺序：翻页圆环分列两边，「返回」在中间（只有一页时只剩中间那一颗） */
-  const page = menuHasPages(size);
-  const list = page
-    ? [['page:prev', 'prev', -1, t('menu.prev')], ['back', 'back', 0, t('menu.back')],
-      ['page:next', 'next', 1, t('menu.next')]]
-    : [['back', 'back', 0, t('menu.back')]];
+  /** 只有真有第二页时这两颗才出现（「返回」在右上角，一直都有） */
+  if (!menuHasPages(size)) return [];
   const step = r * 2 + gap;
-  const mid = (list.length - 1) / 2;
-  return list.map(([id, kind, dir, name], i) => ({
+  /** 中线两侧各一颗：`side = -1` = 上一页、`+1` = 下一页 */
+  return [
+    ['page:prev', 'prev', -1, t('menu.prev'), -1],
+    ['page:next', 'next', 1, t('menu.next'), 1],
+  ].map(([id, kind, dir, name, side]) => ({
     // 箭头也改成**线条画**的（`navPoseSVG`），不再用字体里的 ◀ ▶ ↩ —— 字形风格和线条图标不一致
     id, kind, dir, name, icon: '', poseIcon: navPoseSVG(kind), sub: '',
-    cx: size.w / 2 + (i - mid) * step,
+    cx: size.w / 2 + side * step,
     cy,
     r,
     hit: r * MENU_NAV_HIT_RATIO,
@@ -2406,8 +2472,36 @@ function menuNavLayout(size) {
   }));
 }
 
-/** 菜单里某一格的真实元素（按 data-ex 找） */
+/**
+ * 菜单右上角那颗常驻的「↩ 返回」圆环（**菜单里的「退出」就是它**）。
+ *
+ * 用户要求：「把菜单界面中的退出圆环始终放在右上角，且各界面退出圆环的位置和大小都保持一致。」
+ * —— 它的 cx / cy / 直径 / 判定半径全部来自 `exitRingLayout()`，和动作页那颗「退出」圆环**同一个数**；
+ * 它的元素 `#menuBack` 也在 `.menu-screen` **之外**（常驻，不跟换屏滑动），见 index.html。
+ *
+ * 行为照旧（`selectFromMenu`）：第一级 = 回网页首页、第二级 = 回分类；蓄力 5 秒（`MENU_NAV_KINDS.back`）。
+ */
+function menuBackItem(size = stageSize()) {
+  const g = exitRingLayout(size);
+  return {
+    id: 'back', kind: 'back', dir: 0, name: t('menu.back'), icon: '', poseIcon: navPoseSVG('back'), sub: '',
+    cx: g.cx, cy: g.cy, px: g.px, r: g.r, hit: g.hit, start: g.start,
+    // 圈里**只画图标、不写文字**（用户要求），字号由 CSS 的 `.corner-ring .ring-label--icon` 给
+    //（= calc(var(--ring-px) * 0.62)，和动作页退出圆环同一比例）；这里留着字段只为形状一致
+    nameSize: 0,
+    iconSize: g.iconSize,
+  };
+}
+
+/** 菜单右上角那颗「返回」圆环的按钮元素（常驻在 `.menu-screen` 之外，不在 `#menuGrid` 里） */
+function menuBackEl() { return $('menuBack'); }
+
+/**
+ * 菜单里某一格的真实元素（按 data-ex 找）。
+ * 「↩ 返回」例外：它**常驻在 `.menu-screen` 之外**（不在 `#menuGrid` 里），有自己的固定 id。
+ */
 function menuRingEl(id) {
+  if (id === 'back') return menuBackEl();
   const grid = $('menuGrid');
   if (!grid || !grid.children) return null;
   return [...grid.children].find((el) => el?.dataset?.ex === id) || null;
@@ -2422,11 +2516,13 @@ function buildMenu() {
   const info = menuPageInfo(size);
   const nav = menuNavLayout(size);
   for (const it of menuItems().slice(info.from, info.to)) {
-    grid.appendChild(menuItemEl(it));      // 动作 / 分类 / 返回
+    grid.appendChild(menuItemEl(it));      // 动作 / 分类
   }
   for (const it of nav) {
     grid.appendChild(menuItemEl(it));      // 上一页 / 下一页
   }
+  // 「↩ 返回」不在这里：它是常驻元素（#menuBack），和动作页的退出圆环同一套坐标/尺寸，
+  // 见 index.html 与 menuBackItem() —— 换屏滑动不会把它带走。
 }
 
 /** 造一个菜单圆环（动作格与翻页圆环共用同一套结构与动画） */
@@ -2483,6 +2579,18 @@ function layoutMenu() {
     const sub = el.querySelector?.('.menu-sub');
     if (sub) sub.style.fontSize = `${clamp(it.nameSize * 0.72, 10, 20).toFixed(1)}px`;
   }
+  /**
+   * 右上角那颗「↩ 返回」：**和动作页的退出圆环走同一个摆放函数**（`layoutExitRing`），
+   * 位置与直径都来自 `exitRingLayout()` —— 两个界面逐像素同坐标、同尺寸。
+   * 圈里的图标字号由 CSS 给（`.corner-ring .ring-label--icon` = calc(--ring-px × 0.62)），
+   * 和退出圆环同一个比例，所以这里不再写行内字号。
+   */
+  layoutExitRing(menuBackEl(), size);
+}
+
+/** 菜单右上角「返回」圆环的图标（线条箭头，和动作页退出圆环同一颗；文字含义在 aria-label 上） */
+function syncMenuBackIcon() {
+  setRingIcon($('menuBackLabel'), menuBackEl(), 'back', t('menu.back'));
 }
 
 /** 重建菜单（换层 / 换页 / 换语言 / 进菜单时）：标题、页码、文案与位置一起刷新 */
@@ -2498,6 +2606,10 @@ function renderMenu() {
   // 底部提示随层级换：第一级的「↩ 返回」是回网页首页，第二级的是回分类
   const foot = $('menuFoot');
   if (foot) foot.textContent = state.menuLevel === 0 ? t('menu.hint') : t('menu.hintIn');
+  syncMenuBackIcon();        // 右上角那颗「返回」的图标 / aria-label 跟着语言走
+  // 右上角那颗「返回」常驻（在 `.menu-screen` 之外、不参与换屏滑动）：只要菜单在，它就在
+  const cornerBox = $('menuCornerExit');
+  if (cornerBox) cornerBox.hidden = false;
   buildMenu();
   layoutMenu();
   renderMenuPage();
@@ -2813,8 +2925,12 @@ function updateMenu(landmarks, now) {
   const size = stageSize();
   const st = gestureState.menu;
   const palms = palmPoints(landmarks, size.w, size.h, state.settings.mirror);
-  // 选项圆环 + 顶部常驻的导航圆环（返回 / 上一页 / 下一页）一起判：取**最近**的那一个
-  const layout = [...menuRingLayout(size), ...menuNavLayout(size)];
+  /**
+   * 选项圆环 + 那两颗翻页圆环 + **右上角常驻的「↩ 返回」**一起判：取**最近**的那一个。
+   * 「返回」的 cx/cy/判定半径来自 `menuBackItem()` → `exitRingLayout()`，和动作页那颗
+   * 退出圆环同一个数（绘制与判定同源，不在菜单里另算一套）。
+   */
+  const layout = [...menuRingLayout(size), ...menuNavLayout(size), menuBackItem(size)];
 
   // ---- 闸 3：手掌速度（px/s）。没看到的那只手把记录清掉，免得它再出现时算出一个假速度
   const speed = { L: 0, R: 0 };
@@ -2976,8 +3092,9 @@ function closeMenu() {
  */
 function selectFromMenu(id) {
   if (!state.menuMode) return;
-  // 「返回」在顶部常驻的导航圆环里（不在 menuItems 里），所以两处一起找
-  const item = [...menuItems(), ...menuNavLayout(stageSize())].find((it) => it.id === id);
+  // 「返回」在右上角常驻（不在 menuItems 里），翻页圆环在顶部那一带，所以三处一起找
+  const item = [...menuItems(), ...menuNavLayout(stageSize()), menuBackItem(stageSize())]
+    .find((it) => it.id === id);
   if (!item) return;
   if (item.kind === 'category') {
     audio.milestone();
@@ -5112,6 +5229,8 @@ function bindUI() {
   $('ringRetry')?.addEventListener('click', () => triggerGesture('retry'));
   // 右上角常驻的「退出」圆环：手或脚停 3 秒是主路径，点一下同样有效
   $('ringQuickExit')?.addEventListener('click', () => triggerCornerExit());
+  // 手势菜单右上角那颗「↩ 返回」（和动作页退出圆环同位置同尺寸）：鼠标 / 触屏点一下同样有效
+  menuBackEl()?.addEventListener('click', () => selectFromMenu('back'));
   // resize 统一走 onViewportChange（它顺带重算 --vh / 设备类名 / 竖屏遮罩），别再单独挂 onStageResize
   document.addEventListener('fullscreenchange', onStageResize);
   $('btnPause').addEventListener('click', () => (state.session === 'paused' ? resumeSession() : pauseSession()));
@@ -5605,6 +5724,8 @@ window.__mfg = {
   // 右上角常驻的「退出」圆环（手或脚进去停 3 秒 → 退出这一组）
   showCornerExit, hideCornerExit, updateCornerExit, triggerCornerExit, syncCornerExit,
   layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, touchSamples, anyTouchInRing, stageSize, onStageResize,
+  // 右上角「退出 / 返回」圆环共用的**唯一**几何与摆放（动作页退出圆环 + 菜单返回圆环）
+  exitRingLayout, layoutExitRing, menuBackItem, menuBackEl, syncMenuBackIcon,
   CORNER_RING_INSET_PX, CORNER_RING_TOP_PX, RING_PX_FALLBACK, RING_HIT_RATIO,
   // HUD 进度圆环里的字号自适应（纯函数，测试直接调）：
   //   hudRingInnerPx(ringPx) → 内径；hudTextWidth(text, fontSize) → 估算宽；hudValueFontSize(ringPx, text) → 字号

@@ -214,6 +214,25 @@
             <!-- 底部提示随层级换（第一级的「↩ 返回」= 回网页首页、第二级 = 回分类），文案见 renderMenu -->
             <div class="menu-foot" id="menuFoot" data-i18n="menu.hint"></div>
             </div>
+
+            <!-- 右上角常驻的「↩ 返回」圆环（用户要求：「把菜单界面中的退出圆环始终放在右上角，
+                 且各界面退出圆环的位置和大小都保持一致」）。
+                 · 位置与尺寸和动作页那颗「退出」圆环**完全一致**：app.js 的 exitRingLayout() 一处算出
+                   （圆心 ringCenter('corner', …)、直径 --ring-px），摆放也走同一个 layoutExitRing()；
+                 · 它在 `.menu-screen` **之外**（和猫爪层一样常驻）：翻页 / 返回的整屏滑动不会把它带走；
+                 · 圈里只有线条箭头（和动作页的退出图标同一颗、同一比例），文字在 aria-label / title 上；
+                 · 第一级 = 回网页首页、第二级 = 回分类（见 selectFromMenu）；蓄力 5 秒。 -->
+            <div class="corner-ring" id="menuCornerExit">
+              <button class="ring-btn menu-ring menu-ring--back" id="menuBack" type="button"
+                      data-i18n-title="menu.back" data-i18n-aria="menu.back">
+                <svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+                  <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+                  <circle class="ring-fill" cx="60" cy="60" r="52"></circle>
+                </svg>
+                <span class="ring-label" id="menuBackLabel"></span>
+                <span class="ring-timer"></span>
+              </button>
+            </div>
           </div>
 
           <!-- 右上角常驻的「退出」圆环：手或脚伸进圆环停 3 秒 → 退出这一组。
@@ -548,6 +567,12 @@
       <p class="rotate-gate-text" data-i18n="ui.rotateText"></p>
     </div>
   </div>
+
+  <!-- 量「圆环直径」的探针：宽高 = CSS 变量 `--ring-px`（含 720 / 560px 两条小屏覆盖），
+       `visibility: hidden` 仍然参与布局，所以 clientWidth 读得到（`display: none` 就量不到了）。
+       app.js 的 ringPx() 在目标圆环自己量不到时读它 —— 菜单里那颗「↩ 返回」和动作页那颗「退出」
+       在**任何窗口尺寸**下都要取到同一个直径，而动作页那颗在菜单里是 display: none。 -->
+  <span class="ring-size-probe" id="ringSizeProbe" aria-hidden="true"></span>
 
   <!-- 全屏降级链在 src/app.js 里（一条链管三种环境）：标准 requestFullscreen →
        老 WebKit webkitRequestFullscreen → **iPhone 的 CSS 伪全屏**（没有元素级 API 时的兜底，

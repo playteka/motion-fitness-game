@@ -529,23 +529,26 @@ kbd {
   font-weight: 600;
 }
 /**
- * 运动名称（用户要求「左上角的运动名称可以适当放大」）：13.5px → 18~24px，
+ * 运动名称（用户要求「左上角的运动名称可以适当放大」→ 再要求「字体再放大一些」）：13.5px → 20~28px，
  * 用 clamp 跟着视口走，小屏仍然能整句塞进胶囊（放不下就换行，不裁切）。
  */
 #hudName {
-  font-size: clamp(18px, 1.85vw, 24px);
+  font-size: clamp(20px, 2.05vw, 28px);
   font-weight: 800;
   line-height: 1.2;
   letter-spacing: 0.2px;
 }
 /**
- * 名称后面紧跟的「本组目标」（用户要求「运动名称之后是本组运动的目标，比如 xx 次，或 xx 秒」）：
- * 弱化一档 —— 小一号、次要色、常规字重，视觉上从属于名称；不换行（`20 次` 不该被拆成两行）。
+ * 名称后面紧跟的「本组目标」（`20 次` / `45 秒`）。
+ *
+ * 用户要求「动作名称和运动目标次数或时长，**字体调整为一样大小**」→ 与 `#hudName` 用**同一档字号**；
+ * 层级只靠颜色区分（次要色 + 稍轻的字重），不再靠小一号字号，所以两行读起来是一句话。
+ * 不换行（`20 次` 不该被拆成两行）。
  */
 .hud-target {
-  margin-left: 2px;
-  font-size: clamp(12px, 1.15vw, 15px);
-  font-weight: 600;
+  margin-left: 6px;
+  font-size: clamp(20px, 2.05vw, 28px);
+  font-weight: 800;
   color: var(--muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -1174,10 +1177,15 @@ kbd {
   text-align: center;
   pointer-events: none;
 }
-/* ---- 右上角常驻的「退出」圆环（手或脚进去保持 3 秒 = 退出这一组）----
+/* ---- 右上角常驻的「退出 / 返回」圆环（手或脚进去保持 3 秒 = 退出这一组）----
    动画、进度、触发方式与上面两个圆环完全共用（同一套 .ring-* 与 paintRing 逻辑）。
    位置由 JS 按舞台像素摆在**右上角**（用户要求：「把『退出』这个圆环从左下角移到右上角」），
-   直径仍与「一组结束后」的两个圆环共用 --ring-px，避免各写各的。 */
+   直径仍与「一组结束后」的两个圆环共用 --ring-px，避免各写各的。
+
+   ⚠️ 用户后来要求「把菜单界面中的退出圆环始终放在右上角，且各界面退出圆环的位置和大小都保持一致」：
+   手势菜单右上角那颗「↩ 返回」（`#menuCornerExit > #menuBack`）**也用这一组样式与类**，
+   位置 / 直径由 app.js 的 exitRingLayout() 一处提供（同一个 ringCenter('corner') + 同一个 --ring-px），
+   所以两个界面里这颗圆环逐像素同坐标、同尺寸（它常驻在 `.menu-screen` 之外，换屏滑动不带走它）。 */
 .corner-ring {
   position: absolute;
   inset: 0;
@@ -1185,6 +1193,20 @@ kbd {
   pointer-events: none;
 }
 .corner-ring[hidden] { display: none; }
+
+/* 量圆环直径用的探针：宽高就是 --ring-px（跟着 720 / 560px 的小屏覆盖一起收），
+   `visibility: hidden` 仍然参与布局（`display: none` 就量不到了），不占视觉、不挡鼠标。
+   app.js 的 ringPx() 用它给「菜单里那颗返回圆环」取直径 —— 动作页那颗退出圆环在菜单里是
+   display: none，自己量不到；按视口宽度套 clamp 的兜底又不知道小屏那两条 --ring-px 覆盖。 */
+.ring-size-probe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--ring-px);
+  height: var(--ring-px);
+  visibility: hidden;
+  pointer-events: none;
+}
 
 /* 记录调试数据时的角标：贴在画面右下角、全屏按钮的上方。
    用户要求：「一旦这个开关打开，则在视频屏幕的右下角要出现一个图标，显示其正在记录帧数据，
@@ -1869,6 +1891,10 @@ kbd {
   top: 8px;
   left: 0;
   right: 0;
+  /* 右上角那颗常驻「↩ 返回」和动作页的退出圆环一样大（--ring-px），标题 / 说明 / 页码在右侧给它
+     让出位置 —— 和 HUD 左栏 `max-width: calc(100% - var(--ring-px) - 48px)` 是同一个做法，
+     所以窄屏上长文案也只会换行，不会钻到圆环底下。 */
+  padding: 0 calc(var(--ring-px) + 30px);
   text-align: center;
 }
 .menu-title {
@@ -1980,7 +2006,11 @@ kbd {
   pointer-events: none;
 }
 .menu-sub:empty { display: none; }
-/* 「返回」那一格：低调一点，一眼分得出它不是动作 */
+/* 「返回」那一格：低调一点，一眼分得出它不是动作。
+   ⚠️ 它现在**常驻在右上角**（`#menuCornerExit > #menuBack`，在 `.menu-screen` 之外），
+   位置 / 直径走动作页退出圆环那一套（`.corner-ring .ring-btn` = --ring-px + exitRingLayout()），
+   所以这里的背景色会被 `.corner-ring .ring-btn`（更具体）盖掉 —— 这是刻意的：
+   两个界面的「退出 / 返回」圆环要长得一模一样。 */
 .menu-ring--back { background: rgba(6, 12, 20, 0.3); }
 .menu-ring--back .ring-track { stroke: rgba(148, 163, 184, 0.28); }
 /* 翻页圆环（上一页 / 下一页）：同样是「导航」而不是动作，做得比动作圆环低调一点 */

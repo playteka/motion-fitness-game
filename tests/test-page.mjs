@@ -212,6 +212,36 @@ console.log('\n[3] 静态资源与模型文件');
     ok('小屏时 HUD 进度圆环不再写死尺寸（改用同一个 --ring-px，两个圆环仍然等大）',
       !/@media[^{]*720px[^{]*\{[^@]*\.hud-ring\s*\{[^}]*width:\s*\d+px/.test(css), 'hud-ring 有写死的宽高');
 
+    /* ---- 用户要求：「把菜单界面中的退出圆环始终放在右上角，且各界面退出圆环的位置和大小都保持一致。」
+       做法（方案 B）：手势菜单右上角那颗「↩ 返回」（`#menuCornerExit > #menuBack`）从原来那排
+       「上一页 / 返回 / 下一页」里摘出来，和动作页的退出圆环**共用** `.corner-ring` 样式、
+       `layoutExitRing()` 摆放、`exitRingLayout()` 几何（圆心 `ringCenter('corner')` + 直径 `--ring-px`）。 */
+    {
+      const appSrc = read('src/app.js');
+      const backTree = ancestorIds(html, 'menuBack') || [];
+      ok('菜单右上角有一颗「返回」圆环，用的就是退出圆环那组样式（.corner-ring → 尺寸 = --ring-px）',
+        /class="corner-ring" id="menuCornerExit"/.test(html)
+        && /class="ring-btn menu-ring menu-ring--back" id="menuBack"/.test(html)
+        && backTree[backTree.length - 1] === 'menuCornerExit' && backTree.includes('gestureMenu'),
+        JSON.stringify(backTree));
+      ok('这颗「返回」**常驻**在 `.menu-screen` 之外（翻页 / 返回的整屏滑动不会把它带走）',
+        !backTree.includes('menuScreen')
+        && /function layoutExitRing\(el, size = stageSize\(\)\)/.test(appSrc)
+        && /layoutExitRing\(ringEl\('corner'\)\);/.test(appSrc)        // 动作页那颗退出圆环
+        && /layoutExitRing\(menuBackEl\(\), size\);/.test(appSrc));     // 菜单这颗返回圆环
+      const navBody = /function menuNavLayout\(size\) \{([\s\S]*?)\n\}/.exec(appSrc)?.[1] || '';
+      ok('menuNavLayout 只算「上一页 / 下一页」（「返回」的圆心/判定不在这里另算一套）',
+        !!navBody && !/'back'/.test(navBody) && /cx: size\.w \/ 2 \+ side \* step,/.test(navBody),
+        navBody.slice(0, 80));
+      ok('量 --ring-px 的探针：宽高 = var(--ring-px)、visibility: hidden（仍有布局才量得到）',
+        /id="ringSizeProbe"/.test(html)
+        && /\.ring-size-probe\s*\{[\s\S]*?width:\s*var\(--ring-px\);\n  height:\s*var\(--ring-px\);[\s\S]*?visibility:\s*hidden;/.test(css)
+        && /const probe = \$\('ringSizeProbe'\);/.test(appSrc));
+      ok('菜单标题那一块给右上角圆环让出位置（右侧留 --ring-px + 间隙，长文案不钻到环底下）',
+        /\.menu-head\s*\{[\s\S]*?padding:\s*0 calc\(var\(--ring-px\) \+ 30px\)/.test(css),
+        (/\.menu-head\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '').trim().slice(0, 80));
+    }
+
     /* ---- 用户反馈：「感觉目前必须是脚踝和手腕进入才开始 3 秒计时，这个不好」----
        根因（见 app.js 里 touchSamples 的注释）：Pose 模型对手指（17~22）与脚跟 / 脚尖（29~32）
        这些点本来就是**估出来的**，手/脚伸到画面角落时常落在手腕 / 脚踝附近或被可见度门槛丢掉 ——
@@ -241,12 +271,16 @@ console.log('\n[3] 静态资源与模型文件');
       badge.includes('id="hudName"') && badge.includes('id="hudTarget"')
       && badge.indexOf('id="hudName"') < badge.indexOf('id="hudTarget"'), badge.slice(0, 160));
     const nameRule = /#hudName\s*\{([^}]*)\}/.exec(css)?.[1] || '';
-    ok('运动名称**明显放大**（≥18px，比原来的 13.5px 大一档，又不至于把 HUD 挤爆）',
-      /font-size:\s*clamp\(18px/.test(nameRule), nameRule.trim());
+    ok('运动名称**明显放大**（≥20px，比原来的 13.5px 大一档，又不至于把 HUD 挤爆）',
+      /font-size:\s*clamp\(20px/.test(nameRule), nameRule.trim());
     const targetRule = /\.hud-target\s*\{([^}]*)\}/.exec(css)?.[1] || '';
-    ok('目标弱化一档（次要色 + 比名称小的字号 + 不换行）',
-      /color:\s*var\(--muted\)/.test(targetRule) && /font-size/.test(targetRule)
-      && /white-space:\s*nowrap/.test(targetRule), targetRule.trim());
+    const nameSize = /font-size:\s*([^;]+);/.exec(nameRule)?.[1]?.trim() || '';
+    const targetSize = /font-size:\s*([^;]+);/.exec(targetRule)?.[1]?.trim() || '';
+    // 用户要求：「动作名称和运动目标次数或时长，字体调整为一样大小」→ 字号必须完全相同，层级只靠颜色
+    ok('目标与名称**同一档字号**（层级只靠次要色），且不换行',
+      !!nameSize && nameSize === targetSize
+      && /color:\s*var\(--muted\)/.test(targetRule) && /white-space:\s*nowrap/.test(targetRule),
+      `name=${nameSize} target=${targetSize}`);
 
     // ② 进度圆环在左栏、环里包着 #hudValue（DOM 层级真的嵌套，不是靠先后顺序猜的）
     const valueAnc = ancestorIds(html, 'hudValue') || [];
@@ -837,16 +871,18 @@ console.log('\n[3] 静态资源与模型文件');
       && /state\.menuPage = 0;/.test(app)
       && /id="menuPage"/.test(html) && typeof LOCALES.zh.menu.page === 'string'
       && typeof LOCALES.en.menu.page === 'string');
-    ok('三个导航圆环并排居中（上一页 / 返回 / 下一页），「返回」不在 menuItems 里、不参与翻页',
+    ok('「上一页 / 下一页」两颗并排、以舞台中线为轴对称（「返回」不在 menuItems 里、也不在它们中间）',
       /function menuNavLayout\(/.test(app)
-      && /const page = menuHasPages\(size\);/.test(app)
-      && /\['page:prev', 'prev', -1, t\('menu\.prev'\)\], \['back', 'back', 0, t\('menu\.back'\)\]/.test(app)
-      && /cx: size\.w \/ 2 \+ \(i - mid\) \* step,/.test(app)
-      && !/list\.push\(\{ id: 'back'/.test(app)
-      && /const item = \[\.\.\.menuItems\(\), \.\.\.menuNavLayout\(stageSize\(\)\)\]\.find/.test(app));
+      && /if \(!menuHasPages\(size\)\) return \[\];/.test(app)
+      && /\['page:prev', 'prev', -1, t\('menu\.prev'\), -1\]/.test(app)
+      && /\['page:next', 'next', 1, t\('menu\.next'\), 1\]/.test(app)
+      && /cx: size\.w \/ 2 \+ side \* step,/.test(app)
+      && !/\[i - mid\] \* step/.test(app)                        // 不再按「三颗一组」算中心
+      && !/\{ id: 'back'/.test(app)                              // 返回不在 menuNavLayout 里
+      && /const item = \[\.\.\.menuItems\(\), \.\.\.menuNavLayout\(stageSize\(\)\), menuBackItem\(stageSize\(\)\)\]/.test(app));
     ok('「上一页 / 下一页」圆环按需出现（有第二页才有），和「返回」一样停满 5 秒才触发',
       /\['page:prev', 'prev', -1/.test(app) && /\['page:next', 'next', 1/.test(app)
-      && /const page = menuHasPages\(size\);/.test(app)
+      && /if \(!menuHasPages\(size\)\) return \[\];/.test(app)
       && /const MENU_NAV_HOLD_MS = 5000;/.test(app)
       && /const MENU_NAV_KINDS = \{ back: 1, prev: 1, next: 1 \};/.test(app)
       && /const holdMs = item && MENU_NAV_KINDS\[item\.kind\] \? MENU_NAV_HOLD_MS : GESTURE_HOLD_MS;/.test(app)
@@ -929,10 +965,15 @@ console.log('\n[3] 静态资源与模型文件');
       && /const txt = t\('ui\.gestureExit'\);/.test(app)
       && !/menu\.exitHome/.test(app)
       && LOCALES.zh.menu.exitHome === undefined && LOCALES.en.menu.exitHome === undefined);
-    ok('导航那颗「返回」图标与样式和其他「返回」完全一致（线条箭头 + menu-ring--back），第一级回网页首页',
-      /\['back', 'back', 0, t\('menu\.back'\)\]/.test(app)
-      && /menu-ring--\$\{it\.kind\}/.test(app)
-      && /poseIcon: navPoseSVG\(kind\)/.test(app)
+    ok('右上角那颗「返回」和动作页的退出圆环共享 exitRingLayout()（位置 / 直径 / 判定半径同一份），第一级回网页首页',
+      /function exitRingLayout\(size = stageSize\(\)\)/.test(app)
+      && /const px = ringPx\('corner'\);/.test(app)
+      && /const c = ringCenter\('corner', size\.w, size\.h\);/.test(app)
+      && /function menuBackItem\(size = stageSize\(\)\)/.test(app)
+      && /const g = exitRingLayout\(size\);/.test(app)
+      && /cx: g\.cx, cy: g\.cy, px: g\.px, r: g\.r, hit: g\.hit, start: g\.start,/.test(app)
+      && /poseIcon: navPoseSVG\('back'\)/.test(app)
+      && /\.menu-ring--back/.test(css)
       && /menuBackHome\(\);                     \/\/ 淡出 \+ 主页淡入（用户要求返回也要有淡入淡出）/.test(app));
     ok('底部提示分两级 + 教翻页手势（双手挥两次）',
       /id="menuFoot"/.test(html)
