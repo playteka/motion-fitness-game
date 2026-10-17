@@ -1230,6 +1230,37 @@ console.log('\n[5] 要领计分方案');
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * 6. 手机浏览器支持之一：摄像头诊断面板
+ * ------------------------------------------------------------------ */
+
+console.log('\n[6] 手机浏览器支持：摄像头诊断面板');
+{
+  const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+
+  // --- 摄像头诊断面板：挂在遮罩里、原生 <details> 可折叠、PC 上也看得到 ---
+  const diagTag = html.match(/<details[^>]*id="camDiag"[^>]*>/)?.[0] || '';
+  ok('诊断面板是可折叠的 <details id="camDiag">（打不开摄像头时才出现）',
+    diagTag.length > 0 && /\bhidden\b/.test(diagTag), diagTag || '没找到');
+  ok('诊断面板在摄像头遮罩内部（PC 与手机同一块面板，不额外占地方）', (() => {
+    const mask = html.indexOf('id="stageMask"');
+    const diag = html.indexOf('id="camDiag"');
+    const maskEnd = html.indexOf('id="hud"');
+    return mask >= 0 && diag > mask && diag < maskEnd;
+  })());
+  ok('诊断面板有列表容器与建议行的挂点（camDiagList / camDiagAdvice）',
+    ids.has('camDiagList') && ids.has('camDiagAdvice'));
+  ok('诊断面板的标题 / 说明走 i18n（没有写死中文）',
+    /id="camDiag"[\s\S]{0,400}?data-i18n="diag\.title"/.test(html)
+    && /id="camDiag"[\s\S]{0,600}?data-i18n="diag\.lead"/.test(html));
+  ok('诊断面板的样式在 style.css 里（含折叠标题的 44px 触摸目标）', (() => {
+    const css = read('style.css');
+    const blk = /\.cam-diag\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+    const sum = /\.cam-diag summary\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+    return blk.length > 0 && /max-height/.test(blk) && Number(/min-height:\s*(\d+)px/.exec(sum)?.[1]) >= 44;
+  })());
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
 if (failures.length) {
   console.log('失败项：');

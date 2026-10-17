@@ -4879,6 +4879,87 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   api.state.session = 'idle';
 }
 
+/* ------------------------------------------------------------------ *
+ * ⑧ 摄像头诊断面板（手机打不开摄像头时，把客观事实摆出来 + 一句处置建议）
+ *
+ * 用户实测：iPhone 上只有 QQ 浏览器能开摄像头，Safari / Chrome 不能。
+ * 根因是 secure context 规则（http + 局域网 IP 一律不给 getUserMedia），
+ * 所以面板必须**先**把 isSecureContext / location.protocol 摆出来，再谈权限。
+ * 这里用构造出来的环境喂纯函数，把「什么环境说什么话」钉住。
+ * ------------------------------------------------------------------ */
+{
+  const api = windowStub.__mfg;
+  const { t: tDiag } = await import('../src/i18n.js');
+
+  // 手机 http + 局域网 IP 的真实样子：不是安全上下文、mediaDevices 直接不存在
+  const insecure = {
+    secureContext: false, protocol: 'http:', hasMediaDevices: false, hasGetUserMedia: false,
+    errName: '', errMessage: '', videoW: 0, videoH: 0,
+    playsinline: null, muted: null, autoplay: null,
+  };
+  const denied = {
+    secureContext: true, protocol: 'https:', hasMediaDevices: true, hasGetUserMedia: true,
+    errName: 'NotAllowedError', errMessage: 'Permission denied', videoW: 0, videoH: 0,
+    playsinline: true, muted: true, autoplay: true,
+  };
+
+  ok('非安全上下文（http + 局域网 IP）→ 处置建议直接指向「换 https」',
+    api.cameraDiagAdviceKey(insecure) === 'diag.adviceInsecure',
+    api.cameraDiagAdviceKey(insecure));
+  ok('https 下 NotAllowedError → 建议去改浏览器 / 系统权限',
+    api.cameraDiagAdviceKey(denied) === 'diag.adviceNotAllowed');
+  ok('NotFoundError → 建议确认摄像头存在且没被占用',
+    api.cameraDiagAdviceKey({ ...denied, errName: 'NotFoundError' }) === 'diag.adviceNotFound');
+  ok('NotReadableError（被别的程序占用）→ 有自己的建议',
+    api.cameraDiagAdviceKey({ ...denied, errName: 'NotReadableError' }) === 'diag.adviceNotReadable');
+  ok('SecurityError / OverconstrainedError 也各自有建议',
+    api.cameraDiagAdviceKey({ ...denied, errName: 'SecurityError' }) === 'diag.adviceSecurity'
+    && api.cameraDiagAdviceKey({ ...denied, errName: 'OverconstrainedError' }) === 'diag.adviceOverconstrained');
+  ok('没见过的错误名 → 兜底到「按上面的客观事实排查」',
+    api.cameraDiagAdviceKey({ ...denied, errName: 'WeirdError' }) === 'diag.adviceUnknown');
+  ok('错误名表里每种建议都真的有词条（不会显示成 key）',
+    Object.values(api.DIAG_ERROR_ADVICE).every((k) => tDiag(k) !== k && !/^diag\./.test(tDiag(k))),
+    Object.values(api.DIAG_ERROR_ADVICE).filter((k) => tDiag(k) === k).join(', '));
+
+  const rows = api.cameraDiagRows(insecure);
+  ok('诊断面板列出 7 项客观事实（含 isSecureContext / 协议 / 错误 / 画面尺寸 / video 属性）',
+    rows.length === 7, `实际 ${rows.length} 行`);
+  ok('第一行就是 isSecureContext，非安全上下文时标成「坏行」并显示「否」',
+    rows[0].label.includes('isSecureContext') && rows[0].value === tDiag('diag.no') && rows[0].bad === true,
+    JSON.stringify(rows[0]));
+  ok('协议那一行显示的是真实的 location.protocol',
+    rows[1].value === 'http:', rows[1].value);
+  ok('mediaDevices / getUserMedia 不存在时也标成坏行',
+    rows[2].bad === true && rows[3].bad === true);
+  ok('没有报错时错误行写「（没有报错）」，有报错时把 name 和 message 都写出来',
+    rows[4].value === tDiag('diag.noError') && api.cameraDiagRows(denied)[4].value === 'NotAllowedError: Permission denied',
+    api.cameraDiagRows(denied)[4].value);
+  ok('画面尺寸行写「videoWidth × videoHeight」',
+    api.cameraDiagRows({ ...denied, videoW: 1280, videoH: 720 })[5].value === '1280 × 720');
+  ok('拿不到 isSecureContext 这类事实时显示「—」，不假装是「否」',
+    api.cameraDiagRows({ ...insecure, secureContext: null })[0].value === tDiag('diag.unknown'));
+
+  // 真的写进 DOM（面板挂在遮罩里、原生 <details> 可折叠）
+  api.renderCameraDiag({ name: 'NotAllowedError', message: 'Permission denied' });
+  ok('诊断面板显示出来了（打不开时才出现）', elements.get('camDiag').hidden === false);
+  ok('面板里写进了 7 行事实', elements.get('camDiagList').children.length === 7,
+    `${elements.get('camDiagList').children.length} 行`);
+  ok('出问题的那一行带 is-bad 类（一眼看出哪条不对）',
+    elements.get('camDiagList').children.filter((li) => li.classList.contains('is-bad')).length === 1,
+    elements.get('camDiagList').children.map((li) => li.className).join(' | '));
+  ok('最后一行是处置建议，且与错误名对应',
+    elements.get('camDiagAdvice').textContent === `${tDiag('diag.advice')}：${tDiag('diag.adviceNotAllowed')}`,
+    elements.get('camDiagAdvice').textContent);
+  ok('面板里每一行都是「字段名 + 值」两个 span（手机上窄屏也能一行一行看）',
+    elements.get('camDiagList').children.every((li) => li.children.length === 2
+      && li.children[0].className === 'cam-diag-k' && li.children[1].className === 'cam-diag-v'));
+
+  // 非安全上下文时的文案必须明确提到 https（用户 iPhone 上 Safari / Chrome 打不开就是这个原因）
+  ok('「地址不安全」的文案里明确写了 https 怎么办',
+    /https/.test(tDiag('ui.maskInsecureText')) && /README/.test(tDiag('ui.maskInsecureText')),
+    tDiag('ui.maskInsecureText').slice(0, 60));
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {
   console.log('失败项：');
   for (const f of failures) console.log('  - ' + f);

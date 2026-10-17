@@ -129,6 +129,9 @@ const state = {
   detectCount: 0,
   poseHits: 0,
   camError: null,
+  /** 最近一次 getUserMedia 的 name / message（诊断面板用；camError 是拼好的字符串，给探针看） */
+  camErrName: '',
+  camErrMessage: '',
   /** 最近一帧「手/脚」离左下角圆环多远（🐞 面板用：排查到底有没有识别到手/脚） */
   touchInfo: null,
   consoleErrors: [],
@@ -4259,6 +4262,130 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
+/* ------------------------------------------------------------------ *
+ * 摄像头诊断面板：打不开时**把客观事实摆出来**，而不是只说「失败了」
+ *
+ * 手机上的问题九成一眼就能看出来：`isSecureContext` 是 false + `location.protocol` 是 http:
+ * → 浏览器按 secure context 规则拒绝给摄像头（QQ 浏览器自带取景通道所以看起来「能用」）。
+ * 面板做成可折叠的 <details>，PC 上也一样能看到，平时不占地方。
+ * 下面三个都是**纯函数**（给什么环境就说什么话），所以测试可以直接喂构造出来的环境断言文案。
+ * ------------------------------------------------------------------ */
+
+/** getUserMedia 的错误名 → 处置建议词条（没列到的走 diag.adviceUnknown） */
+const DIAG_ERROR_ADVICE = {
+  NotAllowedError: 'diag.adviceNotAllowed',
+  PermissionDeniedError: 'diag.adviceNotAllowed',
+  NotFoundError: 'diag.adviceNotFound',
+  DevicesNotFoundError: 'diag.adviceNotFound',
+  SecurityError: 'diag.adviceSecurity',
+  OverconstrainedError: 'diag.adviceOverconstrained',
+  ConstraintNotSatisfiedError: 'diag.adviceOverconstrained',
+  NotReadableError: 'diag.adviceNotReadable',
+  TrackStartError: 'diag.adviceNotReadable',
+  AbortError: 'diag.adviceAbort',
+  TypeError: 'diag.adviceType',
+};
+
+/** 布尔类属性：拿不到就返回 null（面板显示「—」，不假装是「否」） */
+function boolAttr(el, name) {
+  if (!el) return null;
+  if (typeof el.hasAttribute === 'function') return !!el.hasAttribute(name);
+  const raw = el.attributes ? el.attributes[name] : undefined;
+  if (raw === undefined) return null;
+  return raw !== 'false';
+}
+
+/** 把「此刻浏览器里的事实」收集成一个普通对象（纯函数：只读，不改任何状态） */
+function cameraDiagEnv(err = null, opts = {}) {
+  const v = opts.video || $('video');
+  const nav = opts.navigator || (typeof navigator !== 'undefined' ? navigator : null);
+  const loc = opts.location || (typeof location !== 'undefined' ? location : null);
+  const win = opts.window || (typeof window !== 'undefined' ? window : null);
+  const md = (nav && nav.mediaDevices) || null;
+  return {
+    secureContext: win && 'isSecureContext' in win ? !!win.isSecureContext : null,
+    protocol: (loc && loc.protocol) || '',
+    hasMediaDevices: !!md,
+    hasGetUserMedia: !!(md && md.getUserMedia),
+    errName: (err && err.name) || '',
+    errMessage: String((err && err.message) || ''),
+    videoW: (v && v.videoWidth) || 0,
+    videoH: (v && v.videoHeight) || 0,
+    playsinline: boolAttr(v, 'playsinline'),
+    muted: boolAttr(v, 'muted'),
+    autoplay: boolAttr(v, 'autoplay'),
+  };
+}
+
+/** 面板要显示的三态文字 */
+function diagYesNo(v) {
+  if (v === null || v === undefined) return t('diag.unknown');
+  return v ? t('diag.yes') : t('diag.no');
+}
+
+/**
+ * 面板里逐行的事实（纯函数：给一个 env 就返回固定的行）。
+ * @returns {Array<{label:string,value:string,bad:boolean}>}
+ */
+function cameraDiagRows(env = {}) {
+  const yn = (b) => diagYesNo(b);
+  const attrs = `playsinline=${yn(env.playsinline)} muted=${yn(env.muted)} autoplay=${yn(env.autoplay)}`;
+  return [
+    // 第一行就是手机上最关键的那一条：不是安全上下文 → 浏览器一定不给摄像头
+    { label: t('diag.secure'), value: yn(env.secureContext), bad: env.secureContext === false },
+    { label: t('diag.protocol'), value: env.protocol || t('diag.unknown'), bad: false },
+    { label: t('diag.mediaDevices'), value: yn(env.hasMediaDevices), bad: env.hasMediaDevices === false },
+    { label: t('diag.getUserMedia'), value: yn(env.hasGetUserMedia), bad: env.hasGetUserMedia === false },
+    {
+      label: t('diag.error'),
+      value: env.errName ? `${env.errName}: ${env.errMessage}` : t('diag.noError'),
+      bad: !!env.errName,
+    },
+    { label: t('diag.video'), value: `${env.videoW || 0} × ${env.videoH || 0}`, bad: false },
+    { label: t('diag.attrs'), value: attrs, bad: false },
+  ];
+}
+
+/**
+ * 这一组事实对应的处置建议（词条 key，纯函数）。
+ * 顺序即优先级：**不安全上下文**排第一 —— 它是手机上最常见的根因，
+ * 哪怕错误名看起来是 NotAllowedError（权限没给），换到 https 才是正解。
+ */
+function cameraDiagAdviceKey(env = {}) {
+  if (env.secureContext === false) return 'diag.adviceInsecure';
+  if (env.hasGetUserMedia === false) return 'diag.adviceNoMedia';
+  return DIAG_ERROR_ADVICE[env.errName] || 'diag.adviceUnknown';
+}
+
+/** 把面板填出来并显示（返回填进去的内容，测试直接断言返回值） */
+function renderCameraDiag(err = null) {
+  const box = $('camDiag');
+  const list = $('camDiagList');
+  const env = cameraDiagEnv(err);
+  const rows = cameraDiagRows(env);
+  const adviceKey = cameraDiagAdviceKey(env);
+  if (list) {
+    list.innerHTML = '';
+    for (const row of rows) {
+      const li = document.createElement('li');
+      li.className = row.bad ? 'cam-diag-row is-bad' : 'cam-diag-row';
+      const k = document.createElement('span');
+      k.className = 'cam-diag-k';
+      k.textContent = row.label;
+      const val = document.createElement('span');
+      val.className = 'cam-diag-v';
+      val.textContent = row.value;
+      li.appendChild(k);
+      li.appendChild(val);
+      list.appendChild(li);
+    }
+  }
+  const advice = $('camDiagAdvice');
+  if (advice) advice.textContent = `${t('diag.advice')}：${t(adviceKey)}`;
+  if (box) box.hidden = false;
+  return { env, rows, adviceKey };
+}
+
 async function startCamera(deviceId = null) {
   const mask = $('stageMask');
   $('maskIcon').textContent = '⏳';
@@ -4268,11 +4395,15 @@ async function startCamera(deviceId = null) {
     await withTimeout(camera.start(deviceId), 25000, t('ui.maskCamFailTitle'));
   } catch (err) {
     state.camError = `${err?.name || 'Error'}: ${err?.message || err}`;
+    state.camErrName = err?.name || 'Error';
+    state.camErrMessage = String(err?.message || err || '');
     console.error('[camera]', state.camError);
     $('maskIcon').textContent = '⚠️';
     $('maskTitle').textContent = t('ui.maskCamFailTitle');
     $('maskText').textContent = `${err?.message || t('ui.unknownError')}${t('ui.maskCamFailSuffix')}`;
     $('btnStartCam').textContent = t('ui.retry');
+    // 客观事实 + 一句处置建议（手机上打开就能看出到底卡在哪一步）
+    renderCameraDiag(err);
     updatePipelineStatus();
     return;
   }
@@ -4281,6 +4412,11 @@ async function startCamera(deviceId = null) {
   $('stage').style.aspectRatio = `${camera.video.videoWidth} / ${camera.video.videoHeight}`;
   $('hud').hidden = false;
   mask.classList.add('hidden');
+  // 摄像头开起来了：诊断面板收起来（它只在「打不开」的时候有用）
+  const diag = $('camDiag');
+  if (diag) diag.hidden = true;
+  state.camErrName = '';
+  state.camErrMessage = '';
   $('btnStart').disabled = false;
   state.poseHits = 0;
   updatePipelineStatus();
@@ -4778,10 +4914,15 @@ function boot() {
   captureConsole();
   const params = new URLSearchParams(location.search);
   if (!Camera.supported()) {
-    $('maskIcon').textContent = '🚫';
-    $('maskTitle').textContent = t('ui.maskUnsupportedTitle');
-    $('maskText').textContent = t('ui.maskUnsupportedText');
+    // 分两种情况说清楚：**不是安全上下文**（http + 局域网 IP，手机上的头号原因）
+    // 与「浏览器太老 / 不支持」。两种都把诊断面板亮出来，让用户看到 isSecureContext 等事实。
+    const insecure = typeof window !== 'undefined' && window.isSecureContext === false
+      && location.protocol !== 'file:';
+    $('maskIcon').textContent = insecure ? '🔒' : '🚫';
+    $('maskTitle').textContent = t(insecure ? 'ui.maskInsecureTitle' : 'ui.maskUnsupportedTitle');
+    $('maskText').textContent = t(insecure ? 'ui.maskInsecureText' : 'ui.maskUnsupportedText');
     $('btnStartCam').disabled = true;
+    renderCameraDiag(state.camErrName ? { name: state.camErrName, message: state.camErrMessage } : null);
   }
   setLang(detectLang(), { persist: false });
   applyI18n(document);
@@ -4847,6 +4988,8 @@ window.__mfg = {
   announceHoldCount, HOLD_COUNT_EVERY,
   announceTimeLeft, TIME_CALL_AT, targetPresetsFor, targetStepFor,
   buildMusicTracks, selectMusicTrack,
+  // 摄像头诊断面板（打不开时列出客观事实 + 处置建议）
+  cameraDiagEnv, cameraDiagRows, cameraDiagAdviceKey, renderCameraDiag, DIAG_ERROR_ADVICE, diagYesNo,
   // 调试数据记录（全局配置里的隐藏分组）：记录器本体 + 开关函数，测试直接用它们驱动
   poseLogger, setPoseLog, togglePoseLog, poseLogMeta, renderPoseLogStatus,
   setPoseLogUi, anyModalOpen, videoStateActive,
