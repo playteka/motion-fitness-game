@@ -118,6 +118,13 @@ export default {
     maskInsecureTitle: 'This address is not secure, so the camera is blocked',
     maskInsecureText: 'Mobile browsers only allow the camera over https (or localhost). Re-open the page on https:// — either a self-signed certificate or a tunnel, see “Using it on a phone” in the README.',
     unknownError: 'Unknown error',
+
+    // ---- Phone support (rotate hint / front & rear camera) ----
+    rotateTitle: 'Turn your phone sideways',
+    rotateText: 'Motion tracking uses a landscape frame (16:9): only in landscape do the video and the rings fit. Rotate back and it continues by itself.',
+    facing: 'Camera',
+    facingUser: 'Front (selfie)',
+    facingBack: 'Rear',
   },
 
   /* ---------------- Camera diagnostics panel (lists the facts when it won’t open) ---------------- */
@@ -226,6 +233,7 @@ export default {
     timedGo: '⏱ {sec} seconds on the clock — see how many you can do!',
     timeUpVoice: 'Time is up, awesome',
     cameraReady: 'Camera {w}×{h}',
+    cameraFacing: 'Switched to the {name} camera',
     cameraOff: 'Camera off',
     modelLoading: 'Loading model…',
     modelReadyShort: 'Model ready {model}/{delegate}',

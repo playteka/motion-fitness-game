@@ -1969,15 +1969,110 @@ kbd {
  * iOS Safari **没有元素级 Fullscreen API**（requestFullscreen 在 iPhone 上不存在，只有 iPad 有），
  * 所以没有原生全屏可用时改走这一套：#stage 固定铺满视口，页面其余部分被盖住，
  * 我们自己的 HUD / 判定进度条 / 圆环全部保留（这正是 <video>.webkitEnterFullscreen() 做不到的）。
- * 类由 index.html 末尾那段内联兜底脚本切换（只在没有原生全屏能力时才生效）。
+ * 类由 src/app.js 的 setPseudoFullscreen() 切换（按钮 / Esc / 转屏都能进出）。
  */
 body.pseudo-fullscreen { overflow: hidden; }
 #stage.pseudo-fullscreen {
   position: fixed;
   inset: 0;
   width: 100vw;
+  /* 优先 dvh：iOS 地址栏伸缩时 100vh 会算成「地址栏收起后」的高度，底部会被顶出屏幕；
+     --vh 由 app.js 的 syncViewportUnit() 用 visualViewport 实测值兜底（老 Safari 没有 dvh）。 */
   height: 100dvh;
+  height: calc(var(--vh, 1vh) * 100);
   z-index: 9999;
   border-radius: 0;
   background: #070c15;
+  /* 刘海 / 底部横条：伪全屏时把这些区域也留给画面，圆环与按钮靠下面的安全区规则躲开 */
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
 }
+
+/* ------------------------------------------------------------------ *
+ * 手机 / 平板适配（放在最后：要盖过上面的小屏媒体查询）
+ *
+ *   1) `--vh` 动态视口兜底 + `env(safe-area-inset-*)` 安全区（刘海 / 底部横条）
+ *   2) 竖屏提示遮罩（.rotate-gate，只有 body.is-phone 且竖屏时由 app.js 显示）
+ *   3) 触摸：点击目标 ≥44px、禁双击缩放误触、禁长按选中
+ *   4) 手机上「视频框」占满宽度、HUD 与进度条不越界
+ * ------------------------------------------------------------------ */
+:root {
+  /* 视口 1% 的高度：JS 会用 visualViewport 实测值覆盖它；没有 JS 时退回 1vh */
+  --vh: 1vh;
+  /* 安全区（刘海 / 底部横条 / 圆角）：不写 viewport-fit=cover 时这四个值恒为 0 */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* 手机上所有可点元素的最小高度（Apple / Google 都建议 ≥44px） */
+  --tap-min: 44px;
+}
+@supports (height: 100dvh) {
+  :root { --vh: 1dvh; }
+}
+
+/* 双击缩放误触：manipulation 保留拖动/滚动，只去掉双击放大 */
+html, body { touch-action: manipulation; }
+/* 长按选中：按钮 / 圆环 / 开关上关掉（输入框仍然可以正常选中文字） */
+button, summary, select, .toggle, .ring-btn, .icon-btn, .stage-btn, .menu-page,
+.chip, .ex-card, .cat-head { user-select: none; -webkit-user-select: none; }
+button, .ring-btn, .icon-btn, .stage-btn { -webkit-tap-highlight-color: transparent; }
+
+/* 页面容器 + 弹窗高度：用动态视口，避免地址栏伸缩时底部按钮被顶出屏幕 */
+.app {
+  padding-left: calc(20px + var(--safe-left));
+  padding-right: calc(20px + var(--safe-right));
+  padding-bottom: calc(40px + var(--safe-bottom));
+  min-height: calc(var(--vh, 1vh) * 100);
+}
+.modal-card { max-height: calc(var(--vh, 1vh) * 100 - 48px); }
+
+/* 画面上贴边的元素：让开刘海与底部横条 */
+.hud {
+  padding-top: calc(16px + var(--safe-top));
+  padding-left: calc(18px + var(--safe-left));
+  padding-right: calc(18px + var(--safe-right));
+}
+.stage-btn { right: calc(12px + var(--safe-right)); bottom: calc(12px + var(--safe-bottom)); }
+.stage-toolbar { padding-bottom: var(--safe-bottom); }
+
+/* ---------- 竖屏提示遮罩 ---------- */
+.rotate-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 9, 15, 0.96);
+  padding: calc(24px + var(--safe-top)) 24px calc(24px + var(--safe-bottom));
+  text-align: center;
+}
+.rotate-gate[hidden] { display: none; }
+.rotate-gate-inner { max-width: 320px; }
+.rotate-gate-icon { display: inline-block; font-size: 0; margin-bottom: 14px; }
+.rotate-gate-icon .ui-icon {
+  width: 56px;
+  height: 56px;
+  color: var(--accent);
+  /* 图标自己转 90°：一眼看出「横过来」这个动作 */
+  transform: rotate(90deg);
+}
+.rotate-gate-title { font-size: 19px; font-weight: 700; margin: 0 0 8px; }
+.rotate-gate-text { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.65; }
+
+/* ---------- 手机上的触摸目标与排布 ---------- */
+body.is-phone .icon-btn,
+body.is-phone .mini-btn,
+body.is-phone .ghost-btn,
+body.is-phone .primary-btn,
+body.is-phone .toggle,
+body.is-phone .chip,
+body.is-phone select {
+  min-height: var(--tap-min);
+}
+body.is-phone .icon-btn { min-width: var(--tap-min); }
+body.is-phone .stage-btn { width: var(--tap-min); height: var(--tap-min); }
+/* 手机上视频框占满整个宽度（窄屏里 16:9 仍然完整可见，圆环按 --ring-px 的 clamp 缩） */
+body.is-phone .stage-card { padding: 10px; border-radius: 14px; }
+body.is-phone .stage { border-radius: 10px; }
+/* 竖屏时页面不让横向滚动（横屏提示遮罩已经盖住了，这里只是兜底） */
+body.is-phone.is-portrait { overflow-x: hidden; }

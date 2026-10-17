@@ -39,6 +39,16 @@ const SETTINGS_VERSION = 2;
 
 const DEFAULT_SETTINGS = {
   modelKey: 'lite',
+  /**
+   * 用户**自己**改过识别模型没有（手机默认轻量模型只在没改过时生效）。
+   * 见 applyDeviceDefaults —— 用户的选择永远优先，不会被「设备默认值」覆盖。
+   */
+  modelKeySet: false,
+  /**
+   * 摄像头朝向（手机上有前后两个镜头）：'user' 前置（默认）/ 'environment' 后置。
+   * 浏览器实际生效的朝向会回写到 camera.facing，失败时按 pose-engine 的降级顺序自动回退。
+   */
+  cameraFacing: 'user',
   mirror: true,
   voice: true,
   sfx: true,
@@ -472,6 +482,8 @@ function showHome({ syncRoute = true } = {}) {
   buildHome();
   updateButtons();
   if (syncRoute) setRoute('#/');
+  // 主页在竖屏下不挡（浏览动作库没问题）：视图一换就重算一次遮罩
+  syncDeviceClasses();
 }
 
 /** 切到动作页 */
@@ -489,6 +501,8 @@ function showWorkout() {
   // 左下角的「退出」圆环不在这里摆：它**只在摄像头开着的时候**显示（用户要求），
   // 由主循环里的 syncCornerExit() 每帧对齐（摄像头一开一关它自己出现/消失）。
   syncCornerExit();
+  // 动作页要横向画面：手机上竖屏进入时，把「请把手机横过来」的遮罩亮出来
+  syncDeviceClasses();
 }
 
 /** 从主页点进某个动作（进入训练页） */
@@ -1144,13 +1158,14 @@ function ringPx(key) {
   return Math.round(clamp(vw * RING_PX_FALLBACK.vw, RING_PX_FALLBACK.min, RING_PX_FALLBACK.max));
 }
 
-/** 圆环的圆心（**像素**）：中间两个按比例摆，左下角那个固定贴在左下角 */
+/** 圆环的圆心（**像素**）：中间两个按比例摆，左下角那个固定贴在左下角（含刘海 / 底部横条安全区） */
 function ringCenter(key, stageW, stageH) {
   if (key === 'corner') {
     const px = ringPx('corner');
+    const safe = safeAreaInsets();   // 手机横屏时左侧是刘海、底部是横条：圆环要躲开
     return {
-      x: CORNER_RING_INSET_PX + px / 2,
-      y: stageH - CORNER_RING_BOTTOM_PX - px / 2,
+      x: safe.left + CORNER_RING_INSET_PX + px / 2,
+      y: stageH - safe.bottom - CORNER_RING_BOTTOM_PX - px / 2,
     };
   }
   const r = GESTURE_RINGS[key];
@@ -1371,6 +1386,163 @@ function stageSize() {
   const h = stage?.clientHeight || 0;
   if (w > 0 && h > 0) return { w, h };
   return { w: 1280, h: 720 };
+}
+
+/* ------------------------------------------------------------------ *
+ * 手机 / 平板适配：设备档位 → 默认模型 / 摄像头分辨率；视口单位；安全区；竖屏提示
+ *
+ * 全部按「纯函数 + 一个读取真实环境的壳」来写：给一组环境值就能断言结论，
+ * 真机上的取值由 `deviceEnv()` 负责。PC 上的结论必须与改造前完全一致（档位 = high）。
+ * ------------------------------------------------------------------ */
+
+const PHONE_UA = /iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry|Opera Mini/i;
+const TABLET_UA = /iPad|Android(?!.*Mobile)|Tablet|Silk/i;
+
+/**
+ * 设备类别（纯函数）：`phone` / `tablet` / `desktop`。
+ * 除了 UA，还认「触摸屏 + 小屏」这条兜底 —— iPadOS 的 Safari 会把自己报成 Mac，
+ * 但它的屏幕最小边是 768，所以不会被误判成手机（PC 行为不受影响）。
+ */
+function deviceClass(env = {}) {
+  const ua = String(env.ua || '');
+  if (PHONE_UA.test(ua)) return 'phone';
+  // 「触摸屏 + 小屏」比 UA 更靠谱（有些 Android 浏览器 UA 里没有 Mobile 字样）：
+  // 屏幕最小边 ≤500 的触摸设备按手机对待。PC 的屏幕最小边远大于 500，不会误判。
+  const minSide = Number(env.screenMin || 0);
+  if (Number(env.maxTouchPoints || 0) > 0 && minSide > 0 && minSide <= 500) return 'phone';
+  if (TABLET_UA.test(ua)) return 'tablet';
+  return 'desktop';
+}
+
+/** 真实环境里读一遍判定要用的值（测试可以完全绕开它，自己造 env） */
+function deviceEnv() {
+  const nav = typeof navigator !== 'undefined' ? navigator : {};
+  const win = typeof window !== 'undefined' ? window : {};
+  const sw = Number(win.screen?.width) || Number(win.innerWidth) || 0;
+  const sh = Number(win.screen?.height) || Number(win.innerHeight) || 0;
+  return {
+    ua: String(nav.userAgent || ''),
+    maxTouchPoints: Number(nav.maxTouchPoints || 0),
+    hardwareConcurrency: Number(nav.hardwareConcurrency || 0),
+    deviceMemory: Number(nav.deviceMemory || 0),
+    width: Number(win.innerWidth || 0),
+    height: Number(win.innerHeight || 0),
+    screenMin: sw && sh ? Math.min(sw, sh) : 0,
+  };
+}
+
+/**
+ * 性能档位（纯函数）：`low` 表示「按手机的省电口径来」。
+ * 手机一律 low（屏幕小、又要靠电池练十几分钟）；平板只有四核以下才算 low；
+ * 电脑上只有 ≤2 核的老机器才算 low —— 正常 PC 仍是 `high`，行为和以前一模一样。
+ */
+function perfTier(env = {}) {
+  const cls = deviceClass(env);
+  const cores = Number(env.hardwareConcurrency || 0);
+  if (cls === 'phone') return 'low';
+  if (cls === 'tablet' && cores > 0 && cores <= 4) return 'low';
+  if (cores > 0 && cores <= 2) return 'low';
+  return 'high';
+}
+
+/**
+ * 首次打开时该用哪个识别模型（纯函数）：手机 / 低配 → `lite`；其余返回 null = **不改动**。
+ * ⚠️ 用户自己在设置里选过（`settings.modelKeySet`）时调用方根本不会问到这里 —— 见 applyDeviceDefaults。
+ */
+function pickDefaultModelKey(env = {}) {
+  return perfTier(env) === 'low' ? 'lite' : null;
+}
+
+/** 要不要请用户「把手机横过来」（纯函数）：只有手机 + 竖屏才提示，电脑 / 平板不打扰 */
+function shouldSuggestRotate(env = {}) {
+  if (deviceClass(env) !== 'phone') return false;
+  const w = Number(env.width || 0);
+  const h = Number(env.height || 0);
+  return h > 0 && w > 0 && h > w;
+}
+
+/**
+ * 竖屏遮罩**这一刻**该不该亮（手机 + 竖屏 + 在动作页）。
+ *
+ * 为什么还要看 `homeMode`：竖屏浏览主页的动作库完全没问题，一进站就被整屏遮住太凶；
+ * 只有进到动作页（要摄像头、要横向画面）才提示横过来。
+ */
+function rotateGateWanted(env = deviceEnv()) {
+  return shouldSuggestRotate(env) && !state.homeMode;
+}
+
+/**
+ * 刘海 / 底部横条的像素值：CSS 里定义了 `--safe-*`（`env(safe-area-inset-*)`），
+ * JS 侧（左下角圆环是自己按像素定位的）读出来用。
+ * 读不到（老浏览器 / 测试桩）时一律当 0，绝不让定位算错。
+ */
+function safeAreaInsets() {
+  const zero = { top: 0, right: 0, bottom: 0, left: 0 };
+  if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return zero;
+  try {
+    const cs = window.getComputedStyle(document.documentElement);
+    const px = (name) => {
+      const n = parseFloat(String(cs.getPropertyValue(name) || '').replace(/px\s*$/, ''));
+      return Number.isFinite(n) ? n : 0;
+    };
+    return { top: px('--safe-top'), right: px('--safe-right'), bottom: px('--safe-bottom'), left: px('--safe-left') };
+  } catch {
+    return zero;
+  }
+}
+
+/**
+ * 视口高度兜底：把「当前真实可用高度 / 100」写进 `--vh`。
+ *
+ * iOS 的地址栏会伸缩：`100vh` 永远是「地址栏收起后」的高度，地址栏在的时候页面底部会被顶出屏幕。
+ * CSS 那边优先用 `100dvh`，但 dvh 只有较新的 Safari 支持 —— 所以 JS 再补一层实测值。
+ * 返回算出来的高度（0 = 拿不到，此时不改 CSS）。
+ */
+function syncViewportUnit() {
+  const win = typeof window !== 'undefined' ? window : {};
+  const vv = win.visualViewport;
+  const h = Number((vv && vv.height) || win.innerHeight || 0);
+  const root = typeof document !== 'undefined' ? document.documentElement : null;
+  if (root && root.style && typeof root.style.setProperty === 'function' && h > 0) {
+    root.style.setProperty('--vh', `${(h / 100).toFixed(2)}px`);
+  }
+  return h;
+}
+
+/**
+ * 给 `<body>` 打上设备类名、按需亮出「请把手机横过来」遮罩。
+ *
+ * 类名（供样式用）：`is-phone` / `is-tablet` / `is-portrait` / `is-landscape`。
+ * 竖屏遮罩盖住画面时，正在练的那一组先暂停 —— 遮住了还在跑只会让用户白做。
+ */
+function syncDeviceClasses(env = deviceEnv()) {
+  const cls = deviceClass(env);
+  const portrait = shouldSuggestRotate(env);
+  const gate = rotateGateWanted(env);
+  const body = typeof document !== 'undefined' ? document.body : null;
+  if (body && body.classList) {
+    body.classList.toggle('is-phone', cls === 'phone');
+    body.classList.toggle('is-tablet', cls === 'tablet');
+    body.classList.toggle('is-portrait', portrait);
+    body.classList.toggle('is-landscape', cls === 'phone' && !portrait);
+  }
+  const gateEl = $('rotateGate');
+  if (gateEl) gateEl.hidden = !gate;
+  if (gate && state.session === 'running') pauseSession();
+  return { cls, portrait, gate };
+}
+
+/**
+ * 首次进入时的「省电默认值」：手机 / 低配机器默认用轻量模型。
+ * **用户自己选过模型就永不覆盖** —— 这是用户明确要求的那条（`modelKeySet`）。
+ */
+function applyDeviceDefaults(env = deviceEnv()) {
+  if (state.settings.modelKeySet) return null;
+  const want = pickDefaultModelKey(env);
+  if (!want || want === state.settings.modelKey) return null;
+  state.settings.modelKey = want;
+  saveSettings();
+  return want;
 }
 
 /**
@@ -4489,7 +4661,11 @@ async function startCamera(deviceId = null) {
   $('maskTitle').textContent = t('ui.maskOpening');
   $('maskText').textContent = t('ui.maskOpeningText');
   try {
-    await withTimeout(camera.start(deviceId), 25000, t('ui.maskCamFailTitle'));
+    // 朝向与性能档一起传进去：手机自动降一档分辨率、后置失败会优雅退回前置（见 pose-engine）
+    await withTimeout(camera.start(deviceId, {
+      facing: state.settings.cameraFacing || 'user',
+      tier: perfTier(deviceEnv()),
+    }), 25000, t('ui.maskCamFailTitle'));
   } catch (err) {
     state.camError = `${err?.name || 'Error'}: ${err?.message || err}`;
     state.camErrName = err?.name || 'Error';
@@ -4655,7 +4831,7 @@ function bindUI() {
   $('ringRetry')?.addEventListener('click', () => triggerGesture('retry'));
   // 左下角常驻的「退出」圆环：手或脚停 3 秒是主路径，点一下同样有效
   $('ringQuickExit')?.addEventListener('click', () => triggerCornerExit());
-  window.addEventListener('resize', onStageResize);
+  // resize 统一走 onViewportChange（它顺带重算 --vh / 设备类名 / 竖屏遮罩），别再单独挂 onStageResize
   document.addEventListener('fullscreenchange', onStageResize);
   $('btnPause').addEventListener('click', () => (state.session === 'paused' ? resumeSession() : pauseSession()));
   $('btnStop').addEventListener('click', () => stopSession('user'));
@@ -4680,6 +4856,7 @@ function bindUI() {
   $('modelSel').value = state.settings.modelKey;
   $('modelSel').addEventListener('change', async (e) => {
     state.settings.modelKey = e.target.value;
+    state.settings.modelKeySet = true;   // 用户自己选过了：以后换设备也不再覆盖
     saveSettings();
     if (camera.active) await reloadModel();
   });
@@ -4834,13 +5011,25 @@ function bindUI() {
   };
   document.addEventListener('fullscreenchange', onFsChange);
   document.addEventListener('webkitfullscreenchange', onFsChange);
-  // 转屏：伪全屏是「按当前视口钉住」的，转屏后尺寸全变，直接退出让用户自己再点（也避免半屏错位）
-  const onOrient = () => {
-    if (pseudoFullscreenOn()) exitFullscreen();
+  /**
+   * 视口变化（转屏 / 地址栏伸缩 / 软键盘）：一次把所有跟着变的东西重算一遍 ——
+   * `--vh`（iOS 地址栏伸缩时 100vh 会算错）、设备类名与竖屏遮罩、圆环与菜单的位置。
+   */
+  const onViewportChange = () => {
+    if (pseudoFullscreenOn()) exitFullscreen();   // 伪全屏是按旧视口钉住的，转屏后先退出更稳
+    syncViewportUnit();
+    syncDeviceClasses();
     onStageResize();
   };
   if (typeof window !== 'undefined' && window.addEventListener) {
-    window.addEventListener('orientationchange', onOrient);
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('orientationchange', onViewportChange);
+  }
+  // iOS 的地址栏伸缩只会改 visualViewport，不派发 window.resize —— 补两个监听
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  if (vv && typeof vv.addEventListener === 'function') {
+    vv.addEventListener('resize', onViewportChange);
+    vv.addEventListener('scroll', onViewportChange);
   }
   syncFullscreenSupport();
 
@@ -4849,6 +5038,20 @@ function bindUI() {
     saveSettings();
     await startCamera(e.target.value);
   });
+
+  // 前置 / 后置摄像头切换（手机）：切换后重新开一次摄像头，失败会按降级顺序回退
+  const facingSel = $('facingSel');
+  if (facingSel) {
+    facingSel.value = state.settings.cameraFacing || 'user';
+    facingSel.addEventListener('change', async (e) => {
+      state.settings.cameraFacing = e.target.value === 'environment' ? 'environment' : 'user';
+      saveSettings();
+      setCueLine(t('status.cameraFacing', {
+        name: t(state.settings.cameraFacing === 'environment' ? 'ui.facingBack' : 'ui.facingUser'),
+      }));
+      if (camera.active) await startCamera(state.settings.camDeviceId || null);
+    });
+  }
 
   $('tMinus').addEventListener('click', () => {
     setTarget(state.target - targetStepFor(localizedExercise(state.exerciseId)));
@@ -4950,6 +5153,8 @@ function bindUI() {
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && state.session === 'running') pauseSession();
+    // 屏幕常亮：切到后台时浏览器会把 wakeLock 收回去，回到前台且还在练就重新申请一次
+    else if (!document.hidden && state.session === 'running' && !state.wakeLock) requestWakeLock();
   });
 }
 
@@ -5047,7 +5252,12 @@ function boot() {
   applyI18n(document);
   buildLanguageSelect();
   buildMusicTracks();
+  // 手机 / 低配机器：没被用户改过就用轻量模型（必须在 bindUI 之前，不然下拉框读的是旧值）
+  applyDeviceDefaults();
   bindUI();
+  // 视口单位与设备类名（含竖屏遮罩）先算一次，第一屏就是对的
+  syncViewportUnit();
+  syncDeviceClasses();
   // 先按地址栏路由定位：带 ?exercise= / ?autostart / ?probe 时直接进动作页（自动化与书签要用），
   // 地址栏是 #/ex/<id> 时进那个动作，否则停在主页让用户挑分类与动作。
   const wantId = params.get('exercise') || routeExercise();
@@ -5109,6 +5319,9 @@ window.__mfg = {
   buildMusicTracks, selectMusicTrack,
   // 摄像头诊断面板（打不开时列出客观事实 + 处置建议）
   cameraDiagEnv, cameraDiagRows, cameraDiagAdviceKey, renderCameraDiag, DIAG_ERROR_ADVICE, diagYesNo,
+  // 手机适配：设备档位 / 视口单位 / 安全区 / 竖屏遮罩 / 省电默认值
+  deviceClass, deviceEnv, perfTier, pickDefaultModelKey, shouldSuggestRotate,
+  safeAreaInsets, syncViewportUnit, syncDeviceClasses, applyDeviceDefaults,
   // 调试数据记录（全局配置里的隐藏分组）：记录器本体 + 开关函数，测试直接用它们驱动
   poseLogger, setPoseLog, togglePoseLog, poseLogMeta, renderPoseLogStatus,
   setPoseLogUi, anyModalOpen, videoStateActive,

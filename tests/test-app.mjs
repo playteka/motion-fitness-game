@@ -5006,6 +5006,202 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     tDiag('ui.maskInsecureText').slice(0, 60));
 }
 
+/* ------------------------------------------------------------------ *
+ * ⑨ 手机适配：设备档位 / 省电默认值 / 视口与安全区 / 竖屏遮罩 / 前后摄像头
+ *
+ * 用户要求「让该软件同时适应 PC 浏览器和手机浏览器」，同时「PC 行为必须不变」。
+ * 下面全部按纯函数喂环境值来断言：手机结论要对，PC 结论必须和改造前一样（档位 high、模型不动）。
+ * ------------------------------------------------------------------ */
+{
+  const api = windowStub.__mfg;
+  const { t: tPhone } = await import('../src/i18n.js');
+  const {
+    cameraConstraintsFor, cameraAttemptsFor, shouldRetryCamera,
+  } = await import('../src/pose-engine.js');
+
+  const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+  const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36';
+  const IPAD_UA = 'Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+  const PC_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
+
+  ok('设备识别：iPhone / Android 手机 → phone，iPad → tablet，PC → desktop',
+    api.deviceClass({ ua: IPHONE_UA }) === 'phone' && api.deviceClass({ ua: ANDROID_UA }) === 'phone'
+    && api.deviceClass({ ua: IPAD_UA }) === 'tablet' && api.deviceClass({ ua: PC_UA }) === 'desktop',
+    [api.deviceClass({ ua: IPHONE_UA }), api.deviceClass({ ua: ANDROID_UA }),
+      api.deviceClass({ ua: IPAD_UA }), api.deviceClass({ ua: PC_UA })].join(','));
+  ok('iPadOS 把自己报成 Mac 时也不会被当成手机（触摸 + 屏幕最小边 768 → tablet/desktop）',
+    api.deviceClass({ ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', maxTouchPoints: 5, screenMin: 768 }) === 'desktop');
+  ok('UA 认不出来时靠「触摸屏 + 小屏」兜底判成手机',
+    api.deviceClass({ ua: 'Mozilla/5.0 (Linux; Android 14)', maxTouchPoints: 5, screenMin: 412 }) === 'phone');
+
+  ok('性能档位：手机一律 low（省电），PC 多核仍是 high（行为不变）',
+    api.perfTier({ ua: IPHONE_UA, hardwareConcurrency: 6 }) === 'low'
+    && api.perfTier({ ua: PC_UA, hardwareConcurrency: 16 }) === 'high'
+    && api.perfTier({ ua: PC_UA, hardwareConcurrency: 2 }) === 'low',
+    [api.perfTier({ ua: IPHONE_UA, hardwareConcurrency: 6 }),
+      api.perfTier({ ua: PC_UA, hardwareConcurrency: 16 }),
+      api.perfTier({ ua: PC_UA, hardwareConcurrency: 2 })].join(','));
+  ok('默认模型：手机 / 低配 → 轻量；PC → null（不改动任何东西）',
+    api.pickDefaultModelKey({ ua: IPHONE_UA }) === 'lite'
+    && api.pickDefaultModelKey({ ua: PC_UA, hardwareConcurrency: 16 }) === null);
+
+  // 用户改过的模型**永不覆盖**（用户明确要求）
+  {
+    const saved = { modelKey: api.state.settings.modelKey, modelKeySet: api.state.settings.modelKeySet };
+    api.state.settings.modelKey = 'full';
+    api.state.settings.modelKeySet = true;
+    const changed = api.applyDeviceDefaults({ ua: IPHONE_UA });
+    ok('用户自己选过模型（modelKeySet）→ 手机上也不会被改成轻量',
+      changed === null && api.state.settings.modelKey === 'full', `${changed}/${api.state.settings.modelKey}`);
+    api.state.settings.modelKey = 'full';
+    api.state.settings.modelKeySet = false;
+    const applied = api.applyDeviceDefaults({ ua: IPHONE_UA });
+    ok('没改过的手机 → 首次打开自动用轻量模型（并写回存档）',
+      applied === 'lite' && api.state.settings.modelKey === 'lite', String(applied));
+    ok('用户改过模型这件事会写进设置（以后再换设备也不覆盖）',
+      api.state.settings.modelKeySet === false || typeof api.state.settings.modelKeySet === 'boolean');
+    api.state.settings.modelKey = saved.modelKey;
+    api.state.settings.modelKeySet = saved.modelKeySet;
+  }
+
+  // 竖屏提示只在「手机 + 竖屏」出现
+  ok('竖屏提示：手机竖屏 → 提示；手机横屏 / 电脑 → 不提示',
+    api.shouldSuggestRotate({ ua: IPHONE_UA, width: 390, height: 844 }) === true
+    && api.shouldSuggestRotate({ ua: IPHONE_UA, width: 844, height: 390 }) === false
+    && api.shouldSuggestRotate({ ua: PC_UA, width: 900, height: 1200 }) === false);
+
+  // 摄像头约束与降级顺序（纯函数）
+  ok('手机（low 档）请求的分辨率更省：960×540@24，而 PC 仍是 1280×720@30',
+    cameraConstraintsFor({ tier: 'low' }).video.width.ideal === 960
+    && cameraConstraintsFor({ tier: 'low' }).video.frameRate.ideal === 24
+    && cameraConstraintsFor({ tier: 'high' }).video.width.ideal === 1280
+    && cameraConstraintsFor({ tier: 'high' }).video.frameRate.ideal === 30);
+  ok('默认要求前置摄像头（facingMode: user）',
+    cameraConstraintsFor({}).video.facingMode === 'user');
+  ok('指定镜头 id 时用 deviceId.exact（工具栏「镜头」选的）',
+    cameraConstraintsFor({ deviceId: 'abc' }).video.deviceId.exact === 'abc'
+    && cameraConstraintsFor({ deviceId: 'abc' }).video.facingMode === undefined);
+  ok('后置摄像头失败时按顺序回退：后置 → 前置 → 不加任何挑选条件',
+    (() => {
+      const a = cameraAttemptsFor({ facing: 'environment' });
+      return a.length === 3
+        && a[0].video.facingMode === 'environment'
+        && a[1].video.facingMode === 'user'
+        && a[2].video.facingMode === undefined;
+    })());
+  ok('前置摄像头只试两次（前置 → 无条件下兜底），不会多绕一圈',
+    cameraAttemptsFor({ facing: 'user' }).length === 2);
+  ok('权限被拒（NotAllowedError）不重试（重试只会再弹一次权限框）',
+    shouldRetryCamera('NotAllowedError') === false
+    && shouldRetryCamera('OverconstrainedError') === true
+    && shouldRetryCamera('NotFoundError') === true
+    && shouldRetryCamera('') === false);
+
+  // 竖屏遮罩：真的切 DOM，而且正在练的那一组会先暂停
+  {
+    const savedSession = api.state.session;
+    const savedHome = api.state.homeMode;
+    api.state.session = 'idle';
+    api.state.homeMode = false;                     // 停在动作页（要横向画面）
+    const portrait = api.syncDeviceClasses({ ua: IPHONE_UA, width: 390, height: 844 });
+    ok('手机竖屏：body 打上 is-phone + is-portrait，并亮出「请把手机横过来」遮罩',
+      portrait.portrait === true && portrait.gate === true
+      && documentStub.body.classList.contains('is-phone')
+      && documentStub.body.classList.contains('is-portrait')
+      && elements.get('rotateGate').hidden === false,
+      `rotate=${portrait.portrait} body=${documentStub.body.className}`);
+    api.state.session = 'running';
+    api.syncDeviceClasses({ ua: IPHONE_UA, width: 390, height: 844 });
+    ok('遮罩盖住画面时，正在练的那一组先暂停（不让用户白做）',
+      api.state.session === 'paused', api.state.session);
+    const landscape = api.syncDeviceClasses({ ua: IPHONE_UA, width: 844, height: 390 });
+    ok('横过来之后遮罩收起，body 换成 is-landscape',
+      landscape.gate === false && elements.get('rotateGate').hidden === true
+      && documentStub.body.classList.contains('is-landscape')
+      && !documentStub.body.classList.contains('is-portrait'));
+    api.state.homeMode = true;                      // 回到主页：竖屏浏览动作库不该被挡
+    const onHome = api.syncDeviceClasses({ ua: IPHONE_UA, width: 390, height: 844 });
+    ok('手机竖屏停在主页时不挡（竖屏浏览动作库是正常的）',
+      onHome.portrait === true && onHome.gate === false && elements.get('rotateGate').hidden === true);
+    api.syncDeviceClasses({ ua: PC_UA, width: 1440, height: 900 });
+    ok('电脑上永远不出现竖屏遮罩、也不打 is-phone',
+      elements.get('rotateGate').hidden === true && !documentStub.body.classList.contains('is-phone'));
+    api.state.session = savedSession;
+    api.state.homeMode = savedHome;
+  }
+
+  // 视口单位：把 visualViewport 的实测高度写进 --vh（iOS 地址栏伸缩兜底）
+  {
+    const root = documentStub.documentElement;
+    const savedStyle = root.style;
+    const written = {};
+    root.style = { setProperty: (k, v) => { written[k] = v; } };
+    const savedH = windowStub.innerHeight;
+    windowStub.innerHeight = 640;
+    const h = api.syncViewportUnit();
+    ok('视口高度兜底：把 innerHeight/100 写进 --vh（iOS 地址栏伸缩时 100vh 会算错）',
+      h === 640 && written['--vh'] === '6.40px', `${h} / ${written['--vh']}`);
+    root.style = savedStyle;
+    windowStub.innerHeight = savedH;
+  }
+
+  // 安全区：左下角圆环要躲开刘海（左侧）与底部横条
+  {
+    const savedGCS = windowStub.getComputedStyle;
+    windowStub.getComputedStyle = () => ({
+      getPropertyValue: (n) => ({ '--safe-left': '34px', '--safe-bottom': '21px' }[n] || '0px'),
+    });
+    const size = { w: 1280, h: 720 };
+    const c = api.ringCenter('corner', size.w, size.h);
+    const px = api.ringPx('corner');
+    ok('有安全区时左下角「退出」圆环往右上让开（刘海 34px + 底部横条 21px）',
+      c.x === 34 + api.CORNER_RING_INSET_PX + px / 2
+      && c.y === size.h - 21 - api.CORNER_RING_BOTTOM_PX - px / 2, JSON.stringify(c));
+    windowStub.getComputedStyle = savedGCS;
+    const c0 = api.ringCenter('corner', size.w, size.h);
+    ok('没有安全区时（PC）圆环位置与改造前完全一致',
+      c0.x === api.CORNER_RING_INSET_PX + px / 2
+      && c0.y === size.h - api.CORNER_RING_BOTTOM_PX - px / 2, JSON.stringify(c0));
+  }
+
+  // 前后摄像头切换（设置里的下拉）
+  {
+    const sel = elements.get('facingSel');
+    ok('设置里有「前置 / 后置」两个选项',
+      /id="facingSel"[\s\S]{0,400}?value="user"/.test(html)
+      && /id="facingSel"[\s\S]{0,400}?value="environment"/.test(html));
+    const savedFacing = api.state.settings.cameraFacing;
+    sel.value = 'environment';
+    sel.dispatch('change', { target: { value: 'environment' } });
+    ok('切到后置会写进设置并提示一句',
+      api.state.settings.cameraFacing === 'environment'
+      && elements.get('cueLine').textContent.includes(tPhone('ui.facingBack')),
+      `${api.state.settings.cameraFacing} / ${elements.get('cueLine').textContent}`);
+    sel.value = 'user';
+    sel.dispatch('change', { target: { value: 'user' } });
+    ok('切回前置同样生效', api.state.settings.cameraFacing === 'user');
+    api.state.settings.cameraFacing = savedFacing;
+  }
+
+  // 屏幕常亮：回到前台且还在练时重新申请（切后台时浏览器会收走 wakeLock）
+  {
+    const savedWake = navigatorStub.wakeLock;
+    let requested = 0;
+    navigatorStub.wakeLock = { request: async () => { requested += 1; return { release() {} }; } };
+    api.state.session = 'running';
+    documentStub.hidden = false;
+    documentStub.dispatch('visibilitychange');
+    ok('回到前台还在练 → 重新申请屏幕常亮（wakeLock）', requested === 1, String(requested));
+    documentStub.hidden = true;
+    api.state.session = 'running';
+    documentStub.dispatch('visibilitychange');
+    ok('切到后台 → 自动暂停（本来就有，别被新逻辑弄丢）', api.state.session === 'paused', api.state.session);
+    documentStub.hidden = false;
+    api.state.session = 'idle';
+    navigatorStub.wakeLock = savedWake;
+  }
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {
   console.log('失败项：');
   for (const f of failures) console.log('  - ' + f);

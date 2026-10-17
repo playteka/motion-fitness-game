@@ -118,6 +118,13 @@ export default {
     maskInsecureTitle: '这个地址不安全，浏览器不给摄像头',
     maskInsecureText: '手机浏览器只在 https（或 localhost）下允许开摄像头。请把地址换成 https:// 再打开 —— 生成自签证书或走隧道，见 README「手机浏览器使用」。',
     unknownError: '未知错误',
+
+    // ---- 手机适配（竖屏提示 / 前后摄像头）----
+    rotateTitle: '请把手机横过来',
+    rotateText: '动作识别是横向画面（16:9）：横屏后整个视频框与圆环才放得下。横过来就自动继续。',
+    facing: '摄像头',
+    facingUser: '前置（自拍）',
+    facingBack: '后置',
   },
 
   /* ---------------- 摄像头诊断面板（打不开时列出客观事实） ---------------- */
@@ -228,6 +235,7 @@ export default {
     timedGo: '⏱ {sec} 秒计时开始，看你能做多少次！',
     timeUpVoice: '时间到，太棒了',
     cameraReady: '摄像头 {w}×{h}',
+    cameraFacing: '已切换到「{name}」摄像头',
     cameraOff: '摄像头未开启',
     modelLoading: '模型加载中…',
     modelReadyShort: '模型就绪 {model}/{delegate}',

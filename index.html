@@ -375,6 +375,14 @@
 
         <div class="modal-group">
           <h3 class="modal-group-title" data-i18n="settings.cameraGroup"></h3>
+          <!-- 前置 / 后置摄像头（手机）：默认前置（自拍视角），可切后置；切换失败会优雅回退 -->
+          <label class="field wide">
+            <span data-i18n="ui.facing"></span>
+            <select id="facingSel">
+              <option value="user" data-i18n="ui.facingUser"></option>
+              <option value="environment" data-i18n="ui.facingBack"></option>
+            </select>
+          </label>
           <div class="toggle-grid">
             <button class="toggle" id="btnMirror" type="button" aria-pressed="true" data-i18n="ui.mirror"></button>
             <button class="toggle" id="btnSkeleton" type="button" aria-pressed="false" data-i18n="ui.skeleton"></button>
@@ -488,6 +496,17 @@
           <button class="ghost-btn" id="btnClearHistory" type="button" data-i18n="ui.clear"></button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- 手机竖屏提示：动作识别本来就是横向布局（人横着站/躺，画面 16:9），
+       竖屏时先请用户把手机横过来。显隐由 app.js 的 syncDeviceClasses() 控制：
+       只有「手机 + 竖屏」才显示，电脑 / 平板永远不打扰；显示时正在练的那一组会先暂停。 -->
+  <div class="rotate-gate" id="rotateGate" hidden>
+    <div class="rotate-gate-inner">
+      <span class="rotate-gate-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg></span>
+      <p class="rotate-gate-title" data-i18n="ui.rotateTitle"></p>
+      <p class="rotate-gate-text" data-i18n="ui.rotateText"></p>
     </div>
   </div>
 

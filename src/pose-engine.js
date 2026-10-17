@@ -92,11 +92,61 @@ export class PoseEngine {
 }
 
 /** 摄像头管理：授权、枚举、切换 */
+
+/**
+ * 一次 `getUserMedia` 的约束（纯函数，测试直接断言）。
+ *
+ * - 指定了 `deviceId` → 精确要那一个镜头（用户在工具栏「镜头」里选过的）；
+ * - 否则用 `facingMode`（`user` 前置 / `environment` 后置）——手机默认前置；
+ * - `tier === 'low'`（手机 / 低配）时把理想分辨率降到 960×540、24fps：
+ *   720p 对手机浏览器来说解码 + 推理都更吃力，降一档更稳（识别精度几乎不受影响）。
+ */
+export function cameraConstraintsFor({ deviceId = null, facing = 'user', tier = 'high' } = {}) {
+  const low = tier === 'low';
+  const size = {
+    width: { ideal: low ? 960 : 1280 },
+    height: { ideal: low ? 540 : 720 },
+    frameRate: { ideal: low ? 24 : 30 },
+  };
+  if (deviceId) return { audio: false, video: { deviceId: { exact: deviceId }, ...size } };
+  if (facing && facing !== 'auto') return { audio: false, video: { facingMode: facing, ...size } };
+  return { audio: false, video: { ...size } };
+}
+
+/**
+ * 「优雅回退」的尝试顺序（纯函数）。
+ *
+ * 手机上的摄像头千奇百怪（没有后置、后置被占用、镜头 id 换了），所以一次失败就换下一个方案，
+ * 而不是直接报错：
+ *   ① 用户明确选过的镜头（deviceId）
+ *   ② 用户选的前 / 后置（facingMode）
+ *   ③ 后置失败 → 退回前置（绝大多数设备一定有前置）
+ *   ④ 最后兜底：什么条件都不加，只要能出画面
+ */
+export function cameraAttemptsFor({ deviceId = null, facing = 'user', tier = 'high' } = {}) {
+  const attempts = [];
+  if (deviceId) attempts.push(cameraConstraintsFor({ deviceId, tier }));
+  if (facing && facing !== 'auto') attempts.push(cameraConstraintsFor({ facing, tier }));
+  if (facing === 'environment') attempts.push(cameraConstraintsFor({ facing: 'user', tier }));
+  attempts.push({ audio: false, video: { width: { ideal: 1280 }, height: { ideal: 720 } } });
+  return attempts;
+}
+
+/**
+ * 这个错误值不值得换下一个方案重试（纯函数）。
+ * **权限被拒（NotAllowedError）不重试** —— 重试只会再弹一次权限框，用户更烦。
+ */
+export function shouldRetryCamera(errName = '') {
+  return ['OverconstrainedError', 'ConstraintNotSatisfiedError', 'NotFoundError',
+    'DevicesNotFoundError', 'TypeError'].includes(errName);
+}
+
 export class Camera {
   constructor(videoEl) {
     this.video = videoEl;
     this.stream = null;
     this.deviceId = null;
+    this.facing = 'user';
   }
 
   get active() { return !!this.stream && this.video.readyState >= 2; }
@@ -116,22 +166,38 @@ export class Camera {
     return devices.filter((d) => d.kind === 'videoinput');
   }
 
-  async start(deviceId = null) {
+  /**
+   * @param {string|null} deviceId 指定镜头（工具栏「镜头」选的）
+   * @param {{facing?:'user'|'environment'|'auto', tier?:'low'|'high'}} opts
+   *   一个方案失败就按 cameraAttemptsFor 的顺序换下一个；权限被拒则立刻抛出（不重试）
+   */
+  async start(deviceId = null, { facing = 'user', tier = 'high' } = {}) {
     this.stop();
-    const constraints = {
-      audio: false,
-      video: deviceId
-        ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
-        : { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-    };
-    this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+    const attempts = cameraAttemptsFor({ deviceId, facing, tier });
+    let lastErr = null;
+    for (let i = 0; i < attempts.length; i += 1) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        this.stream = await navigator.mediaDevices.getUserMedia(attempts[i]);
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (!shouldRetryCamera(err?.name) || i === attempts.length - 1) break;
+        console.warn('[camera] constraint attempt failed, trying the next one:', err?.name || err);
+      }
+    }
+    if (lastErr) throw lastErr;
     this.video.srcObject = this.stream;
     await this.video.play();
     await new Promise((resolve) => {
       if (this.video.videoWidth) return resolve();
       this.video.onloadedmetadata = () => resolve();
     });
-    this.deviceId = this.stream.getVideoTracks()[0]?.getSettings?.().deviceId || deviceId || null;
+    const track = this.stream.getVideoTracks()[0];
+    this.deviceId = track?.getSettings?.().deviceId || deviceId || null;
+    // 实际生效的朝向（手机上浏览器可能自己纠正），用来同步设置里的下拉
+    this.facing = track?.getSettings?.().facingMode || facing || 'user';
     return this.stream;
   }
 

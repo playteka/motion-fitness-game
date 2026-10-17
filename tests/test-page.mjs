@@ -1337,6 +1337,95 @@ console.log('\n[7] 手机浏览器支持：伪全屏与 PWA');
   })());
 }
 
+/* ------------------------------------------------------------------ *
+ * 8. 手机浏览器支持之三：动态视口 / 安全区 / 竖屏遮罩 / 触摸 / 前后摄像头
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8] 手机浏览器支持：布局、触摸与性能档');
+{
+  const css = read('style.css');
+  const app = read('src/app.js');
+  const engine = read('src/pose-engine.js');
+
+  // --- 动态视口：100dvh + JS 实测 --vh 兜底 ---
+  ok('声明了 --vh 动态视口变量（iOS 地址栏伸缩时 100vh 会算错）',
+    /--vh:\s*1vh/.test(css) && /@supports \(height: 100dvh\)/.test(css) && /--vh:\s*1dvh/.test(css));
+  ok('视口变化时用 visualViewport 的实测高度刷新 --vh',
+    /visualViewport/.test(app) && /function syncViewportUnit\(/.test(app)
+    && /setProperty\('--vh'/.test(app));
+  ok('resize / orientationchange / visualViewport 都会重算尺寸（圆环与菜单跟着走）',
+    /addEventListener\('orientationchange', onViewportChange\)/.test(app)
+    && /addEventListener\('resize', onViewportChange\)/.test(app)
+    && /vv\.addEventListener\('scroll', onViewportChange\)/.test(app)
+    && /const onViewportChange = \(\) =>/.test(app));
+  ok('index.html 的 viewport 带 viewport-fit=cover（不写它安全区常量恒为 0）',
+    /name="viewport"[^>]*viewport-fit=cover/.test(html));
+  ok('伪全屏高度同时写了 dvh 与 --vh 兜底（老 Safari 没有 dvh）',
+    /height:\s*100dvh;\s*\n\s*height:\s*calc\(var\(--vh/.test(css));
+
+  // --- 安全区 ---
+  ok('四个方向都预留了刘海 / 底部横条安全区（env(safe-area-inset-*)）',
+    ['top', 'right', 'bottom', 'left'].every((d) => new RegExp(`--safe-${d}:\\s*env\\(safe-area-inset-${d}`).test(css)));
+  ok('.app 的左右与底部内边距带上安全区（横屏刘海不会压住内容）',
+    /\.app\s*\{[\s\S]{0,220}?padding-left:\s*calc\(20px \+ var\(--safe-left\)\)/.test(css)
+    && /padding-right:\s*calc\(20px \+ var\(--safe-right\)\)/.test(css)
+    && /padding-bottom:\s*calc\(40px \+ var\(--safe-bottom\)\)/.test(css));
+  ok('HUD / 全屏按钮也躲开安全区（贴边元素不压刘海、不压底部横条）',
+    /\.hud\s*\{[\s\S]{0,200}?padding-top:\s*calc\(16px \+ var\(--safe-top\)\)/.test(css)
+    && /\.stage-btn\s*\{[\s\S]{0,200}?right:\s*calc\(12px \+ var\(--safe-right\)\)/.test(css));
+  ok('左下角「退出」圆环的定位把安全区算进去了（JS 读 --safe-*）',
+    /function safeAreaInsets\(/.test(app) && /safe\.left \+ CORNER_RING_INSET_PX/.test(app)
+    && /stageH - safe\.bottom - CORNER_RING_BOTTOM_PX/.test(app));
+
+  // --- 竖屏遮罩 ---
+  ok('index.html 有竖屏提示遮罩（#rotateGate + 走 i18n 的标题/说明）',
+    /id="rotateGate"/.test(html) && /data-i18n="ui\.rotateTitle"/.test(html)
+    && /data-i18n="ui\.rotateText"/.test(html));
+  ok('竖屏遮罩的样式是整屏覆盖层（fixed + 高 z-index + 安全区内边距）', (() => {
+    const blk = /\.rotate-gate\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+    return /position:\s*fixed/.test(blk) && /z-index/.test(blk)
+      && /--safe-top/.test(blk) && /--safe-bottom/.test(blk);
+  })());
+  ok('遮罩显隐由 app.js 按「手机 + 竖屏 + 在动作页」判定（主页与电脑都不打扰）',
+    /function shouldSuggestRotate\(/.test(app) && /function rotateGateWanted\(/.test(app)
+    && /shouldSuggestRotate\(env\) && !state\.homeMode/.test(app) && /gateEl\.hidden = !gate/.test(app)
+    && /body\.classList\.toggle\('is-phone'/.test(app) && /classList\.toggle\('is-portrait'/.test(app));
+  ok('遮罩盖住画面时先暂停那一组（别让用户白做）',
+    /if \(gate && state\.session === 'running'\) pauseSession\(\)/.test(app));
+
+  // --- 触摸 ---
+  ok('禁掉双击缩放误触（touch-action: manipulation）', /touch-action:\s*manipulation/.test(css));
+  ok('按钮 / 开关 / 圆环禁掉长按选中（user-select: none）',
+    /user-select:\s*none/.test(css) && /-webkit-user-select:\s*none/.test(css));
+  ok('定义了 --tap-min 并且 ≥44px（Apple / Google 的最小点击目标）',
+    Number(/--tap-min:\s*(\d+)px/.exec(css)?.[1]) >= 44, /--tap-min:\s*(\d+)px/.exec(css)?.[1]);
+  ok('手机上给图标按钮 / 开关 / 下拉都补了 44px 的最小高度',
+    /body\.is-phone \.icon-btn[\s\S]{0,400}?min-height:\s*var\(--tap-min\)/.test(css));
+  ok('手机上的全屏按钮也是 44×44（右下角那个小图标）',
+    /body\.is-phone \.stage-btn\s*\{[^}]*width:\s*var\(--tap-min\)/.test(css));
+  ok('视频元素是 playsinline muted autoplay（iOS 上缺 playsinline 会自己跳全屏）',
+    /<video id="video"[^>]*playsinline[^>]*muted[^>]*autoplay/.test(html));
+
+  // --- 性能档与摄像头朝向 ---
+  ok('手机默认轻量模型、且用户改过就不覆盖（modelKeySet 是唯一的判据）',
+    /modelKeySet:\s*false/.test(app) && /if \(state\.settings\.modelKeySet\) return null;/.test(app)
+    && /state\.settings\.modelKeySet = true;/.test(app));
+  ok('手机（low 档）请求更省的分辨率（960×540@24），PC 仍是 1280×720@30',
+    /width:\s*\{\s*ideal:\s*low \? 960 : 1280 \}/.test(engine)
+    && /frameRate:\s*\{\s*ideal:\s*low \? 24 : 30 \}/.test(engine));
+  ok('默认前置摄像头（facingMode: user）+ 设置里可切前置 / 后置',
+    /facingMode:\s*facing/.test(engine) && /cameraFacing:\s*'user'/.test(app)
+    && /id="facingSel"/.test(html) && /data-i18n="ui\.facingUser"/.test(html)
+    && /data-i18n="ui\.facingBack"/.test(html));
+  ok('摄像头失败会优雅回退（后置 → 前置 → 不加条件），权限被拒则不重试',
+    /export function cameraAttemptsFor/.test(engine) && /export function shouldRetryCamera/.test(engine)
+    && /'NotAllowedError'/.test(engine) === false
+    && /OverconstrainedError/.test(engine));
+  ok('训练开始申请屏幕常亮、结束释放，回到前台补申请（失败静默）',
+    /requestWakeLock\(\)/.test(app) && /releaseWakeLock\(\)/.test(app)
+    && /state\.session === 'running' && !state\.wakeLock\) requestWakeLock\(\)/.test(app));
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
 if (failures.length) {
   console.log('失败项：');
