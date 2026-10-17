@@ -73,12 +73,22 @@ body {
  * 主页那套『紫 / 青 / 薄荷渐变』色」。所以渐变不再只属于主页 —— 动作页（`#workoutView`）的
  * 整页铺底、视频框外围的 letterbox、侧栏、顶栏、按钮全部跟着换成同一套。
  *
- * **一处定义**：下面 `body.is-home, body.in-workout` 是**唯一**一份渐变数值 —— `--home-*`
- * 与四层 background（1 层 linear + 3 层 radial 光晕）都只写在这里，两个页面都只引用它。
+ * **一处定义**：下面 `body.is-home, body.in-workout, .modal-card` 是**唯一**一份渐变数值 ——
+ * `--home-*` 与四层 background（1 层 linear + 3 层 radial 光晕）都只写在这里，三个作用域都只引用它：
+ *   ① 主页 `body.is-home`、② 动作页 `body.in-workout`、③ **弹窗面板 `.modal-card`**（用户要求
+ *   「还有弹窗的 theme，也要调成一样的色调」—— 四个弹窗 #settingsModal / #exerciseModal /
+ *   #bestModal / #historyModal 的面板都是 `.modal-card`，压暗背景的 `.modal-backdrop` scrim 保留）。
  * `is-home` 由 app.js 的 showHome() 加、showWorkout() 去；`in-workout` 反过来加/去，
- * 两者**互斥**，所以两个页面共用同一张底、切屏时不会同时挂着两个类。
+ * 两者**互斥**，所以两个页面共用同一张底、切屏时不会同时挂着两个类；`.modal-card` 则一直挂着自己
+ * 那份（弹窗可以在主页开、也可以在动作页开，两种情况都同一张底）。
  * 主页的卡片 / 搜索框等仍用下面 `body.is-home ...` 那几条；动作页的外壳（letterbox / 侧栏 /
- * 顶栏 / 按钮）走下面「动作页外壳」那一节，同样只引用这里的 --home-* 变量。
+ * 顶栏 / 按钮）走下面「动作页外壳」那一节；弹窗面板内部走「弹窗」那一节的令牌重映射 ——
+ * 三处都只引用这里的 --home-* 变量。
+ *
+ * 弹窗面板的对比度（按 CSS 真实四层背景栅格化，取面板覆盖区域最亮像素 L≈0.10）：
+ *   面板底 正文 6.5:1 / 次要 5.8:1；面板内卡片（白 5.5%）正文 5.7:1 / 次要 5.1:1；
+ *   输入框（同一张卡）5.7:1；状态色（取中的选曲按钮：品牌实底 + 深字）7.1~9.7:1；
+ *   危险色 `--bad` 在亮底上只有 2.5:1 —— 所以弹窗作用域里**不直接用它**（见弹窗那一节）。
  *
  * ⚠️ **视频区不算外壳**：`#stage` 里放 video 的那块必须保持中性深色 `#05090f`（见 `.stage`），
  * 因为上面还要叠关节线 / HUD / 圆环 / 判定进度条 —— 彩色底会直接毁掉对比度。
@@ -96,7 +106,8 @@ body {
  *   （不涉及 prefers-reduced-motion）。
  * ------------------------------------------------------------------ */
 body.is-home,
-body.in-workout {
+body.in-workout,
+.modal-card {
   /* 渐变三段：深紫 → 青蓝 → 薄荷深绿（主页与动作页共用，只此一份数值） */
   --home-bg-1: #2b0f6b;
   --home-bg-2: #0c4a6e;
@@ -105,7 +116,7 @@ body.in-workout {
   --home-glow-1: rgba(52, 229, 196, 0.15);
   --home-glow-2: rgba(56, 189, 248, 0.13);
   --home-glow-3: rgba(167, 139, 250, 0.14);
-  /* 卡片 / 描边在亮底上略提亮一档，层次仍然清楚（弹窗保持原来的深色，不受影响） */
+  /* 卡片 / 描边在亮底上略提亮一档，层次仍然清楚（弹窗面板也在这份共用块里，同样跟着提亮） */
   --home-card: rgba(255, 255, 255, 0.055);
   --home-card-2: rgba(255, 255, 255, 0.08);
   --home-line: rgba(255, 255, 255, 0.18);
@@ -147,7 +158,8 @@ body.is-home .ex-card.active {
   border-color: rgba(52, 229, 196, 0.75);
   box-shadow: 0 0 0 1px rgba(52, 229, 196, 0.4) inset;
 }
-/* 顶栏那几个图标按钮（⚠️ 只限顶栏：弹窗右上角的关闭按钮也用 `.icon-btn`，那些必须保持原样） */
+/* 顶栏那几个图标按钮（⚠️ 只限顶栏：弹窗右上角的关闭按钮也用 `.icon-btn`，它走 `.modal-card`
+   自己的令牌重映射，不套这条 hover） */
 body.is-home .topbar .icon-btn:hover,
 body.is-home .topbar .icon-btn:focus-visible { border-color: rgba(56, 189, 248, 0.7); }
 body.is-home .search-field,
@@ -174,14 +186,14 @@ body.is-home .start-gesture-sub { color: var(--home-text); }
 /* ================================================================== *
  * 动作页外壳：**和主页同一套高饱和深色**（深蹲 / 开合跳……这些运动页面）
  *
- * 页面本身的渐变铺底已经由上面的 `body.is-home, body.in-workout` 给到（同一份变量）。
- * 这一节只补「外壳」：视频框外围的 letterbox（`.stage-card`）、侧栏卡片（`.card`）、顶栏
+ * 页面本身的渐变铺底已经由上面的 `body.is-home, body.in-workout, .modal-card` 共用块给到
+ * （同一份变量）。这一节只补「外壳」：视频框外围的 letterbox（`.stage-card`）、侧栏卡片（`.card`）、顶栏
  * 图标按钮、开始 / 暂停 / 复位这些按钮的底色与描边 —— 全部改引用 --home-*，
  * 不再出现第二份颜色数值。
  *
  * ⚠️ 作用域只到 `body.in-workout .topbar` 与 `body.in-workout #workoutView`：
- *   弹窗（#settingsModal / #exerciseModal / 记录弹窗）和竖屏遮罩都不在里面，
- *   所以它们继续是原来的深色。
+ *   弹窗（#settingsModal / #exerciseModal / 记录弹窗）**不在这里**改色 —— 它们各自是
+ *   独立的第三个作用域 `.modal-card`（见文件下半「弹窗」那一节），竖屏遮罩则继续原来的深色。
  * ⚠️ **压在视频上的叠加层故意不在这里改色**（`.hud` / `.hud-badge` / `.hud-score` /
  *   `.criteria-bar` / `.stage-btn` / `.pose-hint`）：它们各自的深色半透明 scrim 就是为了
  *   「视频可能很亮 + 周围是彩色渐变」时也保住对比度，改成彩色底反而会掉到 4.5:1 以下。
@@ -202,7 +214,7 @@ body.in-workout #workoutView {
 /* 外壳里几处**写死颜色**的次要文字：在亮底上只有 1.9~4.3:1，统一提亮到主页那一档。
    （用 --muted 的那批已经跟着上面的令牌重映射走了，这里只补写死的。）
    ⚠️ 全部挂 `#workoutView`：弹窗是它的兄弟节点（不在里面），所以「运动设定」弹窗里的
-   同名类（.card-title 等）仍然保持原来的深色配色。 */
+   同名类（.card-title 等）不会被这条规则提到 --home-text，而是走弹窗自己那套作用域。 */
 body.in-workout #workoutView .card-title,
 body.in-workout #workoutView .howto-list,
 body.in-workout #workoutView .camera-hint { color: var(--home-text); }   /* #bfd4ea 3.1:1 / #cfe0f2 4.3:1 / #9fd8ff 3.8:1 → 6.2:1 */
@@ -1364,7 +1376,9 @@ kbd {
   text-align: center;
   font: 700 17px/1 inherit;
   color: var(--text);
-  background: rgba(0, 0, 0, 0.25);
+  /* 走令牌而不是写死 rgba(0,0,0,.25)：在弹窗作用域里 --card 已经是 --home-card，
+     数字框和旁边的下拉框 / 开关是同一张卡（亮底上正文 5.7:1）。 */
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
   outline: none;
@@ -1374,7 +1388,7 @@ kbd {
 
 .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 .chips button {
-  background: var(--card-2);
+  background: var(--card);
   border: 1px solid var(--line);
   color: var(--muted);
   border-radius: 999px;
@@ -1976,17 +1990,36 @@ kbd {
 
 .modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; }
 .modal[hidden] { display: none; }
-.modal-backdrop { position: absolute; inset: 0; background: rgba(4, 8, 15, 0.72); backdrop-filter: blur(3px); }
+/* 压暗背景的 scrim：**必须保留**（否则打开弹窗时后面的主页 / 动作页会整片透出来），
+   只把纯黑换成「略偏品牌色」的深色 —— 紫 / 薄荷两团极淡的光晕 + 0.74 的深底，
+   总不透明度没降（0.74 + 光晕），后面页面仍然看不出来；blur 让面板与背景分开。 */
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(760px 440px at 20% 6%, rgba(167, 139, 250, 0.14), transparent 62%),
+    radial-gradient(680px 400px at 88% 94%, rgba(52, 229, 196, 0.1), transparent 60%),
+    rgba(4, 8, 15, 0.74);
+  backdrop-filter: blur(3px);
+}
 .modal-card {
   position: relative;
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
   overflow: auto;
-  background: linear-gradient(180deg, #0f1a2b, #0b1422);
+  /* ⚠️ 这里**故意不写 background**：底色 / 文字色来自页面顶部 `body.is-home, body.in-workout,
+     .modal-card` 那一份共用渐变（12 个 --home-* + 3 层光晕 + 1 层三段线性，只此一处定义）。
+     面板再叠一条深色渐变就等于抄第二份数值，弹窗又会慢慢漂回旧配色。 */
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 18px 20px 22px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  /* 令牌重映射：和动作页外壳同一套做法 —— 输入框 / 开关 / 表格行 / 药丸 / 次要文字
+     全部换到主页那一档，既有规则一条都不用重写（--accent 等品牌色不动）。 */
+  --card: var(--home-card);
+  --card-2: var(--home-card-2);
+  --line: var(--home-line);
+  --muted: var(--home-muted);
 }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .modal-head h2 { font-size: 17px; margin: 0; }
@@ -2014,7 +2047,7 @@ kbd {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  background: var(--card-2);
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 9px 12px;
@@ -2026,13 +2059,54 @@ kbd {
   transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease;
 }
 .track-btn:hover { border-color: rgba(52, 229, 196, 0.5); transform: translateY(-1px); }
-.track-btn.active {
-  border-color: rgba(52, 229, 196, 0.8);
-  background: rgba(52, 229, 196, 0.12);
-  box-shadow: 0 0 0 1px rgba(52, 229, 196, 0.35) inset;
+/* 选中的一首：和「开关按下」「大按钮」同一套 —— 品牌色实底 + 深字（7.1~9.7:1）。
+   原来那种「12% 青叠在亮卡上」在渐变底上只有 4.2:1，字一多就糊。 */
+.modal-card .track-btn.active {
+  background: linear-gradient(135deg, rgba(52, 229, 196, 0.92), rgba(56, 189, 248, 0.88));
+  border-color: rgba(52, 229, 196, 0.9);
+  color: #04211c;
+  box-shadow: 0 6px 18px rgba(52, 229, 196, 0.22);
 }
+.modal-card .track-btn.active .track-meta { color: #06302a; }
 .track-btn .track-name { font-weight: 600; }
 .track-btn .track-meta { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------ *
+ * 弹窗面板内部：写死颜色的地方逐条提亮（面板底最亮处 L≈0.10）
+ *
+ * 全部挂在 `.modal-card` 作用域里 —— 这些类名在动作页 / 主页上也有同名的，
+ * 不限定作用域就会把那边已经调好的颜色再盖回去。
+ * 阈值：正文 ≥4.5:1、次要文字 ≥5:1（下表的数字是实测值，不是估的）。
+ * 危险色 `--bad`(#f87171) 在亮底上只有 2.5:1，弹窗作用域里**没有任何**危险色文字
+ * （清空记录走浏览器原生 confirm），所以不去定义一份「亮底版的危险色」。
+ * ------------------------------------------------------------------ */
+/* 记录列表（最佳成绩 / 运动记录）：名字用正文色，数值用品牌青，分数用提亮一档的琥珀 */
+.modal-card .record-list .r-name { color: var(--home-text); }        /* #cfe0f2 5.2 → 6.6 */
+.modal-card .record-list .r-val { color: var(--home-accent); }       /* --accent 4.3 → 5.3 */
+.modal-card .record-list .r-score,
+.modal-card .history-list .h-score { color: #fde68a; }               /* --warn 4.2 → 5.6 */
+.modal-card .record-list li,
+.modal-card .history-list li { border-bottom-color: var(--home-line); }
+/* 亮卡又把 --home-muted 压掉一丁点（手机竖屏最坏 4.97:1，桌面 5.13:1），
+   所以**卡片上**的次要文字统一用正文色（手机 5.5:1 / 桌面 5.7:1），层级靠字号与字重区分；
+   面板底上的次要文字（.modal-hint / .modal-group-title）仍是 --home-muted（5.6~5.8:1）。 */
+.modal-card .field,
+.modal-card .chips button,
+.modal-card .track-btn .track-meta,
+.modal-card .spec-group-title,
+.modal-card .spec-note,
+.modal-card .spec-note-full,
+.modal-card .toggle:not([aria-pressed="true"]) { color: var(--home-text); }
+/* 判据表格（运动设定）：卡片底跟着提亮；判据值 / 每格分数原本是 --accent / #fde047，
+   在亮卡上只有 3.8 / 4.6:1，各提亮一档（4.9 / 5.3:1） */
+.modal-card .spec-group {
+  background: var(--home-card);
+  border-color: var(--home-line);
+}
+.modal-card .spec-keyframes { border-color: rgba(56, 189, 248, 0.5); }
+.modal-card .spec-row { border-top-color: rgba(255, 255, 255, 0.14); }
+.modal-card .spec-cond { color: #99f6e4; }
+.modal-card .spec-pts { color: #fef08a; }
 
 /* 小屏 */
 @media (max-width: 720px) {

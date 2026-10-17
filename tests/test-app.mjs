@@ -297,6 +297,10 @@ if (app) {
   // 打开设置弹窗 → 关闭；再从主页进动作 → 回到训练视图
   api.openSettings();
   ok('打开设置弹窗', elements.get('settingsModal').hidden === false);
+  ok('主页上开弹窗不额外挂牌（弹窗面板自己就是第三个作用域 .modal-card，不靠 body 类）',
+    documentStub.body.classList.contains('is-home')
+    && !documentStub.body.classList.contains('in-workout'),
+    String(documentStub.body.className));
   api.closeSettings();
   ok('关闭设置弹窗', elements.get('settingsModal').hidden === true);
   api.openExercise('bridge');
@@ -308,6 +312,14 @@ if (app) {
     documentStub.body.classList.contains('in-workout')
     && !documentStub.body.classList.contains('is-home'),
     String(documentStub.body.className));
+  // 「运动设定」弹窗开在动作页上：面板照样是同一套配色（.modal-card），body 上的挂牌不变
+  api.openExerciseSettings();
+  ok('动作页上开「运动设定」弹窗不改变挂牌类（弹窗配色不靠 in-workout）',
+    elements.get('exerciseModal').hidden === false
+    && documentStub.body.classList.contains('in-workout')
+    && !documentStub.body.classList.contains('is-home'),
+    String(documentStub.body.className));
+  api.closeExerciseSettings();
   api.showHome();
   ok('返回主页：回到 idle 且动作页隐藏',
     api.state.homeMode === true && elements.get('workoutView').hidden === true,

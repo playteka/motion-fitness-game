@@ -1475,16 +1475,18 @@ console.log('\n[8] 手机浏览器支持：布局、触摸与性能档');
 }
 
 /* ------------------------------------------------------------------ *
- * 9. 动作页与主页共用配色（用户要求「在深蹲 / 开合跳所有这样的运动页面，背景要改为主页那套
- *    紫 / 青 / 薄荷渐变色」）—— 渐变只定义一次，视频区保持中性深色
+ * 9. 主页 / 动作页 / 弹窗面板共用配色（用户要求「在深蹲 / 开合跳所有这样的运动页面，背景要改为主页
+ *    那套紫 / 青 / 薄荷渐变色」，之后又要求「还有弹窗的 theme，也要调成一样的色调」）
+ *    —— 渐变只定义一次，视频区保持中性深色
  * ------------------------------------------------------------------ */
 
-console.log('\n[9] 动作页与主页共用同一套渐变（视频区保持中性深色）');
+console.log('\n[9] 主页 / 动作页 / 弹窗面板共用同一套渐变（视频区保持中性深色）');
 {
   const css = read('style.css');
   // 注释里也会提到变量名 / 选择器（解释「为什么」），断言只看真正的代码
   const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const app = read('src/app.js');
+  const html = read('index.html');
 
   // --- 一处定义：--home-* 只出现一次，并且写在与主页共用的那个块里 ---
   const tokens = ['--home-bg-1', '--home-bg-2', '--home-bg-3', '--home-glow-1', '--home-glow-2',
@@ -1493,13 +1495,13 @@ console.log('\n[9] 动作页与主页共用同一套渐变（视频区保持中�
   ok('配色变量一处定义：12 个 --home-* 在 style.css 里各只定义一次（没有第二份数值）',
     counts.every(([, n]) => n === 1), counts.map(([k, n]) => `${k}:${n}`).join(' '));
 
-  const shared = /body\.is-home,\s*\nbody\.in-workout\s*\{([\s\S]*?)\n\}/.exec(code)?.[1] || '';
-  ok('主页与动作页共用同一个声明块（body.is-home, body.in-workout）',
+  const shared = /body\.is-home,\s*\nbody\.in-workout,\s*\n\.modal-card\s*\{([\s\S]*?)\n\}/.exec(code)?.[1] || '';
+  ok('三个作用域共用同一个声明块（body.is-home, body.in-workout, .modal-card）',
     shared.length > 0 && tokens.every((k) => shared.includes(k + ':')),
     shared ? shared.replace(/\s+/g, ' ').slice(0, 90) : '没找到共用块');
 
   // --- 渐变写法：深紫 → 青蓝 → 薄荷 + 三层品牌色光晕，钉在视口上 ---
-  ok('动作页背景就是主页那套渐变（3 层 radial 光晕 + 1 层 linear 三段 + background-attachment: fixed）',
+  ok('三个作用域共用那套渐变（3 层 radial 光晕 + 1 层 linear 三段 + background-attachment: fixed）',
     (shared.match(/radial-gradient\(/g) || []).length === 3
     && /linear-gradient\(158deg,\s*var\(--home-bg-1\)\s*0%/.test(shared)
     && /var\(--home-bg-2\)\s*50%/.test(shared)
@@ -1534,6 +1536,48 @@ console.log('\n[9] 动作页与主页共用同一套渐变（视频区保持中�
     && /\.criteria-bar\s*\{[^}]*background:\s*rgba\(8, 15, 26, 0\.72\)/.test(code)
     && /\.stage-btn\s*\{[^}]*background:\s*rgba\(8, 15, 26, 0\.6\)/.test(code)
     && !/body\.in-workout[^{]*\{[^}]*filter:/.test(code));
+
+  // --- 弹窗（用户要求「还有弹窗的 theme，也要调成一样的色调」） ---
+  // 真实选择器：四个弹窗 #settingsModal / #exerciseModal / #bestModal / #historyModal 里的面板
+  // 都是 `.modal-card`（遮罩是 `.modal-backdrop`）；所以第三个作用域就是 `.modal-card`。
+  const panels = [...html.matchAll(/<div class="modal-card[^"]*" role="dialog"/g)];
+  ok('四个弹窗的面板都是 .modal-card（第三个作用域指向真实存在的面板选择器，不是编的）',
+    panels.length === 4
+    && ['settingsModal', 'exerciseModal', 'bestModal', 'historyModal']
+      .every((id) => new RegExp(`id="${id}"[\\s\\S]{0,240}?class="modal-card`).test(html)));
+
+  // 注意：顶部共用块的选择器列表也以 `.modal-card {` 结尾，所以这里按「面板自己的那条规则」
+  // （带 position: relative / border-radius: 18px）挑出来，别把共用块当成面板规则。
+  const modalCard = [...code.matchAll(/\.modal-card\s*\{([\s\S]*?)\n\}/g)]
+    .map((m) => m[1]).find((body) => /border-radius:\s*18px/.test(body)) || '';
+  ok('弹窗面板不再写第二份底色（.modal-card 里没有 background，旧的 #0f1a2b / #0b1422 已清干净）',
+    modalCard.length > 0 && !/background\s*:/.test(modalCard)
+    && !/#0f1a2b|#0b1422/.test(code));
+  ok('弹窗面板把卡片 / 描边 / 次要文字重映射到 --home-*（照抄动作页外壳那套做法）',
+    /--card:\s*var\(--home-card\)/.test(modalCard)
+    && /--card-2:\s*var\(--home-card-2\)/.test(modalCard)
+    && /--line:\s*var\(--home-line\)/.test(modalCard)
+    && /--muted:\s*var\(--home-muted\)/.test(modalCard));
+
+  const backdrop = /^\.modal-backdrop\s*\{([\s\S]*?)\n\}/m.exec(code)?.[1] || '';
+  ok('压暗背景的 scrim 保留（深色底 0.74 + blur，只是略偏品牌色，后面页面不会透出来）',
+    /rgba\(4, 8, 15, 0\.74\)/.test(backdrop)
+    && /backdrop-filter:\s*blur\(3px\)/.test(backdrop)
+    && (backdrop.match(/radial-gradient\(/g) || []).length === 2);
+  ok('弹窗内部写死颜色的地方逐条提亮（记录 / 判据表格 / 输入框，保住 4.5:1、次要 5:1）',
+    /\.modal-card \.record-list \.r-name\s*\{[^}]*color:\s*var\(--home-text\)/.test(code)
+    && /\.modal-card \.record-list \.r-val\s*\{[^}]*color:\s*var\(--home-accent\)/.test(code)
+    && /\.modal-card \.record-list \.r-score,\s*\n\.modal-card \.history-list \.h-score\s*\{[^}]*color:\s*#fde68a/.test(code)
+    && /\.modal-card \.spec-cond\s*\{[^}]*color:\s*#99f6e4/.test(code)
+    && /\.modal-card \.spec-pts\s*\{[^}]*color:\s*#fef08a/.test(code)
+    && /#targetInput\s*\{[^}]*background:\s*var\(--card\)/.test(code)
+    // 亮卡上的次要文字统一用正文字色：手机竖屏最坏也能 ≥5:1
+    && /\.modal-card \.field,\s*\n\.modal-card \.chips button,[\s\S]{0,320}?\.modal-card \.toggle:not\(\[aria-pressed="true"\]\)\s*\{[^}]*color:\s*var\(--home-text\)/.test(code));
+  ok('弹窗配色不碰 #stage / video / HUD / 判定条 / 全屏按钮 / 竖屏遮罩（视频区继续中性深色）', (() => {
+    const selectors = [...code.matchAll(/([^{}]*\.modal-card[^{}]*)\{/g)].map((m) => m[1]);
+    const leak = selectors.filter((s) => /#stage\b|\bvideo\b|\.stage(?!-)|\.hud(?!-)|\.criteria-bar|\.pose-hint|\.score-pop|\.stage-btn|\.rotate-gate/.test(s));
+    return leak.length === 0;
+  })(), '被弹窗配色串味的视频叠加层选择器');
 
   // --- showHome / showWorkout 成对开关（行为侧另由 test-app.mjs 跑真实 app.js） ---
   const showHomeFn = /function showHome\([\s\S]*?\n\}/.exec(app)?.[0] || '';
