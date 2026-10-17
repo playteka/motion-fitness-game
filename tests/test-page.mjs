@@ -1272,6 +1272,71 @@ console.log('\n[6] 手机浏览器支持：摄像头诊断面板');
   })());
 }
 
+/* ------------------------------------------------------------------ *
+ * 7. 手机浏览器支持之二：全屏降级（CSS 伪全屏）与 PWA / 添加到主屏
+ * ------------------------------------------------------------------ */
+
+console.log('\n[7] 手机浏览器支持：伪全屏与 PWA');
+{
+  const css = read('style.css');
+
+  // --- iPhone 的 CSS 伪全屏：铺满视口 + 锁住页面滚动，但**不动**任何子元素 ---
+  const pseudo = /#stage\.pseudo-fullscreen\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
+  ok('伪全屏把 #stage 固定铺满视口（position: fixed + inset: 0 + dvh）',
+    /position:\s*fixed/.test(pseudo) && /inset:\s*0/.test(pseudo)
+    && /100dvh/.test(pseudo) && /z-index/.test(pseudo), pseudo.replace(/\s+/g, ' ').slice(0, 90));
+  ok('伪全屏不隐藏、不改动 HUD / 判定进度条 / 圆环（它们必须留在画面上）',
+    !/display:\s*none/.test(pseudo) && !/\.pseudo-fullscreen\s+\.(hud|criteria-bar|corner-ring)/.test(css));
+  ok('伪全屏时锁住页面其余部分的滚动（body.pseudo-fullscreen）',
+    /body\.pseudo-fullscreen[^{]*\{[^{]*overflow:\s*hidden/.test(css));
+
+  // --- PWA / 添加到主屏 ---
+  ok('index.html 有 apple-mobile-web-app-capable（从主屏打开时没有浏览器栏）',
+    /<meta name="apple-mobile-web-app-capable" content="yes"/.test(html));
+  ok('index.html 有 apple-mobile-web-app-status-bar-style 与 theme-color',
+    /<meta name="apple-mobile-web-app-status-bar-style"/.test(html)
+    && /<meta name="theme-color"/.test(html));
+  ok('index.html 引用了 manifest.webmanifest（.webmanifest 会被服务器按规范 MIME 发出去）',
+    /<link rel="manifest" href="manifest\.webmanifest"/.test(html));
+  ok('preview-server.js 认得 .webmanifest 的 MIME（不然 Chrome 会拒装）',
+    /'\.webmanifest':\s*'application\/manifest\+json/.test(read('preview-server.js')));
+
+  const manifestPath = path.join(ROOT, 'manifest.webmanifest');
+  ok('manifest.webmanifest 存在', fs.existsSync(manifestPath));
+  const manifest = JSON.parse(read('manifest.webmanifest'));
+  ok('manifest 是 standalone（添加到主屏后全屏，没有浏览器栏）',
+    manifest.display === 'standalone', String(manifest.display));
+  ok('manifest 声明横屏（动作识别本来就是横向布局）',
+    manifest.orientation === 'landscape', String(manifest.orientation));
+  ok('manifest 有名称 / 起始地址', !!manifest.name && !!manifest.short_name && !!manifest.start_url);
+
+  const icons = manifest.icons || [];
+  ok('manifest 有 192 与 512 两个尺寸（缺了 Chrome / Android 不给装）',
+    icons.some((i) => i.sizes === '192x192') && icons.some((i) => i.sizes === '512x512'),
+    icons.map((i) => i.sizes).join(','));
+  ok('manifest 的图标文件真的存在，而且是真 PNG（不是空文件 / 不是别的格式）', icons.length > 0 && icons.every((i) => {
+    const p = path.join(ROOT, i.src);
+    if (!fs.existsSync(p) || fs.statSync(p).size < 500) return false;
+    const head = fs.readFileSync(p).subarray(0, 8);
+    return head.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  }), icons.map((i) => i.src).join(','));
+  ok('512 那张声明成 maskable（Android 圆形裁切也不会切到图案）',
+    icons.some((i) => i.sizes === '512x512' && /maskable/.test(i.purpose || '')));
+  ok('iOS 的 apple-touch-icon 单独给了 link（iOS 不读 manifest 的 icons）',
+    /<link rel="apple-touch-icon"[^>]*href="icons\/apple-touch-icon-180\.png"/.test(html)
+    && fs.existsSync(path.join(ROOT, 'icons/apple-touch-icon-180.png')));
+  ok('图标是「品牌色 + 线条图案」，不是 emoji（生成器用 Pillow 画几何图形，不靠字体渲染字符）',
+    /def dumbbell_mask/.test(read('tools/make-icons.py'))
+    && !/ImageFont|draw\.text\(/.test(read('tools/make-icons.py')));
+  ok('三种尺寸的图标尺寸真的对（读 PNG 头里的 IHDR）', icons.length > 0 && (() => {
+    const want = { 'icons/icon-192.png': 192, 'icons/icon-512.png': 512, 'icons/apple-touch-icon-180.png': 180 };
+    return Object.entries(want).every(([rel, size]) => {
+      const buf = fs.readFileSync(path.join(ROOT, rel));
+      return buf.readUInt32BE(16) === size && buf.readUInt32BE(20) === size;
+    });
+  })());
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
 if (failures.length) {
   console.log('失败项：');

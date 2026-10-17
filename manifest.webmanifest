@@ -1,0 +1,26 @@
+{
+  "name": "体感健身游戏 · Motion Fitness",
+  "short_name": "体感健身",
+  "description": "摄像头识别的体感健身游戏：19 个动作、按要领逐步计分，画面全程在本机处理",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#070c15",
+  "theme_color": "#0b1017",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

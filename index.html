@@ -11,7 +11,11 @@
     <meta name="apple-mobile-web-app-title" content="体感健身">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#0b1017">
-    <link rel="manifest" href="manifest.json">
+    <!-- manifest 用 .webmanifest 扩展名：服务器会按 application/manifest+json 发出去（规范要求的 MIME） -->
+    <link rel="manifest" href="manifest.webmanifest">
+    <!-- iOS 的「添加到主屏」只看这一行（它不读 manifest 的 icons）：180×180 PNG -->
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon-180.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 </head>
 <body>
   <div class="app">
