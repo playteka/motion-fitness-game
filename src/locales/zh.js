@@ -50,7 +50,8 @@ export default {
     resetReps: '重置计数',
 
     step1: '① 选择动作',
-    step2: '② 设定目标',
+    // 动作页只**显示**这一组的目标（目标设定已按用户要求搬到主页右上角的「运动设定」里）
+    targetCard: '本组目标',
     step3: '③ 开始训练',
     actionGuide: '动作要领',
     scoreCard: '要领得分',
@@ -827,7 +828,12 @@ export default {
     open: '运动设定',
     title: '运动设定',
     close: '关闭',
-    lead: '这些设定只对当前这个动作生效',
+    // 两步弹窗：第一步先选运动项目，第二步才是这个动作的目标与判据
+    pickGroup: '① 选择运动项目',
+    pickLead: '先选一个动作；下一步再调它的目标、判据与机位。',
+    pickAgain: '← 换一个动作',
+    pickItem: '设置「{name}」的目标',
+    lead: '这些设定只对上面这个动作生效',
     targetGroup: '🎯 目标设定',
     target: '本组目标',
     // 限时计数（开合跳）：目标是时长，成绩是这段时间里完成的次数

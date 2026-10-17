@@ -110,6 +110,15 @@ const smoother = new LandmarkSmoother();
 const state = {
   settings: loadSettings(),
   exerciseId: 'squat',
+  /**
+   * 「运动设定」弹窗**第二步**正在编辑哪个动作（第一步选中的那个）。
+   *
+   * 与 `exerciseId` 分开：弹窗从主页打开时，用户可能只是想调另一个动作的目标，
+   * 不应该顺手把「正在练的动作 / HUD / 进度条」也换掉。目标本身就是**按动作分别存**的
+   * （`settings.targets[id]` / `settings.seconds[id]`），所以这里只是「编辑哪一份」的指针。
+   * 选择动作（`selectExercise`）时会同步成同一个 id —— 刚练过的动作就是第一步里高亮的那个。
+   */
+  settingsExerciseId: 'squat',
   target: 15,
   session: 'calibrating',   // calibrating | ready | countdown | running | paused | idle
   homeMode: false,          // 停在动作主页：不校准、不计数（避免浏览动作时偷偷开始一组）
@@ -477,7 +486,7 @@ function showHome({ syncRoute = true } = {}) {
   document.body.classList.add('is-home');
   document.body.classList.remove('in-workout');
   $('btnHome').hidden = true;
-  $('btnExercise').hidden = true;   // 运动设定只在动作页出现
+  $('btnExercise').hidden = false;   // 运动设定在主页右上角（和设置并排）
   closeSettings();
   closeExerciseSettings();
   closeRecordsModal();
@@ -501,7 +510,7 @@ function showWorkout() {
   $('homeView').hidden = true;
   $('workoutView').hidden = false;
   $('btnHome').hidden = false;
-  $('btnExercise').hidden = false;   // 动作页才有「运动设定」
+  $('btnExercise').hidden = true;   // 运动设定只在主页出现（动作页没有目标设定入口）
   renderExerciseSettings();
   // 左下角的「退出」圆环不在这里摆：它**只在摄像头开着的时候**显示（用户要求），
   // 由主循环里的 syncCornerExit() 每帧对齐（摄像头一开一关它自己出现/消失）。
@@ -603,10 +612,108 @@ function closeRecordsModal() {
 }
 
 /* ------------------------------------------------------------------ *
- * 运动设定弹窗（只出现在动作页：目标 / 判定方式 / 机位提示）
+ * 运动设定弹窗（**两步**：① 先选动作 → ② 再设这个动作的目标 / 判据 / 机位）
+ *
+ * 用户要求（原话）：「将目标设定从运动页面中删除，放到主页的右上方和『设置』在一起。
+ * 用户打开『运动设定』之后首先选择运动项目，然后再进入对应的运动目标设置等内容。」
+ *
+ * 所以入口是主页右上角那个图标（`#btnExercise`，与 ⚙️ 设置并排），动作页没有入口；
+ * 弹窗打开时**永远先停在第一步（选择动作）**（这是用户那句话的字面要求，比「记住上次动作」
+ * 优先），第二步顶部有明确的「← 换一个动作」返回第一步。
+ * 目标数据模型本来就是**按动作分别存**（`settings.targets[id]` / `settings.seconds[id]`），
+ * 所以第二步编辑的是「选中那个动作」的那一份，不需要新发明一套存储。
  * ------------------------------------------------------------------ */
 
 function exerciseSettingsOpen() { return !$('exerciseModal').hidden; }
+
+/** 「运动设定」当前要编辑哪个动作：第一步选中的那个（永远是一个真实存在的动作 id） */
+function settingsExerciseId() {
+  return EXERCISE_MAP[state.settingsExerciseId] ? state.settingsExerciseId : state.exerciseId;
+}
+
+/**
+ * 某个动作**已经保存着**的目标值（次数 / 秒）。
+ *
+ * 一处定义：`selectExercise` 取当前动作的目标、选择页上的小字、弹窗里的数字框都走这里，
+ * 所以「主页卡片 / 运动设定 / HUD」看到的永远是同一个数。
+ * 限时计数类存 `settings.seconds`（时长），其余存 `settings.targets`（次数）。
+ */
+function targetForExercise(id) {
+  const ex = localizedExercise(id);
+  if (!ex) return 0;
+  return ex.timed
+    ? (state.settings.seconds?.[id] || ex.seconds || ex.defaultTarget)
+    : (state.settings.targets[id] || ex.defaultTarget);
+}
+
+/** 第一步：选择动作页（列出动作库，按分类分组） */
+function showExercisePickStep() {
+  const pick = $('exercisePickStep');
+  const target = $('exerciseTargetStep');
+  if (pick) pick.hidden = false;
+  if (target) target.hidden = true;
+}
+
+/** 第二步：这个动作的目标设置页 */
+function showExerciseTargetStep() {
+  const pick = $('exercisePickStep');
+  const target = $('exerciseTargetStep');
+  if (pick) pick.hidden = true;
+  if (target) target.hidden = false;
+}
+
+/**
+ * 建第一步的动作选择页：**19 个动作全部列出，按 5 个分类分组**。
+ *
+ * 图标复用动作自己的姿势图（`localizedExercise().poseIcon`，就是 `icons.js` 的
+ * `exercisePoseSVG(id)`，与主页卡片 / 进度条 / HUD 同一套），不另画新图标；
+ * 每一项就是「姿势图标 + 名称（+ 目标）」的按钮，点一下（或回车 / 空格）就进第二步。
+ */
+function renderExercisePicker() {
+  const box = $('exercisePickList');
+  if (!box) return;
+  const picked = settingsExerciseId();
+  box.innerHTML = '';
+  for (const cat of localizedCategories()) {
+    const list = localizedByCategory(cat.id);
+    const block = document.createElement('section');
+    block.className = 'pick-cat';
+    block.dataset.cat = cat.id;
+    block.innerHTML = `<div class="pick-cat-head"><span class="pick-cat-icon">${categoryMarkSVG(cat.id) || cat.icon}</span>`
+      + `<span class="pick-cat-name">${esc(cat.name)}</span>`
+      + `<span class="pick-cat-count">${esc(t('home.count', { n: list.length }))}</span></div>`;
+    const grid = document.createElement('div');
+    grid.className = 'pick-grid';
+    for (const ex of list) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pick-card';
+      btn.dataset.id = ex.id;
+      if (ex.id === picked) btn.classList.add('active');
+      const kind = t(ex.kind === 'rep' ? (ex.timed ? 'ui.kindTimed' : 'ui.kindRep') : 'ui.kindHold');
+      const target = `${targetForExercise(ex.id)} ${ex.targetUnit}`;
+      btn.innerHTML = `<span class="pick-icon">${ex.poseIcon || ex.icon}</span>`
+        + `<span class="pick-body"><span class="pick-name">${esc(ex.name)}</span>`
+        + `<span class="pick-meta">${esc(kind)} · ${esc(target)}</span></span>`;
+      btn.setAttribute('aria-label', t('exercise.pickItem', { name: ex.name }));
+      btn.setAttribute('title', ex.name);
+      btn.addEventListener('click', () => pickExerciseForSettings(ex.id));
+      grid.appendChild(btn);
+    }
+    block.appendChild(grid);
+    box.appendChild(block);
+  }
+}
+
+/** 第一步里选中某个动作 → 进第二步（切换后把焦点放到「换一个动作」上，键盘用户不会迷路） */
+function pickExerciseForSettings(id) {
+  if (!EXERCISE_MAP[id]) return;
+  state.settingsExerciseId = id;
+  showExerciseTargetStep();
+  renderExerciseSettings();
+  const back = $('btnExercisePickAgain');
+  if (back && typeof back.focus === 'function') back.focus({ preventScroll: true });
+}
 
 /**
  * 这个动作的判定进度条模型：显示用的格子、图标、每格能拿多少分。
@@ -750,8 +857,9 @@ function keyframeRowsHtml(id) {
 function renderExerciseSpecs() {
   const box = $('exerciseSpecs');
   if (!box) return;
-  const { groups } = exerciseSpecs(state.exerciseId);
-  const parts = [keyframeRowsHtml(state.exerciseId)];
+  const id = settingsExerciseId();
+  const { groups } = exerciseSpecs(id);
+  const parts = [keyframeRowsHtml(id)];
   const advice = groups.find((g) => g.titleKey === 'spec.group.advice');
   if (advice && advice.items.length) {
     parts.push('<div class="spec-group">');
@@ -771,16 +879,27 @@ function renderExerciseSpecs() {
   box.innerHTML = parts.join('');
 }
 
-/** 把当前动作的资料刷进弹窗与侧栏摘要（目标、判定依据、机位、技术指标） */
+/**
+ * 把**选中的那个动作**的资料刷进弹窗第二步（目标、判定依据、机位、关键帧判据），
+ * 顺便刷新侧栏那行「本组目标」摘要（摘要说的始终是**正在练**的动作，不是弹窗里在编辑的那个）。
+ */
 function renderExerciseSettings() {
-  const ex = localizedExercise(state.exerciseId);
+  const id = settingsExerciseId();
+  const ex = localizedExercise(id);
+  if (!ex) return;
   const unit = ex.targetUnit || '';
   $('exerciseName').textContent = `${ex.icon} ${ex.name}`;
   $('exerciseJudge').textContent = `🎯 ${t('exercise.judgeBy', { what: ex.judgeText })}`
     + (ex.rough ? ` · ${t('exercise.rough')}` : '');
   $('exerciseCamera').textContent = `📹 ${ex.cameraHint}`;
   $('targetUnit').textContent = unit;
-  $('targetReadout').textContent = `${t('exercise.target')}: ${state.target} ${unit}`;
+  // 数字框显示**这个动作自己存着的目标**（目标按动作分别存，见 targetForExercise）
+  $('targetInput').value = String(targetForExercise(id));
+  // 侧栏摘要：正在练的那个动作 + 它自己的目标（弹窗可以编辑别的动作，摘要不跟着乱跳）
+  const cur = localizedExercise(state.exerciseId);
+  if ($('targetReadout')) {
+    $('targetReadout').textContent = `${t('exercise.target')}: ${state.target} ${cur?.targetUnit || ''}`;
+  }
   // 限时计数（开合跳）：把「这一组跑多久、成绩是什么」写在目标下面，避免以为要跳到某个次数
   const timedEl = $('exerciseTime');
   if (timedEl) {
@@ -919,18 +1038,26 @@ function renderPoseLogStatus() {
 function openExerciseSettings() {
   const modal = $('exerciseModal');
   if (!modal) return;
-  renderExerciseSettings();
+  // 如果指针失效（比如存档里是个旧 id），退回「正在练的动作」
+  if (!EXERCISE_MAP[state.settingsExerciseId]) state.settingsExerciseId = state.exerciseId;
+  renderExercisePicker();
+  renderExerciseSettings();   // 第二步的内容先渲染好，选中动作时立即出现，不用再等一次
+  // **每次打开都先显示选择页**（用户要求「打开运动设定之后首先选择运动项目」）：
+  // 上次选过的动作只在第一步里高亮（.active），不会跳过选择这一步。
+  showExercisePickStep();
   modal.hidden = false;
   // 让读屏软件念出弹窗标题（文案走 i18n，这里只做无障碍关联）
   const title = $('exerciseTitle');
   if (title) title.textContent = t('exercise.title');
-  const first = modal.querySelector('button');
-  if (first) first.focus({ preventScroll: true });
+  const first = $('exercisePickList')?.querySelector?.('.pick-card');
+  if (first && typeof first.focus === 'function') first.focus({ preventScroll: true });
 }
 
 function closeExerciseSettings() {
   const modal = $('exerciseModal');
   if (modal) modal.hidden = true;
+  // 关掉后回到第一步：下次打开（不管从哪儿）都不会直接落在某个动作的目标页上
+  showExercisePickStep();
 }
 
 /* ------------------------------------------------------------------ *
@@ -2742,7 +2869,7 @@ function openMenu({ silent = false } = {}) {
   $('workoutView').classList.add('menu-mode');
   $('stage').classList.add('menu-mode');
   $('btnHome').hidden = false;
-  $('btnExercise').hidden = true;    // 菜单里没有「运动设定」
+  $('btnExercise').hidden = true;    // 手势菜单里也没有「运动设定」（它只在主页右上角）
   renderMenu();
   $('gestureMenu').hidden = false;
   /**
@@ -3186,11 +3313,12 @@ function selectExercise(id) {
   hideGestureRings();   // 换动作：上一组的手势圆环不该留着（必须在 stopSession 之后收）
   state.exerciseId = id;
   state.settings.exerciseId = id;
+  // 运动设定第二步的「编辑指针」跟着当前动作走：刚练过的动作就是选择页里高亮的那一个
+  state.settingsExerciseId = id;
   const ex = localizedExercise(id);
-  // 目标：限时计数类是**时长（秒）**，从 settings.seconds 取（默认就是动作自己的秒数）
-  state.target = ex.timed
-    ? (state.settings.seconds?.[id] || ex.seconds || ex.defaultTarget)
-    : (state.settings.targets[id] || ex.defaultTarget);
+  // 目标：限时计数类是**时长（秒）**，从 settings.seconds 取（默认就是动作自己的秒数）；
+  // 计数 / 计时类是次数或秒，从 settings.targets 取（一处定义见 targetForExercise）
+  state.target = targetForExercise(id);
   state.detector = createDetector(id);
   state.calibrator = state.calibrator || new Calibrator(id, { mirror: state.settings.mirror });
   state.calibrator.setExercise(id);
@@ -3269,7 +3397,7 @@ function toCalibration({ silent = false, afterSet = false } = {}) {
 }
 
 function buildTargetChips() {
-  const ex = localizedExercise(state.exerciseId);
+  const ex = localizedExercise(settingsExerciseId());
   const presets = targetPresetsFor(ex);
   const chips = $('targetChips');
   chips.innerHTML = '';
@@ -3284,20 +3412,27 @@ function buildTargetChips() {
 }
 
 function setTarget(v) {
-  const ex = localizedExercise(state.exerciseId);
+  // 弹窗第二步在编辑哪个动作，就写这个动作自己那一份（目标本来就是按动作分别存的）
+  const id = settingsExerciseId();
+  const ex = localizedExercise(id);
+  if (!ex) return;
   const n = clamp(Math.round(Number(v) || ex.defaultTarget), 1, 999);
-  state.target = n;
   // 限时计数存到 seconds（时长），其他动作存到 targets（次数）
   if (ex.timed) {
     state.settings.seconds = state.settings.seconds || {};
-    state.settings.seconds[state.exerciseId] = n;
+    state.settings.seconds[id] = n;
   } else {
-    state.settings.targets[state.exerciseId] = n;
+    state.settings.targets[id] = n;
+  }
+  // 正在练的就是它 → 当前目标 / HUD / 侧栏摘要跟着变（编辑别的动作时不碰这些）
+  if (id === state.exerciseId) {
+    state.target = n;
+    updateHud();
   }
   $('targetInput').value = String(n);
   saveSettings();
   renderExerciseSettings();
-  updateHud();
+  renderExercisePicker();   // 第一步每一项上的「15 次」小字也跟着更新
 }
 
 /* ------------------------------------------------------------------ *
@@ -4825,6 +4960,7 @@ function refreshForLang() {
   updateButtons();
   if (state.calib) renderCalibration(state.calib);
   buildHome();        // 主页分类/动作名也要跟着换语言
+  renderExercisePicker(); // 运动设定第一步的动作名 / 分类名也跟着换语言
   buildMusicTracks(); // 曲子名也要跟着换语言
   if (gestureState.visible) showGestureRings({ speak: false });   // 圆环上的字也要跟着换
   if (state.menuMode) renderMenu();                               // 手势菜单的文案也要跟着换
@@ -4962,13 +5098,19 @@ function bindUI() {
   $('btnSettings').addEventListener('click', () => openSettings());
   $('btnCloseSettings').addEventListener('click', () => closeSettings());
   $('settingsBackdrop').addEventListener('click', () => closeSettings());
-  // 运动设定：顶栏图标 + 侧栏「设定目标」卡片里的按钮，两处都打开同一个弹窗
+  // 运动设定：只有**主页右上角**那个图标（和设置并排）；动作页没有入口。
+  // 弹窗内部两步：第一步选动作，第二步设目标；「← 换一个动作」回到第一步。
   $('btnExercise').addEventListener('click', () => openExerciseSettings());
-  $('btnExerciseInline').addEventListener('click', () => openExerciseSettings());
+  $('btnExercisePickAgain').addEventListener('click', () => {
+    showExercisePickStep();
+    renderExercisePicker();   // 回来时把「上次选的动作」高亮 + 目标小字刷新一遍
+    const first = $('exercisePickList')?.querySelector?.('.pick-card');
+    if (first && typeof first.focus === 'function') first.focus({ preventScroll: true });
+  });
   $('btnCloseExercise').addEventListener('click', () => closeExerciseSettings());
   $('exerciseBackdrop').addEventListener('click', () => closeExerciseSettings());
 
-  // ---- 调试数据记录（运动设定弹窗里的开关）----
+  // ---- 调试数据记录（**设置（全局配置）**弹窗里的隐藏分组）----
   {
     const btn = $('btnPoseLog');
     if (btn) {
@@ -5341,6 +5483,9 @@ window.__mfg = {
   setTarget, changeLang, refreshForLang,
   buildHome, showHome, showWorkout, openExercise, openSettings, closeSettings,
   openExerciseSettings, closeExerciseSettings, renderExerciseSettings,
+  // 运动设定弹窗的两步：第一步选动作（分组列出动作库）/ 第二步目标与判据 / 「换一个动作」
+  renderExercisePicker, pickExerciseForSettings, showExercisePickStep, showExerciseTargetStep,
+  settingsExerciseId, targetForExercise,
   openRecordsModal, closeRecordsModal, recordsModalOpen, renderRecords, renderHistory,
   buildCriteriaBar, updateCriteria, resetCriteriaProgress, renderCriteriaBar,
   showCriteriaTip, hideCriteriaTip,

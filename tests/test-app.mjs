@@ -342,20 +342,24 @@ if (app) {
 }
 
 /* ------------------------------------------------------------------ *
- * 运动设定弹窗（目标 / 判定方式 / 机位，只出现在动作页）
+ * 运动设定弹窗（两步：① 先选动作 → ② 再设这个动作的目标 / 判据 / 机位）
+ *
+ * 用户要求：「将目标设定从运动页面中删除，放到主页的右上方和『设置』在一起。
+ * 用户打开『运动设定』之后首先选择运动项目，然后再进入对应的运动目标设置等内容。」
  * ------------------------------------------------------------------ */
 
-console.log('\n[1b] 运动设定弹窗');
+console.log('\n[1b] 运动设定弹窗（入口在主页、两步流程）');
 {
   const api = windowStub.__mfg;
   api.showHome();
-  ok('主页上「运动设定」图标隐藏（只在动作页出现）',
-    elements.get('btnExercise').hidden === true);
+  ok('主页上显示「运动设定」图标（入口挪到了主页右上角）',
+    elements.get('btnExercise').hidden === false);
   ok('主页时运动设定弹窗是关着的', elements.get('exerciseModal').hidden === true);
 
   api.openExercise('pushup');
-  ok('动作页显示「运动设定」图标', elements.get('btnExercise').hidden === false);
-  ok('顶栏上「运动设定」与「配置」并排（同一个 topbar-actions 里）', (() => {
+  ok('动作页**不再**有「运动设定」图标（入口已从运动页删除）',
+    elements.get('btnExercise').hidden === true);
+  ok('顶栏上「运动设定」与「设置」并排（同一个 topbar-actions 里）', (() => {
     const bar = html.slice(html.indexOf('class="topbar-actions"'), html.indexOf('</header>'));
     const ex = bar.indexOf('id="btnExercise"');
     const st = bar.indexOf('id="btnSettings"');
@@ -391,15 +395,49 @@ console.log('\n[1b] 运动设定弹窗');
   homeBtn.dispatch('click');
   ok('点图标能回主页', api.state.homeMode === true, String(api.state.homeMode));
   ok('回主页后图标自己隐藏', homeBtn.hidden === true);
-  api.openExercise('pushup');
+  ok('回主页后「运动设定」图标重新出现（它是主页入口）',
+    elements.get('btnExercise').hidden === false);
 
+  // ===== 打开运动设定：第一步必须先选运动项目 =====
   elements.get('btnExercise').dispatch('click');
   ok('点图标打开运动设定弹窗', elements.get('exerciseModal').hidden === false);
-  ok('弹窗标题是当前动作', elements.get('exerciseName').textContent.includes('俯卧撑'),
+  ok('第一步先选运动项目（选择页显示、目标设置页藏着）',
+    elements.get('exercisePickStep').hidden === false
+    && elements.get('exerciseTargetStep').hidden === true,
+    `pick=${elements.get('exercisePickStep').hidden} target=${elements.get('exerciseTargetStep').hidden}`);
+  // 桩里选择页的结构：分类 section → 里面的 grid → 每一个动作按钮
+  const pickSections = () => elements.get('exercisePickList').children;
+  const pickCards = () => pickSections().flatMap((cat) => cat.children[0]?.children || []);
+  ok(`第一步把动作库全部列出来（${EXERCISES.length} 个，与 EXERCISES.length 对齐）`,
+    pickCards().length === EXERCISES.length,
+    `实际 ${pickCards().length} / ${EXERCISES.length}`);
+  ok('第一步按 5 个分类分组',
+    pickSections().length === 5 && pickSections().every((s) => !!s.dataset.cat),
+    `实际 ${pickSections().length} 组`);
+  ok('每一项都有姿势图标 + 名称（图标复用 exercisePoseSVG，不画新的）',
+    pickCards().length > 0 && pickCards().every((b) => /<svg class="ex-pose/.test(b.innerHTML)
+      && /class="pick-name"/.test(b.innerHTML) && b.innerHTML.includes('ex-pose--solid')),
+    pickCards()[0]?.innerHTML?.slice(0, 90));
+  ok('选择项无障碍名称走 i18n（含动作名）', (() => {
+    const btn = pickCards().find((b) => b.dataset.id === 'pushup');
+    return !!btn && /设置「俯卧撑」的目标/.test(btn.attributes['aria-label'] || '');
+  })(), pickCards().find((b) => b.dataset.id === 'pushup')?.attributes?.['aria-label']);
+  ok('上次练过的动作在选择页里高亮（不是跳过选择页，只是标出来）',
+    pickCards().filter((b) => b.classList.contains('active')).map((b) => b.dataset.id).join(',') === 'pushup',
+    pickCards().filter((b) => b.classList.contains('active')).map((b) => b.dataset.id).join(','));
+
+  // 选中俯卧撑 → 进第二步
+  pickCards().find((b) => b.dataset.id === 'pushup').dispatch('click');
+  ok('选中动作后进入第二步（选择页收起、目标设置页出现）',
+    elements.get('exerciseTargetStep').hidden === false
+    && elements.get('exercisePickStep').hidden === true);
+  ok('弹窗标题是刚选的动作', elements.get('exerciseName').textContent.includes('俯卧撑'),
     elements.get('exerciseName').textContent);
-  ok('弹窗里显示判定依据', elements.get('exerciseJudge').textContent.includes('判定依据'),
+  ok('第二步有「← 换一个动作」返回第一步的入口',
+    /data-i18n="exercise\.pickAgain"/.test(html) && !!elements.get('btnExercisePickAgain'));
+  ok('第二步显示判定依据', elements.get('exerciseJudge').textContent.includes('判定依据'),
     elements.get('exerciseJudge').textContent);
-  ok('弹窗里显示机位提示', elements.get('exerciseCamera').textContent.includes('侧对摄像头'),
+  ok('第二步显示机位提示', elements.get('exerciseCamera').textContent.includes('侧对摄像头'),
     elements.get('exerciseCamera').textContent);
   ok('弹窗里的目标值跟当前目标一致',
     elements.get('targetInput').value === String(api.state.target),
@@ -443,11 +481,41 @@ console.log('\n[1b] 运动设定弹窗');
   ok('识别器上不再有 strict 开关（判据只剩宽松这一档）',
     api.state.detector.strict === undefined, String(api.state.detector.strict));
 
+  // 「← 换一个动作」：回到第一步，再选另一个动作就进它的目标页
+  elements.get('btnExercisePickAgain').dispatch('click');
+  ok('「← 换一个动作」回到第一步（选择页重新出现、目标页收起）',
+    elements.get('exercisePickStep').hidden === false
+    && elements.get('exerciseTargetStep').hidden === true);
+  ok('回到第一步时高亮的是刚编辑过的动作',
+    pickCards().filter((b) => b.classList.contains('active')).map((b) => b.dataset.id).join(',') === 'pushup',
+    pickCards().filter((b) => b.classList.contains('active')).map((b) => b.dataset.id).join(','));
+  // 选一个别的动作：第二步必须换成**它**的目标与判据（目标本来就是按动作分别存的）
+  pickCards().find((b) => b.dataset.id === 'plank').dispatch('click');
+  ok('换到平板支撑后，第二步显示它自己的目标（45 秒）与判据',
+    elements.get('exerciseName').textContent.includes('平板支撑')
+    && elements.get('targetInput').value === '45'
+    && elements.get('targetUnit').textContent === '秒'
+    && elements.get('exerciseSpecs').innerHTML.includes('关键帧与判分'),
+    `${elements.get('exerciseName').textContent} / ${elements.get('targetInput').value} ${elements.get('targetUnit').textContent}`);
+  ok('编辑弹窗里别的动作不会顺手改掉「正在练的动作」的目标（当前还是俯卧撑）',
+    api.state.exerciseId === 'pushup' && api.state.target === before + 4,
+    `${api.state.exerciseId} / ${api.state.target}`);
+  // 回到俯卧撑（后面的判据断言都按俯卧撑写）
+  elements.get('btnExercisePickAgain').dispatch('click');
+  pickCards().find((b) => b.dataset.id === 'pushup').dispatch('click');
+
   // 关闭方式：✕、点背景、Esc
   elements.get('btnCloseExercise').dispatch('click');
   ok('点 ✕ 关闭运动设定弹窗', elements.get('exerciseModal').hidden === true);
-  elements.get('btnExerciseInline').dispatch('click');
-  ok('侧栏「设定目标」卡片里的按钮也能打开', elements.get('exerciseModal').hidden === false);
+  ok('关闭后回到第一步：下次打开不会直接落在某个动作的目标页',
+    elements.get('exercisePickStep').hidden === false
+    && elements.get('exerciseTargetStep').hidden === true);
+  ok('动作页没有第二个入口了（侧栏只剩只读的目标摘要，没有「运动设定」按钮）',
+    !html.includes('id="btnExerciseInline"') && !!elements.get('targetReadout')
+    && /<p class="target-readout" id="targetReadout"/.test(html));
+  // 重新打开（每次都是第一步），再选俯卧撑进第二步，供下面逐条核对判据
+  api.openExerciseSettings();
+  pickCards().find((b) => b.dataset.id === 'pushup').dispatch('click');
 
   // ===== 关键帧判据与判分：把识别器真正用的数值显示给用户 =====
   // 关键帧那一组里带线条图标（SVG 里有坐标数字），做数值断言前先把图标去掉，免得误命中坐标
@@ -661,7 +729,8 @@ console.log('\n[1b] 运动设定弹窗');
 
   elements.get('exerciseBackdrop').dispatch('click');
   ok('点背景关闭', elements.get('exerciseModal').hidden === true);
-  elements.get('btnExercise').dispatch('click');
+  // 重新打开（动作页上按钮是 hidden 的，真实用户点不到它；这里直接调内部入口）
+  api.openExerciseSettings();
   // 注意：dispatch 一次 keydown 会顺带触发「首次手势解锁音频」那个一次性的监听器
   //（它用完就把 pointerdown / keydown / touchstart 上的自己都摘掉），
   // 所以这里把三种事件的监听器列表原样还原，别影响后面 [10] 的用例。
@@ -674,8 +743,8 @@ console.log('\n[1b] 运动设定弹窗');
   ok('Esc 优先关掉运动设定弹窗', elements.get('exerciseModal').hidden === true);
 
   api.showHome();
-  ok('返回主页时运动设定弹窗自动关闭且图标隐藏',
-    elements.get('exerciseModal').hidden === true && elements.get('btnExercise').hidden === true);
+  ok('返回主页时运动设定弹窗自动关闭，图标重新出现（主页才是它的位置）',
+    elements.get('exerciseModal').hidden === true && elements.get('btnExercise').hidden === false);
 }
 
 /* ------------------------------------------------------------------ *

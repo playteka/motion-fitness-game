@@ -50,7 +50,9 @@ export default {
     resetReps: 'Reset reps',
 
     step1: '① Pick an exercise',
-    step2: '② Set your goal',
+    // The exercise page only *shows* this set's target (setting it moved to the home-page
+    // "Exercise settings" button, as the user asked)
+    targetCard: "This set's target",
     step3: '③ Start training',
     actionGuide: 'Form steps',
     scoreCard: 'Form score',
@@ -830,7 +832,12 @@ export default {
     open: 'Exercise settings',
     title: 'Exercise settings',
     close: 'Close',
-    lead: 'These settings apply to the current exercise only',
+    // Two-step modal: pick an exercise first, then tune that exercise's target and criteria
+    pickGroup: '① Pick an exercise',
+    pickLead: 'Pick an exercise first; the next step tunes its target, criteria and camera hint.',
+    pickAgain: '← Change exercise',
+    pickItem: 'Set the target for “{name}”',
+    lead: 'These settings apply only to the exercise above',
     targetGroup: '🎯 Target',
     target: 'Set target',
     // Timed counting (Jumping Jack): the target is a duration, the result is the reps done inside it

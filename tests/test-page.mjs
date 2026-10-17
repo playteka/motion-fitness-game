@@ -502,6 +502,94 @@ console.log('\n[3] 静态资源与模型文件');
     /homeView'\)\.hidden = false/.test(app) && /workoutView'\)\.hidden = true/.test(app)
     && /homeView'\)\.hidden = true/.test(app) && /workoutView'\)\.hidden = false/.test(app));
 
+  /* ---- 用户要求：「将目标设定从运动页面中删除，放到主页的右上方和『设置』在一起。
+     用户打开『运动设定』之后首先选择运动项目，然后再进入对应的运动目标设置等内容。」---- */
+  {
+    const bar = html.slice(html.indexOf('class="topbar-actions"'), html.indexOf('</header>'));
+    const exAt = html.indexOf('id="btnExercise"');
+    const exBlock = exAt >= 0 ? html.slice(exAt, html.indexOf('</button>', exAt)) : '';
+    const exTag = /<button[^>]*id="btnExercise"[^>]*>/.exec(html)?.[0] || '';
+    ok('主页右上角有「运动设定」图标按钮（在 topbar-actions 里，和 ⚙️ 设置并排）',
+      bar.includes('id="btnExercise"') && bar.includes('id="btnSettings"')
+      && bar.indexOf('id="btnExercise"') < bar.indexOf('id="btnSettings"')
+      && /class="icon-btn"/.test(exTag),
+      exTag);
+    ok('「运动设定」默认就显示（主页入口；动作页才隐藏）', !/\bhidden\b/.test(exTag), exTag);
+    ok('图标是 Lucide `sliders-horizontal`（取离线库的 path 原样，24 网格 / stroke 2 / currentColor，不是 emoji）',
+      exBlock.includes('class="ui-icon"') && /viewBox="0 0 24 24"/.test(exBlock)
+      && /d="M10 5H3"/.test(exBlock) && /d="M21 12h-9"/.test(exBlock) && /d="M8 10v4"/.test(exBlock)
+      && !/[\u{1F300}-\u{1FAFF}]/u.test(exBlock),
+      exBlock.slice(0, 120));
+    ok('按钮有无障碍名称（data-i18n-title / data-i18n-aria 都指向 exercise.open，中英都有词条）',
+      /data-i18n-title="exercise\.open"/.test(exTag) && /data-i18n-aria="exercise\.open"/.test(exTag)
+      && typeof LOCALES.zh.exercise.open === 'string' && typeof LOCALES.en.exercise.open === 'string');
+
+    // 动作页：入口删掉，只剩只读的目标摘要
+    const workChunk = html.slice(html.indexOf('id="workoutView"'), html.indexOf('id="exerciseModal"'));
+    ok('动作页里没有「运动设定」按钮（原有的顶栏图标 + 侧栏按钮都删掉了）',
+      !/id="btnExercise"/.test(workChunk) && !/id="btnExerciseInline"/.test(html)
+      && !/data-i18n="exercise\.open"/.test(workChunk));
+    ok('动作页只显示「本组目标」（只读摘要，不能再在这里设定目标）',
+      /id="targetReadout"/.test(workChunk) && /data-i18n="ui\.targetCard"/.test(workChunk)
+      && !/id="tMinus"|id="targetInput"/.test(workChunk));
+    ok('动作页隐藏 / 回主页显示（showWorkout / showHome 成对开关这个主页入口）',
+      /\$\('btnExercise'\)\.hidden = true;/.test(app)
+      && /\$\('btnExercise'\)\.hidden = false;/.test(app));
+
+    // 弹窗：两步结构
+    const pickAt = html.indexOf('id="exercisePickStep"');
+    const targetAt = html.indexOf('id="exerciseTargetStep"');
+    const nameAt = html.indexOf('id="exerciseName"');
+    ok('运动设定弹窗是两步：第一步选择页在前、第二步目标设置页在后',
+      pickAt > 0 && targetAt > pickAt && nameAt > targetAt,
+      `pick=${pickAt} target=${targetAt} name=${nameAt}`);
+    ok('第二步默认藏着（打开时先看到第一步），且提供「← 换一个动作」返回入口',
+      /id="exerciseTargetStep" hidden/.test(html) && /id="btnExercisePickAgain"/.test(html)
+      && /data-i18n="exercise\.pickAgain"/.test(html));
+    ok('两步的文案中英都有（pickGroup / pickLead / pickAgain / pickItem）',
+      ['pickGroup', 'pickLead', 'pickAgain', 'pickItem']
+        .every((k) => Object.values(LOCALES).every((L) => typeof L.exercise?.[k] === 'string')),
+      Object.values(LOCALES).map((L) => Object.keys(L.exercise || {}).length).join(','));
+    {
+      const { localizedCategories, localizedByCategory } = await import('../src/exercises.js');
+      const cats = localizedCategories();
+      const total = cats.reduce((n, c) => n + localizedByCategory(c.id).length, 0);
+      ok(`选择页按 ${cats.length} 个分类把动作库全部列出（合计 ${total} 个 = EXERCISES.length）`,
+        cats.length === 5 && total === EXERCISES.length,
+        `${cats.length} 类 / ${total} 个 / EXERCISES=${EXERCISES.length}`);
+    }
+    ok('第一步由 app.js 建（renderExercisePicker：localizedCategories + localizedByCategory + 每个动作一个按钮）',
+      /function renderExercisePicker\(\)/.test(app)
+      && /for \(const cat of localizedCategories\(\)\)/.test(app)
+      && /localizedByCategory\(cat\.id\)/.test(app)
+      && /btn\.dataset\.id = ex\.id/.test(app)
+      && /btn\.addEventListener\('click', \(\) => pickExerciseForSettings\(ex\.id\)\)/.test(app));
+    ok('每一项 = 已有的姿势图标（exercisePoseSVG 产出的 poseIcon）+ 名称',
+      /ex\.poseIcon \|\| ex\.icon/.test(app) && /class="pick-name"/.test(app)
+      && /poseIcon: exercisePoseSVG\(id\)/.test(read('src/exercises.js'))
+      && /export function exercisePoseSVG\(id\)/.test(read('src/icons.js')));
+    ok('选中动作 → 进第二步（pickExerciseForSettings → showExerciseTargetStep + 渲染该动作）',
+      /function pickExerciseForSettings\(id\)/.test(app)
+      && /state\.settingsExerciseId = id;/.test(app)
+      && /showExerciseTargetStep\(\);/.test(app));
+    ok('每次打开运动设定都先显示选择页（用户原话优先于「记住上次动作」）',
+      /function openExerciseSettings\(\)/.test(app)
+      && /showExercisePickStep\(\);\s*\n\s*modal\.hidden = false/.test(app));
+    ok('「记住上次动作」只体现为选择页里的高亮（不会跳过第一步）',
+      /if \(ex\.id === picked\) btn\.classList\.add\('active'\);/.test(app)
+      && /\.pick-card\.active\s*\{/.test(css));
+    ok('目标按动作分别编辑（已有的 settings.targets / settings.seconds，没有新造一套存储）',
+      /state\.settings\.targets\[id\] = n/.test(app)
+      && /state\.settings\.seconds\[id\] = n/.test(app)
+      && !/settings\.exerciseTargets|settings\.targetOverrides/.test(app));
+    // 配色：新增的两步内容沿用弹窗令牌（--card / --line / --text / --muted），不写死颜色
+    const pickCard = /(?:^|\n)\.pick-card\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] || '';
+    ok('选择页沿用弹窗令牌配色（背景 --card / 描边 --line / 文字 --text，没有新的写死底色）',
+      /background:\s*var\(--card\)/.test(pickCard) && /border:\s*1px solid var\(--line\)/.test(pickCard)
+      && /color:\s*var\(--text\)/.test(pickCard) && !/#[0-9a-f]{3,8}\b/i.test(pickCard.replace(/rgba?\([^)]*\)/g, '')),
+      pickCard.trim().slice(0, 100));
+  }
+
   /* ---- 用户要求：「一旦『记录调试数据』这个开关打开，则在**视频屏幕的右下角**要出现一个图标，
      显示其正在记录帧数据，同时用数字显示已经记录了多少帧了。」---- */
   {

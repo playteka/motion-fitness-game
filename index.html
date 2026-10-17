@@ -34,11 +34,6 @@
                 data-i18n-title="home.back" data-i18n-aria="home.back">
           <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
         </button>
-        <!-- 运动设定：只出现在动作页，管「这个动作」的目标与判据 -->
-        <button class="icon-btn" id="btnExercise" type="button" hidden
-                data-i18n-title="exercise.open" data-i18n-aria="exercise.open">
-          <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></span>
-        </button>
         <!-- 最佳成绩 / 运动记录：内容都放在弹窗里，不再占动作页的地方（用户要求） -->
         <button class="icon-btn" id="btnBest" type="button"
                 data-i18n-title="home.openBest" data-i18n-aria="home.openBest">
@@ -47,6 +42,13 @@
         <button class="icon-btn" id="btnHistory" type="button"
                 data-i18n-title="home.openHistory" data-i18n-aria="home.openHistory">
           <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></span>
+        </button>
+        <!-- 运动设定：**在主页右上角，和「设置」并排**（用户要求「将目标设定从运动页面中删除，
+             放到主页的右上方和『设置』在一起」）。动作页上这个按钮隐藏，动作页不再有目标设定入口。
+             图标是 Lucide `sliders-horizontal`（24×24 / stroke 2 / currentColor）。 -->
+        <button class="icon-btn" id="btnExercise" type="button"
+                data-i18n-title="exercise.open" data-i18n-aria="exercise.open">
+          <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/></svg></span>
         </button>
         <button class="icon-btn" id="btnSettings" type="button"
                 data-i18n-title="home.openSettings" data-i18n-aria="home.openSettings">
@@ -279,11 +281,11 @@
           <p class="calib-hint" id="calibHint"></p>
         </section>
 
+        <!-- 这里只**显示**这一组的目标（用户要求「将目标设定从运动页面中删除，
+             放到主页的右上方」）：动作页没有「运动设定」按钮，改目标去主页那个图标。
+             保留这一行是因为训练时还要知道自己这一组的目标是多少（HUD 里也有一份）。 -->
         <section class="card">
-          <div class="card-title-row">
-            <h2 class="card-title" data-i18n="ui.step2"></h2>
-            <button class="mini-btn" id="btnExerciseInline" type="button" data-i18n="exercise.open"></button>
-          </div>
+          <h2 class="card-title" data-i18n="ui.targetCard"></h2>
           <p class="target-readout" id="targetReadout"></p>
         </section>
 
@@ -415,7 +417,7 @@
     </div>
   </div>
 
-  <!-- ================= 运动设定弹窗（只对当前动作生效） ================= -->
+  <!-- ================= 运动设定弹窗（两步：先选动作 → 再设这个动作的目标与判据） ================= -->
   <div class="modal" id="exerciseModal" hidden>
     <div class="modal-backdrop" id="exerciseBackdrop"></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="exerciseTitle">
@@ -428,38 +430,53 @@
       </div>
 
       <div class="modal-body">
-        <p class="exercise-head" id="exerciseName"></p>
-        <p class="modal-hint" data-i18n="exercise.lead"></p>
+        <!-- ---------- 第一步：先选运动项目（每次打开都停在这一步） ---------- -->
+        <div class="exercise-pick" id="exercisePickStep">
+          <h3 class="modal-group-title" data-i18n="exercise.pickGroup"></h3>
+          <p class="modal-hint" data-i18n="exercise.pickLead"></p>
+          <!-- 动作库按 5 个分类分组，每项 = 姿势图标 + 名称 + 目标（由 app.js 的 renderExercisePicker 建） -->
+          <div id="exercisePickList"></div>
+        </div>
 
-        <div class="modal-group">
-          <h3 class="modal-group-title" data-i18n="exercise.targetGroup"></h3>
-          <div class="target-row">
-            <button class="step-btn" id="tMinus" type="button">−</button>
-            <input id="targetInput" type="number" min="1" max="999" step="1" value="15"
-                   data-i18n-aria="exercise.target" />
-            <button class="step-btn" id="tPlus" type="button">＋</button>
-            <span class="target-unit" id="targetUnit"></span>
+        <!-- ---------- 第二步：这个动作的目标设置与判据（原来的弹窗内容） ---------- -->
+        <div class="exercise-target" id="exerciseTargetStep" hidden>
+          <div class="exercise-target-head">
+            <button class="mini-btn" id="btnExercisePickAgain" type="button"
+                    data-i18n="exercise.pickAgain"></button>
+            <p class="exercise-head" id="exerciseName"></p>
           </div>
-          <div class="chips" id="targetChips"></div>
-          <!-- 限时计数（开合跳）：这一组固定多少秒、成绩是什么。非限时动作时隐藏 -->
-          <p class="modal-hint" id="exerciseTime" hidden></p>
-        </div>
+          <p class="modal-hint" data-i18n="exercise.lead"></p>
 
-        <div class="modal-group">
-          <h3 class="modal-group-title" data-i18n="exercise.judgeGroup"></h3>
-          <p class="modal-hint" id="exerciseJudge"></p>
-        </div>
+          <div class="modal-group">
+            <h3 class="modal-group-title" data-i18n="exercise.targetGroup"></h3>
+            <div class="target-row">
+              <button class="step-btn" id="tMinus" type="button">−</button>
+              <input id="targetInput" type="number" min="1" max="999" step="1" value="15"
+                     data-i18n-aria="exercise.target" />
+              <button class="step-btn" id="tPlus" type="button">＋</button>
+              <span class="target-unit" id="targetUnit"></span>
+            </div>
+            <div class="chips" id="targetChips"></div>
+            <!-- 限时计数（开合跳）：这一组固定多少秒、成绩是什么。非限时动作时隐藏 -->
+            <p class="modal-hint" id="exerciseTime" hidden></p>
+          </div>
 
-        <!-- 关键帧判据与判分：逐格数值由 src/specs.js 从识别器真正使用的常量里取 -->
-        <div class="modal-group">
-          <h3 class="modal-group-title" data-i18n="exercise.specGroup"></h3>
-          <p class="modal-hint" data-i18n="exercise.specLead"></p>
-          <div class="spec-box" id="exerciseSpecs"></div>
-        </div>
+          <div class="modal-group">
+            <h3 class="modal-group-title" data-i18n="exercise.judgeGroup"></h3>
+            <p class="modal-hint" id="exerciseJudge"></p>
+          </div>
 
-        <div class="modal-group">
-          <h3 class="modal-group-title" data-i18n="exercise.cameraGroup"></h3>
-          <p class="modal-hint" id="exerciseCamera"></p>
+          <!-- 关键帧判据与判分：逐格数值由 src/specs.js 从识别器真正使用的常量里取 -->
+          <div class="modal-group">
+            <h3 class="modal-group-title" data-i18n="exercise.specGroup"></h3>
+            <p class="modal-hint" data-i18n="exercise.specLead"></p>
+            <div class="spec-box" id="exerciseSpecs"></div>
+          </div>
+
+          <div class="modal-group">
+            <h3 class="modal-group-title" data-i18n="exercise.cameraGroup"></h3>
+            <p class="modal-hint" id="exerciseCamera"></p>
+          </div>
         </div>
       </div>
     </div>
