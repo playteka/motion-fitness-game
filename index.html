@@ -29,10 +29,12 @@
       </div>
       <div class="topbar-actions">
         <!-- 返回主页：和奖杯 / 齿轮那几个一样是图标按钮，文字含义放在 title / aria-label 里（快捷键 H）。
-             图标统一用**线条图标**（Lucide ISC，24×24 / stroke 2 / currentColor），不再用 emoji。 -->
+             图标统一用**线条图标**（Lucide ISC，24×24 / stroke 2 / currentColor），不再用 emoji。
+             用户要求：「返回图标现在使用的是 Home 这样的房子图标，改为『返回』图标」
+             → 用 Lucide 的 corner-up-left，和手势菜单 / 圆环里那颗「返回」是**同一颗箭头**。 -->
         <button class="icon-btn" id="btnHome" type="button" hidden
                 data-i18n-title="home.back" data-i18n-aria="home.back">
-          <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20v-7a4 4 0 0 0-4-4H4"/><path d="M9 14 4 9l5-5"/></svg>
         </button>
         <!-- 最佳成绩 / 运动记录：内容都放在弹窗里，不再占动作页的地方（用户要求） -->
         <button class="icon-btn" id="btnBest" type="button"

@@ -1369,6 +1369,15 @@ console.log('\n[3] 静态资源与模型文件');
       /const catIcon = categoryMarkSVG\(cat\.id\) \|\| cat\.icon;/.test(app)
       && /<h3 class="cat-head"><span class="cat-icon">\$\{catIcon\}<\/span>/.test(app)
       && /import \{ iconSVG, uniqueStages, categoryMarkSVG, navPoseSVG, libIconSVG, pawSVG \}/.test(app));
+    // 用户要求：「返回图标现在使用的是 Home 这样的房子图标，改为『返回』图标」
+    ok('动作页顶栏「返回」用的是**返回箭头**（corner-up-left，和菜单/圆环那颗返回同一形状），不再是房子图标',
+      (() => {
+        const btn = /<button[^>]*id="btnHome"[^>]*>([\s\S]*?)<\/button>/.exec(html)?.[1] || '';
+        return /M20 20v-7a4 4 0 0 0-4-4H4/.test(btn)   // corner-up-left 的弧段
+          && /M9 14 4 9l5-5/.test(btn)                  // corner-up-left 的箭头
+          && !/M15 21v-8/.test(btn)                     // 旧的房子图标不该还在
+          && !/M3 10a2 2 0 0 1 \.709/.test(btn);        // 房子的屋顶段也不该在
+      })());
     ok('现成图标的来源与许可写在源码里（Lucide ISC / Tabler MIT），换图标时查得到出处',
         /Lucide 1\.55（ISC 许可）/.test(read('src/icons.js')) && /Tabler Icons 3\.49 outline（MIT）/.test(read('src/icons.js')));
       /* 用户要求：「返回，上一页，下一页不要显示文字了，显示图标即可」 */
