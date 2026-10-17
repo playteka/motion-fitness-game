@@ -15,3 +15,5 @@ tools/certs/
 Thumbs.db
 desktop.ini
 .icon-preview/
+progress.json
+progress-dashboard.html
