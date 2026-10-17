@@ -1452,10 +1452,37 @@ kbd {
 .exercise-pick,
 .exercise-target { display: flex; flex-direction: column; gap: 10px; }
 #exercisePickList { display: flex; flex-direction: column; gap: 14px; margin-top: 2px; }
-/* 第二步顶部：明显的「← 换一个动作」返回第一步 + 当前动作名 */
-.exercise-target-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* 第二步顶部：「换一个动作」大号胶囊按钮 + 当前动作名。
+   按钮单独占一整行（不挤标题、也不挤下面的目标数字框），触摸热区 ≥48px 高。 */
+.exercise-target-head { display: flex; flex-direction: column; gap: 10px; }
 .exercise-target-head .exercise-head { margin: 0; }
-.exercise-target-head .mini-btn:hover { color: var(--accent); border-color: var(--accent); }
+.pick-again-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 11px 18px;
+  border: 1.5px solid var(--home-accent);
+  border-radius: 999px;
+  background: var(--home-card);
+  color: var(--home-accent);
+  font-family: inherit;
+  font-size: 15.5px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+.pick-again-btn:hover,
+.pick-again-btn:focus-visible {
+  background: var(--home-card-2);
+  box-shadow: 0 0 0 1px var(--home-accent) inset;
+}
+.pick-again-btn:active { transform: translateY(1px); }
+.pick-again-icon { display: inline-flex; width: 20px; height: 20px; }
+.pick-again-icon .ui-icon { width: 20px; height: 20px; vertical-align: 0; }
 
 .pick-cat { display: flex; flex-direction: column; gap: 6px; }
 .pick-cat-head {

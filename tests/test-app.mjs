@@ -433,8 +433,15 @@ console.log('\n[1b] 运动设定弹窗（入口在主页、两步流程）');
     && elements.get('exercisePickStep').hidden === true);
   ok('弹窗标题是刚选的动作', elements.get('exerciseName').textContent.includes('俯卧撑'),
     elements.get('exerciseName').textContent);
-  ok('第二步有「← 换一个动作」返回第一步的入口',
-    /data-i18n="exercise\.pickAgain"/.test(html) && !!elements.get('btnExercisePickAgain'));
+  ok('第二步有「换一个动作」返回第一步的入口（大号胶囊按钮 + title / aria 词条）',
+    /data-i18n="exercise\.pickAgain"/.test(html) && !!elements.get('btnExercisePickAgain')
+    && /data-i18n-title="exercise\.pickAgain"/.test(html)
+    && /data-i18n-aria="exercise\.pickAgain"/.test(html));
+  ok('「换一个动作」左边真的填进了 libIconSVG(\'back\') 的线条箭头（不是 emoji / 字符）', (() => {
+    const box = elements.get('btnExercisePickAgain').querySelector('.pick-again-icon');
+    return /<svg class="ui-icon"/.test(box.innerHTML) && /viewBox="0 0 24 24"/.test(box.innerHTML)
+      && /M9 14 4 9l5-5/.test(box.innerHTML) && !/←/.test(box.innerHTML);
+  })(), (elements.get('btnExercisePickAgain').querySelector('.pick-again-icon')?.innerHTML || '').slice(0, 90));
   ok('第二步显示判定依据', elements.get('exerciseJudge').textContent.includes('判定依据'),
     elements.get('exerciseJudge').textContent);
   ok('第二步显示机位提示', elements.get('exerciseCamera').textContent.includes('侧对摄像头'),

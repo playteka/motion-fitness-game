@@ -835,7 +835,8 @@ export default {
     // Two-step modal: pick an exercise first, then tune that exercise's target and criteria
     pickGroup: '① Pick an exercise',
     pickLead: 'Pick an exercise first; the next step tunes its target, criteria and camera hint.',
-    pickAgain: '← Change exercise',
+    // The arrow is an icon (icons.js `libIconSVG('back')`), so the label carries no “←” character
+    pickAgain: 'Change exercise',
     pickItem: 'Set the target for “{name}”',
     lead: 'These settings apply only to the exercise above',
     targetGroup: '🎯 Target',

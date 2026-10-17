@@ -543,9 +543,48 @@ console.log('\n[3] 静态资源与模型文件');
     ok('运动设定弹窗是两步：第一步选择页在前、第二步目标设置页在后',
       pickAt > 0 && targetAt > pickAt && nameAt > targetAt,
       `pick=${pickAt} target=${targetAt} name=${nameAt}`);
-    ok('第二步默认藏着（打开时先看到第一步），且提供「← 换一个动作」返回入口',
+    ok('第二步默认藏着（打开时先看到第一步），且提供「换一个动作」返回入口（title / aria 都走同一个词条）',
       /id="exerciseTargetStep" hidden/.test(html) && /id="btnExercisePickAgain"/.test(html)
-      && /data-i18n="exercise\.pickAgain"/.test(html));
+      && /data-i18n="exercise\.pickAgain"/.test(html)
+      && /data-i18n-title="exercise\.pickAgain"/.test(html)
+      && /data-i18n-aria="exercise\.pickAgain"/.test(html));
+    // 用户要求：「把运动设定里面的『换一个动作』设计得更大更明显一点」
+    {
+      const againAt = html.indexOf('id="btnExercisePickAgain"');
+      const againStart = againAt >= 0 ? html.lastIndexOf('<button', againAt) : -1;
+      const againBlock = againStart >= 0 ? html.slice(againStart, html.indexOf('</button>', againAt)) : '';
+      const againCss = /(?:^|\n)\.pick-again-btn\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] || '';
+      ok('「换一个动作」是一整行的大号胶囊按钮（.pick-again-btn，文案在内层 label 里）',
+        /class="pick-again-btn"/.test(againBlock) && /class="pick-again-label"/.test(againBlock)
+        && /border-radius:\s*999px/.test(againCss) && /width:\s*100%/.test(againCss),
+        againBlock.slice(0, 110));
+      ok('「换一个动作」高度 ≥44px、字号 15~16px 且加粗（触摸热区与可读性）',
+        /min-height:\s*(4[4-9]|[5-9]\d)px/.test(againCss)
+        && /font-size:\s*1[5-6](\.\d+)?px/.test(againCss)
+        && /font-weight:\s*[67]00/.test(againCss),
+        againCss.replace(/\s+/g, ' ').slice(0, 160));
+      ok('「换一个动作」是品牌色描边的胶囊（--home-accent / --home-card，没有写死颜色）',
+        /border:\s*[\d.]+px solid var\(--home-accent\)/.test(againCss)
+        && /color:\s*var\(--home-accent\)/.test(againCss)
+        && /background:\s*var\(--home-card\)/.test(againCss)
+        && !/#[0-9a-f]{3,8}\b/i.test(againCss),
+        againCss.replace(/\s+/g, ' ').slice(0, 160));
+      ok('「换一个动作」hover / focus / active 都有反馈（底色变亮 + 内描边 + 按下位移）',
+        /\.pick-again-btn:hover,\s*\n\.pick-again-btn:focus-visible\s*\{[^}]*var\(--home-card-2\)/.test(css)
+        && /\.pick-again-btn:active\s*\{[^}]*transform:\s*translateY\(1px\)/.test(css));
+      ok('左侧箭头用项目里的线条图标（libIconSVG(\'back\') 填进 .pick-again-icon，24 网格 / stroke 2），不是 emoji',
+        /libIconSVG\('back', 'ui-icon'\)/.test(app)
+        && /export function libIconSVG/.test(read('src/icons.js'))
+        && /class="pick-again-icon"/.test(againBlock)
+        && !/[\u{1F300}-\u{1FAFF}]/u.test(againBlock)
+        && !/←/.test(againBlock),
+        againBlock.slice(0, 110));
+      ok('按钮留在第二步顶部（标题行里、目标数字框与判据列表之前）', (() => {
+        const headAt = html.indexOf('class="exercise-target-head"');
+        const targetGroupAt = html.indexOf('data-i18n="exercise.targetGroup"');
+        return headAt >= 0 && againAt > headAt && againAt < targetGroupAt;
+      })(), `head=${html.indexOf('class="exercise-target-head"')} btn=${againAt}`);
+    }
     ok('两步的文案中英都有（pickGroup / pickLead / pickAgain / pickItem）',
       ['pickGroup', 'pickLead', 'pickAgain', 'pickItem']
         .every((k) => Object.values(LOCALES).every((L) => typeof L.exercise?.[k] === 'string')),

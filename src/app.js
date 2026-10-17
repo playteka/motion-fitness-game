@@ -5099,8 +5099,14 @@ function bindUI() {
   $('btnCloseSettings').addEventListener('click', () => closeSettings());
   $('settingsBackdrop').addEventListener('click', () => closeSettings());
   // 运动设定：只有**主页右上角**那个图标（和设置并排）；动作页没有入口。
-  // 弹窗内部两步：第一步选动作，第二步设目标；「← 换一个动作」回到第一步。
+  // 弹窗内部两步：第一步选动作，第二步设目标；顶部那颗大号胶囊按钮「换一个动作」回到第一步。
   $('btnExercise').addEventListener('click', () => openExerciseSettings());
+  {
+    // 按钮左边的线条返回箭头：和手势菜单里的「返回」同一个图标（icons.js 的 libIconSVG('back')），
+    // 不从 emoji / 字符里凑 —— 24 网格、stroke 2、颜色走 currentColor（= 按钮的 --home-accent）。
+    const icon = $('btnExercisePickAgain')?.querySelector?.('.pick-again-icon');
+    if (icon) icon.innerHTML = libIconSVG('back', 'ui-icon');
+  }
   $('btnExercisePickAgain').addEventListener('click', () => {
     showExercisePickStep();
     renderExercisePicker();   // 回来时把「上次选的动作」高亮 + 目标小字刷新一遍

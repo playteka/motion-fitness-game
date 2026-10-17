@@ -441,8 +441,13 @@
         <!-- ---------- 第二步：这个动作的目标设置与判据（原来的弹窗内容） ---------- -->
         <div class="exercise-target" id="exerciseTargetStep" hidden>
           <div class="exercise-target-head">
-            <button class="mini-btn" id="btnExercisePickAgain" type="button"
-                    data-i18n="exercise.pickAgain"></button>
+            <!-- 大号胶囊按钮：整行宽 + 品牌青描边（用户要求「换一个动作」更大更明显）。
+                 图标由 app.js 用 icons.js 的 libIconSVG('back') 填进这个 span（和「返回」同款线条箭头）。 -->
+            <button class="pick-again-btn" id="btnExercisePickAgain" type="button"
+                    data-i18n-title="exercise.pickAgain" data-i18n-aria="exercise.pickAgain">
+              <span class="pick-again-icon" aria-hidden="true"></span>
+              <span class="pick-again-label" data-i18n="exercise.pickAgain"></span>
+            </button>
             <p class="exercise-head" id="exerciseName"></p>
           </div>
           <p class="modal-hint" data-i18n="exercise.lead"></p>
