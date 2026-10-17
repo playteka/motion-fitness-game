@@ -502,33 +502,88 @@ kbd {
   background: linear-gradient(180deg, rgba(4, 8, 14, 0.62), rgba(4, 8, 14, 0) 42%);
 }
 .hud[hidden] { display: none; }
+/**
+ * 左上角这一列：名称胶囊 → 进度圆环（环里包着次数/秒数）→ 分数 → 提示。
+ *
+ * `max-width` 是给**右上角的常驻退出圆环**让位（用户要求：「退出圆环从左上角移到右上角，
+ * 移动后要保证它不压住新的进度圆环 / HUD 内容」）：右边界永远停在「圆环左边缘再往左 30px」，
+ * 所以哪怕动作名很长（英文的 "Standing Forward Fold"）也只会换行，不会钻到圆环底下。
+ */
+.hud-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: calc(100% - var(--ring-px) - 48px);
+}
 .hud-badge {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  flex-wrap: wrap;               /* 名称 + 目标：窄屏放不下就换行，绝不溢出胶囊 */
+  gap: 6px 8px;
+  max-width: 100%;
   background: rgba(9, 16, 26, 0.72);
   border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 5px 13px;
+  border-radius: 22px;
+  padding: 7px 15px;
   font-size: 13.5px;
   font-weight: 600;
 }
-.hud-value-row { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; }
+/**
+ * 运动名称（用户要求「左上角的运动名称可以适当放大」）：13.5px → 18~24px，
+ * 用 clamp 跟着视口走，小屏仍然能整句塞进胶囊（放不下就换行，不裁切）。
+ */
+#hudName {
+  font-size: clamp(18px, 1.85vw, 24px);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+}
+/**
+ * 名称后面紧跟的「本组目标」（用户要求「运动名称之后是本组运动的目标，比如 xx 次，或 xx 秒」）：
+ * 弱化一档 —— 小一号、次要色、常规字重，视觉上从属于名称；不换行（`20 次` 不该被拆成两行）。
+ */
+.hud-target {
+  margin-left: 2px;
+  font-size: clamp(12px, 1.15vw, 15px);
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .hud-value {
-  font-size: 74px;
+  /* 兜底字号；运行时由 app.js 的 syncHudValueSize() 按圆环内径 + 位数写行内 font-size */
+  font-size: 64px;
   font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   text-shadow: 0 6px 30px rgba(0, 0, 0, 0.6);
   transition: transform 0.12s ease;
 }
-.hud-value.pop { transform: scale(1.16); }
-.hud-unit { font-size: 22px; color: var(--muted); font-weight: 600; }
-.hud-sub { color: #cfe4f7; font-size: 13.5px; margin-top: 2px; opacity: 0.9; }
+/* 跳动时只轻轻放大（1.16 会让 4 位数在圆环里临时出圈） */
+.hud-value.pop { transform: scale(1.08); }
+.hud-unit { font-size: clamp(10px, 0.95vw, 13px); color: var(--muted); font-weight: 600; line-height: 1; }
+.hud-sub { color: #cfe4f7; font-size: 13.5px; margin-top: 3px; opacity: 0.9; }
 .hud-extra { color: var(--muted); font-size: 12.5px; margin-top: 6px; min-height: 18px; }
 
-.hud-ring { position: relative; width: var(--ring-px); height: var(--ring-px); }
+/* 进度圆环：位置从右上角挪到了「计次的位置」（名称下方、分数上方），尺寸仍是共用变量 */
+.hud-ring {
+  position: relative;
+  width: var(--ring-px);
+  height: var(--ring-px);
+  margin-top: 2px;
+}
 .hud-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+/* 环心：次数 / 秒数 + 单位，绝对居中，永远不参与点击 */
+.hud-ring-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  pointer-events: none;
+}
 .ring-bg { fill: none; stroke: rgba(255, 255, 255, 0.14); stroke-width: 9; }
 .ring-fg {
   fill: none;
@@ -540,20 +595,11 @@ kbd {
   transition: stroke-dashoffset 0.25s ease, stroke 0.25s ease;
   filter: drop-shadow(0 0 6px rgba(52, 229, 196, 0.5));
 }
-.ring-text {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  font-size: 17px;
-  font-variant-numeric: tabular-nums;
-}
-/* 分数：紧贴次数下方、单独一种颜色（金色）——
-   用户要求「分数要放在和次数靠近的地方，比如在次数下方，而且要字体要用不同的颜色」 */
+/* 分数：紧贴**圆环下方**、单独一种颜色（金色）——
+   用户要求「计分依然放在圆环的下方，保持不变」 */
 .hud-score {
   display: inline-block;
-  margin-top: 3px;
+  margin-top: 8px;
   padding: 2px 13px;
   border-radius: 999px;
   background: rgba(9, 16, 26, 0.6);
@@ -1128,9 +1174,10 @@ kbd {
   text-align: center;
   pointer-events: none;
 }
-/* ---- 左下角常驻的「退出」圆环（手或脚进去保持 3 秒 = 退出这一组 + 退出全屏）----
-   动画、进度、触发方式与上面两个圆环完全共用（同一套 .ring-* 与 paintRing 逻辑），
-   位置固定在**左下角**、与右上角的 HUD 进度圆环**严格对称**、直径也**完全一致**。 */
+/* ---- 右上角常驻的「退出」圆环（手或脚进去保持 3 秒 = 退出这一组）----
+   动画、进度、触发方式与上面两个圆环完全共用（同一套 .ring-* 与 paintRing 逻辑）。
+   位置由 JS 按舞台像素摆在**右上角**（用户要求：「把『退出』这个圆环从左下角移到右上角」），
+   直径仍与「一组结束后」的两个圆环共用 --ring-px，避免各写各的。 */
 .corner-ring {
   position: absolute;
   inset: 0;
@@ -1188,10 +1235,10 @@ kbd {
   .rec-badge .rec-dot { animation: none; }
 }
 .corner-ring .ring-btn {
-  /* 直径与右上角的 HUD 进度圆环**同一个变量**（用户要求「各个圆环大小一样」）；
-     圆心位置由 JS 按舞台尺寸设（**左下角**，与右上角那个严格成对角：
-     左边距 = HUD 的右边距 18px，下边距 = HUD 的上边距 16px）。
-     进度条两侧已经给它留好了位置（--bar-side-space），所以它不用再抬高避让。 */
+  /* 直径与「一组结束后」的圆环**同一个变量**（用户要求「各个圆环大小一样」）；
+     圆心位置由 JS 按舞台尺寸设（**右上角**：右边距 = HUD 的右边距 18px，
+     上边距 = HUD 的上边距 16px，再各自叠加 safe-area-inset-right / -top）。
+     进度条两侧的 --bar-side-space 是上一版给左下角圆环留的，留着不影响任何东西。 */
   width: var(--ring-px);
   height: var(--ring-px);
   opacity: 0.92;

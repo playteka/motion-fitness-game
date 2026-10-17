@@ -151,7 +151,7 @@ const state = {
   /** 最近一次 getUserMedia 的 name / message（诊断面板用；camError 是拼好的字符串，给探针看） */
   camErrName: '',
   camErrMessage: '',
-  /** 最近一帧「手/脚」离左下角圆环多远（🐞 面板用：排查到底有没有识别到手/脚） */
+  /** 最近一帧「手/脚」离右上角退出圆环多远（🐞 面板用：排查到底有没有识别到手/脚） */
   touchInfo: null,
   consoleErrors: [],
   saidSteps: new Set(),
@@ -512,7 +512,7 @@ function showWorkout() {
   $('btnHome').hidden = false;
   $('btnExercise').hidden = true;   // 运动设定只在主页出现（动作页没有目标设定入口）
   renderExerciseSettings();
-  // 左下角的「退出」圆环不在这里摆：它**只在摄像头开着的时候**显示（用户要求），
+  // 右上角的「退出」圆环不在这里摆：它**只在摄像头开着的时候**显示（用户要求），
   // 由主循环里的 syncCornerExit() 每帧对齐（摄像头一开一关它自己出现/消失）。
   syncCornerExit();
   // 动作页要横向画面：手机上竖屏进入时，把「请把手机横过来」的遮罩亮出来
@@ -1086,42 +1086,108 @@ const GESTURE_HOLD_MS = 3000;
 const GESTURE_GRACE_MS = 300;
 
 /**
- * **左下角常驻的「退出」圆环**（用户要求）。
+ * **右上角常驻的「退出」圆环**（用户要求）。
  *
- * 「在画面左下角划一个『退出』圆环，手或者脚进入之后保持 3 秒则退出运动以及全屏状态。
- *   圆环的动画效果和运动结束后的退出圆环保持一样。」
- * 后续又要求：「左下角，和右上角的圆环成对角的状态，直径还可以再大一点，
- *   右上角的圆环直径可以小一点，**各个圆环大小一样，保持对称**；而且只在打开摄像头的时候显示。」
+ * 最早是左下角：「在画面左下角划一个『退出』圆环，手或者脚进入之后保持 3 秒则退出运动以及全屏状态。
+ *   圆环的动画效果和运动结束后的退出圆环保持一样。」后来用户又把它挪到了**右上角**
+ * （「把『退出』这个圆环从左下角移到右上角」）——因为 HUD 的进度圆环挪到计次的位置去了，
+ * 右上角正好空出来，而且右上角比左下角更好够到。
  *
- * 所以它和「一组结束后」的那两个圆环**共用同一套东西**：同样的 `.ring-*` 样式与 SVG、
+ * 它和「一组结束后」的那两个圆环**共用同一套东西**：同样的 `.ring-*` 样式与 SVG、
  * 同样的顺时针走满一圈动画、同样的 `paintRing` / `updateGesture` 逻辑、同样的 3 秒
- * （`GESTURE_HOLD_MS`）与同样宽容度（`GESTURE_GRACE_MS`）；尺寸与右上角的 HUD 进度环
+ * （`GESTURE_HOLD_MS`）与同样宽容度（`GESTURE_GRACE_MS`）；尺寸与 HUD 那个进度环
  * **共用 CSS 变量 `--ring-px`**（所以「各个圆环大小一样」是一条样式约束，不会各写各的），
- * 位置摆在**左下角**、与右上角那个**严格成对角**（左边距 = 右边距、下边距 = 上边距）。区别只有：
+ * 位置按舞台像素摆在**右上角**（`ringCenter('corner', …)`，右边距 18px / 上边距 16px，
+ * 再各自叠加 safe-area-inset-right / -top）。区别只有：
  *   - 手**或脚**都算（手掌中心，或整只脚的中心）；
- *   - 触发后退出这一组**并退出全屏**（`showHome()` 里本来就会退出全屏）；
+ *   - 触发后退出这一组（训练里回手势菜单；菜单里是兜底的回主页）；
  *   - **只在摄像头开着的时候显示**（`camera.active`）。
  *
- * 用户后来把两件事一起定下来：「让退出圆环可以放在画面的左下角，和右上角的进度圆环对称。
- *   退出圆环放大一点，大小和右上角的进度圆环保持一样大小。」—— 所以它现在真的贴在左下角，
- *   而**进度条自己把两侧空间让出来**（CSS 变量 `--bar-side-space` = 左边距 + 圆环直径 + 间隙），
- *   两者各占各的地方，不用再靠「把圆环抬高」来避让（原来是 `CORNER_RING_BOTTOM_PX = 122`）。
+ * ⚠️ 位置只有 `ringCenter('corner', …)` 这一处定义：`layoutCornerRing()` 用它来摆可见的圆环，
+ * `anyTouchInRing()` / `handInRing()` 用它来判手/脚在不在环里，所以「看到哪就是判哪」。
  */
-/** 圆环外沿离画面左边这么远（与右上角 HUD 圆环的 18px 右边距左右对称） */
+/** 圆环外沿离画面右边这么远（与 HUD 的右边距 `padding: 16px 18px` 对齐） */
 const CORNER_RING_INSET_PX = 18;
 /**
- * 圆环下沿离画面底部这么高：**与右上角 HUD 圆环的上内边距（`.hud` 的 `padding: 16px 18px`）一致**，
- * 这样左下角 / 右上角两个圆环是严格的中心对称关系。
+ * 圆环上沿离画面顶部这么高：**与 HUD 的上内边距（`.hud` 的 `padding: 16px 18px`）一致**，
+ * 所以退出圆环和左上角的名称胶囊在同一条基线上。
  *
- * 原来这里是 122px（把圆环抬到判定进度条上方）；现在进度条**变短了**（最多 880px，并且两侧
- * 用 `--bar-side-space` 给圆环留了位置），所以圆环可以贴回左下角，不会再压住最左边那一格。
+ * 历史（别走回头路）：这个圆环原来贴在**左下角**（`CORNER_RING_BOTTOM_PX = 16`，
+ * 与右上角 HUD 进度环成对角）。用户后来要求「把『退出』这个圆环从左下角移到**右上角**」，
+ * 而右上角又刚好空出来了（HUD 进度环挪到了计次的位置）—— 于是它接管右上角，
+ * 常量也从「下边距」改成「上边距」，仍然是最靠近画面角上的那个位置。
  */
-const CORNER_RING_BOTTOM_PX = 16;
+const CORNER_RING_TOP_PX = 16;
 /**
  * 读不到元素真实尺寸时的兜底直径（与 style.css 里 `--ring-px` 的 clamp 参数保持一致）。
- * 用户要求「退出圆环放大一点」：96/132 → 104/140（右上角那个共用同一个变量，一起变大、仍然等大）。
+ * 用户要求「退出圆环放大一点」：96/132 → 104/140（HUD 进度环共用同一个变量，一起变大、仍然等大）。
  */
 const RING_PX_FALLBACK = { min: 104, vw: 0.105, max: 140 };
+/**
+ * HUD 进度圆环（现在放在计次的位置）的**内径占外径的比例**。
+ *
+ * SVG viewBox 是 120×120、圆 `r = 52`、描边 `stroke-width = 9`：
+ *   内边半径 = 52 − 9/2 = 47.5 → 内径 = 95，占外径 120 的 **95/120**。
+ * 环里的数字必须整颗落在这个内径里（再乘一个安全系数），所以这个比例是
+ * `hudRingInnerPx()` / `hudValueFontSize()` 的同一个来源 —— 字号和绘制的圆环不会各说各的。
+ */
+const HUD_RING_INNER_RATIO = 95 / 120;
+/**
+ * 数字文字宽度的估算系数（`tabular-nums` 的数字每字宽约 0.6em，取 0.62 留一点余量）。
+ * 纯估算，不需要真实布局，所以测试可以直接调这几个函数做断言。
+ */
+const HUD_DIGIT_EM = 0.62;
+/** 环里文字最多占内径的比例（剩下的 16% 是内边距，数字贴着描边也不会碰到） */
+const HUD_VALUE_PAD = 0.84;
+
+/**
+ * HUD 进度圆环的**内径**（像素）—— 只由直径决定，纯函数。
+ *
+ * 「绘制」和「字号」共用这一份：SVG 描边画在 r=52、stroke 9 的圈上，
+ * 内边就是 47.5（viewBox 单位），换算成屏幕上就是 `ringPx × 95/120`。
+ */
+function hudRingInnerPx(ringPx) {
+  const px = Number(ringPx);
+  if (!Number.isFinite(px) || px <= 0) return 0;
+  return px * HUD_RING_INNER_RATIO;
+}
+
+/**
+ * 估算一段数字文字的宽度（像素，纯函数）：`字数 × 字号 × 0.62`。
+ *
+ * 数字是等宽字体（`font-variant-numeric: tabular-nums`），每个字符宽约 0.6em，
+ * 0.62 是留了余量；不依赖 `measureText`，所以 Node 测试里能直接算。
+ */
+function hudTextWidth(text, fontSize) {
+  const n = String(text ?? '').length;
+  const f = Number(fontSize);
+  if (!Number.isFinite(f) || f <= 0) return 0;
+  return n * f * HUD_DIGIT_EM;
+}
+
+/**
+ * **HUD 圆环里那个大数字该用多大字号**（纯函数，测试直接调用）。
+ *
+ * 用户要求：「把计次或者计时的数字放到圆环里面，注意调整数字大小，使得数字刚好可以放在
+ * 圆环之内，尤其是当数字比较大，比如读秒到 100 秒以上的时候，应当**动态调整字体大小**，
+ * 使得数字不要超过圆环边界。」
+ *
+ * 算法：先由圆环直径算出内径，再取「高度」与「宽度」两条约束的较小值 ——
+ *   · 高度：字号 = 行高（`line-height: 1`），最多占内径的 84%；
+ *   · 宽度：`字数 × 字号 × 0.62 ≤ 内径 × 84%` → 字号 ≤ 内径 × 84% / (字数 × 0.62)。
+ * 于是 `0 / 9 / 99 / 100 / 1000` 都落在圈里，位数越多字越小。
+ * 返回值按 0.1px **向下**取整（不向上，才保证估算宽度永远不超过内径），
+ * 所以测试可以直接断言 `hudTextWidth(text, hudValueFontSize(ringPx, text)) ≤ hudRingInnerPx(ringPx)`。
+ */
+function hudValueFontSize(ringPx, text) {
+  const inner = hudRingInnerPx(ringPx);
+  if (!(inner > 0)) return 11;
+  const len = Math.max(1, String(text ?? '').length);
+  const maxByHeight = inner * HUD_VALUE_PAD;
+  const maxByWidth = (inner * HUD_VALUE_PAD) / (len * HUD_DIGIT_EM);
+  const size = Math.min(maxByHeight, maxByWidth);
+  return Math.max(1, Math.floor(size * 10) / 10);
+}
 /**
  * 手 / 脚要「进到圆环里」的判定半径（占**直径**）。
  *
@@ -1147,7 +1213,7 @@ const RING_HIT_RATIO = 0.5;
 const RING_TOUCH_TOL = 1.12;
 /**
  * 手势落点的最低可见度：低于这个值的点整帧不参与（被身体挡住的看不见的手/脚不会误触）。
- * 原来写死 0.4 —— 但手/脚伸到**画面边角**（左下角圆环正好在角上）时，MediaPipe 给的可见度
+ * 原来写死 0.4 —— 但手/脚伸到**画面边角**（右上角圆环正好贴在角上）时，MediaPipe 给的可见度
  * 本来就偏低，0.4 会把「明明看得见的手」整个丢掉，这也是「不灵敏」的原因之一，现在放宽到 0.3。
  */
 const TOUCH_VIS_MIN = 0.3;
@@ -1155,7 +1221,7 @@ const TOUCH_VIS_MIN = 0.3;
  * **脚**（脚跟 / 脚尖）的最低可见度：比手更宽松（0.15）。
  *
  * 为什么单独给脚一档（用户反馈「**只要脚尖进入圆环就要开始沙漏计时，现在感觉要脚踝进入才开始计时**」）：
- * 圆环贴在画面**左下角**，而脚要够到那儿通常是抬起来斜着伸过去 —— 此时 MediaPipe 对
+ * 圆环贴在画面**角落**（最初是左下角，后来挪到右上角），脚要够到那儿通常是抬起来斜着伸过去 —— 此时 MediaPipe 对
  * 脚跟 / 脚尖这两个点的可见度经常只有 0.2 上下（脚在画面边缘、鞋尖被裁掉、脚背朝镜头都会被压低），
  * 用 0.3 的门槛**整只脚的脚尖点全被丢掉**，只剩一个脚踝点可用 —— 于是「必须把脚踝塞进圆环」
  * 才开始计时，正是用户感觉到的那个现象。手指尖没有这个问题（手举到角上仍然清晰）。
@@ -1205,7 +1271,7 @@ const gestureState = {
   visible: false,
   exit: { p: 0, since: 0, lastInside: 0, done: false },
   retry: { p: 0, since: 0, lastInside: 0, done: false },
-  // 左下角常驻的「退出」圆环：独立显示/隐藏（不跟「一组结束」那两个一起）
+  // 右上角常驻的「退出」圆环：独立显示/隐藏（不跟「一组结束」那两个一起）
   corner: { p: 0, since: 0, lastInside: 0, done: false },
   cornerVisible: false,
   /**
@@ -1278,9 +1344,9 @@ function setPoseLogUi(on) {
  * 算 —— 这样判定半径和屏幕上看到的圆环永远对得上。
  *
  * ⚠️ 兜底公式用的是**视口宽度（vw）**，不是舞台宽度：CSS 里 `--ring-px: clamp(104px, 10.5vw, 140px)`
- * 里的 vw 就是视口宽度，右上角那个 HUD 圆环完全由 CSS 决定（= 11vw）。以前这里用舞台宽度算，
+ * 里的 vw 就是视口宽度，HUD 进度环与退出圆环都完全由 CSS 决定（= 10.5vw）。以前这里用舞台宽度算，
  * 比 vw 小一圈，于是**在元素还没显示出来的时候量到的直径会被写死在行内样式上** ——
- * 结果就是「左下角的退出圆环看起来比右上角的进度圆环小」（用户反馈）。现在两边口径一致。
+ * 结果就是「退出圆环看起来比 HUD 进度圆环小」（用户反馈）。现在两边口径一致。
  */
 function ringPx(key) {
   const el = ringEl(key);
@@ -1290,21 +1356,27 @@ function ringPx(key) {
   return Math.round(clamp(vw * RING_PX_FALLBACK.vw, RING_PX_FALLBACK.min, RING_PX_FALLBACK.max));
 }
 
-/** 圆环的圆心（**像素**）：中间两个按比例摆，左下角那个固定贴在左下角（含刘海 / 底部横条安全区） */
+/**
+ * 圆环的圆心（**像素**）：中间两个按比例摆，右上角那个固定在右上角
+ * （含刘海 / 状态栏安全区）。
+ *
+ * ⚠️ 这个函数是**唯一**的位置来源：`layoutCornerRing()` 用它摆可见的圆环，
+ * `anyTouchInRing()` / `handInRing()` 用它判手/脚在不在环里 —— 绘制与判定同一份坐标。
+ */
 function ringCenter(key, stageW, stageH) {
   if (key === 'corner') {
     const px = ringPx('corner');
-    const safe = safeAreaInsets();   // 手机横屏时左侧是刘海、底部是横条：圆环要躲开
+    const safe = safeAreaInsets();   // 手机横屏时右侧是刘海、顶部是状态栏：圆环要躲开
     return {
-      x: safe.left + CORNER_RING_INSET_PX + px / 2,
-      y: stageH - safe.bottom - CORNER_RING_BOTTOM_PX - px / 2,
+      x: stageW - safe.right - CORNER_RING_INSET_PX - px / 2,
+      y: safe.top + CORNER_RING_TOP_PX + px / 2,
     };
   }
   const r = GESTURE_RINGS[key];
   return { x: r.x * stageW, y: r.y * stageH };
 }
 
-/** 圆环的判定半径（像素）：中间两个沿用原来的比例口径，左下角那个按自己的直径算 */
+/** 圆环的判定半径（像素）：中间两个沿用原来的比例口径，右上角退出圆环按自己的直径算 */
 function ringHitRadius(key, size) {
   if (key === 'corner') return ringPx('corner') * RING_HIT_RATIO;
   return RING_HIT * size.w;
@@ -1312,7 +1384,7 @@ function ringHitRadius(key, size) {
 
 /**
  * 手 / 脚的**外延采样点**：MediaPipe 的 Pose 模型里，食指 / 小指 / 拇指（17~22）和脚跟 / 脚尖（29~32）
- * 都是**估出来的**，手/脚伸到画面边角（正好是左下角圆环所在的位置）时它们常常落在**手腕 / 脚踝附近**、
+ * 都是**估出来的**，手/脚伸到画面边角（退出圆环所在的位置）时它们常常落在**手腕 / 脚踝附近**、
  * 或者干脆被可见度门槛丢掉 —— 于是「手感上只有手腕和脚踝能触发」（用户第二次反馈的原话：
  * 「感觉目前必须是脚踝和手腕进入才开始 3 秒计时」）。
  *
@@ -1333,7 +1405,7 @@ const FOOT_EXT_K = [0.5, 1.0];
  * 脚 = 踝 + 脚跟 + 脚趾尖（每只脚 3 个点）+ **沿小腿 / 脚跟方向补出来的脚尖点**。
  *
  * 用户口径：「**手掌或脚的一部分进入**我认为就要开始沙漏计时，保持 3 秒后退出。
- *   **一部分进入即可触发**。」 —— 所以左下角那个退出圆环**逐点**判定：
+ *   **一部分进入即可触发**。」 —— 所以右上角那个退出圆环**逐点**判定：
  * 只要手/脚上的**任意一个点**落进圆环里就开始计时（指尖、脚跟、脚趾尖、脚踝都算）。
  *
  * 三次放宽的历史（都保留在注释里）：
@@ -1448,7 +1520,7 @@ function pointsInRing(samples, key, size) {
  */
 function anyTouchInRing(samples, key, size) {
   const c = ringCenter(key, size.w, size.h);
-  // 左下角那个退出圆环多给一点宽容度（见 RING_TOUCH_TOL）；中间两个大圆环仍然严格按判定半径
+  // 右上角那个退出圆环多给一点宽容度（见 RING_TOUCH_TOL）；中间两个大圆环仍然严格按判定半径
   const hit = ringHitRadius(key, size) * (key === 'corner' ? RING_TOUCH_TOL : 1);
   if (!samples || !samples.length) {
     return { inside: false, pointIn: false, spanIn: false, best: null, bestSeg: null, minDist: Infinity, hit };
@@ -1482,11 +1554,11 @@ function anyTouchInRing(samples, key, size) {
 
 /**
  * 手 / 脚各自的**中心**（手掌中心 / 整只脚的中心）—— 只用于「一组结束」那两个圆环
- * （它们的设计是「把手掌放进圆环中央」）和 🐞 面板的读数；左下角退出圆环改用 touchSamples 逐点判。
+ * （它们的设计是「把手掌放进圆环中央」）和 🐞 面板的读数；右上角退出圆环改用 touchSamples 逐点判。
  *
  * ⚠️ 只平均**真实量到的关键点**，不算 touchSamples 里补出来的外延点（`ghost`）：
  * 那两个大圆环的设计是「把手掌放进圆环中央」，中心要是被外延点往指尖方向拽，手感就变了。
- * 外延点只服务于左下角退出圆环的「一部分进入即触发」。
+ * 外延点只服务于右上角退出圆环的「一部分进入即触发」。
  */
 function touchPoints(landmarks, stageW, stageH, mirror) {
   const samples = touchSamples(landmarks, stageW, stageH, mirror).filter((p) => !p.ghost);
@@ -1506,7 +1578,7 @@ function touchPoints(landmarks, stageW, stageH, mirror) {
   ].filter(Boolean);
 }
 
-/** 只有手掌（「一组结束」那两个圆环用；左下角的退出圆环改用 touchSamples 逐点判，手或脚都算） */
+/** 只有手掌（「一组结束」那两个圆环用；右上角的退出圆环改用 touchSamples 逐点判，手或脚都算） */
 function palmPoints(landmarks, stageW, stageH, mirror) {
   /**
    * ⚠️ 只按 `kind === 'hand'` 挑，**不能写成 `slice(0, 2)`**：
@@ -1611,7 +1683,7 @@ function rotateGateWanted(env = deviceEnv()) {
 
 /**
  * 刘海 / 底部横条的像素值：CSS 里定义了 `--safe-*`（`env(safe-area-inset-*)`），
- * JS 侧（左下角圆环是自己按像素定位的）读出来用。
+ * JS 侧（右上角退出圆环是自己按像素定位的）读出来用。
  * 读不到（老浏览器 / 测试桩）时一律当 0，绝不让定位算错。
  */
 function safeAreaInsets() {
@@ -1716,14 +1788,14 @@ function layoutGestureRings() {
   layoutCornerRing();
 }
 
-/** 左下角退出圆环的位置（左下角、与右上角 HUD 圆环成对角；全屏/横竖屏切换后要重摆） */
+/** 右上角退出圆环的位置（右上角、HUD 名称胶囊同一水平线；全屏/横竖屏切换后要重摆） */
 function layoutCornerRing() {
   const el = ringEl('corner');
   if (!el) return;
   const size = stageSize();
   // ⚠️ 先清掉行内尺寸再量：行内 px 会盖住 CSS 的 `--ring-px`，如果不清，
   // 上一次量到的旧尺寸会被一直沿用 —— 窗口一改大小（或跨过小屏断点）圆环就不跟着变了，
-  // 于是又和右上角那个 HUD 圆环不一样大（这正是用户反馈的那个「看起来小一圈」）。
+  // 于是又和 HUD 那个进度圆环不一样大（这正是用户反馈的那个「看起来小一圈」）。
   el.style.width = '';
   el.style.height = '';
   const px = ringPx('corner');
@@ -1736,10 +1808,11 @@ function layoutCornerRing() {
 
 function ringEl(key) {
   if (key === 'corner') return $('ringQuickExit');
+  if (key === 'hud') return $('hudRing');
   return $(key === 'exit' ? 'ringExit' : 'ringRetry');
 }
 
-/** 左下角退出圆环上那个「退出」文案 / 计时器的元素 */
+/** 右上角退出圆环上那个「退出」图标 / 计时器的元素 */
 function cornerLabelEl() { return $('ringQuickExitLabel'); }
 
 /** 一组做完 → 亮出两个圆环，并提示怎么用（语音 + 屏幕上方的提示条） */
@@ -1759,7 +1832,7 @@ function showGestureRings({ speak = true } = {}) {
     paintRing(key, 0);
   }
   box.hidden = false;
-  // 「一组结束」的两个圆环已经给了退出/再做一次 → 左下角那个常驻圆环先收起来，别重复
+  // 「一组结束」的两个圆环已经给了退出/再做一次 → 右上角那个常驻圆环先收起来，别重复
   hideCornerExit();
   const hint = $('gestureHint');
   if (hint) {
@@ -1786,7 +1859,7 @@ function hideGestureRings() {
     st.p = 0; st.since = 0; st.lastInside = 0; st.done = false;
     ringEl(key)?.classList.remove('dwelling', 'done');
   }
-  // 左下角那个常驻圆环的显示/隐藏由「摄像头开着没有」决定（每帧同步，见 syncCornerExit）
+  // 右上角那个常驻圆环的显示/隐藏由「摄像头开着没有」决定（每帧同步，见 syncCornerExit）
   syncCornerExit();
 }
 
@@ -1847,7 +1920,7 @@ function updateGesture(landmarks, now) {
 }
 
 /**
- * 左下角的常驻「退出」圆环：显示 / 隐藏。
+ * 右上角的常驻「退出」圆环：显示 / 隐藏。
  *
  * 显示时机（用户要求）：**只在摄像头开着的时候**（`camera.active`）摆出来 —— 摄像头没开、
  * 或者出错了，圆环就没意义（手/脚也识别不到）。摄像头开着时在校准 / 倒计时 / 计数中 / 暂停
@@ -1868,8 +1941,8 @@ function showCornerExit() {
   if (timer) timer.textContent = '';
   paintRing('corner', 0);
   // ⚠️ 顺序很重要：**先显示再量尺寸**。元素还在 `display: none` 时 `clientWidth` 是 0，
-  // 量到的是兜底值，那个值会被写进行内 width/height —— 于是圆环会一直比右上角的 HUD 圆环小一圈
-  // （用户反馈「退出圆环放大一点，大小和右上角的进度圆环保持一样大小」就是这个原因）。
+  // 量到的是兜底值，那个值会被写进行内 width/height —— 于是圆环会一直比 HUD 那个进度圆环小一圈
+  // （用户反馈「退出圆环放大一点，大小和 HUD 的进度圆环保持一样大小」就是这个原因）。
   box.hidden = false;
   gestureState.cornerVisible = true;
   layoutCornerRing();
@@ -1886,12 +1959,12 @@ function hideCornerExit() {
 }
 
 /**
- * 把左下角退出圆环的显示状态与「摄像头开着没有」对齐（每帧调用，很便宜）。
+ * 把右上角退出圆环的显示状态与「摄像头开着没有」对齐（每帧调用，很便宜）。
  * 条件：摄像头开着 + 不在主页 + **不在手势菜单里** + 「一组结束」的两个大圆环没摆着。
  *
  * 手势菜单里**不显示**这个圆环（用户要求：「在第一级菜单选择页面去掉『退出』圆环，
  * 增加一个『返回』圆环」）：菜单每一级都有一格「↩ 返回」负责往上一层 / 回网页首页，
- * 左下角那个「退出」只在**动作里**用（退出这一组 → 回菜单）。
+ * 右上角那个「退出」只在**动作里**用（退出这一组 → 回菜单）。
  */
 function syncCornerExit() {
   const want = !!camera.active && !state.homeMode && !state.menuMode && !gestureState.visible;
@@ -1900,7 +1973,7 @@ function syncCornerExit() {
 }
 
 /**
- * 每帧更新左下角退出圆环：**手或脚的任意一部分**进到圆环里、保持满 GESTURE_HOLD_MS 就退出。
+ * 每帧更新右上角退出圆环：**手或脚的任意一部分**进到圆环里、保持满 GESTURE_HOLD_MS 就退出。
  * 进度与动画完全复用中间那两个圆环的那一套（paintRing / 同一组常量）。
  *
  * 判定口径（用户要求）：「手掌或脚的一部分进入就要开始沙漏计时，保持 3 秒后退出，
@@ -1908,7 +1981,7 @@ function syncCornerExit() {
  * 所以现在是三层一起判（见 touchSamples / anyTouchInRing）：
  *   1. 逐点 —— 指尖 / 脚跟 / 脚趾尖 / 脚踝 / 手腕，任意一个点落在圆环里；
  *   2. 逐段 —— 同一条手/脚上的点连成线段，圆环和线段相交也算（**脚尖在环里、脚踝在环外**就是这样被抓住的）；
- *   3. 脚尖点量不到时用**估算的脚尖**（`ghost`），脚伸到画面左下角时这一步很关键。
+ *   3. 脚尖点量不到时用**估算的脚尖**（`ghost`），脚伸到画面角落（圆环所在的位置）时这一步很关键。
  *
  * 之前几次放宽的历史见 RING_HIT_RATIO / TOUCH_VIS_MIN / FOOT_VIS_MIN / GESTURE_DRAIN_MS 的注释。
  * 「手/脚现在在哪、离圆心多远、是哪个部位进的环」记进 `state.touchInfo`，🐞 面板会显示。
@@ -1968,12 +2041,12 @@ function updateCornerExit(landmarks, now) {
   return false;
 }
 
-/** 左下角圆环触发：退出这一组**并且退出全屏**（和「一组结束后」的退出圆环同一个动作） */
+/** 右上角圆环触发：退出这一组（和「一组结束后」的退出圆环同一个动作） */
 /**
- * 左下角退出圆环触发。
+ * 右上角退出圆环触发。
  *
  * 用户要求（全手势流程）：「在各项运动中如果退出，则回到菜单页面，如果在菜单界面退出则回到网页首页。」
- * 后来菜单里改由「↩ 返回」圆环负责往上一层 / 回网页首页（左下角这个圆环在菜单里不再显示），
+ * 后来菜单里改由「↩ 返回」圆环负责往上一层 / 回网页首页（右上角这个圆环在菜单里不再显示），
  * 所以它现在的活是：**训练界面里 → 回手势菜单**（这一组照常收尾结算，记录照旧保存）。
  * `menuMode` 那一支留着当兜底（万一菜单里又出现这个圆环，行为仍然是回网页首页）。
  */
@@ -2035,8 +2108,8 @@ function retrySet() {
  * 流程：
  *   首页「开始」 ──开摄像头 + #stage 全屏──▶ 手势菜单 ──手掌停满 3 秒选一格──▶ 该动作的训练界面
  *        ▲                                      │                                    │
- *        └────────── 左下角圆环（菜单里 = 回首页）┘                                    │
- *        └──────────────── 左下角圆环（训练里 = 退出 → 回菜单）◀──────────────────────┘
+ *        └────────── 右上角圆环（菜单里不显示；兜底 = 回首页）┘                            │
+ *        └──────────────── 右上角圆环（训练里 = 退出 → 回菜单）◀──────────────────────────┘
  *
  * 判定复用其它圆环的同一套常量与手感：手掌中心 + GESTURE_HOLD_MS(3s) + GESTURE_GRACE_MS(300ms 抖动宽容)
  * + GESTURE_DRAIN_MS(1.5s 慢慢退回)；区别只有「一格一格地选」：手掌移到别的圆环上，
@@ -2064,7 +2137,7 @@ const MENU_ROWS = 1;
  * 用户反馈：「因为菜单圆环很大，数量又比较多，人站在画面中手很容易误触某个圆环。」
  * 圆环现在有 200~300px，瞄准早就不难了，多放出去的那 15% 半径（面积 +32%）**全部是误触面积**：
  * 手从旁边走过、站在画面里手自然下垂，都可能蹭到某一格的判定圈。所以收紧到「必须真的在圆圈里」。
- * （左下角那个退出圆环是反过来的老问题 —— 手/脚够不到，所以它单独用 `RING_TOUCH_TOL = 1.12` 放宽；
+ * （右上角那个退出圆环是反过来的老问题 —— 手/脚够不到，所以它单独用 `RING_TOUCH_TOL = 1.12` 放宽；
  *   菜单是「太灵敏」，两者口径不同是刻意的。）
  */
 const MENU_HIT_RATIO = 1.0;
@@ -2242,7 +2315,7 @@ function menuBandGeom(size) {
 /**
  * 菜单圆环的几何：**按舞台尺寸算**（不读 DOM 的布局）——只算**这一页的选项**。
  *
- * 和左下角退出圆环是同一个做法：判定用的圆心 / 半径与写进元素的行内 `left/top` 永远来自同一份数，
+ * 和右上角退出圆环是同一个做法：判定用的圆心 / 半径与写进元素的行内 `left/top` 永远来自同一份数，
  * 所以「看到哪一格」和「程序判哪一格」不会各说一套（测试也能在没有真实布局的桩里跑）。
  * 直径与字号一起算：字号按直径走，圆环一大字就跟着大（用户反馈「圆环太小、字也太小」）。
  *
@@ -2689,7 +2762,7 @@ function updateMenuSwipe(palms, layout, size, now, speed) {
  * 用户要求：「在出现圆环选择的情况下，用户手掌的位置出现一个小的猫爪图标，便于用户知道自己的手掌在哪里。」
  * 后来又要求：「在每个运动的窗口里面，如果手掌进入或者靠近类似『退出』这样的圆环，则像菜单界面一样出现猫爪。」
  *   - **手势菜单**里照旧显示（`state.menuMode`）；**运动界面**里也显示 —— 进了训练
- *     （`running` / `paused` / `countdown`）或者「一组结束」的两个圆环 / 左下角退出圆环正摆着
+ *     （`running` / `paused` / `countdown`）或者「一组结束」的两个圆环 / 右上角退出圆环正摆着
  *     （`gestureState.visible` / `cornerVisible`）时，只要有手掌被识别到就画；
  *   - **主页（`state.homeMode`）与没有手掌时必须藏起来**，不能残留在画面上（整层 `hidden` + 去掉 `on`）；
  *   - 坐标直接用识别到的手掌中心（和圆环判定用的是同一份舞台像素，所以「爪子在哪」＝「程序认为手在哪」）；
@@ -2698,7 +2771,7 @@ function updateMenuSwipe(palms, layout, size, now, speed) {
 function pawsWanted() {
   if (state.homeMode) return false;                  // 主页：一律不画（摄像头也关着）
   if (state.menuMode) return true;                   // 手势菜单：照旧（有没有手由 palms 决定）
-  // 运动界面：进了训练（含 3-2-1 倒计时 / 暂停），或者「一组结束」/ 左下角的圆环正摆着
+  // 运动界面：进了训练（含 3-2-1 倒计时 / 暂停），或者「一组结束」/ 右上角的圆环正摆着
   if (state.session === 'running' || state.session === 'paused'
     || state.session === 'countdown') return true;
   return !!(gestureState.visible || gestureState.cornerVisible);
@@ -2833,7 +2906,7 @@ function updateMenu(landmarks, now) {
 }
 
 /**
- * 左下角圆环的文案：**退出（回菜单）**。
+ * 右上角圆环的文案：**退出（回菜单）**。
  *
  * 它现在只在训练界面里出现 —— 手势菜单里改成每一级都有一格「↩ 返回」了
  * （用户要求：「在第一级菜单选择页面去掉『退出』圆环，增加一个『返回』圆环」）。
@@ -2877,7 +2950,7 @@ function openMenu({ silent = false } = {}) {
    * 用 `animateMenuSwap` 的「只做入场」那一半 —— 传一个空的重建函数（这一屏刚刚已经建好了）。
    */
   animateMenuSwap(-1, () => {});
-  syncCornerLabel();         // 左下角那个圆环此刻是隐藏的（菜单里不显示它）
+  syncCornerLabel();         // 右上角那个圆环此刻是隐藏的（菜单里不显示它）
   syncCornerExit();
   updateButtons();
   if (!silent) audio.say(t('menu.title'), { rate: 1.05 });
@@ -3055,17 +3128,19 @@ function toggleStageFullscreen() {
   return stageFullscreenOn();
 }
 
-/** 左下角退出圆环的每帧维护（菜单与训练页共用）：对齐显隐 → 更新进度 → 触发 */
+/** 右上角退出圆环的每帧维护（菜单与训练页共用）：对齐显隐 → 更新进度 → 触发 */
 function tickCornerExit(landmarks, now) {
   syncCornerExit();
   if (gestureState.cornerVisible && updateCornerExit(landmarks || null, now)) triggerCornerExit();
 }
 
-/** 舞台尺寸变化（横竖屏切换、全屏）时把圆环重新摆一次 */
+/** 舞台尺寸变化（横竖屏切换、全屏）时把圆环重新摆一次，并按新的圆环直径重算 HUD 数字字号 */
 function onStageResize() {
   if (gestureState.visible) layoutGestureRings();
   if (gestureState.cornerVisible) layoutCornerRing();
   if (state.menuMode) layoutMenu();
+  // 圆环直径跟着 --ring-px 的 clamp 变了 → 环里那个数字要重新收放（用户要求「resize 时重算」）
+  syncHudValueSize();
 }
 
 /* ------------------------------------------------------------------ *
@@ -3444,6 +3519,29 @@ function fmtClock(ms) {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 
+/** HUD 进度圆环的直径（像素）：读真实元素（= CSS 的 `--ring-px`），读不到按同一组 clamp 兜底 */
+function hudRingPx() {
+  return ringPx('hud');
+}
+
+/**
+ * 把 `#hudValue` 的字号调到「刚好放进圆环内径」（用户要求：数字变大时动态缩小，不出圈）。
+ *
+ * 纯计算在 `hudValueFontSize(ringPx, text)` 里（测试直接调它），这里只负责读环直径、
+ * 把结果写进行内 `font-size`。三处会调：
+ *   · `updateHud()` —— 次数 / 秒数每变一次都重算；
+ *   · `onStageResize()` —— 窗口 resize / 转屏 / 全屏切换后圆环直径变了；
+ *   · 换语言后 HUD 重绘也走 updateHud()。
+ * 返回写进去的字号（测试用来断言「100 → 1000 会变小」）。
+ */
+function syncHudValueSize() {
+  const el = $('hudValue');
+  if (!el) return 0;
+  const size = hudValueFontSize(hudRingPx(), el.textContent || '');
+  el.style.fontSize = `${size}px`;
+  return size;
+}
+
 function updateHud() {
   const ex = localizedExercise(state.exerciseId);
   const det = state.detector;
@@ -3458,16 +3556,24 @@ function updateHud() {
   const totalMs = state.target * 1000;
   const leftSec = timed ? Math.max(0, Math.ceil((totalMs - state.elapsedMs) / 1000)) : 0;
 
+  // 左上角：名称后面紧跟**本组目标**（计数类 `20 次`、计时 / 限时类是 `45 秒`）——
+  // 单位取 ex.targetUnit（与「运动设定」弹窗、选择页上的小字同一份），不另抄一份文案。
+  $('hudTarget').textContent = `${state.target} ${ex.targetUnit}`;
+  $('hudUnit').textContent = ex.unit;
+
   if (isHold) {
     $('hudValue').textContent = String(Math.floor(holdMs / 1000));
-    $('hudSub').textContent = `${t('ui.targetPrefix')} ${state.target} ${ex.unit}`;
+    // 目标已经在名称后面了，下面这行不再重复「目标 30 秒」
+    $('hudSub').textContent = '';
   } else {
     // 限时计数：大数字仍然是**次数**（这一组跳了多少下），时长在下面那行
     $('hudValue').textContent = String(valid);
     $('hudSub').textContent = timed
       ? `⏱ ${t('ui.timeLeft', { left: leftSec, total: state.target })}`
-      : `${t('ui.targetPrefix')} ${state.target} ${ex.targetUnit}`;
+      : '';
   }
+  // 次数 / 秒数的位数会变（9 → 100 → 1000、读秒到 100 秒以上）→ 每次都按位数重算字号
+  syncHudValueSize();
   $('hudScore').textContent = scoreText(score);
 
   // 进度环：计时类与限时计数类走**时间**进度（还剩多少时间一眼看得出），其余走次数进度
@@ -3477,7 +3583,6 @@ function updateHud() {
   const C = 2 * Math.PI * 52;
   $('ringFg').style.strokeDashoffset = String(C * (1 - progress));
   $('ringFg').style.stroke = progress >= 1 ? 'var(--good)' : 'var(--accent)';
-  $('ringText').textContent = `${Math.round(progress * 100)}%`;
 
   $('hudExtra').textContent = partial > 0
     ? `${t('ui.partial')} ${partial}`
@@ -3515,7 +3620,7 @@ function diagText() {
   }).join(' · ');
 }
 
-/** 左下角「退出」圆环那一行：手/脚现在在哪、离圆心几个判定半径（排查「到底有没有识别到手/脚」） */
+/** 右上角「退出」圆环那一行：手/脚现在在哪、离圆心几个判定半径（排查「到底有没有识别到手/脚」） */
 function touchDiagLine(n) {
   const info = state.touchInfo;
   if (!info || !info.has) return `${t('debug.touch')} ${t('debug.noTouch')}`;
@@ -4559,7 +4664,7 @@ function loop() {
 
   /**
    * ---- 手势菜单：不校准、不计数、也不记调试帧（还没有动作），只判「手掌停在哪个圆环里」----
-   * 画面上仍然是摄像头 + 火柴人（看得见自己），加一圈动作圆环与左下角「回首页」圆环。
+   * 画面上仍然是摄像头 + 火柴人（看得见自己），加一圈动作圆环与右上角「退出」圆环。
    */
   if (state.menuMode) {
     renderCalibration(null);
@@ -4638,10 +4743,10 @@ function loop() {
   if (gestureState.visible) {
     updateGesture(res ? res.landmarks : null, now);
   }
-  // 左下角常驻的「退出」圆环：手或脚进去停满 3 秒 → 训练里回手势菜单、菜单里回网页首页
+  // 右上角常驻的「退出」圆环：手或脚进去停满 3 秒 → 训练里回手势菜单（菜单里不显示）
   // （显示与否由摄像头开着没有决定，见 syncCornerExit）
   tickCornerExit(res ? res.landmarks : null, now);
-  // 手掌指针（猫爪）：运动界面里也跟手（「一组结束」/ 左下角退出圆环摆着时，
+  // 手掌指针（猫爪）：运动界面里也跟手（「一组结束」/ 右上角退出圆环摆着时，
   // 手一伸进画面就能看见自己的手在哪 —— 用户要求「像菜单界面一样出现猫爪」）
   updatePaws(res ? res.landmarks : null);
 
@@ -5005,7 +5110,7 @@ function bindUI() {
   // 一组做完的两个手势圆环：用手掌停 3 秒是主路径，鼠标/触屏点一下同样有效
   $('ringExit')?.addEventListener('click', () => triggerGesture('exit'));
   $('ringRetry')?.addEventListener('click', () => triggerGesture('retry'));
-  // 左下角常驻的「退出」圆环：手或脚停 3 秒是主路径，点一下同样有效
+  // 右上角常驻的「退出」圆环：手或脚停 3 秒是主路径，点一下同样有效
   $('ringQuickExit')?.addEventListener('click', () => triggerCornerExit());
   // resize 统一走 onViewportChange（它顺带重算 --vh / 设备类名 / 竖屏遮罩），别再单独挂 onStageResize
   document.addEventListener('fullscreenchange', onStageResize);
@@ -5307,7 +5412,7 @@ function bindUI() {
       return;
     }
     if (e.key === 'Escape') {
-      // 弹窗优先关闭；手势菜单里按 Esc = 回网页首页（和左下角圆环同一个动作）；
+      // 弹窗优先关闭；手势菜单里按 Esc = 回网页首页（和右上角圆环同一个动作）；
       // iPhone 的 CSS 伪全屏里 Esc = 先退出全屏（再按一次才是结束这一组）；最后是结束本组
       if (recordsModalOpen()) { closeRecordsModal(); return; }
       if (exerciseSettingsOpen()) { closeExerciseSettings(); return; }
@@ -5497,10 +5602,14 @@ window.__mfg = {
   showCriteriaTip, hideCriteriaTip,
   showGestureRings, hideGestureRings, updateGesture, triggerGesture, retrySet,
   gestureState, GESTURE_RINGS, GESTURE_HOLD_MS, RING_HIT,
-  // 左下角常驻的「退出」圆环（手或脚进去停 3 秒 → 退出这一组 + 退出全屏）
+  // 右上角常驻的「退出」圆环（手或脚进去停 3 秒 → 退出这一组）
   showCornerExit, hideCornerExit, updateCornerExit, triggerCornerExit, syncCornerExit,
-  layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, touchSamples, anyTouchInRing, stageSize,
-  CORNER_RING_INSET_PX, CORNER_RING_BOTTOM_PX, RING_PX_FALLBACK, RING_HIT_RATIO,
+  layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, touchSamples, anyTouchInRing, stageSize, onStageResize,
+  CORNER_RING_INSET_PX, CORNER_RING_TOP_PX, RING_PX_FALLBACK, RING_HIT_RATIO,
+  // HUD 进度圆环里的字号自适应（纯函数，测试直接调）：
+  //   hudRingInnerPx(ringPx) → 内径；hudTextWidth(text, fontSize) → 估算宽；hudValueFontSize(ringPx, text) → 字号
+  hudRingInnerPx, hudTextWidth, hudValueFontSize, syncHudValueSize, hudRingPx,
+  HUD_RING_INNER_RATIO, HUD_DIGIT_EM, HUD_VALUE_PAD,
   TOUCH_VIS_MIN, FOOT_VIS_MIN, FOOT_TIP_FROM_HEEL, FOOT_TIP_FROM_SHIN, distToSegment, pointsInRing,
   // 手/脚「一部分进入即触发」用的外延点参数与退出圆环的宽容度（测试要按它们构造真实肢体）
   RING_TOUCH_TOL, HAND_EXT_K, HAND_EXT_MAX_ARM, FOOT_EXT_K,

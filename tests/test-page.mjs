@@ -180,41 +180,41 @@ console.log('\n[3] 静态资源与模型文件');
   }
   ok('两种语言的提示条文案都不超过 130 字（折 2 行以内）', overlong.length === 0, overlong.join(', '));
 
-  /* ---- 圆环尺寸：右上角的 HUD 进度环与左下角的「退出」环共用同一个变量，所以永远一样大 ----
-     用户要求：「左下角这个退出圆环…和右上角的圆环成对角的状态…各个圆环大小一样，保持对称」。 */
+  /* ---- 圆环尺寸：HUD 进度环与右上角的「退出」环共用同一个变量，所以永远一样大 ----
+     用户要求：「各个圆环大小一样，保持对称」；退出圆环后来从左下角挪到了右上角。 */
   {
     const ringPx = /--ring-px:\s*clamp\(([^)]*)\)/.exec(css)?.[1];
     ok('圆环直径是一个共用变量 --ring-px（clamp 形式，小屏自己收一收）',
       !!ringPx && ringPx.trim().split(',').length === 3, String(ringPx));
     const hudBlock = /\.hud-ring\s*\{([^}]*)\}/.exec(css)?.[1] || '';
     const cornerBlock = /\.corner-ring\s+\.ring-btn\s*\{([^}]*)\}/.exec(css)?.[1] || '';
-    ok('右上角 HUD 圆环的宽高 = --ring-px（不再写死 118px）',
+    ok('HUD 进度圆环的宽高 = --ring-px（不再写死 118px）',
       /width:\s*var\(--ring-px\)/.test(hudBlock) && /height:\s*var\(--ring-px\)/.test(hudBlock),
       hudBlock.trim());
-    ok('左下角「退出」圆环的宽高 = 同一个 --ring-px（所以两个圆环永远等大、成对角）',
+    ok('右上角「退出」圆环的宽高 = 同一个 --ring-px（所以两个圆环永远等大）',
       /width:\s*var\(--ring-px\)/.test(cornerBlock) && /height:\s*var\(--ring-px\)/.test(cornerBlock),
       cornerBlock.trim());
-    // 左下角的容器铺满舞台、靠 JS 摆到左下角，且不属于「一组结束」那两个圆环那一组
-    ok('左下角退出圆环有自己的容器（不与「一组结束后」的两个圆环共用显隐）',
+    // 右上角的容器铺满舞台、靠 JS 摆到右上角，且不属于「一组结束」那两个圆环那一组
+    ok('退出圆环有自己的容器（不与「一组结束后」的两个圆环共用显隐）',
       /\.corner-ring\s*\{[^}]*position:\s*absolute/.test(css)
       && /\.corner-ring\[hidden\]\s*\{\s*display:\s*none/.test(css));
     // 用户要求「退出圆环放大一点」：下限抬高到 ≥104px
     const ringMin = Number((ringPx || '').split(',')[0].replace(/[^\d.]/g, ''));
     ok('圆环直径比上一版更大（clamp 下限 ≥104px）', ringMin >= 104, `下限=${ringMin}px`);
-    // 用户反馈「左下角退出圆环十分不灵敏」：手/脚靠近时圆环要**亮一下**，
+    // 用户反馈「退出圆环十分不灵敏」：手/脚靠近时圆环要**亮一下**，
     // 让人分得清「没识别到」和「位置差一点」；而且只改颜色 / 光晕，不动尺寸。
     const nearBlock = /\.corner-ring \.ring-btn\.near\s*\{([^}]*)\}/.exec(css)?.[1] || '';
     ok('手/脚靠近圆环时圆环会亮一下（.near 状态）',
       !!nearBlock && /box-shadow/.test(nearBlock) && /background:/.test(nearBlock), nearBlock.trim());
     ok('「靠近」状态只改颜色 / 光晕，不动宽高与位置（不会抖）',
       !!nearBlock && !/(width|height|left|top|transform)\s*:/.test(nearBlock), nearBlock.trim());
-    // 小屏也必须还是「两个一起收」：.hud-ring 不许再写死尺寸（以前写过 84px，会和左下角那个不一样大）
-    ok('小屏时右上角 HUD 圆环不再写死尺寸（改用同一个 --ring-px，两个圆环仍然等大）',
+    // 小屏也必须还是「两个一起收」：.hud-ring 不许再写死尺寸（以前写过 84px，会和退出圆环不一样大）
+    ok('小屏时 HUD 进度圆环不再写死尺寸（改用同一个 --ring-px，两个圆环仍然等大）',
       !/@media[^{]*720px[^{]*\{[^@]*\.hud-ring\s*\{[^}]*width:\s*\d+px/.test(css), 'hud-ring 有写死的宽高');
 
     /* ---- 用户反馈：「感觉目前必须是脚踝和手腕进入才开始 3 秒计时，这个不好」----
        根因（见 app.js 里 touchSamples 的注释）：Pose 模型对手指（17~22）与脚跟 / 脚尖（29~32）
-       这些点本来就是**估出来的**，手/脚伸到画面左下角时常落在手腕 / 脚踝附近或被可见度门槛丢掉 ——
+       这些点本来就是**估出来的**，手/脚伸到画面角落时常落在手腕 / 脚踝附近或被可见度门槛丢掉 ——
        于是只剩「手腕 / 脚踝」两个点能触发。修法分两层，这里把两层都钉住。 */
     const ringSrc = read('src/app.js');
     ok('手/脚按**肢体方向补出外延点**再判（用肘推手掌、用膝 / 脚跟推脚尖）',
@@ -223,13 +223,80 @@ console.log('\n[3] 静态资源与模型文件');
       && /const extend = \(/.test(ringSrc));
     ok('外延点有「别伸太远」的上限（按手臂 / 小腿长度卡住，误检的脚跟不会把脚尖送进圆环）',
       /HAND_EXT_MAX_ARM/.test(ringSrc) && /FOOT_TIP_MAX_SHIN/.test(ringSrc));
-    ok('只有左下角退出圆环的判定半径放宽 12%（中间两个大圆环仍然严格按画出来的半径判）',
+    ok('只有退出圆环的判定半径放宽 12%（中间两个大圆环仍然严格按画出来的半径判）',
       /RING_TOUCH_TOL\s*=\s*1\.12/.test(ringSrc)
       && (ringSrc.match(/key === 'corner' \? RING_TOUCH_TOL : 1/g) || []).length >= 2);
   }
 
+  /* ---- 新版 HUD 版面（用户四条要求）----
+     ① 左上角名称放大、后面紧跟本组目标（`20 次` / `45 秒`）；
+     ② 进度圆环挪到「计次的位置」，环里包着次数/秒数；
+     ③ 分数仍然在圆环下方；
+     ④ 「退出」圆环从左下角挪到右上角（绘制与判定同一份坐标，见 test-app 的真实渲染断言）。 */
+  {
+    const src = read('src/app.js');
+    // ① 名称 + 目标：同一个 .hud-badge 胶囊里，目标紧跟在名称后面
+    const badge = /<div class="hud-badge">([\s\S]*?)<\/div>/.exec(html)?.[1] || '';
+    ok('HUD 胶囊里同时有运动名称（#hudName）与本组目标（#hudTarget），目标紧跟在名称后面',
+      badge.includes('id="hudName"') && badge.includes('id="hudTarget"')
+      && badge.indexOf('id="hudName"') < badge.indexOf('id="hudTarget"'), badge.slice(0, 160));
+    const nameRule = /#hudName\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    ok('运动名称**明显放大**（≥18px，比原来的 13.5px 大一档，又不至于把 HUD 挤爆）',
+      /font-size:\s*clamp\(18px/.test(nameRule), nameRule.trim());
+    const targetRule = /\.hud-target\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    ok('目标弱化一档（次要色 + 比名称小的字号 + 不换行）',
+      /color:\s*var\(--muted\)/.test(targetRule) && /font-size/.test(targetRule)
+      && /white-space:\s*nowrap/.test(targetRule), targetRule.trim());
+
+    // ② 进度圆环在左栏、环里包着 #hudValue（DOM 层级真的嵌套，不是靠先后顺序猜的）
+    const valueAnc = ancestorIds(html, 'hudValue') || [];
+    const scoreAnc = ancestorIds(html, 'hudScore') || [];
+    const hudLeftBlock = /<div class="hud-left">([\s\S]*?)<div class="score-pop"/.exec(html)?.[1] || '';
+    ok('#hudValue 真的在进度圆环（#hudRing）**里面**',
+      valueAnc.includes('hudRing'), valueAnc.join('>'));
+    ok('进度圆环挪进了左侧 HUD 栏（#hudRing 在 .hud-left 里，不再是右上角那个独立块）',
+      hudLeftBlock.includes('id="hudRing"') && hudLeftBlock.includes('id="hudValue"'),
+      hudLeftBlock.slice(0, 100));
+    const centerRule = /\.hud-ring-center\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    ok('环里的数字绝对居中（inset: 0 + 纵向排 + 居中），单位跟着在数字下面',
+      /inset:\s*0/.test(centerRule) && /flex-direction:\s*column/.test(centerRule)
+      && /justify-content:\s*center/.test(centerRule), centerRule.trim());
+
+    // ③ 分数仍在圆环下方（环之后、且不在环里面）
+    ok('分数排在进度圆环**之后**（DOM 顺序：环 → 分数），仍然在圆环下方',
+      html.indexOf('id="hudRing"') < html.indexOf('id="hudScore"')
+      && !scoreAnc.includes('hudRing'), scoreAnc.join('>'));
+    ok('旧的百分比文字（#ringText）已移除：环里只放次数/秒数，进度由环本身表达',
+      !/id="ringText"/.test(html) && !/ringText/.test(css) && !/ringText/.test(src));
+
+    // ④ 退出圆环：右上角（JS 一处定义，绘制与判定共用）
+    ok('退出圆环的圆心在 ringCenter(\'corner\') 一处定义，并改成右上角（右侧/顶部安全区 + 18px / 16px）',
+      /function ringCenter\(key, stageW, stageH\)/.test(src)
+      && /stageW - safe\.right - CORNER_RING_INSET_PX/.test(src)
+      && /safe\.top \+ CORNER_RING_TOP_PX/.test(src)
+      && !/stageH - safe\.bottom - CORNER_RING_BOTTOM_PX/.test(src));
+    const hudLeftRule = /\.hud-left\s*\{([^}]*)\}/.exec(css)?.[1] || '';
+    ok('HUD 左栏给右上角的退出圆环留出了位置（max-width 扣掉 --ring-px + 间隙，长名称只换行不钻到环底下）',
+      /max-width:\s*calc\(100%\s*-\s*var\(--ring-px\)\s*-\s*48px\)/.test(hudLeftRule), hudLeftRule.trim());
+
+    // 数字自动适配：纯函数 + 运行时写行内字号 + resize / 数字变化都重算
+    ok('字号自适应是**纯函数** hudValueFontSize(ringPx, text)（测试可以直接调）',
+      /function hudValueFontSize\(ringPx, text\)/.test(src));
+    ok('内径与估算宽度同样是纯函数（hudRingInnerPx / hudTextWidth），字号与绘制的圆环同源',
+      /function hudRingInnerPx\(ringPx\)/.test(src) && /function hudTextWidth\(text, fontSize\)/.test(src)
+      && /HUD_RING_INNER_RATIO\s*=\s*95 \/ 120/.test(src));
+    ok('运行时把算出来的字号写进 #hudValue 的行内 font-size',
+      /function syncHudValueSize\(\)/.test(src)
+      && /hudValueFontSize\(hudRingPx\(\), el\.textContent/.test(src)
+      && /el\.style\.fontSize = `\$\{size\}px`/.test(src));
+    ok('updateHud() 每次数字变化都重算字号',
+      /function updateHud\(\)[\s\S]{0,2600}?syncHudValueSize\(\)/.test(src));
+    ok('窗口 resize / 转屏 / 全屏切换后也重算字号（onStageResize 调 syncHudValueSize）',
+      /function onStageResize\(\)[\s\S]{0,700}?syncHudValueSize\(\)/.test(src));
+  }
+
   // 判定进度条：**用户要求「缩短一点、高度也变小一些」** ——
-  //   宽度不再铺满（上限 880px，并且两侧用 --bar-side-space 给左下角的退出圆环留位置）；
+  //   宽度不再铺满（上限 880px，并且两侧用 --bar-side-space 给圆环留位置）；
   //   高度由 --criteria-icon-h 推出来（图标 44~60px，比上一版的 58~82px 矮一截）。
   const barBlock = /\.criteria-bar\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
   ok('进度条宽度不再铺满画面（上限 ≤900px，且两侧给圆环留出位置）',
@@ -852,12 +919,12 @@ console.log('\n[3] 静态资源与模型文件');
     ok('主循环里跑菜单判定，选中 / 翻页各有各的出口',
       /if \(state\.menuMode\) \{/.test(app) && /updateMenu\(res \? res\.landmarks : null, now\)/.test(app)
       && /selectFromMenu\(act\.id\)/.test(app) && /flipMenuPage\(act\.dir\)/.test(app));
-    ok('退出分流：菜单里不再显示左下角圆环（顶部常驻「↩ 返回」），动作里点它回菜单',
+    ok('退出分流：菜单里不再显示退出圆环（顶部常驻「↩ 返回」），动作里点它回菜单',
       /const toHome = state\.menuMode;/.test(app)
       && /if \(toHome\) showHome\(\);\s*\n\s*else openMenu\(\{ silent: true \}\);/.test(app)
       && /openMenu\(\{ silent: true \}\);\s*\/\/ 退出动作 → 回手势菜单/.test(app)
       && /const want = !!camera\.active && !state\.homeMode && !state\.menuMode && !gestureState\.visible;/.test(app));
-    ok('左下角圆环只有一种语义了：「退出（回菜单）」',
+    ok('退出圆环只有一种语义了：「退出（回菜单）」',
       /function syncCornerLabel\(\)/.test(app)
       && /const txt = t\('ui\.gestureExit'\);/.test(app)
       && !/menu\.exitHome/.test(app)
@@ -1197,7 +1264,7 @@ console.log('\n[3] 静态资源与模型文件');
       // 和菜单里那三颗导航圆环同一比例（62%），所以粗细尺寸一致
       && /const iconSize = clamp\(d \* 0\.62, 30, 78\);/.test(app)
       && /\.ring-label--icon \.ex-pose \{ width: 1em; height: 1em; \}/.test(css)
-      // ⚠️ 左下角那颗要单独再写一条：`.corner-ring .ring-label` 优先级更高，否则图标又被压回 19px
+      // ⚠️ 退出圆环那颗要单独再写一条：`.corner-ring .ring-label` 优先级更高，否则图标又被压回 19px
       && /\.corner-ring \.ring-label--icon \{ font-size: calc\(var\(--ring-px\) \* 0\.62\); \}/.test(css)
       && css.indexOf('.corner-ring .ring-label--icon') > css.indexOf('.corner-ring .ring-label {'));
     /* 用户要求：「缺省情况下『火柴人』保持关闭，除非用户主动打开。关节角度缺省情况下保持打开，除非用户主动关闭。」 */
@@ -1548,9 +1615,10 @@ console.log('\n[8] 手机浏览器支持：布局、触摸与性能档');
   ok('HUD / 全屏按钮也躲开安全区（贴边元素不压刘海、不压底部横条）',
     /\.hud\s*\{[\s\S]{0,200}?padding-top:\s*calc\(16px \+ var\(--safe-top\)\)/.test(css)
     && /\.stage-btn\s*\{[\s\S]{0,200}?right:\s*calc\(12px \+ var\(--safe-right\)\)/.test(css));
-  ok('左下角「退出」圆环的定位把安全区算进去了（JS 读 --safe-*）',
-    /function safeAreaInsets\(/.test(app) && /safe\.left \+ CORNER_RING_INSET_PX/.test(app)
-    && /stageH - safe\.bottom - CORNER_RING_BOTTOM_PX/.test(app));
+  ok('右上角「退出」圆环的定位把安全区算进去了（JS 读 --safe-*；右侧刘海 + 顶部状态栏）',
+    /function safeAreaInsets\(/.test(app)
+    && /stageW - safe\.right - CORNER_RING_INSET_PX/.test(app)
+    && /safe\.top \+ CORNER_RING_TOP_PX/.test(app));
 
   // --- 竖屏遮罩 ---
   ok('index.html 有竖屏提示遮罩（#rotateGate + 走 i18n 的标题/说明）',

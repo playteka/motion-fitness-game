@@ -882,17 +882,23 @@ console.log('\n[3] 动作 → 计分 → 音效与界面');
   ok('HUD 分数与检测器一致',
     elements.get('hudScore').textContent === `${det.score} 分`,
     `${elements.get('hudScore').textContent} vs ${det.score}`);
-  // 用户要求：分数要放在和次数靠近的地方（次数下方），并且用不同的颜色
+  // 用户要求（新版 HUD）：名称放大 + 目标紧随其后；次数/秒数放进进度圆环；分数仍在圆环下方
   {
-    const hudLeft = /<div class="hud-left">([\s\S]*?)<div class="hud-ring"/.exec(html)?.[1] || '';
+    const hudLeft = /id="hudName"([\s\S]*?)id="hudSub"/.exec(html)?.[1] || '';
     ok('分数（#hudScore）和次数（#hudValue）在同一个 hud-left 区块里',
       hudLeft.includes('id="hudValue"') && hudLeft.includes('id="hudScore"'), hudLeft.slice(0, 120));
-    ok('分数就排在次数下方（次数 → 分数 → 目标/提示）',
-      hudLeft.indexOf('id="hudValue"') < hudLeft.indexOf('id="hudScore"')
-      && hudLeft.indexOf('id="hudScore"') < hudLeft.indexOf('id="hudSub"'),
+    ok('次数（#hudValue）在进度圆环（#hudRing）里面',
+      html.indexOf('id="hudRing"') < html.indexOf('id="hudValue"')
+      && html.indexOf('id="hudValue"') < html.indexOf('id="hudScore"'));
+    ok('分数就排在圆环下方（圆环 → 分数 → 提示）',
+      html.indexOf('id="hudRing"') < html.indexOf('id="hudScore"')
+      && html.indexOf('id="hudScore"') < html.indexOf('id="hudSub"'),
       hudLeft.slice(0, 200));
-    ok('分数不再挂在右下角的目标进度环下面（环里只剩百分比）',
-      html.indexOf('id="hudScore"') < html.indexOf('class="hud-ring"'));
+    ok('名称后面紧跟本组目标（同一个胶囊里，名称 → 目标）',
+      html.indexOf('id="hudName"') < html.indexOf('id="hudTarget"')
+      && html.indexOf('id="hudTarget"') < html.indexOf('id="hudRing"'));
+    ok('旧的百分比文字（#ringText）已经去掉（环里只放次数/秒数）',
+      !/id="ringText"/.test(html));
   }
 
   // 现在流程是「校准 → 开始 → 计数」：校准阶段不计数、不计分
@@ -2218,10 +2224,10 @@ console.log('\n[8d] 每个动作做完一组都有两个圆环');
 }
 
 /* ------------------------------------------------------------------ *
- * [8e] 左下角常驻的「退出」圆环（手或脚进去停 3 秒 → 退出这一组 + 退出全屏）
+ * [8e] 右上角常驻的「退出」圆环（手或脚进去停 3 秒 → 退出这一组）
  * ------------------------------------------------------------------ */
 
-console.log('\n[8e] 左下角常驻的「退出」圆环');
+console.log('\n[8e] 右上角常驻的「退出」圆环');
 {
   const api = windowStub.__mfg;
   const { LM } = await import('../src/geometry.js');
@@ -2288,44 +2294,45 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
   const fakeStream = { getTracks: () => [] };   // camera.active 依赖 stream + video.readyState
   api.camera.stream = null;
   api.syncCornerExit();
-  ok('摄像头没开时不显示左下角退出圆环（用户要求）', cornerShown() === false);
+  ok('摄像头没开时不显示右上角退出圆环（用户要求）', cornerShown() === false);
   api.camera.stream = fakeStream;
   api.syncCornerExit();
-  ok('摄像头开着时左下角摆出退出圆环（不用等一组做完）', cornerShown() === true);
+  ok('摄像头开着时右上角摆出退出圆环（不用等一组做完）', cornerShown() === true);
 
-  // ===== 位置：左下角，与右上角的 HUD 圆环成对角 =====
+  // ===== 位置：右上角（用户要求：把「退出」圆环从左下角移到右上角）=====
   const c = center();
-  ok('圆环在左下角（圆心在画面左半边、下半边）',
-    c.x < SW / 2 && c.y > SH / 2, `中心=(${Math.round(c.x)},${Math.round(c.y)})`);
-  ok('左边距与右上角 HUD 圆环的右边距对称（都是 18px）',
-    Math.round(c.x - px() / 2) === api.CORNER_RING_INSET_PX
-    && api.CORNER_RING_INSET_PX === 18, `左边缘=${Math.round(c.x - px() / 2)}px`);
-  ok('直径和右上角 HUD 圆环一样（共用 CSS 变量 --ring-px，见 test-page 的样式断言）',
+  ok('圆环在右上角（圆心在画面右半边、上半边）',
+    c.x > SW / 2 && c.y < SH / 2, `中心=(${Math.round(c.x)},${Math.round(c.y)})`);
+  ok('右边距与 HUD 的右边距一致（都是 18px）',
+    Math.round(SW - (c.x + px() / 2)) === api.CORNER_RING_INSET_PX
+    && api.CORNER_RING_INSET_PX === 18, `右边缘距边=${Math.round(SW - (c.x + px() / 2))}px`);
+  ok('直径和 HUD 进度圆环一样（共用 CSS 变量 --ring-px，见 test-page 的样式断言）',
     px() > 0 && api.ringHitRadius('corner', { w: SW, h: SH }) > 0, `${px()}px`);
   ok('圆环比上一版更大（用户要求「退出圆环放大一点」：兜底下限 96 → 104）',
     api.RING_PX_FALLBACK.min >= 104 && api.RING_PX_FALLBACK.max >= 140 && px() >= 104,
     `${px()}px（兜底 ${api.RING_PX_FALLBACK.min}~${api.RING_PX_FALLBACK.max}）`);
-  // 用户要求：「让退出圆环可以放在画面的左下角，和右上角的进度圆环对称」
-  // —— 严格中心对称：左边距 = HUD 右边距（18px）、下边距 = HUD 上边距（16px = .hud 的 padding-top）
-  ok('左下角 / 右上角两个圆环严格对称（左边距 18px = HUD 右边距；下边距 16px = HUD 上边距）',
-    Math.round(c.x - px() / 2) === 18 && Math.round(SH - (c.y + px() / 2)) === 16
-    && api.CORNER_RING_INSET_PX === 18 && api.CORNER_RING_BOTTOM_PX === 16,
-    `左=${Math.round(c.x - px() / 2)} 下=${Math.round(SH - (c.y + px() / 2))}`);
-  ok('圆环真的贴在左下角（不再是抬到进度条上方那版：下边距远小于 122px）',
-    api.CORNER_RING_BOTTOM_PX < 40, String(api.CORNER_RING_BOTTOM_PX));
-  // 不压进度条靠的是**进度条自己让位**（CSS 的 --bar-side-space = 左边距 + 圆环直径 + 间隙），
-  // 所以这里校验同一套算式：进度条左边缘必须在圆环右边缘的右边。
+  // 用户要求：「把『退出』这个圆环从左下角移到右上角」——
+  // 右上角与 HUD 的边距对齐：右边距 = HUD 右边距 18px、上边距 = HUD 上边距 16px（同一条基线）。
+  ok('退出圆环 / HUD 边距严格对齐（右边距 18px；上边距 16px）',
+    Math.round(SW - (c.x + px() / 2)) === 18 && Math.round(c.y - px() / 2) === 16
+    && api.CORNER_RING_INSET_PX === 18 && api.CORNER_RING_TOP_PX === 16,
+    `右=${Math.round(SW - (c.x + px() / 2))} 上=${Math.round(c.y - px() / 2)}`);
+  ok('圆环真的贴在右上角（上边距远小于画面高度；不再是「抬到进度条上方那版」）',
+    api.CORNER_RING_TOP_PX < 40, String(api.CORNER_RING_TOP_PX));
+  // 不压新 HUD：HUD 左栏的右边界必须停在圆环左边缘左边（留出间隙）。
+  // 左栏 max-width = 100% − --ring-px − 48px（见 test-page 的样式断言），这里按同一算式复算。
   {
-    const barW = Math.min(880, SW - 2 * (18 + px() + 12));
-    const barLeft = (SW - barW) / 2;
-    ok('进度条给圆环留出了位置（进度条左边缘在圆环右边缘右侧，两者不重叠）',
-      barLeft >= c.x + px() / 2, `进度条左=${Math.round(barLeft)} vs 圆环右=${Math.round(c.x + px() / 2)}`);
+    const hudLeftRight = 18 + (SW - 36 - px() - 48);
+    const ringLeft = c.x - px() / 2;
+    ok('退出圆环不压新的进度圆环 / HUD 内容（HUD 左栏右边界在圆环左边缘左侧，留出 ≥12px 间隙）',
+      hudLeftRight <= ringLeft - 12,
+      `HUD 左栏右=${Math.round(hudLeftRight)} vs 圆环左=${Math.round(ringLeft)}`);
   }
   // 🐞 回归①：**先显示再量尺寸**。
   // 元素还在 display:none 时 clientWidth 是 0，量到的是兜底值，那个值会被写进行内 width/height ——
-  // 于是左下角圆环永远比右上角的 HUD 圆环小一圈（用户反馈「退出圆环放大一点」的真实原因）。
+  // 于是退出圆环永远比 HUD 的进度圆环小一圈（用户反馈「退出圆环放大一点」的真实原因）。
   // 🐞 回归②：**重摆时先清掉行内尺寸再量** —— 行内 px 会盖住 CSS 的 `--ring-px`，
-  // 不清的话窗口一改大小圆环就被旧尺寸钉住，又和右上角那个不一样大。
+  // 不清的话窗口一改大小圆环就被旧尺寸钉住，又和 HUD 进度圆环不一样大。
   {
     const boxEl = elements.get('cornerExit');
     const btnEl = elements.get('ringQuickExit');
@@ -2344,7 +2351,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     btnEl.style.width = '200px';
     btnEl.style.height = '200px';
     api.layoutCornerRing();
-    ok('重摆时先清掉行内尺寸再量（否则窗口一改大小圆环就被旧 px 钉住、和右上角不再等大）',
+    ok('重摆时先清掉行内尺寸再量（否则窗口一改大小圆环就被旧 px 钉住、和 HUD 进度环不再等大）',
       btnEl.style.width === `${CSS_SIZE}px` && btnEl.style.height === `${CSS_SIZE}px`,
       `${btnEl.style.width} / ${btnEl.style.height}`);
     // 还给后面用兜底值的断言：量不到尺寸（clientWidth = 0）
@@ -2355,7 +2362,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     ringBtn().style.left === `${c.x}px` && ringBtn().style.top === `${c.y}px`
     && ringBtn().style.width === `${px()}px` && ringBtn().style.height === `${px()}px`,
     JSON.stringify(ringBtn().style));
-  ok('左下角圆环里也是**图标**（和「返回」同一颗），文字在 aria-label 上',
+  ok('右上角圆环里也是**图标**（和「返回」同一颗），文字在 aria-label 上',
     /class="ex-pose"/.test(elements.get('ringQuickExitLabel').innerHTML)
     && elements.get('ringQuickExitLabel').innerHTML === api.libIconSVG('back', 'ex-pose')
     && elements.get('ringQuickExit').attributes['aria-label'] === '退出',
@@ -2368,7 +2375,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
 
   // 手不在圆环里 → 不累积
   api.updateCornerExit(handAt(0.5, 0.5), 1000);
-  ok('手不在左下角圆环里时进度为 0', api.gestureState.corner.p === 0,
+  ok('手不在右上角圆环里时进度为 0', api.gestureState.corner.p === 0,
     String(api.gestureState.corner.p));
 
   /**
@@ -2470,7 +2477,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
 
     /* ---- 用户第四轮反馈：「**只要脚尖进入圆环就要开始沙漏计时**，现在感觉要脚踝进入才开始计时」----
        查出来是两个原因（都不是「判定半径太小」）：
-         ① 脚伸到画面左下角时，MediaPipe 对脚跟 / 脚尖的可见度常掉到 0.2 上下，
+         ① 脚伸到画面角落时，MediaPipe 对脚跟 / 脚尖的可见度常掉到 0.2 上下，
             旧门槛 0.3 把整只脚的脚尖点全丢掉 → 只剩一个脚踝点，于是「必须把踝塞进环」；
          ② 脚是**一片**不是一个点：脚尖搭在圆环上时，脚尖 / 脚跟 / 脚踝可能都在环外（连线穿过圆环）。
        修法：脚单独用更宽松的可见度门槛（FOOT_VIS_MIN）、脚尖点量不到时**估一个**（ghost）、
@@ -2577,12 +2584,12 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
        这一轮改的不是「判定半径太小」，而是「手腕 / 脚踝**以外的点根本产生不出来**」——
        两层修法（见 app.js 里 touchSamples / RING_TOUCH_TOL）：
          ① 按肢体方向补出**手掌 / 脚尖的外延点**（Pose 模型的指尖 / 脚跟本来就不可靠）；
-         ② 左下角这个退出圆环的判定半径再放宽 12%（手/脚搭在圆环边缘外一点也算），
+         ② 右上角这个退出圆环的判定半径再放宽 12%（手/脚搭在圆环边缘外一点也算），
             **中间那两个大圆环不跟着放宽**（它们是「把手掌放进圆环中央」的设计）。
        下面几条分别钉住这两层，以及「宽容度只给退出圆环」。 */
     {
       const hit4 = api.ringHitRadius('corner', { w: SW, h: SH });
-      ok('左下角退出圆环的宽容度常量就写在 app.js 里（12%），其余圆环仍是画出来的半径',
+      ok('退出圆环的宽容度常量就写在 app.js 里（12%），其余圆环仍是画出来的半径',
         api.RING_TOUCH_TOL === 1.12 && api.RING_HIT_RATIO === 0.5,
         `TOL=${api.RING_TOUCH_TOL}`);
 
@@ -2672,7 +2679,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
         const cR = api.ringCenter('retry', SW, SH);
         const hR = api.ringHitRadius('retry', { w: SW, h: SH });
         const pRetry = { x: cR.x + hR * 1.06, y: cR.y, kind: 'hand', side: 'L', part: 'wrist', vis: 1 };
-        ok('宽容度只给左下角退出圆环：「再做一次」圆环在 1.06 倍处仍然不算',
+        ok('宽容度只给退出圆环：「再做一次」圆环在 1.06 倍处仍然不算',
           api.anyTouchInRing([pRetry], 'retry', { w: SW, h: SH }).inside === false);
       }
     }
@@ -2732,12 +2739,12 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     && documentStub.exitFullscreenCalls === 0,
     `menu=${api.state.menuMode} home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
   // 用户要求：「在第一级菜单选择页面去掉『退出』圆环，增加一个『返回』圆环，图标和其他『返回』圆环保持一致。」
-  // → 菜单里（两级都）不显示左下角那个「退出」圆环；左下角圆环的文案始终是「退出」
+  // → 菜单里（两级都）不显示右上角那个「退出」圆环；退出圆环的文案始终是「退出」
   api.syncCornerExit();
-  ok('菜单里左下角那个「退出」圆环不再显示（菜单模式不摆它）',
+  ok('菜单里右上角那个「退出」圆环不再显示（菜单模式不摆它）',
     cornerShown() === false && api.gestureState.cornerVisible === false,
     `shown=${cornerShown()}`);
-  ok('左下角圆环的图标始终是「退出」那颗箭头，含义仍在 aria-label（只有训练界面用它了）',
+  ok('右上角圆环的图标始终是「退出」那颗箭头，含义仍在 aria-label（只有训练界面用它了）',
     /class="ex-pose"/.test(elements.get('ringQuickExitLabel').innerHTML)
     && elements.get('ringQuickExit').attributes['aria-label'] === '退出',
     elements.get('ringQuickExit').attributes['aria-label']);
@@ -2755,7 +2762,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
       && documentStub.exitFullscreenCalls >= 1,
       `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
   }
-  ok('退出后左下角圆环收起（主页上不摆）', cornerShown() === false);
+  ok('退出后右上角圆环收起（主页上不摆）', cornerShown() === false);
 
   // 脚也一样（用户要求「手或者脚」）
   api.openExercise('squat');
@@ -2789,13 +2796,24 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
       JSON.stringify(tp.map((p) => [Number((p.x / SW).toFixed(3)), Number((p.y / SH).toFixed(3))])));
   }
 
-  // 「一组结束」的两个大圆环出来时，左下角这个先收起来（那儿已经有「退出」了）
+  // 「一组结束」的两个大圆环出来时，右上角这个先收起来（那儿已经有「退出」了）
   api.state.cornerVisible = true;
   api.showCornerExit();
   api.showGestureRings({ speak: false });
-  ok('一组结束的两个圆环出来时，左下角圆环收起来（不重复）', cornerShown() === false);
+  ok('一组结束的两个圆环出来时，右上角圆环收起来（不重复）', cornerShown() === false);
+  // 不冲突：即便把退出圆环摆着，它的判定圈与「一组结束」两个圆环的判定圈也不重叠
+  {
+    const cc = api.ringCenter('corner', SW, SH);
+    const cr = api.ringHitRadius('corner', { w: SW, h: SH });
+    const clash = ['exit', 'retry'].filter((k) => {
+      const gc = api.ringCenter(k, SW, SH);
+      const gr = api.ringHitRadius(k, { w: SW, h: SH });
+      return Math.hypot(gc.x - cc.x, gc.y - cc.y) <= gr + cr;
+    });
+    ok('退出圆环的判定圈与「一组结束」两个圆环的判定圈都不重叠', clash.length === 0, clash.join(','));
+  }
   api.hideGestureRings();
-  ok('大圆环收起后左下角圆环又摆回来（摄像头还开着）', cornerShown() === true);
+  ok('大圆环收起后右上角圆环又摆回来（摄像头还开着）', cornerShown() === true);
 
   // 摄像头关掉（比如出错）→ 圆环跟着收起来
   api.camera.stream = null;
@@ -2809,7 +2827,7 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
   documentStub.fullscreenElement = elements.get('stage');
   documentStub.exitFullscreenCalls = 0;
   elements.get('ringQuickExit').dispatch('click');
-  ok('点一下左下角圆环 → 回手势菜单（全屏留着）',
+  ok('点一下右上角圆环 → 回手势菜单（全屏留着）',
     api.state.menuMode === true && api.state.homeMode === false
     && documentStub.exitFullscreenCalls === 0,
     `menu=${api.state.menuMode} home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
@@ -2822,6 +2840,159 @@ console.log('\n[8e] 左下角常驻的「退出」圆环');
     api.state.homeMode === true && documentStub.exitFullscreenCalls >= 1,
     `home=${api.state.homeMode} exit=${documentStub.exitFullscreenCalls}`);
   api.camera.stream = savedStream;
+}
+
+/* ------------------------------------------------------------------ *
+ * [8e4] 新版 HUD：名称 + 目标 + 「计次位置」的进度圆环（数字动态字号）
+ *
+ * 用户四条要求：
+ *   ① 左上角运动名称放大，名称之后紧跟本组目标（`N 次` / `N 秒`）；
+ *   ② 进度圆环挪到原来计次的位置，次数 / 秒数放进圆环里，且**数字大了要自动缩小**
+ *      （0 / 9 / 99 / 100 / 1000 / 读秒 100 秒以上都不能超出圆环内径）；
+ *   ③ 分数仍然在圆环下方；
+ *   ④ 「退出」圆环从左下角挪到右上角（绘制与判定同一份坐标，见 [8e]）。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[8e4] 新版 HUD：名称 + 目标 + 环里的数字');
+{
+  const api = windowStub.__mfg;
+  // 这一节会改两个动作的目标，测完还回去，免得影响后面的用例
+  const savedTargets = { ...api.state.settings.targets };
+  const savedSeconds = { ...api.state.settings.seconds };
+  const hudValue = () => elements.get('hudValue');
+  const sizeOf = () => parseFloat(hudValue().style.fontSize);
+  const ringPx = () => api.hudRingPx();
+  const inner = () => api.hudRingInnerPx(ringPx());
+
+  // 纯函数本身：0 / 9 / 99 / 100 / 1000 / 100 秒都放得进圆环内径（宽度与高度两条约束）
+  {
+    const fits = [];
+    const widths = [];
+    for (const ring of [72, 104, 134, 140]) {
+      for (const text of ['0', '9', '99', '100', '1000', '100']) {
+        const fs = api.hudValueFontSize(ring, text);
+        widths.push([ring, text, fs]);
+        if (!(api.hudTextWidth(text, fs) <= api.hudRingInnerPx(ring) + 1e-9)) fits.push(`${ring}/${text}`);
+        if (!(fs > 0)) fits.push(`${ring}/${text} 字号为 0`);
+      }
+    }
+    ok('纯函数 hudValueFontSize：0 / 9 / 99 / 100 / 1000 在 72~140px 圆环里都放得下（估算宽度 ≤ 内径）',
+      fits.length === 0, fits.join(', ') || `示例 ${JSON.stringify(widths.slice(0, 3))}`);
+    const f0 = api.hudValueFontSize(104, '0');
+    const f99 = api.hudValueFontSize(104, '99');
+    const f100 = api.hudValueFontSize(104, '100');
+    const f1000 = api.hudValueFontSize(104, '1000');
+    ok('纯函数：位数越多字号越小（0 ≥ 99 ≥ 100 ≥ 1000），读秒到 100 以上会自动缩小',
+      f0 >= f99 && f99 > f100 && f100 > f1000, `${f0}/${f99}/${f100}/${f1000}`);
+    ok('内径与绘制的圆环同源（内径 = 直径 × 95/120，r=52、stroke=9）',
+      Math.abs(api.hudRingInnerPx(120) - 95) < 1e-9, String(api.hudRingInnerPx(120)));
+  }
+
+  // 真实渲染：计数类 → 名称 + 「20 次」，数字进圆环，字号随 100 / 1000 变小且不超内径
+  api.openExercise('squat');
+  api.setTarget(20);
+  api.state.session = 'running';
+  api.state.detector.validReps = 7;
+  api.updateHud();
+  ok('左上角显示运动名称（深蹲）', /深蹲/.test(elements.get('hudName').textContent),
+    elements.get('hudName').textContent);
+  ok('名称后面紧跟本组目标（计数类 → 「20 次」）',
+    elements.get('hudTarget').textContent === '20 次', elements.get('hudTarget').textContent);
+  ok('圆环里的大数字就是次数（#hudValue = 7）', hudValue().textContent === '7',
+    hudValue().textContent);
+  ok('运行时把字号写进了 #hudValue 的行内 font-size', /^\d+(\.\d+)?px$/.test(hudValue().style.fontSize),
+    hudValue().style.fontSize);
+  {
+    const seen = {};
+    const bad = [];
+    for (const v of [0, 9, 99, 100, 1000]) {
+      api.state.detector.validReps = v;
+      api.updateHud();
+      const fs = sizeOf();
+      seen[v] = fs;
+      if (!(api.hudTextWidth(hudValue().textContent, fs) <= inner() + 1e-9)) bad.push(v);
+    }
+    ok('真实渲染：0 / 9 / 99 / 100 / 1000 的字号都能让数字**留在圆环内径里**',
+      bad.length === 0, `超界 ${bad.join(',')}（内径 ${inner().toFixed(1)}px）`);
+    ok('真实渲染：100 比 99 小、1000 比 100 小（位数一多就自动缩）',
+      seen[99] > seen[100] && seen[100] > seen[1000],
+      JSON.stringify(seen));
+    ok('数字变了字号也会重算（不是只算一次就固定）', seen[9] !== seen[1000],
+      `${seen[9]} → ${seen[1000]}`);
+  }
+
+  // 计时类：读秒到 100 秒以上也要缩，目标写成「N 秒」
+  api.openExercise('plank');
+  api.state.session = 'running';
+  api.state.detector.holdMs = 9_000;
+  api.updateHud();
+  const fs9 = sizeOf();
+  const targetText = elements.get('hudTarget').textContent;
+  api.state.detector.holdMs = 100_000;
+  api.updateHud();
+  const fs100 = sizeOf();
+  ok('计时类目标显示成「N 秒」（平板支撑默认 30 秒）', /^\d+ 秒$/.test(targetText), targetText);
+  ok('计时类读秒到 100 秒以上：数字自动缩小（100 秒的字号 < 9 秒）',
+    hudValue().textContent === '100' && fs100 < fs9, `${fs9} → ${fs100}`);
+  ok('读秒 100 秒时估算宽度仍然 ≤ 圆环内径',
+    api.hudTextWidth(hudValue().textContent, fs100) <= inner() + 1e-9,
+    `${api.hudTextWidth(hudValue().textContent, fs100).toFixed(1)} / ${inner().toFixed(1)}`);
+  ok('计时类 hudSub 不再重复「目标 30 秒」（目标已经挪到名称后面）',
+    elements.get('hudSub').textContent === '', elements.get('hudSub').textContent);
+
+  // 限时计数：大数字是次数，目标按秒显示
+  api.openExercise('jumpingJack');
+  api.setTarget(45);
+  api.state.session = 'running';
+  api.state.elapsedMs = 5_000;
+  api.state.detector.validReps = 12;
+  api.updateHud();
+  ok('限时计数类目标同样显示成「N 秒」（开合跳 45 秒）',
+    elements.get('hudTarget').textContent === '45 秒', elements.get('hudTarget').textContent);
+  ok('限时计数类的大数字仍是次数（12）', hudValue().textContent === '12', hudValue().textContent);
+  ok('限时计数的剩余时间仍然在圆环下方那一行',
+    /剩余\s*40\s*\/\s*45\s*秒/.test(elements.get('hudSub').textContent),
+    elements.get('hudSub').textContent);
+
+  // 分数：仍在圆环下方（DOM 顺序 + 数值）
+  ok('分数（#hudScore）在圆环下面、显示的是识别器的分',
+    elements.get('hudScore').textContent === `${api.state.detector.score} 分`
+    && html.indexOf('id="hudRing"') < html.indexOf('id="hudScore"'),
+    `${elements.get('hudScore').textContent} / ${api.state.detector.score}`);
+
+  // resize / 转屏：onStageResize 会把字号按新圆环直径重算
+  {
+    const el = hudValue();
+    el.style.fontSize = '999px';     // 模拟旧视口下的旧字号
+    api.onStageResize?.();
+    const after = sizeOf();
+    ok('窗口 resize / 转屏后字号按当前圆环直径重算（不是沿用旧值）',
+      after > 0 && after < 999 && api.hudTextWidth(el.textContent, after) <= inner() + 1e-9,
+      `${after}px（内径 ${inner().toFixed(1)}px）`);
+  }
+
+  // 退出圆环：绘制坐标 = 判定圆心（同一份数），且整个落在右上区域
+  {
+    const { w, h } = api.stageSize();
+    const c = api.ringCenter('corner', w, h);
+    const px = api.ringPx('corner');
+    const btn = elements.get('ringQuickExit');
+    ok('退出圆环的**绘制**坐标（行内 left/top）就是判定用的圆心（ringCenter）',
+      btn.style.left === `${c.x}px` && btn.style.top === `${c.y}px`,
+      `${btn.style.left}/${btn.style.top} vs ${c.x}/${c.y}`);
+    ok('退出圆环整个落在右上区域（左边缘在右半边、上边缘在上半边）',
+      c.x - px / 2 > w / 2 && c.y - px / 2 < h / 2,
+      `left=${Math.round(c.x - px / 2)} top=${Math.round(c.y - px / 2)}`);
+    const hit = api.anyTouchInRing(
+      [{ x: c.x, y: c.y, kind: 'hand', side: 'L', part: 'wrist', vis: 1 }], 'corner', { w, h });
+    ok('判定用的圆心与画出来的圆心一致（把手放到画出来的环心 → 判定也在环里）',
+      hit.inside === true, JSON.stringify({ inside: hit.inside, d: hit.best?.d }));
+  }
+
+  api.state.settings.targets = savedTargets;
+  api.state.settings.seconds = savedSeconds;
+  api.state.session = 'idle';   // 别让 showHome() 把这一节的假数据存成记录
+  api.showHome();
 }
 
 /* ------------------------------------------------------------------ *
@@ -2879,7 +3050,7 @@ console.log('\n[8e3] 运动界面里的猫爪指针');
   const fakeCam = { getTracks: () => [] };
   api.state.settings.mirror = false;
   api.openExercise('squat');
-  api.state.session = 'running';         // 训练中（左下角退出圆环这时摆着）
+  api.state.session = 'running';         // 训练中（右上角退出圆环这时摆着）
   // ⚠️ 顺序：「进动作页」会异步重开摄像头，所以**进完再**塞桩流、再 sync（和 [8e] 同一个做法）
   api.camera.stream = fakeCam;
   api.syncCornerExit();
@@ -2887,12 +3058,12 @@ console.log('\n[8e3] 运动界面里的猫爪指针');
   const c3 = api.ringCenter('corner', SW3, SH3);
   const centre = { x: c3.x / SW3, y: c3.y / SH3 };
 
-  ok('训练界面里允许画猫爪（左下角退出圆环摆着，pawsWanted = true）',
+  ok('训练界面里允许画猫爪（右上角退出圆环摆着，pawsWanted = true）',
     api.gestureState.cornerVisible === true && api.pawsWanted() === true);
 
-  // ===== 手掌进入左下角退出圆环 → 猫爪出现在手掌坐标上 =====
+  // ===== 手掌进入右上角退出圆环 → 猫爪出现在手掌坐标上 =====
   api.updatePaws(handAt('L', centre.x, centre.y));
-  ok('手掌伸进左下角退出圆环：左边那只猫爪出现在手掌坐标上并带 on',
+  ok('手掌伸进右上角退出圆环：左边那只猫爪出现在手掌坐标上并带 on',
     layer().hidden === false && pawL().classList.contains('on')
     && pawL().style.left === `${Math.round(c3.x)}px` && pawL().style.top === `${Math.round(c3.y)}px`,
     `${pawL().style.left}/${pawL().style.top} vs ${c3.x}/${c3.y}`);
@@ -4905,7 +5076,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && menuEl.hidden === true && elements.get('workoutView').hidden === false
     && !String(elements.get('workoutView').className).includes('menu-mode'),
     `menu=${api.state.menuMode} ex=${api.state.exerciseId}`);
-  ok('进入动作后左下角圆环又变回「退出」（退出 = 回菜单）',
+  ok('进入动作后右上角圆环又变回「退出」（退出 = 回菜单）',
     elements.get('ringQuickExitLabel').textContent === '退出'
     || api.gestureState.cornerVisible === false,         // 摄像头关着时它本来就不摆
     elements.get('ringQuickExitLabel').textContent);
@@ -4939,7 +5110,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && menuEl.hidden === false && documentStub.exitFullscreenCalls === 0
     && api.menuRingLayout(api.stageSize()).length === 5 && api.menuPageInfo().total === 5
     && api.menuNavLayout(api.stageSize()).some((it) => it.kind === 'back')
-    && api.gestureState.cornerVisible === false,      // 菜单里不再显示左下角那个「退出」圆环
+    && api.gestureState.cornerVisible === false,      // 菜单里不再显示右上角那个「退出」圆环
     `menu=${api.state.menuMode} level=${api.state.menuLevel} exit=${documentStub.exitFullscreenCalls}`);
   api.triggerCornerExit();                  // 菜单里退出
   ok('菜单里退出 → 回网页首页（主页可见 + 退出全屏 + 菜单收起来）',
@@ -5386,23 +5557,23 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     windowStub.innerHeight = savedH;
   }
 
-  // 安全区：左下角圆环要躲开刘海（左侧）与底部横条
+  // 安全区：右上角退出圆环要躲开右侧刘海 / 顶部状态栏
   {
     const savedGCS = windowStub.getComputedStyle;
     windowStub.getComputedStyle = () => ({
-      getPropertyValue: (n) => ({ '--safe-left': '34px', '--safe-bottom': '21px' }[n] || '0px'),
+      getPropertyValue: (n) => ({ '--safe-right': '34px', '--safe-top': '21px' }[n] || '0px'),
     });
     const size = { w: 1280, h: 720 };
     const c = api.ringCenter('corner', size.w, size.h);
     const px = api.ringPx('corner');
-    ok('有安全区时左下角「退出」圆环往右上让开（刘海 34px + 底部横条 21px）',
-      c.x === 34 + api.CORNER_RING_INSET_PX + px / 2
-      && c.y === size.h - 21 - api.CORNER_RING_BOTTOM_PX - px / 2, JSON.stringify(c));
+    ok('有安全区时右上角「退出」圆环往左下让开（右侧刘海 34px + 顶部状态栏 21px）',
+      c.x === size.w - 34 - api.CORNER_RING_INSET_PX - px / 2
+      && c.y === 21 + api.CORNER_RING_TOP_PX + px / 2, JSON.stringify(c));
     windowStub.getComputedStyle = savedGCS;
     const c0 = api.ringCenter('corner', size.w, size.h);
-    ok('没有安全区时（PC）圆环位置与改造前完全一致',
-      c0.x === api.CORNER_RING_INSET_PX + px / 2
-      && c0.y === size.h - api.CORNER_RING_BOTTOM_PX - px / 2, JSON.stringify(c0));
+    ok('没有安全区时（PC）圆环就贴在右上角：右边距 18px、上边距 16px',
+      c0.x === size.w - api.CORNER_RING_INSET_PX - px / 2
+      && c0.y === api.CORNER_RING_TOP_PX + px / 2, JSON.stringify(c0));
   }
 
   // 前后摄像头切换（设置里的下拉）
