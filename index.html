@@ -489,12 +489,11 @@
 
   <script type="module" src="src/app.js"></script>
   <script>
-    /*
-     * iPhone 全屏兜底（用户反馈「Safari 和 Chrome 都无法进入全屏模式」）：
-     * iOS Safari 没有元素级 Fullscreen API（只有 iPad 有），全屏按钮点了没反应。
-     * 这里只在**没有原生全屏能力**时接管：切 #stage 的 CSS 伪全屏（页面其余部分被盖住，
-     * HUD / 判定进度条 / 圆环都保留）。有原生能力的浏览器完全不进这段逻辑，行为不变。
-     */
+    /* iPhone fullscreen fallback: iOS Safari has no element Fullscreen API (iPad only),
+       so the fullscreen button does nothing there. This only takes over when no native
+       capability exists: it toggles a CSS pseudo-fullscreen on #stage, which keeps our own
+       HUD / judgement bar / gesture rings (unlike video.webkitEnterFullscreen()).
+       Browsers with native support never enter this branch. */
     (function () {
       var canNative = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled
         || document.documentElement.webkitRequestFullscreen);
