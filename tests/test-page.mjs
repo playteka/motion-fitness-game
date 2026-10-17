@@ -230,8 +230,10 @@ console.log('\n[3] 静态资源与模型文件');
         && /layoutExitRing\(ringEl\('corner'\)\);/.test(appSrc)        // 动作页那颗退出圆环
         && /layoutExitRing\(menuBackEl\(\), size\);/.test(appSrc));     // 菜单这颗返回圆环
       const navBody = /function menuNavLayout\(size\) \{([\s\S]*?)\n\}/.exec(appSrc)?.[1] || '';
-      ok('menuNavLayout 只算「上一页 / 下一页」（「返回」的圆心/判定不在这里另算一套）',
-        !!navBody && !/'back'/.test(navBody) && /cx: size\.w \/ 2 \+ side \* step,/.test(navBody),
+      ok('menuNavLayout 只算「上一页 / 下一页」（「返回」的圆心/判定不在这里另算一套），并摆进选项那一行的格子里',
+        !!navBody && !/'back'/.test(navBody)
+        && /cx: g\.padX \+ g\.cellW \* \(col \+ 0\.5\),/.test(navBody)
+        && /cy: g\.top \+ g\.cellH \* \(row \+ 0\.5\),/.test(navBody),
         navBody.slice(0, 80));
       ok('量 --ring-px 的探针：宽高 = var(--ring-px)、visibility: hidden（仍有布局才量得到）',
         /id="ringSizeProbe"/.test(html)
@@ -864,21 +866,29 @@ console.log('\n[3] 静态资源与模型文件');
     ok('菜单是**两级**：第一级分类、第二级动作',
       /state\.menuLevel = 0;/.test(app) && /function menuItems\(\)/.test(app)
       && /if \(state\.menuLevel === 0\)/.test(app) && /kind: 'category'/.test(app));
-    ok('每页最多一行、每行最多 5 个（用户要求「每页还是最多一行，每一行最多 5 个圆环选项」）',
-      /const MENU_COLS = 5;/.test(app) && /const MENU_ROWS = 1;/.test(app)
+    ok('每页最多一行、每行最多 **6 个格子**（用户要求「每个运动圆环再缩小，每行最多放 6 个圆环」）',
+      /const MENU_COLS = 6;/.test(app) && /const MENU_ROWS = 1;/.test(app)
       && /function menuPageInfo\(/.test(app) && /function menuPerPage\(/.test(app)
+      && /function menuPageCells\(/.test(app) && /function menuNavCells\(/.test(app)
       && /function menuCols\(/.test(app) && /function menuRowsFor\(/.test(app)
       && /state\.menuPage = 0;/.test(app)
       && /id="menuPage"/.test(html) && typeof LOCALES.zh.menu.page === 'string'
       && typeof LOCALES.en.menu.page === 'string');
-    ok('「上一页 / 下一页」两颗并排、以舞台中线为轴对称（「返回」不在 menuItems 里、也不在它们中间）',
+    ok('每页选项数 = 格子数 − 翻页圆环占的格子（有分页时少 2 个，单页时整行都是选项）',
+      /function menuPageCells\(size = stageSize\(\)\) \{[\s\S]*?menuCols\(size\.w\) \* menuRowsFor\(size\)/.test(app)
+      && /function menuNavCells\(size = stageSize\(\)\) \{[\s\S]*?menuItems\(\)\.length > menuPageCells\(size\) \? 2 : 0/.test(app)
+      && /return Math\.max\(1, menuPageCells\(size\) - menuNavCells\(size\)\);/.test(app));
+    ok('圆环跟着格子变小（直径 = 格子宽 × 0.86，每行 6 格 → 1280×720 上 176px，上一版 211px）',
+      /const dia = Math\.max\(24, Math\.min\(cellW \* 0\.86, cellH \* 0\.70, MENU_RING_MAX\)\);/.test(app)
+      && /const MENU_CELL_MIN_PX = 120;/.test(app));
+    ok('「上一页 / 下一页」**放进选项那一行**（第一行最左 / 最右两格），「返回」不在 menuItems 里、也不在这排里',
       /function menuNavLayout\(/.test(app)
       && /if \(!menuHasPages\(size\)\) return \[\];/.test(app)
-      && /\['page:prev', 'prev', -1, t\('menu\.prev'\), -1\]/.test(app)
-      && /\['page:next', 'next', 1, t\('menu\.next'\), 1\]/.test(app)
-      && /cx: size\.w \/ 2 \+ side \* step,/.test(app)
-      && !/\[i - mid\] \* step/.test(app)                        // 不再按「三颗一组」算中心
-      && !/\{ id: 'back'/.test(app)                              // 返回不在 menuNavLayout 里
+      && /\['page:prev', 'prev', -1, t\('menu\.prev'\), 0, 0\]/.test(app)
+      && /\['page:next', 'next', 1, t\('menu\.next'\), nextRow, cols - 1\]/.test(app)
+      && /const nextRow = cols > 2 \? 0 : rows - 1;/.test(app)
+      && /cx: g\.padX \+ g\.cellW \* \(col \+ 0\.5\),/.test(app)
+      && !/'back'/.test(app.slice(app.indexOf('function menuNavLayout'), app.indexOf('function menuBackItem')))
       && /const item = \[\.\.\.menuItems\(\), \.\.\.menuNavLayout\(stageSize\(\)\), menuBackItem\(stageSize\(\)\)\]/.test(app));
     ok('「上一页 / 下一页」圆环按需出现（有第二页才有），和「返回」一样停满 5 秒才触发',
       /\['page:prev', 'prev', -1/.test(app) && /\['page:next', 'next', 1/.test(app)
@@ -1303,7 +1313,7 @@ console.log('\n[3] 静态资源与模型文件');
     ok('图标态的圆环标签放大居中（CSS），文字含义仍在 title / aria-label',
       /\.ring-label--icon \{ font-size: calc\(var\(--ring-px\) \* 0\.62\); line-height: 0; \}/.test(css)
       // 和菜单里那三颗导航圆环同一比例（62%），所以粗细尺寸一致
-      && /const iconSize = clamp\(d \* 0\.62, 30, 78\);/.test(app)
+      && /const iconSize = clamp\(dia \* 0\.62, 30, 78\);/.test(app)
       && /\.ring-label--icon \.ex-pose \{ width: 1em; height: 1em; \}/.test(css)
       // ⚠️ 退出圆环那颗要单独再写一条：`.corner-ring .ring-label` 优先级更高，否则图标又被压回 19px
       && /\.corner-ring \.ring-label--icon \{ font-size: calc\(var\(--ring-px\) \* 0\.62\); \}/.test(css)
@@ -1369,7 +1379,7 @@ console.log('\n[3] 静态资源与模型文件');
       ok('兜底样式：万一有文字混进导航圆环也不显示；图标居中而不是给文字让位（图标还可以画得更大）',
         /\.menu-ring--back \.menu-name,[\s\S]{0,140}?\{ display: none; \}/.test(css)
         && /\.menu-ring--back \.menu-icon,[\s\S]{0,140}?\{ transform: none; \}/.test(css)
-        && /const iconSize = clamp\(d \* 0\.62, 30, 78\);/.test(app));
+        && /const iconSize = clamp\(dia \* 0\.62, 30, 78\);/.test(app));
     }
   }
 }

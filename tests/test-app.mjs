@@ -4550,10 +4550,13 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     && /#stage\.menu-mode \.hud/.test(fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8')),
     '样式里没有 menu-mode 收起规则');
 
-  // ===== ② 第一级菜单：一页最多一行、每行最多 5 个（用户要求） =====
+  // ===== ② 第一级菜单：每行最多 6 个格子、一页只摆一行（用户要求） =====
+  /* 用户要求：「把每个运动圆环的大小再进一步缩小，每行最多放 6 个圆环，
+     但是把『上一页』、『下一页』这两个圆环也放在这一行（如果需要显示的话）。」 */
   const layout = api.menuRingLayout(api.stageSize());
   const info0 = api.menuPageInfo();
   const nav0 = api.menuNavLayout(api.stageSize());
+  const band0 = api.menuBandGeom(api.stageSize());
   /**
    * 误触面积（用户反馈：「菜单圆环很大、数量又多，人站在画面中手很容易误触某个圆环」）：
    * 在画面上撒点，量一量「圆环 / 起手圈 / 判定圈」各占整幅画面的百分之几。
@@ -4570,11 +4573,20 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     }
     return (n / (N * cols)) * 100;
   };
-  ok('每行最多 5 个 + 一页只摆一行：第一级 5 个分类**一页正好放完**（平时根本不用翻页）',
+  ok('每行最多 6 个格子 + 一页只摆一行：第一级 5 个分类一页正好放完（5 ≤ 6，不出现翻页圆环）',
     api.state.menuLevel === 0 && layout.length === 5 && layout.every((it) => it.kind === 'category')
-    && api.MENU_COLS === 5 && api.MENU_ROWS === 1 && api.menuPerPage(api.stageSize()) === 5
-    && info0.total === 5 && info0.pages === 1,
+    && api.MENU_COLS === 6 && api.MENU_ROWS === 1 && api.menuCols(api.stageSize().w) === 6
+    && api.menuPageCells(api.stageSize()) === 6 && api.menuPerPage(api.stageSize()) === 6
+    && info0.total === 5 && info0.pages === 1 && nav0.length === 0,
     `${layout.length} 个 / 每页 ${api.menuPerPage(api.stageSize())} / ${info0.pages} 页`);
+  ok('圆环跟着格子**变小**（直径 = 格子宽 × 0.86：1280×720 上 176.1px，上一版 211.4px）',
+    layout.every((it) => Math.abs(it.r * 2 - band0.dia) < 1e-9)
+    && Math.abs(band0.dia - 176.1) < 0.2 && band0.dia < 211,
+    `Ø${band0.dia.toFixed(1)}px（上一版 Ø211.4px）`);
+  ok('名字 / 图标字号仍看得清（名字 = 直径 × 15% ≈ 26.4px，图标 = 直径 × 38% ≈ 66.9px）',
+    layout.every((it) => Math.abs(it.nameSize - band0.dia * 0.15) < 1e-9 && it.nameSize >= 24)
+    && layout.every((it) => Math.abs(it.iconSize - band0.dia * 0.38) < 1e-9 && it.iconSize >= 40),
+    `name=${layout[0].nameSize.toFixed(1)} icon=${layout[0].iconSize.toFixed(1)} dia=${band0.dia.toFixed(1)}`);
   ok('「返回」**常驻在右上角**、**不参与翻页**（不在选项格子里，也不在翻页那排里）',
     nav0.length === 0
     && api.menuItems().every((it) => it.kind !== 'back')
@@ -4588,11 +4600,6 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   ok('右上角那颗圆环尺寸 = 动作页退出圆环的 --ring-px（1280×720 上 ≥130px，最早只有 Ø83px）',
     api.menuBackItem(api.stageSize()).r * 2 >= 130,
     `Ø${Math.round(api.menuBackItem(api.stageSize()).r * 2)}px`);
-  ok('圆环反而更大了（一行 5 个 + 导航不占格子：1280×720 上 ≥200px）',
-    layout.every((it) => it.r * 2 >= 200), `${Math.round(layout[0].r * 2)}px`);
-  ok('名字字号跟着圆环走（≥30px）',
-    layout.every((it) => it.nameSize >= 30),
-    `name=${layout[0].nameSize.toFixed(1)} dia=${Math.round(layout[0].r * 2)}`);
   {
     // ---- 误触面积（用户反馈：「人站在画面中手很容易误触某个圆环」）
     const sz = api.stageSize();
@@ -4601,7 +4608,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     const startPct = coverPct(all, sz, (it) => it.start);
     const oldPct = coverPct(all.map((it) => ({ ...it, hit: it.r * 1.15 })), sz, (it) => it.hit);
     ok('判定圈就是**画出来的圆圈**（1.0 倍，不再外扩 15%）：误触面积比旧口径少四分之一',
-      api.MENU_HIT_RATIO === 1 && hitPct <= oldPct * 0.8 && oldPct >= 20,
+      api.MENU_HIT_RATIO === 1 && hitPct <= oldPct * 0.8 && oldPct >= 12,
       `判定 ${hitPct.toFixed(1)}% / 旧口径 ${oldPct.toFixed(1)}% / 画出来 ${coverPct(all, sz).toFixed(1)}%`);
     ok('起手圈再收 20%（0.8 倍）：**开始蓄力**的误触面积只有判定圈的 2/3',
       api.MENU_START_RATIO === 0.8 && startPct <= hitPct * 0.75,
@@ -4611,7 +4618,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       lowest / sz.h <= 0.8,
       `最低 ${(lowest / sz.h * 100).toFixed(0)}%（放手区 ${(100 - lowest / sz.h * 100).toFixed(0)}%）`);
   }
-  ok('只有一页时不显示翻页圆环、也不显示页码（右上角「返回」仍然在）',
+  ok('单页时整行就是纯选项：翻页圆环和页码都不出现（右上角「返回」仍然在）',
     api.menuNavLayout(api.stageSize()).length === 0
     && api.menuBackItem(api.stageSize()).kind === 'back'
     && elements.get('menuPage').hidden === true);
@@ -4638,17 +4645,70 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
         if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < a.hit + b.hit) bad.push(`${a.id}↔${b.id}:判定圈重叠`);
       }
     }
-    ok('选项 + 顶部导航圆环都完整落在画面里、判定圈互不重叠（「最近的那一格」不会有歧义）',
+    ok('选项 + 右上角「返回」都完整落在画面里、判定圈互不重叠（「最近的那一格」不会有歧义）',
       bad.length === 0, bad.slice(0, 3).join(', '));
   }
 
-  // ===== ②′ 分页：窄屏才需要翻页（宽屏 5 个一页正好） =====
-  /* 用户要求「每页还是最多一行，每一行最多 5 个圆环选项」之后，宽屏第一级 5 个分类一页正好放完，
-     只有「核心」那样 6 个动作的第二级才需要第二页。这里**把舞台改成竖屏手机尺寸**
-     （列数掉到 2、窄屏允许两行 → 一页 4 个）来验证翻页本身。 */
+  // ===== ②′ 分页：翻页圆环**也在选项那一行**（5 个格子 = 3 个选项 + 上一页 + 下一页） =====
+  /* 宽屏 6 格正好放下所有分类（最多 6 个动作），所以翻页只在格子更少时出现：
+     这里把舞台改成 700×400（5 列 × 1 行 = 5 格，「核心」6 个动作 > 5 → 要翻页），
+     这时整行就是 `[上一页] + 3 个选项 + [下一页]`，全部圆环同一行、同一套直径/字号。 */
+  {
+    stageEl.clientWidth = 700;
+    stageEl.clientHeight = 400;
+    api.state.menuLevel = 0;
+    api.state.menuCategory = '';
+    api.state.menuPage = 0;
+    api.selectFromMenu('cat:core');                 // 核心 6 个动作，一页 3 个 → 2 页
+    const sizeP = api.stageSize();
+    const navP = api.menuNavLayout(sizeP);
+    const optsP = api.menuRingLayout(sizeP);
+    const gP = api.menuBandGeom(sizeP);
+    ok('有分页时：这一行 = [上一页] + 选项 + [下一页]，**格子总数 ≤ 6**（700×400：5 格）',
+      api.menuCols(sizeP.w) === 5 && api.menuPageCells(sizeP) === 5
+      && navP.length === 2 && optsP.length === 3
+      && navP.map((it) => it.kind).join(',') === 'prev,next'
+      && api.menuNavCells(sizeP) === 2,
+      `cols=${api.menuCols(sizeP.w)} cells=${api.menuPageCells(sizeP)} nav=${navP.length} opt=${optsP.length}`);
+    ok('翻页圆环放在这一行的两端：上一页最左、下一页最右（cx 递增，判定圈不重叠）',
+      navP[0].cx < optsP[0].cx && optsP.every((o) => o.cx < navP[1].cx - o.r)
+      && [...optsP, ...navP].every((a, i, arr) => arr.every((b) => a === b
+        || Math.hypot(a.cx - b.cx, a.cy - b.cy) >= a.hit + b.hit)),
+      JSON.stringify([navP[0].cx, ...optsP.map((o) => o.cx), navP[1].cx].map(Math.round)));
+    ok('**全部圆环都在同一行**（含翻页那两颗：cy 完全相同），直径也同一份',
+      [optsP[0].cy, ...optsP.map((o) => o.cy), ...navP.map((n) => n.cy)].every((y) => Math.abs(y - optsP[0].cy) < 1e-9)
+      && navP.every((n) => Math.abs(n.r - optsP[0].r) < 1e-9)
+      && Math.abs(optsP[0].r * 2 - gP.dia) < 1e-9,
+      `cy=${optsP[0].cy} Ø=${(optsP[0].r * 2).toFixed(1)}`);
+    ok('分页时每页选项数 = 格子数 − 2，菜单信息自洽（6 个动作 → 每页 3 个 → 2 页）',
+      api.menuPerPage(sizeP) === 3 && api.menuPageInfo(sizeP).per === 3
+      && api.menuPageInfo(sizeP).pages === 2 && api.menuPageInfo(sizeP).total === 6
+      && /第 1 \/ 2 页/.test(elements.get('menuPage').textContent)
+      && /6 项/.test(elements.get('menuPage').textContent),
+      `${api.menuPerPage(sizeP)} / ${api.menuPageInfo(sizeP).pages} 页 / ${elements.get('menuPage').textContent}`);
+    ok('翻页后「上一页 / 下一页」位置**一点不动**（不跟着换页跳）',
+      (() => {
+        const before = api.menuNavLayout(sizeP).map((it) => [it.cx, it.cy, it.r]);
+        api.flipMenuPage(1);
+        const after = api.menuNavLayout(sizeP).map((it) => [it.cx, it.cy, it.r]);
+        api.state.menuPage = 0;
+        return JSON.stringify(before) === JSON.stringify(after)
+          && api.menuRingLayout(sizeP).length === 3;
+      })(),
+      JSON.stringify(api.menuNavLayout(sizeP).map((it) => [Math.round(it.cx), Math.round(it.cy)])));
+    // 分组测完，回到第一级、恢复宽屏舞台
+    api.state.menuLevel = 0;
+    api.state.menuCategory = '';
+    api.state.menuPage = 0;
+    stageEl.clientWidth = savedClientW;
+    stageEl.clientHeight = savedClientH;
+    api.renderMenu();
+  }
+
+  // ===== ②″ 更窄的屏（320×700，2 列 × 2 行 = 4 格）：翻页主路径 + 返回 =====
   {
     const stageStub = stageEl;
-    stageStub.clientWidth = 400;
+    stageStub.clientWidth = 320;
     stageStub.clientHeight = 700;
     /* 窄屏上 CSS 把 `--ring-px` 收到 72px（@media max-width:560px）。桩里量不到真实布局，
        所以把「探针」的 clientWidth 设成 72 —— 这正是真实浏览器里 ringPx() 走的那条路：
@@ -4660,32 +4720,23 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     api.renderMenu();
     const nav = api.menuNavLayout(sizeN);
     const infoN = api.menuPageInfo(sizeN);
-    ok('窄屏（竖屏手机 400×700）：列数掉到 2、放宽到两行 → 一页 4 个，于是 5 个分类分 2 页',
-      api.menuCols(sizeN.w) === 2 && api.menuRowsFor(sizeN) === 2 && api.menuPerPage(sizeN) === 4
-      && infoN.pages === 2 && infoN.total === 5 && api.menuRingLayout(sizeN).length === 4,
+    ok('窄屏（320×700）：列数 2、两行 → 4 格；5 个分类 > 4 → 翻页圆环各占一格（每页 2 个、共 3 页）',
+      api.menuCols(sizeN.w) === 2 && api.menuRowsFor(sizeN) === 2 && api.menuPageCells(sizeN) === 4
+      && api.menuPerPage(sizeN) === 2 && infoN.pages === 3 && infoN.total === 5
+      && api.menuRingLayout(sizeN).length === 2 && nav.length === 2,
       `cols=${api.menuCols(sizeN.w)} rows=${api.menuRowsFor(sizeN)} per=${api.menuPerPage(sizeN)} pages=${infoN.pages}`);
     ok('小屏上「返回」圆环的直径 = 探针读到的 CSS --ring-px（72px，不是兜底的 104px）',
       api.ringPx('corner') === 72 && api.menuBackItem(sizeN).px === 72
       && elements.get('menuBack').style.width === '72px',
       `${api.ringPx('corner')}px / item ${api.menuBackItem(sizeN).px} / inline ${elements.get('menuBack').style.width}`);
-    ok('有第二页时「上一页 / 下一页」两颗并排、以舞台中线为轴对称（「返回」已挪到右上角，中间槽位空着）',
-      nav.length === 2
-      && nav.map((it) => it.kind).join(',') === 'prev,next'
-      && nav.every((it) => it.cy + it.r <= Math.min(...api.menuRingLayout(sizeN).map((x) => x.cy - x.r)) + 1)
-      && Math.abs((nav[0].cx + nav[1].cx) / 2 - sizeN.w / 2) < 1,             // 两颗的轴心仍在画面中线上
+    ok('只有 2 列时第一行排不下三样东西 → 按整页首 / 末格摆（左上上一页、右下下一页），选项用中间两格',
+      nav[0].cx < nav[1].cx && nav[0].cy < nav[1].cy
+      && Math.abs(nav[0].cx - (api.menuBandGeom(sizeN).padX + api.menuBandGeom(sizeN).cellW * 0.5)) < 1e-9
+      && Math.abs(nav[1].cx - (api.menuBandGeom(sizeN).padX + api.menuBandGeom(sizeN).cellW * 1.5)) < 1e-9,
       JSON.stringify(nav.map((it) => [it.kind, Math.round(it.cx), Math.round(it.cy)])));
-    /* 用户原话：「上一页和下一页的位置不要动，仅仅移动退出圆环。」
-       → 用**改动前那套公式**复算（400×700：直径 74、间距 12、step 86、cy 128.5），
-       位置 / 直径必须逐像素一致；「返回」不再参与这套坐标。 */
-    ok('翻页两颗的位置与直径和改动前**逐像素一致**（400×700：cx = 200 ∓ 86、cy = 128.5、Ø = 74）',
-      nav.length === 2
-      && Math.abs(nav[0].cx - (sizeN.w / 2 - 86)) < 1e-9
-      && Math.abs(nav[1].cx - (sizeN.w / 2 + 86)) < 1e-9
-      && Math.abs(nav[0].cy - 128.5) < 1e-9 && Math.abs(nav[1].cy - 128.5) < 1e-9
-      && Math.abs(nav[0].r * 2 - 74) < 1e-9 && Math.abs(nav[1].r * 2 - 74) < 1e-9,
-      JSON.stringify(nav.map((it) => ({ cx: it.cx, cy: it.cy, d: it.r * 2 }))));
-    ok('导航圆环和选项圆环的判定圈互不重叠（不会抢格）',
-      api.menuRingLayout(sizeN).every((a) => nav.every((b) => (
+    ok('翻页圆环和选项同样大、判定圈互不重叠（不会抢格）',
+      nav.every((n) => Math.abs(n.r - api.menuRingLayout(sizeN)[0].r) < 1e-9)
+      && api.menuRingLayout(sizeN).every((a) => nav.every((b) => (
         Math.hypot(a.cx - b.cx, a.cy - b.cy) >= a.hit + b.hit))),
       '重叠了');
     ok('右上角「返回」在窄屏也落在画面里，且判定圈不和选项 / 翻页圆环重叠',
@@ -4696,9 +4747,9 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
           && others.every((o) => Math.hypot(o.cx - b.cx, o.cy - b.cy) >= o.hit + b.hit);
       })(),
       JSON.stringify([Math.round(api.menuBackItem(sizeN).cx), Math.round(api.menuBackItem(sizeN).cy)]));
-    ok('页码那一行写着「第 1 / 2 页 · 共 5 项」，而且能点',
+    ok('页码那一行写着「第 1 / 3 页 · 共 5 项」，而且能点',
       elements.get('menuPage').hidden === false
-      && /第 1 \/ 2 页/.test(elements.get('menuPage').textContent)
+      && /第 1 \/ 3 页/.test(elements.get('menuPage').textContent)
       && /5 项/.test(elements.get('menuPage').textContent),
       elements.get('menuPage').textContent);
     // 手掌放进「下一页」圆环，停 5 秒 → 翻页（用户要求导航圆环的沙漏时间加到 5 秒）
@@ -4706,7 +4757,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     const palmsAt = (x, y) => palmsAt6(x * (SW / sizeN.w), y * (SH / sizeN.h));
     const next = nav.find((it) => it.kind === 'next');
     // 防误触第 4 条：手必须**从圆环外面进来**才算数（先把「许可」拿到手）
-    api.updateMenu(palmsAt(200, 690), 19900);
+    api.updateMenu(palmsAt(160, 690), 19900);
     ok('手掌放进「下一页」2.6 秒还没到（导航圆环要停满 5 秒）',
       api.updateMenu(palmsAt(next.cx, next.cy), 20000) === null
       && api.updateMenu(palmsAt(next.cx, next.cy), 22600) === null,
@@ -4719,16 +4770,20 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     ok('停满 5 秒 → 判定翻页（返回 {kind:page, dir:+1}）',
       act && act.kind === 'page' && act.dir === 1, JSON.stringify(act));
     api.flipMenuPage(act.dir);
-    ok('翻到第 2 页（只剩最后一个分类，仍然一样大、居中）',
-      api.state.menuPage === 1 && api.menuRingLayout(sizeN).length === 1
-      && /第 2 \/ 2 页/.test(elements.get('menuPage').textContent),
+    ok('翻到第 2 页（每页 2 个分类；翻页圆环按格子摆、仍然一样大）',
+      api.state.menuPage === 1 && api.menuRingLayout(sizeN).length === 2
+      && /第 2 \/ 3 页/.test(elements.get('menuPage').textContent),
       `page=${api.state.menuPage}`);
     // 按住不放 → 一页一页连续翻（不会卡住；间隔就是那 5 秒）
     const act2 = api.updateMenu(palmsAt(next.cx, next.cy), 30500);
     ok('手掌**一直按着**：再过 5 秒又翻一页（按住不放仍然能连翻）',
       act2 && act2.kind === 'page' && act2.dir === 1, JSON.stringify(act2));
     api.flipMenuPage(act2.dir);
-    ok('翻回第 1 页（循环翻页）', api.state.menuPage === 0, `page=${api.state.menuPage}`);
+    ok('按住不放翻到第 3 页（一共 3 页）',
+      api.state.menuPage === 2 && /第 3 \/ 3 页/.test(elements.get('menuPage').textContent),
+      `page=${api.state.menuPage}`);
+    api.flipMenuPage(1);
+    ok('再翻一页就循环回第 1 页（3 页循环）', api.state.menuPage === 0, `page=${api.state.menuPage}`);
     // 手离开 → 进度慢慢退回去，不会连翻
     api.updateMenu(palmsAt(200, 60), 31200);
     const act3 = api.updateMenu(palmsAt(200, 60), 31600);
@@ -4779,7 +4834,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     const prev = nav.find((it) => it.kind === 'prev');
     grid.children.find((c) => c.dataset.ex === prev.id).dispatch('click');
     ok('鼠标点一下翻页圆环也能翻（第 1 页往前翻 = 循环到最后一页）',
-      api.state.menuPage === 1, `page=${api.state.menuPage}`);
+      api.state.menuPage === 2, `page=${api.state.menuPage}`);
     // 恢复宽屏舞台
     api.state.menuPage = 0;
     stageStub.clientWidth = savedClientW;
@@ -4830,36 +4885,39 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     ok('第二级这一页的圆环也都落在画面里、判定圈互不重叠', bad.length === 0, bad.slice(0, 3).join(', '));
   }
   {
-    // 「核心」有 6 个动作 → 5 个一页，正好是唯一需要翻页的情形（用户要求「一页最多 5 个」之后）
+    // 「核心」有 6 个动作，正好占满一行 6 格 → 单页放完，不出现翻页圆环（用户要求「每行最多 6 个」）
     api.selectFromMenu('back');
     api.selectFromMenu('cat:core');
     const lv1a = api.menuRingLayout(api.stageSize());
-    ok('「核心」6 个动作 → 分 2 页（第 1 页 5 个），顶部这时才多出「上一页 / 下一页」',
-      api.state.menuCategory === 'core' && api.menuPageInfo().pages === 2
-      && lv1a.length === 5 && api.menuNavLayout(api.stageSize()).length === 2,
-      `pages=${api.menuPageInfo().pages} n=${lv1a.length}`);
-    /* 用户原话：「上一页和下一页的位置不要动，仅仅移动退出圆环。」
-       → 1280×720 上按**改动前那套公式**复算：直径 133.2、间距 28.16、step 161.36、cy 173.9616。
-       两颗翻页圆环的 cx/cy/直径必须逐像素一致（「返回」已不在这个公式里）。 */
-    {
-      const navW = api.menuNavLayout(api.stageSize());
-      const stepW = 133.2 + 28.16;
-      ok('宽屏翻页两颗的位置 / 直径和改动前**逐像素一致**（1280×720：cx = 640 ∓ 161.36、cy = 173.9616、Ø = 133.2）',
-        navW.length === 2
-        && Math.abs(navW[0].cx - (SW / 2 - stepW)) < 1e-6 && Math.abs(navW[1].cx - (SW / 2 + stepW)) < 1e-6
-        && Math.abs(navW[0].cy - 173.9616) < 1e-6 && Math.abs(navW[1].cy - 173.9616) < 1e-6
-        && Math.abs(navW[0].r * 2 - 133.2) < 1e-6,
-        JSON.stringify(navW.map((it) => ({ cx: it.cx, cy: it.cy, d: it.r * 2 }))));
-    }
-    api.flipMenuPage(1);
-    ok('第 2 页只剩最后 1 个动作：右上角「返回」仍在原位（不跟着翻走、位置也不跳）',
-      api.menuRingLayout(api.stageSize()).length === 1
-      && Math.abs(api.menuBackItem(api.stageSize()).cx - backLower.cx) < 1e-9
+    const gCore = api.menuBandGeom(api.stageSize());
+    ok('「核心」6 个动作**一页正好放完**（6 格）：6 个圆环同一行、cx 递增、不出现翻页圆环',
+      api.state.menuCategory === 'core' && api.menuPageInfo().pages === 1
+      && lv1a.length === 6 && api.menuNavLayout(api.stageSize()).length === 0
+      && lv1a.every((it) => Math.abs(it.cy - lv1a[0].cy) < 1e-9)
+      && lv1a.every((it, i) => i === 0 || it.cx > lv1a[i - 1].cx + 1)
+      && lv1a.every((it) => Math.abs(it.r * 2 - gCore.dia) < 1e-9),
+      `pages=${api.menuPageInfo().pages} n=${lv1a.length} Ø=${(lv1a[0].r * 2).toFixed(1)}`);
+    ok('第二级的圆环和第一级同尺寸（都在同一套格子里算）',
+      lv1a.every((it) => Math.abs(it.r - layout[0].r) < 1e-9 && Math.abs(it.nameSize - layout[0].nameSize) < 1e-9),
+      `${lv1a[0].r * 2}px vs ${layout[0].r * 2}px`);
+    ok('右上角「返回」在第一级 / 第二级 / 核心页都完全同坐标同尺寸（和动作页退出圆环一致）',
+      Math.abs(api.menuBackItem(api.stageSize()).cx - backLower.cx) < 1e-9
       && Math.abs(api.menuBackItem(api.stageSize()).cy - backLower.cy) < 1e-9
-      && Math.abs(api.menuBackItem(api.stageSize()).r - backLower.r) < 1e-9
-      && api.menuNavLayout(api.stageSize()).length === 2
-      && Math.abs(api.menuNavLayout(api.stageSize())[0].cy - 173.9616) < 1e-6,   // 翻页前后翻页圆环不跳
-      `n=${api.menuRingLayout(api.stageSize()).length} cy=${api.menuBackItem(api.stageSize()).cy} vs ${backLower.cy}`);
+      && Math.abs(api.menuBackItem(api.stageSize()).r - backLower.r) < 1e-9,
+      `${api.menuBackItem(api.stageSize()).cx},${api.menuBackItem(api.stageSize()).cy}`);
+    {
+      const allC = [...lv1a, api.menuBackItem(api.stageSize())];
+      const bad = [];
+      for (let i = 0; i < allC.length; i += 1) {
+        const a = allC[i];
+        if (a.cx - a.r < 0 || a.cx + a.r > SW || a.cy - a.r < 0 || a.cy + a.r > SH) bad.push(`${a.id}:出画`);
+        for (let j = i + 1; j < allC.length; j += 1) {
+          const b = allC[j];
+          if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < a.hit + b.hit) bad.push(`${a.id}↔${b.id}:判定圈重叠`);
+        }
+      }
+      ok('核心这一页的 6 个圆环 + 右上角「返回」都在画面里、判定圈互不重叠', bad.length === 0, bad.slice(0, 3).join(', '));
+    }
     api.state.menuPage = 0;
     api.selectFromMenu('back');
   }
@@ -5038,9 +5096,9 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   {
     const size = api.stageSize();
     const travel = api.MENU_SWIPE_TRAVEL * size.h;
-    // 用「窄屏」造出第二页（宽屏第一级 5 个分类正好一页）
+    // 用「更窄的屏」（320×700：2 列 × 2 行 = 4 格）造出 3 页，翻页圆环才出现
     const stageStub = stageEl;
-    stageStub.clientWidth = 400;
+    stageStub.clientWidth = 320;
     stageStub.clientHeight = 700;
     const sizeN = api.stageSize();
     const travelN = api.MENU_SWIPE_TRAVEL * sizeN.h;
@@ -5070,7 +5128,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     };
     api.state.menuPage = 0;
     api.renderMenu();
-    ok('窄屏下第一级分 2 页（准备翻页用）', api.menuPageInfo(sizeN).pages === 2);
+    ok('窄屏下第一级分 3 页（准备翻页用）', api.menuPageInfo(sizeN).pages === 3);
 
     let t = 70000;
     doubleSwipe(-1, t);
@@ -5078,7 +5136,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     t += 1000;
     const upDir = doubleSwipe(-1, t);
     ok('双手同时**向上**挥两次 → 上一页（在第 1 页往前翻 = 循环到最后一页）',
-      upDir === -1 && api.state.menuPage === 1, `dir=${upDir} page=${api.state.menuPage}`);
+      upDir === -1 && api.state.menuPage === 2, `dir=${upDir} page=${api.state.menuPage}`);
 
     api.state.menuPage = 0;
     api.renderMenu();
@@ -5165,7 +5223,8 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       const below = toN(xCol, sizeN.h * 0.98);               // 环外（下方）
       const through = toN(xCol, throughY);                   // 第二行圆环的正中间（穿过）
       ok('（准备）这条挥手路线确实会穿过一个圆环',
-        api.menuRingLayout(sizeN).some((it) => Math.hypot(xCol - it.cx, throughY - it.cy) <= it.hit),
+        [...api.menuRingLayout(sizeN), ...api.menuNavLayout(sizeN)]
+          .some((it) => Math.hypot(xCol - it.cx, throughY - it.cy) <= it.hit),
         `through=(${Math.round(xCol)},${Math.round(throughY)})`);
       const frames = [
         [below, t],                 // 起手：在环外（立参考点）
@@ -5183,7 +5242,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
         if (act && act.kind === 'page') api.flipMenuPage(act.dir);
       }
     }
-    ok('挥的路线穿过圆环那一片也算（只要立参考点时两只手在环外）', api.state.menuPage === 1,
+    ok('挥的路线穿过圆环那一片也算（只要立参考点时两只手在环外）', api.state.menuPage === 2,
       `page=${api.state.menuPage}`);
 
     // 恢复宽屏
@@ -5297,7 +5356,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
       && api.state.menuCategory === cat17.catId && api.state.menuPage === 0
       && api.menuRingLayout(api.stageSize()).every((it) => it.kind === 'exercise')
       && api.menuBackItem(api.stageSize()).kind === 'back'
-      && api.menuPageInfo().pages === Math.ceil(api.menuPageInfo().total / 5),
+      && api.menuPageInfo().pages === Math.ceil(api.menuPageInfo().total / api.menuPerPage()),
       `level=${api.state.menuLevel} cat=${api.state.menuCategory} total=${api.menuPageInfo().total} pages=${api.menuPageInfo().pages}`);
 
     const ex17 = api.menuRingLayout(api.stageSize()).find((it) => it.kind === 'exercise');
@@ -5321,8 +5380,8 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     const grid = elements.get('menuGrid');
     const ghost = elements.get('menuGridGhost');
     const menuEl2 = elements.get('gestureMenu');
-    // 用窄屏（400×700）造出第二页，才有翻页动画可看
-    stageEl.clientWidth = 400;
+    // 用窄屏（320×700：4 格 → 3 页）造出第二页，才有翻页动画可看
+    stageEl.clientWidth = 320;
     stageEl.clientHeight = 700;
     api.openMenu({ silent: true });            // 保证在菜单里（前一段真实主循环用例把菜单关掉了）
     api.state.menuLevel = 0;
@@ -5335,7 +5394,7 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
     perf.now = () => clock2;
 
     ok('菜单里有一个「残影」层用来播滑出动画（#menuGridGhost）',
-      !!ghost && typeof ghost.className === 'string' && api.menuPageInfo().pages === 2);
+      !!ghost && typeof ghost.className === 'string' && api.menuPageInfo().pages === 3);
 
     api.flipMenuPage(1);
     ok('翻到下一页：新一屏立刻换好（DOM 与状态同步，不等动画），并带上「整屏从右边滑进来」的类',

@@ -2190,8 +2190,14 @@ function retrySet() {
  *   鼠标点页码那一行、键盘 ← / →（或 PageUp / PageDown）同样能翻页。
  * ------------------------------------------------------------------ */
 
-/** 每行最多 5 个（用户要求「每一行最多 5 个圆环选项」） */
-const MENU_COLS = 5;
+/**
+ * 每行最多 **6** 个格子（用户要求：「把每个运动圆环的大小再进一步缩小，每行最多放 6 个圆环，
+ * 但是把『上一页』、『下一页』这两个圆环也放在这一行」）。
+ *
+ * 「格子」既可能是选项、也可能是翻页圆环：有分页时第一行两端各占一格（见 `menuNavLayout`），
+ * 中间才是选项 —— 所以有分页时这一页的选项数会少 2 个，`menuPerPage()` 一起跟着算。
+ */
+const MENU_COLS = 6;
 /** 宽屏每页只摆**一行**（用户要求「每页还是最多一行」）；窄屏另见 menuRowsFor() */
 const MENU_ROWS = 1;
 /**
@@ -2217,8 +2223,15 @@ const MENU_START_RATIO = 0.8;
 const MENU_NAV_HIT_RATIO = 1.0;
 /** 圆环直径的上限（真摆不下时会自动减列，见 MENU_CELL_MIN_PX） */
 const MENU_RING_MAX = 360;
-/** 一格至少要有的宽度：大圆环 + 一行名字才摆得下（不够就自动减列） */
-const MENU_CELL_MIN_PX = 170;
+/**
+ * 一格至少要有的宽度（不够就自动减列）。
+ *
+ * 从 170 收到 **120**：用户要求「每行最多放 6 个圆环」，而且**分页时翻页圆环也占这一行的格子**
+ * （一行 = `[上一页] + 选项 + [下一页]`，最多 6 格）—— 格子变多，直径自然跟着变小；
+ * 120px 这一档能保证 667×375 这类手机横屏也能排到 5 列（3 个选项 + 2 颗翻页），
+ * 不会掉到「一页只放得下 1 个」的地步（见 `menuCols` / `menuPerPage`）。
+ */
+const MENU_CELL_MIN_PX = 120;
 /**
  * 「上一页 / 下一页」圆环：按住多久翻一页。
  *
@@ -2290,7 +2303,7 @@ const MENU_SWIPE_QUIET = 0.12;
 const MENU_SWIPE_QUIET_MS = 130;
 
 /**
- * 菜单项：**两级**，每页最多 `MENU_COLS` 个（宽屏 5 个一行，用户要求）。
+ * 菜单项：**两级**，每页最多 `MENU_COLS` 个格子（宽屏 6 格一行；有分页时其中 2 格是翻页圆环）。
  *   第一级 `menuLevel === 0`：5 个分类（上肢 / 下肢 / 核心 / 全身 / 拉伸）；
  *   第二级 `menuLevel === 1`：当前分类下的动作。
  *
@@ -2335,14 +2348,35 @@ function menuCols(w) {
 /**
  * 摆几行：宽屏**只摆一行**（用户要求「每页还是最多一行」）；
  * 竖屏手机那种窄屏宽度只够 1~2 列，一行就只能放一两个，翻页太碎，所以窄屏放宽到两行。
+ * 真的窄到只剩 1 列时给三行 —— 不然「上一页 + 选项 + 下一页」连一行都排不开（见 menuPerPage）。
  */
 function menuRowsFor(size = stageSize()) {
-  return size.w < 620 ? 2 : MENU_ROWS;
+  if (size.w >= 620) return MENU_ROWS;
+  return menuCols(size.w) < 2 ? 3 : 2;
 }
 
-/** 这一页放几个：宽屏 5 个（5 列 × 1 行）；窄屏列数少了，一页也就少几个 */
+/** 这一页一共有几个**格子**（列 × 行；翻页圆环和选项共用同一套格子） */
+function menuPageCells(size = stageSize()) {
+  return menuCols(size.w) * menuRowsFor(size);
+}
+
+/**
+ * 翻页圆环占掉几个格子：**真的要翻页时**才占（有第二页 → 2 格：第一行最左、最右）。
+ *
+ * ⚠️ 要不要翻页只能由「选项总数 vs 格子数」决定 —— 不能反过来问 `menuPageInfo()`
+ * （它要靠 `menuPerPage()`，而 `menuPerPage()` 又要靠这里，会绕成递归）。
+ */
+function menuNavCells(size = stageSize()) {
+  return menuItems().length > menuPageCells(size) ? 2 : 0;
+}
+
+/**
+ * 这一页放几个**选项**：格子数 − 翻页圆环占的格子。
+ * 单页时翻页圆环不出现，整行都是选项（最多 6 个）；有分页时一行 = `[上一页] + 选项 + [下一页]`，
+ * 所以选项数比格子数少 2。
+ */
 function menuPerPage(size = stageSize()) {
-  return Math.max(1, menuCols(size.w) * menuRowsFor(size));
+  return Math.max(1, menuPageCells(size) - menuNavCells(size));
 }
 
 /** 当前这一层的分页信息（页码越界时夹回范围内） */
@@ -2354,16 +2388,16 @@ function menuPageInfo(size = stageSize()) {
   return { page, pages, total: n, per, from: page * per, to: page * per + per };
 }
 
-/** 有没有上一页 / 下一页（只有一页就不显示翻页圆环） */
+/** 有没有上一页 / 下一页（只有一页就不显示翻页圆环，页码那一行也不显示） */
 function menuHasPages(size = stageSize()) {
-  return menuPageInfo(size).pages > 1;
+  return menuNavCells(size) > 0;
 }
 
 /**
  * 选项区那一带的纵向 / 横向几何（**一处定义**：`menuRingLayout` 与 `menuNavLayout` 共用）。
  *
- * 用「最满的一页」（`rows = menuRowsFor(size)`）来算 —— 这样导航圆环的位置**不随翻页跳动**
- * （窄屏上一页可能是 1 行、另一页是 2 行，按当前页算的话导航会跟着上下跑）。
+ * 用「最满的一页」（`rows = menuRowsFor(size)`）来算 —— 这样圆环的位置**不随翻页跳动**
+ * （窄屏上一页可能是 1 行、另一页是 2 行，按当前页算的话整排会跟着上下跑）。
  */
 function menuBandGeom(size) {
   const narrow = size.w < 620;
@@ -2385,10 +2419,11 @@ function menuBandGeom(size) {
  * 直径与字号一起算：字号按直径走，圆环一大字就跟着大（用户反馈「圆环太小、字也太小」）。
  *
  * ⚠️ 列数只看屏幕宽度（不看这一页有几个），格子的高度按**最满的一页**算（`menuBandGeom`），
- * 这样**每一页的圆环都一样大、都在同一行高度上**，最后一页不满就整行居中（offset）。
+ * 这样**每一页的圆环都一样大、都在同一行高度上**，最后一页不满就整行居中。
  *
- * 导航圆环（上一页 / 下一页）**不占这里的宽度** —— 它们在选项**上方**那一条带子里
- * （见 `menuNavLayout()`）；「↩ 返回」则被摘到了右上角（`menuBackItem()`），所以 5 个选项能把整幅宽度用满。
+ * ⚠️ **有分页时第一行两端是「上一页 / 下一页」**（`menuNavLayout()` 摆那两颗），
+ * 选项只占第一行**中间**那几格、再往下按整行排；所以这一页的选项数 = 格子数 − 2。
+ * 「↩ 返回」被摘到了右上角（`menuBackItem()`），不占这里的格子。
  */
 function menuRingLayout(size) {
   const info = menuPageInfo(size);
@@ -2397,19 +2432,51 @@ function menuRingLayout(size) {
   if (!n) return [];
   const g = menuBandGeom(size);
   const cols = menuCols(size.w);
+  const rows = menuRowsFor(size);
   const dia = g.dia;
   const nameSize = clamp(dia * 0.15, 12, 40);
   // 运动图标改成实心象形图之后更有分量，也跟着放大一档（用户要求「更大气、上档次」）
   const iconSize = clamp(dia * 0.38, 18, 76);
+
+  /**
+   * 这一页的**选项格子**（按阅读顺序）。
+   *
+   * - 有分页、而且第一行排得下「上一页 + 选项 + 下一页」（cols ≥ 3）：第一行两端各让 1 格，
+   *   选项从第一行中间开始、再往下按整行排；
+   * - 第一行排不下（cols ≤ 2）：翻页圆环改按**整页**的首 / 末格摆（`menuNavLayout` 里同一个判断），
+   *   选项占中间那些格子 —— 2 列时就是「左上上一页、右上下拉下一页」，两行各有一个选项。
+   */
+  const nav = menuHasPages(size);
+  const nextAtRowEnd = cols > 2;
+  const rowsInfo = [];
+  for (let row = 0; row < rows; row += 1) {
+    const from = row === 0 && nav ? 1 : 0;
+    const end = row === 0 && nav && nextAtRowEnd ? cols - 1 : cols;
+    const lastRow = row === rows - 1;
+    const colList = [];
+    for (let col = from; col < end; col += 1) {
+      if (nav && !nextAtRowEnd && lastRow && col === cols - 1) continue;   // 右下角留给「下一页」
+      colList.push(col);
+    }
+    rowsInfo.push({ from, cols: colList });
+  }
+  const slots = [];
+  rowsInfo.forEach((ri, row) => ri.cols.forEach((col, k) => slots.push({ row, col, k })));
+  /** 每行实际分到几个选项：不满就把这一行的选项在**这一行的格子带里居中** */
+  const counts = new Map();
+  slice.forEach((_, i) => {
+    const s = slots[i];
+    if (s) counts.set(s.row, (counts.get(s.row) || 0) + 1);
+  });
   return slice.map((it, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const inRow = Math.min(cols, n - row * cols);          // 最后一行可能不满
-    const offset = ((cols - inRow) * g.cellW) / 2;         // 不满就整行居中
+    const s = slots[i] || { row: 0, col: 0, k: 0 };
+    const ri = rowsInfo[s.row] || { from: 0, cols: [0] };
+    const count = counts.get(s.row) || 1;
+    const lead = ri.from + (ri.cols.length - count) / 2;
     return {
       ...it,
-      cx: g.padX + offset + g.cellW * (col + 0.5),
-      cy: g.top + g.cellH * (row + 0.5),
+      cx: g.padX + g.cellW * (lead + s.k + 0.5),
+      cy: g.top + g.cellH * (s.row + 0.5),
       r: dia / 2,
       hit: (dia / 2) * MENU_HIT_RATIO,
       start: (dia / 2) * MENU_START_RATIO,
@@ -2420,54 +2487,41 @@ function menuRingLayout(size) {
 }
 
 /**
- * 常驻的**翻页圆环**：选项那一行**正上方**、以舞台中线为轴左右对称的两颗 ——
- * `[◀ 上一页] [下一页 ▶]`。
+ * 翻页圆环：**有分页时放进选项那一行**（用户要求：「把『上一页』、『下一页』这两个圆环也放在这一行」）。
  *
- * ⚠️ 用户最新要求（「上一页和下一页的位置不要动，仅仅移动退出圆环」）：
- * 这两颗的 **cx / cy / 直径 / 字号 / 蓄力时间一律维持原样** —— 公式与参数一个字都没改，
- * 只是把原来夹在中间那颗「↩ 返回」摘出去放到右上角（见 `menuBackItem()`）。
- * 所以：
- *   - 直径仍是 `min(宽,高) × 18.5%`（下限 96 / 窄屏 64，封顶 200），**不跟** `--ring-px` 走；
- *   - 「上一页」在中线左侧 `step`、「下一页」在右侧 `step`（`step = 直径 + 间距`），
- *     和改动前「三颗并排居中」时前后两颗的坐标**逐像素一致**（那时 mid = 1，i = 0 / 2 →
- *     `w/2 ∓ step`）；中间那颗的槽位空着，而不是把两颗挤向中间。
+ * 位置：`[◀ 上一页]` 在第一行第一格，`[下一页 ▶]` 在第一行最后一格 —— 整行就是
+ * `[上一页] + 选项 + [下一页]`，**格子总数 ≤ `MENU_COLS`（6）**，和选项同一套直径 / 字号；
+ * 只有 2 列时第一行排不下三样东西，改成按**整页**首 / 末格摆（左上 = 上一页、右下 = 下一页），
+ * 和 `menuRingLayout()` 里 `nextAtRowEnd` 的判断是同一个。
  *
- * 历史（别走回头路）：曾经是 `[上一页] [返回] [下一页]` 三颗并排居中（「返回」在中间）；
- * 用户后来的要求是「退出 / 返回圆环在所有界面都固定在右上角、大小一致」，于是「返回」被摘到
- * 右上角，和动作页的退出圆环共用 `exitRingLayout()`。
+ * 没有第二页时这两颗根本不出现（单页不显示、页码那一行也不显示）。
+ *
+ * 历史：它们曾经单独占选项**上方**一条带子、以舞台中线为轴对称（三颗并排居中，返回在中间），
+ * 后来「返回」被摘到右上角（`menuBackItem()`），再后来用户要求把这两颗也并入选项行 —— 现在就是这一版。
+ * 判定 / 起手半径和选项同一套常量（`MENU_NAV_HIT_RATIO` / `MENU_START_RATIO`），并和绘制同源。
  */
 function menuNavLayout(size) {
-  const narrow = size.w < 620;
-  const d = clamp(Math.min(size.w, size.h) * 0.185, narrow ? 64 : 96, 200);
-  const r = d / 2;
-  const nameSize = clamp(d * 0.21, 12, 26);
-  // 导航圆环里**只有图标、没有文字**（用户要求），所以图标可以画得更大
-  const iconSize = clamp(d * 0.62, 30, 78);
-  const gap = clamp(size.w * 0.022, 12, 44);
-  /**
-   * 纵向位置：夹在「标题 / 页码那一块」和「选项那一行的上边缘」中间。
-   * 上边缘按**最满的一页**算（`menuBandGeom`），所以翻页时导航圆环不会上下跳。
-   */
-  const g = menuBandGeom(size);
-  const optTopEdge = g.top + (g.cellH - g.dia) / 2;
-  const headerBottom = size.h * 0.14;
-  const cy = clamp((headerBottom + optTopEdge) / 2, r + 4, optTopEdge - 6 - r);
-  /** 只有真有第二页时这两颗才出现（「返回」在右上角，一直都有） */
   if (!menuHasPages(size)) return [];
-  const step = r * 2 + gap;
-  /** 中线两侧各一颗：`side = -1` = 上一页、`+1` = 下一页 */
+  const g = menuBandGeom(size);
+  const cols = menuCols(size.w);
+  const rows = menuRowsFor(size);
+  const dia = g.dia;
+  const r = dia / 2;
+  // 导航圆环里**只有图标、没有文字**（用户要求），所以图标可以画得更大
+  const iconSize = clamp(dia * 0.62, 30, 78);
+  const nextRow = cols > 2 ? 0 : rows - 1;
   return [
-    ['page:prev', 'prev', -1, t('menu.prev'), -1],
-    ['page:next', 'next', 1, t('menu.next'), 1],
-  ].map(([id, kind, dir, name, side]) => ({
+    ['page:prev', 'prev', -1, t('menu.prev'), 0, 0],
+    ['page:next', 'next', 1, t('menu.next'), nextRow, cols - 1],
+  ].map(([id, kind, dir, name, row, col]) => ({
     // 箭头也改成**线条画**的（`navPoseSVG`），不再用字体里的 ◀ ▶ ↩ —— 字形风格和线条图标不一致
     id, kind, dir, name, icon: '', poseIcon: navPoseSVG(kind), sub: '',
-    cx: size.w / 2 + side * step,
-    cy,
+    cx: g.padX + g.cellW * (col + 0.5),
+    cy: g.top + g.cellH * (row + 0.5),
     r,
     hit: r * MENU_NAV_HIT_RATIO,
     start: r * MENU_START_RATIO,
-    nameSize,
+    nameSize: clamp(dia * 0.21, 12, 26),
     iconSize,
   }));
 }
@@ -5751,6 +5805,8 @@ window.__mfg = {
   libIconSVG, setRingIcon, pawSVG, renderPaws, pawsWanted, updatePaws,
   updateMenu, flipMenuPage, menuPageInfo, menuPerPage, menuHasPages, menuNavLayout, menuCols,
   menuRingLayout, menuItems, menuItemEl, menuCategoryName, paintMenuRing, requestStageFullscreen,
+  // 每页格子数 / 翻页圆环占的格子（「每行最多 6 格，翻页圆环也是这一行的格子」）
+  menuPageCells, menuNavCells,
   // 全屏降级链：标准 requestFullscreen → webkitRequestFullscreen → iPhone 的 CSS 伪全屏
   pickFullscreenMode, fullscreenCaps, pseudoFullscreenOn, setPseudoFullscreen, exitFullscreen,
   stageFullscreenOn, toggleStageFullscreen, PSEUDO_FS_CLASS,
