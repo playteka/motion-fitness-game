@@ -79,6 +79,9 @@ for (const lang of langs) {
   const same = Object.entries(keyed[lang]).filter(([k, v]) => typeof v === 'string'
     && typeof keyed.zh[k] === 'string'
     && v === keyed.zh[k]
+    // 只有「值里真的含中日韩字符」才算照抄中文：纯标识符（navigator.mediaDevices 之类）
+    // 中英本来就该一模一样，不该被判成未翻译。
+    && /[\u3400-\u9fff\uf900-\ufaff]/.test(v)
     && v.replace(/[\s\p{Emoji}\p{Sc}\d{}%°×/·.,:;!?()「」（）]/gu, '').length >= 4);
   ok(`${lang}.js 没有未翻译的整句`, same.length === 0,
     same.slice(0, 6).map(([k]) => k).join(', ') + (same.length > 6 ? ` …共 ${same.length} 条` : ''));
