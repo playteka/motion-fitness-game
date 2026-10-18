@@ -63,7 +63,6 @@ export const GATE_GRACE_MS = 400;
  */
 export const KNEE_PUSHUP_SETUP = {
   hip: [160, 180],
-  knee: [70, 110],
   hipAboveKnee: [0.25, null],
   shoulderAboveHip: [0.25, null],
   kneeClear: [null, 0.35],
@@ -131,7 +130,9 @@ export const GATE_LIMITS = {
     armRaised: [null, 0.45],
   },
   /**
-   * 跪撑（**跪姿俯卧撑**：退阶俯卧撑）—— 第一帧「跪撑」的五条判据，见 `KNEE_PUSHUP_SETUP`。
+   * 跪撑（**跪姿俯卧撑**：退阶俯卧撑）—— 第一帧「跪撑」的四条判据，见 `KNEE_PUSHUP_SETUP`。
+ * 用户要求「去掉膝盖 90 度的要求」：真实跪撑小腿贴地时膝角会读到 140~150°，
+ * 卡 90° 反而永远进不了姿势 —— 所以膝角不再是判据（画面上仍会标出来供参考）。
    *
    * 为什么不复用 `proneUpright`：那一条要求「躯干接近水平（`torsoIncl ≥ 32°`）」，
    * 而跪撑的躯干可以立在任意角度（直背只要求**髋角** ≈180°，不要求躯干水平）。
@@ -140,7 +141,7 @@ export const GATE_LIMITS = {
    * 与旧版的区别（为什么换）：旧版判的是「大腿与躯干**折起来**（髋 ≤158°）」，
    * 而用户给的跪撑模型是「躯干与大腿近乎**一条线**（髋 ≈180°）」—— 正好相反。
    * 两条同时留着必然自相矛盾（门控过了、第一帧判不过），所以整条门控改成新模型，
-   * 并且**五条判据全部集中在 `KNEE_PUSHUP_SETUP` 里**（判定 / 显示 / 计分都读它）。
+   * 并且**四条判据全部集中在 `KNEE_PUSHUP_SETUP` 里**（判定 / 显示 / 计分都读它）。
    *
    * 为什么这五条能把别的动作挡住（前四条都是「身体自己跟自己比」的量，与机位距离无关）：
    *   - 站立：膝角 ≈178° → 卡在 `knee ∈ [70,110]`；膝离地 ≈0.84×躯干长 → 卡在 `kneeClear`；
@@ -282,9 +283,8 @@ export const GATES = {
   /** 俯撑（**不看地面线**：俯卧撑 / 登山者）—— 见 GATE_LIMITS.proneUpright 的说明 */
   proneUpright: (f) => inLimit(f.torsoIncl, GATE_LIMITS.proneUpright.torsoIncl)
     && inLimit(f.armRaised, GATE_LIMITS.proneUpright.armRaised),
-  /** 跪撑（跪姿俯卧撑）—— 第一帧「跪撑」的五条判据，见 `KNEE_PUSHUP_SETUP` / `GATE_LIMITS.kneelPushup` */
+  /** 跪撑（跪姿俯卧撑）—— 第一帧「跪撑」的四条判据，见 `KNEE_PUSHUP_SETUP` / `GATE_LIMITS.kneelPushup` */
   kneelPushup: (f) => inLimit(f.hipAngle, GATE_LIMITS.kneelPushup.hip)
-    && inLimit(f.kneeAngle, GATE_LIMITS.kneelPushup.knee)
     && inLimit(f.hipAboveKnee, GATE_LIMITS.kneelPushup.hipAboveKnee)
     && inLimit(f.shoulderAboveHip, GATE_LIMITS.kneelPushup.shoulderAboveHip)
     && inLimit(f.kneeClear, GATE_LIMITS.kneelPushup.kneeClear),

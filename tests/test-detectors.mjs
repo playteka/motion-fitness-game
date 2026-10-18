@@ -898,7 +898,6 @@ console.log('\n[3b] 跪姿俯卧撑（退阶俯卧撑）');
     /** 判据名（弹窗里的名字）→ 帧上的字段名 */
     const FIELD = {
       hip: 'hipAngle',
-      knee: 'kneeAngle',
       hipAboveKnee: 'hipAboveKnee',
       shoulderAboveHip: 'shoulderAboveHip',
       kneeClear: 'kneeClear',
@@ -910,12 +909,13 @@ console.log('\n[3b] 跪姿俯卧撑（退阶俯卧撑）');
       + `kneeClear=${f.kneeClear.toFixed(2)}`;
 
     const kneel = frameOf(kneelPose(170));
-    ok('跪撑：髋角 ≈180°、膝角 ≈90°、髋比膝高、肩比髋高、膝盖着地 —— 五条判据在真实帧上同时成立',
-      GATES.kneelPushup(kneel) === true && holds(kneel, Object.keys(FIELD)), detail(kneel));
-    ok('跪撑：这五条就是 GATE_LIMITS.kneelPushup 这一张表（判定与显示不会各写一套阈值）',
+    ok('跪撑：髋角 ≈180°、髋比膝高、肩比髋高、膝盖着地 —— 四条判据在真实帧上同时成立（膝角不再参与判定）',
+      GATES.kneelPushup(kneel) === true
+      && holds(kneel, ['hip', 'hipAboveKnee', 'shoulderAboveHip', 'kneeClear']), detail(kneel));
+    ok('跪撑：这四条就是 GATE_LIMITS.kneelPushup 这一张表（判定与显示不会各写一套阈值），且**没有 knee 这一条**',
       GATE_LIMITS.kneelPushup === KNEE_PUSHUP_SETUP
+      && !('knee' in KNEE_PUSHUP_SETUP)
       && KNEE_PUSHUP_SETUP.hip[0] === 160 && KNEE_PUSHUP_SETUP.hip[1] === 180
-      && KNEE_PUSHUP_SETUP.knee[0] === 70 && KNEE_PUSHUP_SETUP.knee[1] === 110
       && KNEE_PUSHUP_SETUP.hipAboveKnee[0] === 0.25 && KNEE_PUSHUP_SETUP.hipAboveKnee[1] === null
       && KNEE_PUSHUP_SETUP.shoulderAboveHip[0] === 0.25 && KNEE_PUSHUP_SETUP.kneeClear[1] === 0.35,
       JSON.stringify(KNEE_PUSHUP_SETUP));
@@ -924,12 +924,18 @@ console.log('\n[3b] 跪姿俯卧撑（退阶俯卧撑）');
     const folded = frameOf(kneelPose(170, { torsoUp: 55 }));
     ok('髋不直（≈120°，背没成一条线）→ 跪撑不成立（只卡髋角这一条）',
       GATES.kneelPushup(folded) === false && fails(folded, 'hip')
-      && holds(folded, ['knee', 'hipAboveKnee', 'shoulderAboveHip', 'kneeClear']), detail(folded));
+      && holds(folded, ['hipAboveKnee', 'shoulderAboveHip', 'kneeClear']), detail(folded));
 
-    // ③ 膝不弯（≈170°，腿伸直了）
-    const straight = frameOf(kneelPose(170, { knee: 170 }));
-    ok('膝盖不弯（≈170°，腿伸直）→ 跪撑不成立（卡膝角这一条）',
-      GATES.kneelPushup(straight) === false && fails(straight, 'knee'), detail(straight));
+    // ③ 膝角不再参与判定（用户要求「去掉膝盖 90 度的要求」）：
+    //    同一组姿势只改膝角（90° vs 170°），门控结论必须**完全一致** —— 这才证明膝角不影响判定。
+    // 只改帧里的 kneeAngle 这个**数**（其它指标原封不动），门控结论必须完全一致 ——
+    // 这样才干净地证明「膝角已不参与判定」，不会被姿态几何的连带变化干扰。
+    const base = frameOf(kneelPose(170));
+    const kneeVar = { ...base, kneeAngle: 170 };
+    ok('膝角 90° 与 170° 只差一个数时，门控结论**完全相同**（膝角已不参与判定），且判据表里没有 knee',
+      GATES.kneelPushup(base) === GATES.kneelPushup(kneeVar)
+      && !('knee' in GATE_LIMITS.kneelPushup),
+      'base=' + GATES.kneelPushup(base) + ' knee170=' + GATES.kneelPushup(kneeVar));
 
     // ④ 髋低于膝
     const hipLow = frameOf(kneelPose(170, { thighUp: 20, torsoUp: -160 }));
@@ -943,7 +949,7 @@ console.log('\n[3b] 跪姿俯卧撑（退阶俯卧撑）');
     const kneeUp = frameOf(kneelPose(170, { hip: { x: 0.78, y: 0.5 } }), { groundY: 0.92 });
     ok('膝盖离地 → 跪撑不成立（只卡「膝盖着地」这一条）',
       GATES.kneelPushup(kneeUp) === false && fails(kneeUp, 'kneeClear')
-      && holds(kneeUp, ['hip', 'knee', 'hipAboveKnee', 'shoulderAboveHip']), detail(kneeUp));
+      && holds(kneeUp, ['hip', 'hipAboveKnee', 'shoulderAboveHip']), detail(kneeUp));
 
     // ⑤ 完全不是这个动作：站着 / 标准俯撑
     const stand = frameOf(standingPose({ knee: 178, lean: 6, armDown: 0, ankleX: 1.0, view: 'side' }));

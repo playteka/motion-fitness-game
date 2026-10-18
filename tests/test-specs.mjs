@@ -222,18 +222,19 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
     });
     const sameItem = (a, b) => a.labelKey === b.labelKey && a.metricKey === b.metricKey
       && a.op === b.op && a.value === b.value && a.value2 === b.value2 && a.unit === b.unit;
-    ok('跪姿俯卧撑：第一格「跪撑」的五条判据逐条等于 KNEE_PUSHUP_SETUP（判定 / 显示同一张表）',
+    ok('跪姿俯卧撑：第一格「跪撑」的四条判据逐条等于 KNEE_PUSHUP_SETUP（判定 / 显示同一张表）',
       EXERCISE_MAP.kneePushup.params.gate === 'kneelPushup'
-      && poseItems.length === 5 && expectItems.every((e) => poseItems.some((it) => sameItem(it, e))),
+      && poseItems.length === 4 && expectItems.every((e) => poseItems.some((it) => sameItem(it, e))),
       JSON.stringify(poseItems.map((it) => `${it.metricKey}:${it.op}:${it.value}${it.value2 ?? ''}`)));
     ok('跪姿俯卧撑：门控里**没有**「躯干倾角 ≥32°」那一条（跪撑的躯干可以立着，直背靠髋角判）',
       !itemsOf('kneePushup').some((it) => it.metricKey === 'metric.torsoIncl'),
       JSON.stringify(itemsOf('kneePushup').map((it) => it.metricKey)));
     /** 界面上真的写出来的那几行（数字 = 常量，文案 = 词条） */
     const kneeRows = specTextRows('kneePushup').map((r) => r.cond);
-    ok('跪姿俯卧撑：弹窗里写的就是 160°–180° / 70°–110° / 0.25 / 0.35（能追溯到常量）',
+    // 用户要求「去掉膝盖 90 度的要求」→ 膝关节角度这一条不该再出现在判据里
+    ok('跪姿俯卧撑：弹窗里写的就是 160°–180° / 0.25 / 0.35（能追溯到常量），且**不再有膝关节角度**',
       kneeRows.includes('髋关节角度 160°–180°')
-      && kneeRows.includes('膝关节角度 70°–110°')
+      && !kneeRows.some((r) => /膝关节角度/.test(r))
       && kneeRows.includes('髋比膝高 ≥ 0.25×小腿长')
       && kneeRows.includes('肩高于髋 ≥ 0.25×躯干长')
       && kneeRows.includes('膝离地高度 ≤ 0.35×躯干长'),
