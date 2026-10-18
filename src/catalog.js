@@ -143,10 +143,10 @@ export const EXERCISES = [
    *   ① **门槛整体放宽**：计次线比标准俯卧撑（比自己顶位弯 30% ≈ 148°）再松 7°
    *      （`looseP` 0.20 ≈ **155°**）—— 上肢力量弱的人弯不了那么深也能计上；
    *      满分深度也跟着变浅（`bottomP` 0.50 ≈ 133°，跪姿本来就压不了那么低）。
-   *   ② **门控换成 `kneelPushup`**：标准俯卧撑用的 `proneUpright` 要求「躯干接近水平 ≥32°」，
-   *      而跪姿时大腿折向地面、上身立得更直（`torsoIncl` 更小），照搬那条会**永远进不了姿势**。
-   *      新的门控只看「大腿与躯干折起来了（髋角 ≤165°）+ 膝盖确实跪在地上 + 手没举过肩」，
-   *      见 engines.js 的 GATE_LIMITS.kneelPushup。
+   *   ② **门控换成 `kneelPushup`**，判的就是用户给的**第一帧「跪撑」**（见 engines.js 的
+   *      `KNEE_PUSHUP_SETUP`）：**髋角 ≈180°（直背）+ 膝角 ≈90° + 髋比膝高 + 肩比髋高 + 膝盖着地**。
+   *      标准俯卧撑的 `proneUpright` 要求「躯干接近水平 ≥32°」，跪撑的躯干可以立在任意角度，
+   *      照搬那条会**永远进不了姿势**（用户反馈过的老坑），所以跪姿单独一条门控。
    */
   e('kneePushup', '🧎', 'upper', {
     plan: 'kneePushup', posture: 'prone', judge: 'elbow', target: 12,

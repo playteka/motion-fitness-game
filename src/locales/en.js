@@ -258,7 +258,7 @@ export default {
       // Crunch: the starting pose is "lie down with knees bent" (different from the bridge / leg raise start)
       crunchLying: 'Lie on the mat with your knees bent: trunk flat (tilt about 90°), knees bent to about 90°, feet planted',
       quadruped: 'Get on all fours: hands and knees on the floor',
-      kneelPushup: 'Set up the kneel: knees on the floor, hands right under your shoulders',
+      kneelPushup: 'Set up the kneel: knees on the floor, knee-to-shoulder in one line (hip ≈180°), knees bent ≈90°, hands under your shoulders',
       kneel: 'Kneel down: knees on the floor, torso tall',
       seated: 'Sit down on the mat and set up for the move',
       side: 'Lie on your side toward the camera, resting on your forearm',
@@ -424,8 +424,8 @@ export default {
     /**
      * Knee Push-up (a regression of the push-up, added at the user's request): the counting line is
      * looser than the standard push-up (155° vs 148°) and it does **not** require a near-horizontal
-     * trunk (in a kneel the thighs fold to the floor and the torso sits more upright) — see kneePushup
-     * in catalog.js.
+     * trunk (the straight back of the kneel is judged by the hip angle ≈180°, not by the trunk tilt) —
+     * see kneePushup in catalog.js.
      */
     kneePushup: {
       name: 'Knee Push-up',
@@ -570,7 +570,7 @@ export default {
     /* Knee push-up (the easier version): the same four steps as the push-up, with looser lines */
     kneePushup: {
       setup: {
-        label: 'Kneel and prop: hands under your shoulders, knees on the floor',
+        label: 'Kneel: one line from knee to shoulder (hip ≈180°), knees bent to ≈90°, knees on the floor',
         pose: 'Get into the kneel first: knees on the floor, hands right under your shoulders',
         straight: 'Straighten your arms and keep one line from your knees to your shoulders',
       },
@@ -1026,8 +1026,8 @@ export default {
       standUpright: 'Standing upright (no floor line needed)',
       // Push-up / mountain climber gate: same idea as the upright stance, avoiding the floor line
       proneUpright: 'Push-up position (no floor line needed)',
-      // Knee push-up: a kneel with the hands propped — it does NOT require a near-horizontal trunk
-      kneelPushup: 'Kneeling prop position (knees down, trunk may stay upright)',
+      // Knee push-up: kneeling prop (knees on the floor + straight back hip ≈180° + knee ≈90° + hips above knees + shoulders above hips)
+      kneelPushup: 'Kneeling prop (hip ≈180°, knees ≈90°, knees on the floor, shoulders above hips)',
       standWide: 'Standing, legs apart',
       prone: 'Push-up position',
       supine: 'Lying on your back, knees bent',

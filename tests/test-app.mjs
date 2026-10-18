@@ -702,9 +702,12 @@ console.log('\n[1b] 运动设定弹窗（入口在主页、两步流程）');
       `${(kneeHtml.match(/spec-row spec-kf/g) || []).length} 格`);
     ok('跪姿俯卧撑：计次线（≤155°）与满分深度（≤133°）都列在关键帧上',
       kneeRaw.includes('155') && kneeRaw.includes('133'), kneeRaw.slice(0, 400));
-    ok('跪姿俯卧撑：门控写的是「跪撑」（髋角 50°–158° + 髋比膝高 + 手没举过肩），没有「躯干倾角 ≥ 32°」',
-      kneeRaw.includes('跪撑') && kneeRaw.includes('髋比膝高') && kneeRaw.includes('50') && kneeRaw.includes('158')
-      && !kneeRaw.includes('躯干倾角 ≥ 32'), kneeRaw.slice(0, 400));
+    ok('跪姿俯卧撑：第一格「跪撑」列的是用户给的五条判据（髋 160°–180° / 膝 70°–110° / 髋比膝高 / 肩高于髋 / 膝离地）',
+      kneeRaw.includes('跪撑') && kneeRaw.includes('髋关节角度 160°–180°')
+      && kneeRaw.includes('膝关节角度 70°–110°') && kneeRaw.includes('髋比膝高')
+      && kneeRaw.includes('肩高于髋') && kneeRaw.includes('膝离地高度 ≤ 0.35×躯干长')
+      && !kneeRaw.includes('躯干倾角 ≥ 32') && !kneeRaw.includes('50°–158°'),
+      kneeRaw.slice(0, 600));
     ok('跪姿俯卧撑：分数的分配与 stagePoints 一致（5 / 7 / 14 / 8 + 满轮 6 = 40）',
       ['+5', '+7', '+14', '+8'].every((x) => kneeRaw.includes(x))
       && kneeRaw.includes('+6 整轮满分') && kneeRaw.includes('每轮 40 分'),

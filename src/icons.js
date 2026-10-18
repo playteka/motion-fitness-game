@@ -572,7 +572,8 @@ export function poseFor(stage, ctx = {}) {
      * 跪姿俯卧撑的起始格「**跪撑**」：掌撑地、髋部较高、膝盖落在地面线上。
      *
      * 不能落到下面的通用 prone 分支 —— 那画的是标准俯卧撑的直臂俯撑（身体绷直、腿伸直），
-     * 而跪姿的要点恰恰是**大腿折下去、膝盖着地**（识别的门控判的也是这个，见 engines.js 的 kneelPushup）。
+     * 而跪姿的要点是**膝盖弯着跪在地上、手撑在肩下**（判据见 engines.js 的 KNEE_PUSHUP_SETUP：
+     * 膝角 ≈90° + 膝盖着地 + 髋比膝高 + 肩比髋高 + 髋角 ≈180°）。
      */
     if (ctx.plan === 'kneePushup') return kneelPushupPose();
     // 仰卧抬腿这类「躺平、腿伸直」的动作：起始格必须画**躺平 + 腿伸直**（≈180°），

@@ -13,7 +13,7 @@ import {
   computeFrame, PERSON_VIS_MEAN, PERSON_VIS_MIN, PERSON_VIS_SLACK, PERSON_MIN_TORSO,
 } from '../src/metrics.js';
 import { createDetector, BRIDGE } from '../src/exercises.js';
-import { GATES, GATE_LIMITS, inLimit, PoseHoldDetector } from '../src/engines.js';
+import { GATES, GATE_LIMITS, KNEE_PUSHUP_SETUP, inLimit, PoseHoldDetector } from '../src/engines.js';
 import { specStages, stageHolds } from '../src/specs.js';
 import { EXERCISES } from '../src/catalog.js';
 import {
@@ -833,18 +833,28 @@ console.log('\n[3] 俯卧撑计数（只判肘角）');
  *
  * 判据与标准俯卧撑**完全是同一套**（通用屈伸引擎、只判肘角），只有两点不同：
  *   ① 门槛整体放宽（计次线 155° vs 标准 148°）；
- *   ② 门控换成 `kneelPushup` —— 标准俯卧撑的 `proneUpright` 要求「躯干接近水平 ≥32°」，
- *      而跪姿时大腿折向地面、上身立得更直，照搬那条会**永远进不了姿势**（下面有断言钉住这一点）。
+ *   ② 门控换成 `kneelPushup` —— **第一帧「跪撑」的五条判据**（用户给的模型）：
+ *      髋角 ≈180°（直背）+ 膝角 ≈90° + 髋比膝高 + 肩比髋高 + 膝盖着地
+ *      （engines.js 的 KNEE_PUSHUP_SETUP，同时就是 GATE_LIMITS.kneelPushup）。
+ *      标准俯卧撑的 `proneUpright` 要求「躯干接近水平 ≥32°」，跪撑的躯干可以立着，
+ *      照搬那条会**永远进不了姿势**（下面有断言钉住这一点）。
  * ------------------------------------------------------------------ */
 
 console.log('\n[3b] 跪姿俯卧撑（退阶俯卧撑）');
 {
   /**
-   * 跪撑：膝盖着地、髋部较高、双手撑在肩下方。
-   * 用 supinePose 拼（`thighUp` 175 = 大腿几乎竖直向下 → 膝盖落到地面；`torsoUp` 20 = 上身立着）。
+   * 跪撑：**用户给的第一帧判据**（见 engines.js 的 KNEE_PUSHUP_SETUP）——
+   * 髋角 ≈180°（躯干与大腿近乎一条线 = 直背）、膝角 ≈90°（小腿与大腿近乎垂直）、
+   * 髋比膝高、肩比髋高、膝盖着地。
+   *
+   * 用 supinePose 拼（通用构建器：髋位置 + 大腿朝向 + 膝角 + 躯干朝向）：
+   *   `thighUp 175` = 髋→膝 几乎竖直向下（膝盖落到地面那一带）；
+   *   `torsoUp -5`  = 髋→肩 接着大腿那条线往上 → 髋角 **180°**；
+   *   `knee 90`     = 小腿与大腿成直角。
+   * （旧模型是 `torsoUp 20` + `knee 100` → 髋角只有 155°，那是「大腿折起来」，和用户的判据相反。）
    */
-  const kneelPose = (elbow) => supinePose({
-    hip: { x: 0.78, y: 0.62 }, thighUp: 175, knee: 100, torsoUp: 20, armDown: 0, elbow,
+  const kneelPose = (elbow, o = {}) => supinePose({
+    hip: { x: 0.78, y: 0.62 }, thighUp: 175, knee: 90, torsoUp: -5, armDown: 0, elbow, ...o,
   });
   /** 一次跪姿俯卧撑：肘角从 topElbow 弯到 botElbow 再回来 */
   const kneelMix = (botElbow, topElbow = 170) => (p) => kneelPose(lerp(topElbow, botElbow, Math.sin(Math.PI * p)));
@@ -878,26 +888,71 @@ console.log('\n[3b] 跪姿俯卧撑（退阶俯卧撑）');
   }
   {
     /**
-     * **门控**：跪撑要过得了，而不是靠「躯干接近水平」。
-     * 这里直接拿合成帧喂两个门控对比 —— 跪姿的 `torsoIncl` 只有 20°，
-     * 标准俯卧撑那条 `proneUpright`（要求 ≥32°）会把它拦住（用户反馈过的老坑）。
+     * **第一帧「跪撑」的五条判据**（用户给的模型）：标准跪撑要过，而且五条各自都要成立；
+     * 每一条单独被破坏（髋不直 / 膝不弯 / 髋低于膝 / 肩低于髋 / 膝离地）都要被拦住 ——
+     * 判的就是 `GATE_LIMITS.kneelPushup` 这一张表（= KNEE_PUSHUP_SETUP，判定与显示同一份）。
      */
-    const frameOf = (lm) => computeFrame(
-      toMetric(lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT), null, 0, false, null,
+    const frameOf = (lm, calib = null) => computeFrame(
+      toMetric(lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT), calib, 0, false, null,
     );
+    /** 判据名（弹窗里的名字）→ 帧上的字段名 */
+    const FIELD = {
+      hip: 'hipAngle',
+      knee: 'kneeAngle',
+      hipAboveKnee: 'hipAboveKnee',
+      shoulderAboveHip: 'shoulderAboveHip',
+      kneeClear: 'kneeClear',
+    };
+    const fails = (f, key) => !inLimit(f[FIELD[key]], KNEE_PUSHUP_SETUP[key]);
+    const holds = (f, keys) => keys.every((key) => !fails(f, key));
+    const detail = (f) => `hip=${f.hipAngle.toFixed(1)} knee=${f.kneeAngle.toFixed(1)} `
+      + `hipAboveKnee=${f.hipAboveKnee.toFixed(2)} shoulderAboveHip=${f.shoulderAboveHip.toFixed(2)} `
+      + `kneeClear=${f.kneeClear.toFixed(2)}`;
+
     const kneel = frameOf(kneelPose(170));
+    ok('跪撑：髋角 ≈180°、膝角 ≈90°、髋比膝高、肩比髋高、膝盖着地 —— 五条判据在真实帧上同时成立',
+      GATES.kneelPushup(kneel) === true && holds(kneel, Object.keys(FIELD)), detail(kneel));
+    ok('跪撑：这五条就是 GATE_LIMITS.kneelPushup 这一张表（判定与显示不会各写一套阈值）',
+      GATE_LIMITS.kneelPushup === KNEE_PUSHUP_SETUP
+      && KNEE_PUSHUP_SETUP.hip[0] === 160 && KNEE_PUSHUP_SETUP.hip[1] === 180
+      && KNEE_PUSHUP_SETUP.knee[0] === 70 && KNEE_PUSHUP_SETUP.knee[1] === 110
+      && KNEE_PUSHUP_SETUP.hipAboveKnee[0] === 0.25 && KNEE_PUSHUP_SETUP.hipAboveKnee[1] === null
+      && KNEE_PUSHUP_SETUP.shoulderAboveHip[0] === 0.25 && KNEE_PUSHUP_SETUP.kneeClear[1] === 0.35,
+      JSON.stringify(KNEE_PUSHUP_SETUP));
+
+    // ② 髋不直（≈120°）：其它四条都还成立，只有髋角不在 [160,180]
+    const folded = frameOf(kneelPose(170, { torsoUp: 55 }));
+    ok('髋不直（≈120°，背没成一条线）→ 跪撑不成立（只卡髋角这一条）',
+      GATES.kneelPushup(folded) === false && fails(folded, 'hip')
+      && holds(folded, ['knee', 'hipAboveKnee', 'shoulderAboveHip', 'kneeClear']), detail(folded));
+
+    // ③ 膝不弯（≈170°，腿伸直了）
+    const straight = frameOf(kneelPose(170, { knee: 170 }));
+    ok('膝盖不弯（≈170°，腿伸直）→ 跪撑不成立（卡膝角这一条）',
+      GATES.kneelPushup(straight) === false && fails(straight, 'knee'), detail(straight));
+
+    // ④ 髋低于膝
+    const hipLow = frameOf(kneelPose(170, { thighUp: 20, torsoUp: -160 }));
+    ok('髋比膝低（大腿朝上抬、髋沉下去）→ 跪撑不成立',
+      GATES.kneelPushup(hipLow) === false && hipLow.hipAboveKnee < 0, detail(hipLow));
+    // ④ 肩低于髋
+    const shoulderLow = frameOf(kneelPose(170, { thighUp: 5, torsoUp: 175 }));
+    ok('肩比髋低（上身塌下去）→ 跪撑不成立',
+      GATES.kneelPushup(shoulderLow) === false && shoulderLow.shoulderAboveHip < 0, detail(shoulderLow));
+    // ④ 膝离地（把整个人抬起来 0.15 倍躯干长；地面线固定住才能量出「离地」）
+    const kneeUp = frameOf(kneelPose(170, { hip: { x: 0.78, y: 0.5 } }), { groundY: 0.92 });
+    ok('膝盖离地 → 跪撑不成立（只卡「膝盖着地」这一条）',
+      GATES.kneelPushup(kneeUp) === false && fails(kneeUp, 'kneeClear')
+      && holds(kneeUp, ['hip', 'knee', 'hipAboveKnee', 'shoulderAboveHip']), detail(kneeUp));
+
+    // ⑤ 完全不是这个动作：站着 / 标准俯撑
     const stand = frameOf(standingPose({ knee: 178, lean: 6, armDown: 0, ankleX: 1.0, view: 'side' }));
     const plank = frameOf(pronePose({ hip: { x: 0.9, y: 0.7 }, bodyTilt: 63, elbow: 172, armDown: 6 }));
-    ok('跪撑（躯干只有 20°，但大腿折下去、膝盖着地、手在肩下）能进新门控',
-      GATES.kneelPushup(kneel) === true, `torsoIncl=${kneel.torsoIncl.toFixed(1)} hip=${kneel.hipAngle.toFixed(1)}`);
+    ok('站着 / 标准俯撑都不会被误判成跪撑',
+      GATES.kneelPushup(stand) === false && GATES.kneelPushup(plank) === false,
+      `站姿 knee=${stand.kneeAngle.toFixed(1)} / 俯撑 knee=${plank.kneeAngle.toFixed(1)}`);
     ok('标准俯卧撑那条门控（要求躯干 ≥32°）反而会把跪撑拦住 —— 这就是必须另开一条门控的原因',
       GATES.proneUpright(kneel) === false, `torsoIncl=${kneel.torsoIncl.toFixed(1)}`);
-    ok('站立与标准俯撑都不会被误判成跪撑',
-      GATES.kneelPushup(stand) === false && GATES.kneelPushup(plank) === false,
-      `站姿 hip=${stand.hipAngle.toFixed(1)} / 俯撑 hip=${plank.hipAngle.toFixed(1)}`);
-    ok('跪撑的门控数值与判定用的是同一张表',
-      GATE_LIMITS.kneelPushup.hip[1] === 158 && GATE_LIMITS.kneelPushup.hipAboveKnee[0] === 0.25
-      && GATE_LIMITS.kneelPushup.armRaised[1] === 0.45, JSON.stringify(GATE_LIMITS.kneelPushup));
 
     const det = fresh('kneePushup');
     const r = makeRunner(det);

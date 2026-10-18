@@ -41,6 +41,34 @@ import { DetectorBase, HoldDetector } from './detector-base.js';
  */
 export const GATE_GRACE_MS = 400;
 
+/**
+ * 跪姿俯卧撑**第一帧「跪撑」**的判据（**唯一来源**：判定 / 画面显示 / 计分都读这一张表）。
+ *
+ * 用户原话：「优化**跪姿俯卧撑**的关键帧，**第一帧：跪撑** —— 髋关节角度接近 180 度，
+ * 膝关节接近 90 度，还要满足：髋比膝位置高，肩比髋位置高，膝盖着地」。
+ *
+ * 五条判据（单位与符号与 GATE_LIMITS 其它门控完全一致）：
+ *   - `hip`            髋关节角（度）：**≈180°** = 躯干与大腿近乎一条线（直背）。容差 20°
+ *                      （角度不会超过 180°，所以区间落在 160°~180°）；
+ *   - `knee`           膝关节角（度）：**≈90°** = 小腿与大腿近乎垂直。容差 ±20°（70°~110°）；
+ *   - `hipAboveKnee`   ×小腿长：正数 = 髋在膝上方 → 膝盖是支点（不是躺 / 趴）；
+ *   - `shoulderAboveHip` ×躯干长：**正数版**（正数 = 肩在髋上方，见 metrics.js 的符号说明，
+ *                      别写成 hipRise —— 那个是相反数，臀桥在用）；
+ *   - `kneeClear`      ×躯干长：离地高度越小越贴地 → **膝盖着地**（与 `kneel` 门控同一口径，
+ *                      阈值比它松：0.35 vs 0.28，校准地面线小幅偏移也不会把跪好的人拦住）。
+ *
+ * ⚠️ 这一张表取代了原来那三条（`hip ∈ [50,158]`「大腿与躯干折起来」+ 髋高于膝 + 手没举过肩）：
+ * 新模型要求的是**直背**（髋角 ≈180°），旧区间正好相反，两者同时留着就会出现
+ * 「门控过了、第一帧却永远判不过」的自相矛盾 —— 所以以新的第一帧判据为准，整条门控跟着换。
+ */
+export const KNEE_PUSHUP_SETUP = {
+  hip: [160, 180],
+  knee: [70, 110],
+  hipAboveKnee: [0.25, null],
+  shoulderAboveHip: [0.25, null],
+  kneeClear: [null, 0.35],
+};
+
 export const GATE_LIMITS = {
   /** 站立（膝盖离地、髋在膝上方） */
   stand: {
@@ -103,30 +131,27 @@ export const GATE_LIMITS = {
     armRaised: [null, 0.45],
   },
   /**
-   * 跪撑（**跪姿俯卧撑**：退阶俯卧撑）。
+   * 跪撑（**跪姿俯卧撑**：退阶俯卧撑）—— 第一帧「跪撑」的五条判据，见 `KNEE_PUSHUP_SETUP`。
    *
-   * 为什么不复用 `proneUpright`：那一条要求「躯干接近水平（`torsoIncl ≥ 32°`）」。
-   * 跪姿时大腿折向地面、上身可以立得比较直（跪得越正 `torsoIncl` 越小），
-   * 于是**跪得越标准反而越进不了门控**，画面上一直提示「还没进入这个动作的姿势」——
-   * 和当初 `prone` 依赖地面线踩的是同一类坑。
+   * 为什么不复用 `proneUpright`：那一条要求「躯干接近水平（`torsoIncl ≥ 32°`）」，
+   * 而跪撑的躯干可以立在任意角度（直背只要求**髋角** ≈180°，不要求躯干水平）。
+   * 拿它当门控会出现「跪得再标准也进不了姿势」（用户反馈过的老坑）。
    *
-   * 这里换成三条**与地面线、与躯干水平度都无关**的判据（全部是「身体自己跟自己比」的量）：
-   *   - `hip ∈ [50, 158]`：跪撑时**大腿与躯干折起来**（实测跪姿 ≈ 115°~155°）；
-   *     站立与俯撑（平板 / 标准俯卧撑）腿和躯干基本在一条线上（侧拍 ≈ 172°、俯撑 = 180°），
-   *     正面站姿因为透视也还有 ≈161°，都落在区间外、会被挡住；
-   *   - `hipAboveKnee ≥ 0.25`：髋明显高于膝 → **膝盖确实跪在地上**（躺 / 趴着 ≈ 0 或负）；
-   *   - `armRaised ≤ 0.45`：手撑在肩下方（不是把手臂举过头顶，那是开合跳那类动作）。
+   * 与旧版的区别（为什么换）：旧版判的是「大腿与躯干**折起来**（髋 ≤158°）」，
+   * 而用户给的跪撑模型是「躯干与大腿近乎**一条线**（髋 ≈180°）」—— 正好相反。
+   * 两条同时留着必然自相矛盾（门控过了、第一帧判不过），所以整条门控改成新模型，
+   * 并且**五条判据全部集中在 `KNEE_PUSHUP_SETUP` 里**（判定 / 显示 / 计分都读它）。
    *
-   * ⚠️ 取舍（有意为之）：深蹲到底时「髋角折起来 + 髋高于膝」也落在这个区间里，
-   * 所以理论上站着深蹲的人也能进门控 —— 但那时肘角不会来回弯（判据只认肘角），
-   * 实测不会误计；反过来，**加了「膝离地高度」这类以校准地面线为基准的条件**，
-   * 就会重蹈 prone / supine 那几次「地面线一偏就永远进不了姿势」的覆辙，所以这里不用它。
+   * 为什么这五条能把别的动作挡住（前四条都是「身体自己跟自己比」的量，与机位距离无关）：
+   *   - 站立：膝角 ≈178° → 卡在 `knee ∈ [70,110]`；膝离地 ≈0.84×躯干长 → 卡在 `kneeClear`；
+   *   - 标准俯撑 / 平板：膝角 ≈180°、膝离地 ≈0.38 → 同样被挡住；
+   *   - 躺 / 趴 / 坐：髋角、髋高于膝都不成立。
+   *
+   * ⚠️ 取舍（有意为之）：这套判据与旧版最大的不同是用上了**地面线**（`kneeClear`）。
+   * 用户明确要求「膝盖着地」，这一条躲不掉；阈值取 0.35（比 `kneel` 门控的 0.28 松），
+   * 地面线小幅偏移不会把标准跪撑拦在外面。
    */
-  kneelPushup: {
-    hip: [50, 158],
-    hipAboveKnee: [0.25, null],
-    armRaised: [null, 0.45],
-  },
+  kneelPushup: KNEE_PUSHUP_SETUP,
   /** 仰卧屈膝（臀桥 / 卷腹）：肩离地高度放宽到 0.95，卷腹卷高了也算 */
   supine: {
     torsoIncl: [36, null],
@@ -257,10 +282,12 @@ export const GATES = {
   /** 俯撑（**不看地面线**：俯卧撑 / 登山者）—— 见 GATE_LIMITS.proneUpright 的说明 */
   proneUpright: (f) => inLimit(f.torsoIncl, GATE_LIMITS.proneUpright.torsoIncl)
     && inLimit(f.armRaised, GATE_LIMITS.proneUpright.armRaised),
-  /** 跪撑（跪姿俯卧撑）—— **不要求躯干接近水平**，见 GATE_LIMITS.kneelPushup 的说明 */
+  /** 跪撑（跪姿俯卧撑）—— 第一帧「跪撑」的五条判据，见 `KNEE_PUSHUP_SETUP` / `GATE_LIMITS.kneelPushup` */
   kneelPushup: (f) => inLimit(f.hipAngle, GATE_LIMITS.kneelPushup.hip)
+    && inLimit(f.kneeAngle, GATE_LIMITS.kneelPushup.knee)
     && inLimit(f.hipAboveKnee, GATE_LIMITS.kneelPushup.hipAboveKnee)
-    && inLimit(f.armRaised, GATE_LIMITS.kneelPushup.armRaised),
+    && inLimit(f.shoulderAboveHip, GATE_LIMITS.kneelPushup.shoulderAboveHip)
+    && inLimit(f.kneeClear, GATE_LIMITS.kneelPushup.kneeClear),
   /** 手撑在椅子/台阶上的俯撑（上斜俯卧撑） */
   proneHigh: (f) => f.torsoIncl > 20 && f.shoulderClear > 0.10 && f.wristClearMin < 1.5,
   /** 俯卧在地面（超人式 / 青蛙趴 / 婴儿式） */
@@ -378,6 +405,16 @@ export const METRICS = {
   kneeSpread: (f) => f.kneeSpread,
   legSpread: (f) => f.legSpread,
   trunk: (f) => f.torsoIncl,
+  /**
+   * 门控 / 弹窗里的指标名 → 帧上的字段。
+   *
+   * 跪撑的 `hipAboveKnee` / `shoulderAboveHip`、坐姿体前屈的 `foldSum` 在帧上就是同名字段，
+   * 而 `hip` / `knee` 在帧上叫 `hipAngle` / `kneeAngle` —— 这张表负责把两种写法对上，
+   * 门控诊断行（`gateDiag`）也靠它取值，不再另写一份映射。
+   */
+  hipAboveKnee: (f) => f.hipAboveKnee,
+  shoulderAboveHip: (f) => f.shoulderAboveHip,
+  foldSum: (f) => f.foldSum,
 };
 
 /** 单侧指标（左右交替类动作用，需要分别看左右） */
@@ -553,7 +590,16 @@ class BendRepDetector extends DetectorBase {
     if (!limits || !f) return [];
     const parts = [];
     for (const [metric, [min, max]] of Object.entries(limits)) {
-      const v = f[metric];
+      /*
+       * 门控里的指标名有两种写法：
+       *   - 帧上的字段名（`torsoIncl` / `kneeClear` / `armRaised` …）；
+       *   - 弹窗里的指标名（`hip` / `knee` / `hipAboveKnee` …）。
+       * 第二种在帧上叫 `hipAngle` / `kneeAngle`，直接 `f[metric]` 会读到 undefined，
+       * 诊断行就显示成「hip —(>=50<=158)✗」这种没法看的东西（跪撑 / 坐姿体前屈都踩过）。
+       * 所以统一走 METRICS 这张「指标名 → 帧字段」表，取不到再退回直接读字段。
+       */
+      const read = METRICS[metric];
+      const v = read ? read(f) : f[metric];
       const ok = inLimit(v, [min, max]);
       const want = `${min !== null ? `>=${fmt(min)}` : ''}${max !== null ? `<=${fmt(max)}` : ''}`;
       parts.push(`${metric} ${Number.isFinite(v) ? fmt(v) : '—'}(${want})${ok ? '✓' : '✗'}`);

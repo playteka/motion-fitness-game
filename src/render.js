@@ -39,8 +39,9 @@ export const FOCUS = {
   lungeBack: ['knee', 'hip'],
   // 俯卧撑：判据是肘角（+ 髋角用来看身体有没有成一条线）
   pushup: ['elbow', 'hip'],
-  // 跪姿俯卧撑（退阶）：同样判肘角；再标髋角，跪撑时它一眼能看出「大腿有没有折下去」
-  kneePushup: ['elbow', 'hip'],
+  // 跪姿俯卧撑（退阶）：判肘角；第一帧「跪撑」的判据里还有**髋角 ≈180°（直背）**与**膝角 ≈90°**
+  //（见 engines.js 的 KNEE_PUSHUP_SETUP），所以这两个角也标在画面上 —— 撑好之前就能看到差多少
+  kneePushup: ['elbow', 'hip', 'knee'],
   bridge: ['hip', 'knee'],
   plank: ['hip', 'elbow', 'shoulderJoint'],
   deadBug: ['knee', 'hip'],
