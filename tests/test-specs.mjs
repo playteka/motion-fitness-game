@@ -181,9 +181,9 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
 
   // ===== 跪姿俯卧撑（**退阶俯卧撑**，用户要求新增）=====
   // 判据和标准俯卧撑**同一套**（通用屈伸引擎、只判肘角），只有门槛与门控不同：
-  // 计次线 155°（标准 148°）、满分深度 133°；门控换成 kneelPushup —— 也就是用户给的
-  // **第一帧「跪撑」五条判据**（engines.js 的 KNEE_PUSHUP_SETUP：髋≈180° / 膝≈90° /
-  // 髋比膝高 / 肩比髋高 / 膝盖着地）。
+  // 计次线 155°（标准 148°）、满分深度 133°；门控换成 kneelPushup —— 也就是
+  // engines.js 的 KNEE_PUSHUP_SETUP（**第二轮放宽后**：髋 120°~180° / 髋比膝高 0.15 /
+  // 肩比髋高 0.10 / 膝离地 0.50，膝角不作判据）。
   {
     const knee = createDetector('kneePushup');
     const at = (p) => roundFor(knee.up - p * (knee.up - knee.down), 'deg');
@@ -232,18 +232,18 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
     /** 界面上真的写出来的那几行（数字 = 常量，文案 = 词条） */
     const kneeRows = specTextRows('kneePushup').map((r) => r.cond);
     // 用户要求「去掉膝盖 90 度的要求」→ 膝关节角度这一条不该再出现在判据里
-    ok('跪姿俯卧撑：弹窗里写的就是 160°–180° / 0.25 / 0.35（能追溯到常量），且**不再有膝关节角度**',
-      kneeRows.includes('髋关节角度 160°–180°')
+    ok('跪姿俯卧撑：弹窗里写的就是 120°–180° / 0.15 / 0.1 / 0.5（能追溯到常量），且**不再有膝关节角度**',
+      kneeRows.includes('髋关节角度 120°–180°')
       && !kneeRows.some((r) => /膝关节角度/.test(r))
-      && kneeRows.includes('髋比膝高 ≥ 0.25×小腿长')
-      && kneeRows.includes('肩高于髋 ≥ 0.25×躯干长')
-      && kneeRows.includes('膝离地高度 ≤ 0.35×躯干长'),
+      && kneeRows.includes('髋比膝高 ≥ 0.15×小腿长')
+      && kneeRows.includes('肩高于髋 ≥ 0.1×躯干长')
+      && kneeRows.includes('膝离地高度 ≤ 0.5×躯干长'),
       JSON.stringify(kneeRows.filter((r) => /髋|膝|肩/.test(r))));
 
     const kneeStages = specStages('kneePushup');
     ok('跪姿俯卧撑：四格 = 跪撑 → 开始下沉 → 到计次线 → 回到起始位（最后一格 = 计次那一刻）',
       kneeStages.length === 4 && kneeStages[0].kind === 'gate' && kneeStages[0].metric === 'hip'
-      && kneeStages[0].op === 'range' && kneeStages[0].value === 160 && kneeStages[0].value2 === 180
+      && kneeStages[0].op === 'range' && kneeStages[0].value === 120 && kneeStages[0].value2 === 180
       && kneeStages[1].metric === 'elbow' && kneeStages[2].metric === 'elbow'
       && kneeStages[3].kind === 'finish' && kneeStages[3].metric === 'progress',
       JSON.stringify(kneeStages.map((s) => `${s.metric}:${s.kind}`)));
@@ -260,11 +260,11 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
       JSON.stringify(pts));
     /**
      * **用真实帧走一遍进度条**（和俯卧撑同一套口径）：
-     * 标准跪撑下第一格要亮；五条反例各自单独破坏时第一格都不亮；站着也不亮。
+     * 标准跪撑下第一格要亮；每条反例单独破坏时第一格都不亮；站着也不亮。
      */
     {
       const { supinePose } = await import('./synthetic-pose.mjs');
-      /** 用户给的标准跪撑：髋 180°、膝 90°、髋比膝高、肩比髋高、膝盖着地 */
+      /** 跪撑（髋 180°、膝 90°、髋比膝高、肩比髋高、膝盖着地）—— 上身立起来的那种跪法 */
       const kneelLm = (o = {}) => supinePose({
         hip: { x: 0.78, y: 0.62 }, thighUp: 175, knee: 90, torsoUp: -5, armDown: 0, elbow: 170, ...o,
       });
@@ -284,15 +284,15 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
           frameOf(standingPose({ knee: 178, lean: 6, armDown: 0, ankleX: 1.0, view: 'side' })),
           createDetector('kneePushup')) === false);
       /**
-       * 反例（用户要求逐条钉住）：每一条判据单独被破坏，第一格就不亮 ——
+       * 反例（逐条钉住）：每一条判据单独被破坏，第一格就不亮 ——
        * 而且用的是**识别器自己的 gateOk**（画面上的第一格就是它点亮的）。
+       * 注意「膝不弯」不在反例里：膝角**不是判据**（用户明确要求删掉）。
        */
       const bad = [
-        ['髋不直（≈120°）', kneelLm({ torsoUp: 55 }), null],
-        ['膝不弯（≈170°）', kneelLm({ knee: 170 }), null],
+        ['髋折成一团（≈100°，坐回脚跟上）', kneelLm({ torsoUp: 75 }), null],
         ['髋比膝低', kneelLm({ thighUp: 20, torsoUp: -160 }), null],
         ['肩比髋低', kneelLm({ thighUp: 5, torsoUp: 175 }), null],
-        ['膝盖离地', kneelLm({ hip: { x: 0.78, y: 0.5 } }), { groundY: 0.92 }],
+        ['膝盖离地（抬到 0.8×躯干长）', kneelLm({ hip: { x: 0.78, y: 0.38 } }), { groundY: 0.92 }],
       ];
       const lit = [];
       for (const [name, lm, calib] of bad) {
@@ -301,7 +301,7 @@ console.log('\n[4] 五个手写识别器：显示值与常量一致');
         det.update(f, 0);
         if (det.gateOk !== false || stageHolds(kneeStages[0], f, det) !== false) lit.push(name);
       }
-      ok('跪姿俯卧撑：五条反例（髋不直 / 膝不弯 / 髋比膝低 / 肩比髋低 / 膝盖离地）第一格都不亮',
+      ok('跪姿俯卧撑：四条反例（髋折成一团 / 髋比膝低 / 肩比髋低 / 膝盖离地）第一格都不亮',
         lit.length === 0, lit.join('、'));
     }
   }

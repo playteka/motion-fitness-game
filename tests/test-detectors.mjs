@@ -44,8 +44,12 @@ function atLeast(name, actual, min) {
   ok(name, actual >= min, `实际 ${actual}，至少 ${min}`);
 }
 
-/** 把帧序列喂给检测器 */
-function makeRunner(det, { smooth = true } = {}) {
+/**
+ * 把帧序列喂给检测器。
+ * `calib` 可以传一条校准结果（`{ groundY }`）—— 跪姿俯卧撑要验证「校准地面线偏了一点」的机位，
+ * 其余测试都不传（= 用脚踝估出来的地面线），行为与以前完全一致。
+ */
+function makeRunner(det, { smooth = true, calib = null } = {}) {
   const smoother = new LandmarkSmoother();
   let t = 0;
   const cues = [];
@@ -60,7 +64,7 @@ function makeRunner(det, { smooth = true } = {}) {
     const raw = lm.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0, visibility: p.visibility ?? 1 }));
     const sm = smooth ? smoother.apply(raw, t / 1000) : raw;
     const metric = toMetric(sm, ASPECT);
-    const f = computeFrame(metric, null, t, false, null);
+    const f = computeFrame(metric, calib, t, false, null);
     lastFrame = f;
     const evs = det.update(f, t);
     for (const e of evs) {
@@ -833,31 +837,85 @@ console.log('\n[3] 俯卧撑计数（只判肘角）');
  *
  * 判据与标准俯卧撑**完全是同一套**（通用屈伸引擎、只判肘角），只有两点不同：
  *   ① 门槛整体放宽（计次线 155° vs 标准 148°）；
- *   ② 门控换成 `kneelPushup` —— **第一帧「跪撑」的五条判据**（用户给的模型）：
- *      髋角 ≈180°（直背）+ 膝角 ≈90° + 髋比膝高 + 肩比髋高 + 膝盖着地
- *      （engines.js 的 KNEE_PUSHUP_SETUP，同时就是 GATE_LIMITS.kneelPushup）。
- *      标准俯卧撑的 `proneUpright` 要求「躯干接近水平 ≥32°」，跪撑的躯干可以立着，
+ *   ② 门控换成 `kneelPushup`（engines.js 的 KNEE_PUSHUP_SETUP，同时就是 GATE_LIMITS.kneelPushup）
+ *      —— 标准俯卧撑的 `proneUpright` 要求「躯干接近水平 ≥32°」，跪撑的躯干可以立着，
  *      照搬那条会**永远进不了姿势**（下面有断言钉住这一点）。
+ *
+ * ⚠️ 第二轮反馈「跪姿俯卧撑似乎没有计数」之后这里**整体重做过**：
+ * 旧测试的「跪撑」是**跪直、躯干竖直**那种姿势（髋角 180°、肩离地 1.0、膝角 90°），
+ * 真机上没人这么撑 —— 于是四项判据在测试里全绿、真人做起来一条都过不去。
+ * 现在换成**真实几何**的构建器（膝着地 + 小腿贴地 + 手撑地 + 膝→髋→肩 一条身体线），
+ * 并用实测数据钉住这次的放宽（探针数据见 engines.js 的 KNEE_PUSHUP_SETUP 注释）：
+ *   ① 髋角 135°~180° 都要计次（真人的屁股不可能一直是「一条线」）；
+ *   ② 下沉时折髋（髋角掉到 150° 左右）门控**不许在一轮中间掉出去**（旧版会记成「太快了」）；
+ *   ③ 校准地面线偏高 0.13×画面高（站着校准、跪下位置变了一点）→ 膝离地 0.41 仍要计次。
  * ------------------------------------------------------------------ */
 
 console.log('\n[3b] 跪姿俯卧撑（退阶俯卧撑）');
 {
+  const D = Math.PI / 180;
+  /** 单位向量 → supinePose 的「相对正上方 θ 度」参数（含绕回 0~360） */
+  const upOf = (v) => ((Math.atan2(v.x, -v.y) / D) + 360) % 360;
+  const upV = (deg) => ({ x: Math.sin(deg * D), y: -Math.cos(deg * D) });
+  const addV = (p, v, k = 1) => ({ x: p.x + v.x * k, y: p.y + v.y * k });
+
   /**
-   * 跪撑：**用户给的第一帧判据**（见 engines.js 的 KNEE_PUSHUP_SETUP）——
-   * 髋角 ≈180°（躯干与大腿近乎一条线 = 直背）、膝角 ≈90°（小腿与大腿近乎垂直）、
-   * 髋比膝高、肩比髋高、膝盖着地。
-   *
-   * 用 supinePose 拼（通用构建器：髋位置 + 大腿朝向 + 膝角 + 躯干朝向）：
-   *   `thighUp 175` = 髋→膝 几乎竖直向下（膝盖落到地面那一带）；
-   *   `torsoUp -5`  = 髋→肩 接着大腿那条线往上 → 髋角 **180°**；
-   *   `knee 90`     = 小腿与大腿成直角。
-   * （旧模型是 `torsoUp 20` + `knee 100` → 髋角只有 155°，那是「大腿折起来」，和用户的判据相反。）
+   * **真实跪姿俯卧撑**（侧拍几何，和 supinePose 同一套公制空间，单位 = 画面高）：
+   *   - 膝盖落在 (kneeX, ground) 上着地、小腿平贴地面朝后（踝也在 ground → 膝离地 ≈0）；
+   *   - `bodyDeg`：膝→髋→肩 这条身体线与地面的夹角（真人 20°~32°，越低 = 越贴近地面）；
+   *   - `hipFlex`：髋关节在这条身体线之外**再折多少度** —— 0 = 髋角 180°（一条线），
+   *     25 = 髋角 155°（屁股略翘，**真人最常做的样子**），45 = 135°；
+   *   - 手腕自动解到地面（真人就是手撑地、靠屈肘下沉，肩能被压下去的高度受手臂长度限制）。
+   * 用 supinePose 拼：`thighUp` = 髋→膝 的朝向、`torsoUp` = 髋→肩 的朝向、
+   * `knee` = 膝角（小腿贴地朝后 → 膝角 = thighUp − 90°，侧拍读数 148°~156°）。
    */
-  const kneelPose = (elbow, o = {}) => supinePose({
-    hip: { x: 0.78, y: 0.62 }, thighUp: 175, knee: 90, torsoUp: -5, armDown: 0, elbow, ...o,
-  });
-  /** 一次跪姿俯卧撑：肘角从 topElbow 弯到 botElbow 再回来 */
-  const kneelMix = (botElbow, topElbow = 170) => (p) => kneelPose(lerp(topElbow, botElbow, Math.sin(Math.PI * p)));
+  function kneelPose(elbow, o = {}) {
+    const {
+      bodyDeg = 32, hipFlex = 0, ground = 0.92, kneeX = 0.42,
+    } = o;
+    const knee = { x: kneeX, y: ground };
+    const dir = { x: Math.cos(bodyDeg * D), y: -Math.sin(bodyDeg * D) };   // 膝→髋
+    const hip = addV(knee, dir, SEG.thigh);
+    const dirT = { x: Math.cos((bodyDeg + hipFlex) * D), y: -Math.sin((bodyDeg + hipFlex) * D) };
+    const shoulder = addV(hip, dirT, SEG.torso);
+    const thighUp = upOf({ x: -dir.x, y: -dir.y });
+    // 腕落到地面：上臂相对「正下方」的角度 armDown 用二分求解
+    const wristY = (ad) => {
+      const e = addV(shoulder, upV(90 - ad), SEG.upper);
+      return addV(e, upV(90 - (ad + 180 - elbow)), SEG.fore).y;
+    };
+    let lo = -80; let hi = 90;
+    for (let i = 0; i < 70; i += 1) {
+      const mid = (lo + hi) / 2;
+      if (wristY(mid) > ground) hi = mid; else lo = mid;
+    }
+    return supinePose({
+      hip,
+      thighUp,
+      knee: (thighUp - 90 + 360) % 360,   // 小腿平贴地面朝后 → shinUp = 90
+      torsoUp: upOf(dirT),
+      armDown: (lo + hi) / 2,
+      elbow,
+    });
+  }
+
+  /**
+   * 一次跪姿俯卧撑：肘角 topElbow → botElbow → topElbow。
+   * `hipFlexTop/hipFlexBot` 让**下沉过程中髋折叠**（真人就是这样把胸口放下去的），
+   * `bodyDegTop/bodyDegBot` 让身体线随下沉变平 —— 两者都是这次放宽要覆盖的真实动作。
+   */
+  const kneelMix = (botElbow, o = {}) => (p) => {
+    const s = Math.sin(Math.PI * p);
+    return kneelPose(lerp(o.topElbow ?? 165, botElbow, s), {
+      bodyDeg: lerp(o.bodyDegTop ?? 32, o.bodyDegBot ?? 26, s),
+      hipFlex: lerp(o.hipFlexTop ?? 0, o.hipFlexBot ?? 0, s),
+    });
+  };
+
+  /** 合成骨架 → 真正喂给识别器的那种帧（可带一条校准地面线） */
+  const frameOf = (lm, calib = null) => computeFrame(
+    toMetric(lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT), calib, 0, false, null,
+  );
 
   const meta = EXERCISES.find((x) => x.id === 'kneePushup');
   const std = EXERCISES.find((x) => x.id === 'pushup');
@@ -879,22 +937,75 @@ console.log('\n[3b] 跪姿俯卧撑（退阶俯卧撑）');
   }
   {
     // 角度的边界：152° 已经越过计次线（155°）→ 要计上；160° 没过线 → 一次都不计
+    // （计次线是**相对你自己撑直时的读数**算的：顶位撑到 170° 时那 20% 才等于 ~155°）
     const over = fresh('kneePushup');
-    makeRunner(over).run(repeat(kneelMix(152), 2000, 3));
+    makeRunner(over).run(repeat(kneelMix(152, { topElbow: 170 }), 2000, 3));
     atLeast('肘只弯到 152°（过计次线）的浅跪姿俯卧撑也要计次', over.validReps, 3);
     const under = fresh('kneePushup');
-    makeRunner(under).run(repeat(kneelMix(160), 2000, 3));
+    makeRunner(under).run(repeat(kneelMix(160, { topElbow: 170 }), 2000, 3));
     ok('肘只到 160°（没过计次线）：一次都不计', under.validReps === 0, `实际 ${under.validReps}`);
   }
   {
     /**
-     * **第一帧「跪撑」的五条判据**（用户给的模型）：标准跪撑要过，而且五条各自都要成立；
-     * 每一条单独被破坏（髋不直 / 膝不弯 / 髋低于膝 / 肩低于髋 / 膝离地）都要被拦住 ——
-     * 判的就是 `GATE_LIMITS.kneelPushup` 这一张表（= KNEE_PUSHUP_SETUP，判定与显示同一份）。
+     * **用户报告「似乎没有计数」的那段真实动作**（正例，姿势故意做得不完美）：
+     *   髋角只有 135°~155°（屁股略翘 / 下沉时折髋）、膝角随意（侧拍读数 148°~156°）、
+     *   肘只弯到 120°~152°（上肢力量弱、沉不深）。
+     * 这一整段在放宽前是「一次都不计」的 —— 卡的不是计次线，是门控的 hip ≥160°。
      */
-    const frameOf = (lm, calib = null) => computeFrame(
-      toMetric(lm.map((p) => ({ ...p, v: p.visibility ?? 1 })), ASPECT), calib, 0, false, null,
-    );
+    const a = fresh('kneePushup');
+    makeRunner(a).run(repeat(kneelMix(120, { hipFlexTop: 25, hipFlexBot: 25 }), 2000, 3));
+    ok('真实感跪姿俯卧撑（髋角 155°、屁股略翘）：3 次 → 计 3 次（放宽前一次都不计）',
+      a.validReps === 3 && a.partialReps === 0, `有效 ${a.validReps} / 半程 ${a.partialReps}`);
+
+    const b = fresh('kneePushup');
+    makeRunner(b).run(repeat(kneelMix(120, { hipFlexTop: 45, hipFlexBot: 45 }), 2000, 3));
+    atLeast('髋角只到 135°（真人把胸口放下去时必然折髋）也要计次', b.validReps, 3);
+
+    const c = fresh('kneePushup');
+    makeRunner(c).run(repeat(kneelMix(152, { topElbow: 170, hipFlexTop: 20, hipFlexBot: 30 }), 2000, 3));
+    atLeast('浅跪姿（肘只到 152°，刚过计次线）+ 下沉时折髋 → 也要计到 3 次', c.validReps, 3);
+    ok('浅跪姿不会记成半程（一路都是「有效次数」）', c.partialReps === 0, `半程 ${c.partialReps}`);
+  }
+  {
+    /**
+     * **门控不许在一轮中间掉出去**（用户「不计次」的第二个原因）。
+     *
+     * 真人下沉时一定会折髋（手撑地不动时肩只能降 6cm，不折髋胸口根本放不下去），
+     * 髋角从 180° 走到 150°。旧门控（hip ≥160°）在**底部**掉出去，
+     * 超过 400ms 宽限就把这一轮清空；回到顶位时被当成新一轮开始，
+     * 用时只剩一百多毫秒 —— 于是记成「太快了」：**既不计次，还挨一句「太快了」**。
+     */
+    const det = fresh('kneePushup');
+    const r = makeRunner(det);
+    r.run(repeat(kneelMix(90, { hipFlexTop: 0, hipFlexBot: 30 }), 2200, 3));
+    ok('下沉时折髋（髋角 180°→150°）：3 次都要计上，而且不许冒出「太快了」',
+      det.validReps === 3 && det.partialReps === 0 && !r.cues.some((c) => c.code === 'tooFast'),
+      `有效 ${det.validReps} / 半程 ${det.partialReps} / cues=${r.cues.map((c) => c.code).join(',')}`);
+  }
+  {
+    /**
+     * **校准地面线偏了一点**（用户「不计次」的第三个原因）：
+     * 校准是**站着**做的，跪下做动作时人的位置/距离变了，膝离地高度这条读数就整体平移。
+     * 探针实测：地面线偏高 0.12×画面高 → 膝离地 0.38×躯干长（旧阈值 0.35 已经拦住）；
+     * 偏高 0.15 → 0.47（更要拦）。这里就用 0.13 这种常见偏差钉住放宽后的 0.50。
+     */
+    const calib = { groundY: 0.92 + 0.13 };
+    const f = frameOf(kneelPose(165), calib);
+    ok('校准地面线偏高 0.13×画面高 → 膝离地读到 0.41×躯干长（超过旧阈值 0.35，落在新阈值 0.50 以内）',
+      f.kneeClear > 0.35 && f.kneeClear <= KNEE_PUSHUP_SETUP.kneeClear[1]
+      && GATES.kneelPushup(f) === true, `kneeClear=${f.kneeClear.toFixed(2)}`);
+
+    const det = fresh('kneePushup');
+    makeRunner(det, { calib }).run(repeat(kneelMix(120), 2000, 3));
+    ok('这种机位下 3 次跪姿俯卧撑也要计到 3 次（放宽前 0 次）',
+      det.validReps === 3, `有效 ${det.validReps}`);
+  }
+  {
+    /**
+     * **第一帧「跪撑」的四条判据**：真实跪撑要过，而且四条各自都要成立；
+     * 判的就是 `GATE_LIMITS.kneelPushup` 这一张表（= KNEE_PUSHUP_SETUP，判定与显示同一份）。
+     * 取值是**第二次放宽后**的：髋 120°~180° / 髋比膝高 ≥0.15 / 肩比髋高 ≥0.10 / 膝离地 ≤0.50。
+     */
     /** 判据名（弹窗里的名字）→ 帧上的字段名 */
     const FIELD = {
       hip: 'hipAngle',
@@ -908,65 +1019,160 @@ console.log('\n[3b] 跪姿俯卧撑（退阶俯卧撑）');
       + `hipAboveKnee=${f.hipAboveKnee.toFixed(2)} shoulderAboveHip=${f.shoulderAboveHip.toFixed(2)} `
       + `kneeClear=${f.kneeClear.toFixed(2)}`;
 
-    const kneel = frameOf(kneelPose(170));
-    ok('跪撑：髋角 ≈180°、髋比膝高、肩比髋高、膝盖着地 —— 四条判据在真实帧上同时成立（膝角不再参与判定）',
+    const kneel = frameOf(kneelPose(165));
+    ok('真实跪撑（膝着地、手撑地、身体线 32°）四条判据在真实帧上同时成立（膝角不参与判定）',
       GATES.kneelPushup(kneel) === true
       && holds(kneel, ['hip', 'hipAboveKnee', 'shoulderAboveHip', 'kneeClear']), detail(kneel));
-    ok('跪撑：这四条就是 GATE_LIMITS.kneelPushup 这一张表（判定与显示不会各写一套阈值），且**没有 knee 这一条**',
-      GATE_LIMITS.kneelPushup === KNEE_PUSHUP_SETUP
-      && !('knee' in KNEE_PUSHUP_SETUP)
-      && KNEE_PUSHUP_SETUP.hip[0] === 160 && KNEE_PUSHUP_SETUP.hip[1] === 180
-      && KNEE_PUSHUP_SETUP.hipAboveKnee[0] === 0.25 && KNEE_PUSHUP_SETUP.hipAboveKnee[1] === null
-      && KNEE_PUSHUP_SETUP.shoulderAboveHip[0] === 0.25 && KNEE_PUSHUP_SETUP.kneeClear[1] === 0.35,
-      JSON.stringify(KNEE_PUSHUP_SETUP));
+    ok('跪撑：这四条就是 GATE_LIMITS.kneelPushup 这一张表（判定与显示不会各写一套阈值），'
+      + '取值 = 放宽后的 120°~180° / 0.15 / 0.10 / 0.50，且**没有 knee 这一条**',
+    GATE_LIMITS.kneelPushup === KNEE_PUSHUP_SETUP
+    && !('knee' in KNEE_PUSHUP_SETUP)
+    && KNEE_PUSHUP_SETUP.hip[0] === 120 && KNEE_PUSHUP_SETUP.hip[1] === 180
+    && KNEE_PUSHUP_SETUP.hipAboveKnee[0] === 0.15 && KNEE_PUSHUP_SETUP.hipAboveKnee[1] === null
+    && KNEE_PUSHUP_SETUP.shoulderAboveHip[0] === 0.10 && KNEE_PUSHUP_SETUP.shoulderAboveHip[1] === null
+    && KNEE_PUSHUP_SETUP.kneeClear[0] === null && KNEE_PUSHUP_SETUP.kneeClear[1] === 0.50,
+    JSON.stringify(KNEE_PUSHUP_SETUP));
 
-    // ② 髋不直（≈120°）：其它四条都还成立，只有髋角不在 [160,180]
-    const folded = frameOf(kneelPose(170, { torsoUp: 55 }));
-    ok('髋不直（≈120°，背没成一条线）→ 跪撑不成立（只卡髋角这一条）',
-      GATES.kneelPushup(folded) === false && fails(folded, 'hip')
-      && holds(folded, ['hipAboveKnee', 'shoulderAboveHip', 'kneeClear']), detail(folded));
+    /**
+     * **放宽的正面证据**（用户报告「不计次」之后按实测放宽的那几条）：
+     * 同一个真实跪撑，只把屁股翘一点 / 肩塌一点 / 地面线偏一点，放宽前全都被拦住、一次都不计。
+     */
+    const piked = frameOf(kneelPose(165, { hipFlex: 40 }));       // 髋角 ≈140°
+    ok('屁股翘起来（髋角 ≈140°）也进得了跪撑 —— 放宽前卡在 hip ≥160° 上，一次都不计',
+      GATES.kneelPushup(piked) === true && piked.hipAngle < 160, detail(piked));
+    const flatShoulder = { ...kneel, shoulderAboveHip: 0.16 };
+    ok('上身比较塌（肩只比髋高 0.16×躯干长）也算跪撑 —— 放宽前卡在 ≥0.25 上',
+      GATES.kneelPushup(flatShoulder) === true, `shoulderAboveHip=${flatShoulder.shoulderAboveHip}`);
+    const offGround = frameOf(kneelPose(165), { groundY: 0.92 + 0.15 });
+    ok('校准地面线偏 0.15×画面高（膝离地 0.47）也算跪撑 —— 放宽前卡在 ≤0.35 上',
+      GATES.kneelPushup(offGround) === true, detail(offGround));
 
     // ③ 膝角不再参与判定（用户要求「去掉膝盖 90 度的要求」）：
-    //    同一组姿势只改膝角（90° vs 170°），门控结论必须**完全一致** —— 这才证明膝角不影响判定。
-    // 只改帧里的 kneeAngle 这个**数**（其它指标原封不动），门控结论必须完全一致 ——
-    // 这样才干净地证明「膝角已不参与判定」，不会被姿态几何的连带变化干扰。
-    const base = frameOf(kneelPose(170));
-    const kneeVar = { ...base, kneeAngle: 170 };
+    //    只改帧里的 kneeAngle 这个**数**（其它指标原封不动），门控结论必须完全一致 ——
+    //    这样才干净地证明「膝角已不参与判定」，不会被姿态几何的连带变化干扰。
+    const kneeVar = { ...kneel, kneeAngle: 170 };
     ok('膝角 90° 与 170° 只差一个数时，门控结论**完全相同**（膝角已不参与判定），且判据表里没有 knee',
-      GATES.kneelPushup(base) === GATES.kneelPushup(kneeVar)
+      GATES.kneelPushup(kneel) === GATES.kneelPushup(kneeVar)
       && !('knee' in GATE_LIMITS.kneelPushup),
-      'base=' + GATES.kneelPushup(base) + ' knee170=' + GATES.kneelPushup(kneeVar));
+      'base=' + GATES.kneelPushup(kneel) + ' knee170=' + GATES.kneelPushup(kneeVar));
 
-    // ④ 髋低于膝
-    const hipLow = frameOf(kneelPose(170, { thighUp: 20, torsoUp: -160 }));
+    /**
+     * **每条判据单独被破坏都要拦住**，而且画面上报的那句提示要**指到具体这一条**
+     * （用户要求：门控没过时得能看出是哪一条没过）。
+     * 做法：真实跪撑帧上只改那一个数（其它指标原封不动），
+     * 既干净又和 `gateDiag` 那一行（🐞 面板）读的是同一批字段。
+     */
+    const breaks = [
+      ['hip', { hipAngle: 100 }, '坐回脚跟上（髋角 100°，背折成一团）'],
+      ['hipAboveKnee', { hipAboveKnee: -0.4 }, '髋沉到膝盖下面（趴/坐下了）'],
+      ['shoulderAboveHip', { shoulderAboveHip: -0.2 }, '肩塌到髋以下'],
+      ['kneeClear', { kneeClear: 0.85 }, '膝盖离地（站着 / 膝悬空）'],
+    ];
+    for (const [metric, patch, what] of breaks) {
+      const det = fresh('kneePushup');
+      det.update({ ...kneel, ...patch }, 0);
+      const key = `status.need.kneelPushupFail.${metric}`;
+      ok(`${what} → 跪撑不成立，提示指到「${metric}」这一条（${key} 有中英文案）`,
+        GATES.kneelPushup({ ...kneel, ...patch }) === false
+        && det.gateOk === false && det.standby === key
+        && t(key) !== key && t(key).length > 6,
+        `standby=${det.standby} 文案=${t(key)}`);
+    }
+
+    /**
+     * 🐞 识别指标面板那一行（`gateDiag`）**照旧摆着四个量的真实值** ——
+     * 用户想自查「差多少」就靠它（提示语只说方向，数值在这里）。
+     */
+    const dbg = fresh('kneePushup');
+    dbg.update({ ...kneel, hipAngle: 100 }, 0);
+    const gateRow = dbg.diag().find((r) => r.key === 'debug.diag.gate');
+    const g = gateRow ? gateRow.value : '';
+    ok('🐞 调试行照旧列出 hip / hipAboveKnee / shoulderAboveHip / kneeClear 的真实值（哪条 ✗ 一眼可见）',
+      /hip 100\(>=120<=180\)✗/.test(g)
+      && /hipAboveKnee [-\d.]+\(>=0\.15\)✓/.test(g)
+      && /shoulderAboveHip [-\d.]+\(>=0\.10\)✓/.test(g)
+      && /kneeClear [-\d.]+\(<=0\.50\)✓/.test(g),
+      g);
+
+    // ⑤ 几何上真的不是这个动作：髋比膝低 / 肩比髋低 / 膝明显离地
+    const hipLow = frameOf(supinePose({
+      hip: { x: 0.78, y: 0.72 }, thighUp: 20, knee: 90, torsoUp: -160, armDown: 0, elbow: 165,
+    }));
     ok('髋比膝低（大腿朝上抬、髋沉下去）→ 跪撑不成立',
       GATES.kneelPushup(hipLow) === false && hipLow.hipAboveKnee < 0, detail(hipLow));
-    // ④ 肩低于髋
-    const shoulderLow = frameOf(kneelPose(170, { thighUp: 5, torsoUp: 175 }));
+    const shoulderLow = frameOf(supinePose({
+      hip: { x: 0.78, y: 0.55 }, thighUp: 5, knee: 90, torsoUp: 175, armDown: 0, elbow: 165,
+    }));
     ok('肩比髋低（上身塌下去）→ 跪撑不成立',
       GATES.kneelPushup(shoulderLow) === false && shoulderLow.shoulderAboveHip < 0, detail(shoulderLow));
-    // ④ 膝离地（把整个人抬起来 0.15 倍躯干长；地面线固定住才能量出「离地」）
-    const kneeUp = frameOf(kneelPose(170, { hip: { x: 0.78, y: 0.5 } }), { groundY: 0.92 });
-    ok('膝盖离地 → 跪撑不成立（只卡「膝盖着地」这一条）',
+    /** 膝离地：把整个人抬起来 0.20×画面高（0.625×躯干长），地面线固定住才能量出「离地」 */
+    const kneeUp = frameOf(kneelPose(165, { ground: 0.92 - 0.20 }), { groundY: 0.92 });
+    ok('膝盖离地（0.63×躯干长）→ 跪撑不成立（只卡「膝盖着地」这一条）',
       GATES.kneelPushup(kneeUp) === false && fails(kneeUp, 'kneeClear')
       && holds(kneeUp, ['hip', 'hipAboveKnee', 'shoulderAboveHip']), detail(kneeUp));
 
-    // ⑤ 完全不是这个动作：站着 / 标准俯撑
+    // ⑥ 完全不是这个动作：站着 / 仰卧（都进不来）
     const stand = frameOf(standingPose({ knee: 178, lean: 6, armDown: 0, ankleX: 1.0, view: 'side' }));
+    const lying = frameOf(supinePose({
+      hip: { x: 0.6, y: 0.9 }, thighUp: 40, knee: 100, torsoUp: 280, armDown: -90, elbow: 170,
+    }));
+    ok('站着 / 仰卧都不会被误判成跪撑',
+      GATES.kneelPushup(stand) === false && GATES.kneelPushup(lying) === false,
+      `站姿 kneeClear=${stand.kneeClear.toFixed(2)} / 仰卧 hipAboveKnee=${lying.hipAboveKnee.toFixed(2)}`);
+    /**
+     * ⚠️ **放宽的代价，有意为之**（`kneeClear` 0.35→0.50 之后）：
+     * 标准俯撑的膝离地读到 ≈0.38，落在新阈值以内 → 这条门控**会把它放过**。
+     * 为什么接受：它是这套动作的「加强版」（同一块肌肉、同一个计数口径），
+     * 被算成跪姿俯卧撑**不会误导用户**；而反过来（真人跪着却进不了姿势）就是「一次都不计」，
+     * 那才是用户反复反馈、绝对不能再来一次的那种失败。
+     * 门控本身还在干活：更平的俯撑（膝离地 0.65）和站姿（0.84）照样被拦住。
+     */
     const plank = frameOf(pronePose({ hip: { x: 0.9, y: 0.7 }, bodyTilt: 63, elbow: 172, armDown: 6 }));
-    ok('站着 / 标准俯撑都不会被误判成跪撑',
-      GATES.kneelPushup(stand) === false && GATES.kneelPushup(plank) === false,
-      `站姿 knee=${stand.kneeAngle.toFixed(1)} / 俯撑 knee=${plank.kneeAngle.toFixed(1)}`);
-    ok('标准俯卧撑那条门控（要求躯干 ≥32°）反而会把跪撑拦住 —— 这就是必须另开一条门控的原因',
-      GATES.proneUpright(kneel) === false, `torsoIncl=${kneel.torsoIncl.toFixed(1)}`);
+    const plankFlat = frameOf(pronePose({ hip: { x: 0.9, y: 0.75 }, bodyTilt: 40, elbow: 172, armDown: 10 }));
+    ok('⚠️ 有意的代价：标准俯撑（膝离地 ≈0.38）现在也会被放过',
+      GATES.kneelPushup(plank) === true, `kneeClear=${plank.kneeClear.toFixed(2)}`);
+    ok('更平的俯撑（膝离地 ≈0.65）仍然被拦住 —— 门控还在干活，不是「什么姿势都算」',
+      GATES.kneelPushup(plankFlat) === false, `kneeClear=${plankFlat.kneeClear.toFixed(2)}`);
+    /**
+     * 为什么跪撑要**单独一条门控**：把上身立起来跪撑（髋折叠 55°，真人常见的一种跪法）时
+     * 躯干几乎是竖直的（倾角 ≈3°），标准俯卧撑那条 `proneUpright`（要求躯干 ≥32°）会把它拦住 ——
+     * 而它对跪姿俯卧撑明明是合法姿势。
+     */
+    const upright = frameOf(kneelPose(165, { hipFlex: 55 }));
+    ok('上身立起来的跪撑（躯干倾角只有几度）过不了标准俯卧撑的门控，但**过得了**跪撑门控 —— '
+      + '这就是必须另开一条门控的原因',
+    GATES.proneUpright(upright) === false && GATES.kneelPushup(upright) === true,
+    `torsoIncl=${upright.torsoIncl.toFixed(1)} hip=${upright.hipAngle.toFixed(1)}`);
 
     const det = fresh('kneePushup');
     const r = makeRunner(det);
     r.run([{ pose: standingIdle, ms: 3000 }]);
     ok('站着不会被误判成跪姿俯卧撑（不计次 + 门控没过）',
       det.validReps === 0 && det.active === false, `有效 ${det.validReps}, active=${det.active}`);
-    ok('没进跪撑姿势时给出准备提示（走 status.need.kneelPushup）',
-      typeof det.standby === 'string' && det.standby.length > 0, String(det.standby));
+    ok('没进跪撑姿势时给出准备提示（走 status.need.kneelPushup… 词条，中文文案存在）',
+      typeof det.standby === 'string' && det.standby.startsWith('status.need.kneelPushup')
+      && t(det.standby) !== det.standby, `${det.standby} → ${t(det.standby)}`);
+  }
+  {
+    /** 只跪不沉（撑在那里不动）→ 一次都不计，也不该刷半程 */
+    const det = fresh('kneePushup');
+    const r = makeRunner(det);
+    r.run(repeat(() => kneelPose(165), 2000, 3));
+    ok('只跪着撑住、完全不下沉 → 一次都不计（也不刷半程）',
+      det.validReps === 0 && det.partialReps === 0, `有效 ${det.validReps} / 半程 ${det.partialReps}`);
+  }
+  {
+    /** 完全不同的动作（仰卧屈膝）→ 不进跪撑门控，一次都不计 */
+    const det = fresh('kneePushup');
+    const r = makeRunner(det);
+    r.run([{
+      pose: () => supinePose({
+        hip: { x: 0.6, y: 0.9 }, thighUp: 40, knee: 100, torsoUp: 280, armDown: -90, elbow: 170,
+      }),
+      ms: 3000,
+    }]);
+    ok('完全不同的动作（仰卧屈膝）→ 一次都不计',
+      det.validReps === 0 && det.active === false, `有效 ${det.validReps}, active=${det.active}`);
   }
   {
     /**

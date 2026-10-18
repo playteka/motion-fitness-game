@@ -257,9 +257,9 @@ export const STEP_PLANS = {
   /* 跪姿俯卧撑（退阶俯卧撑）：判据和标准俯卧撑**同一套**（只判肘角、四步全问识别器自己的进度），
      只是门槛更松（见 catalog.js 里 kneePushup 那一条）。所以这一步的检查也都问 `d.progress`，
      和识别器的计次线是同一把尺子，不会出现「这条线界面说到了、识别器却没计」。
-     ① 跪撑这一步问的是识别器的 `gateOk` —— 也就是用户给的**第一帧判据**
-     （髋角 ≈180° + 膝角 ≈90° + 髋比膝高 + 肩比髋高 + 膝盖着地，见 engines.js 的 KNEE_PUSHUP_SETUP），
-     所以「判据 = 计分」用的是同一张表，没有第二份阈值。 */
+     ① 跪撑这一步问的是识别器的 `gateOk` —— 也就是那张表里的四条判据
+     （髋角 120°~180°（背基本一条线）+ 髋比膝高 + 肩比髋高 + 膝盖着地，见 engines.js 的 KNEE_PUSHUP_SETUP；
+     膝角**不是**判据），所以「判据 = 计分」用的是同一张表，没有第二份阈值。 */
   kneePushup: {
     perCycle: true,
     repBonus: 6,
@@ -268,7 +268,7 @@ export const STEP_PLANS = {
         id: 'setup',
         labelKey: 'steps.kneePushup.setup.label',
         points: 5,
-        // 跪撑到位（五条判据全在 `d.gateOk` 里，见 engines.js 的 KNEE_PUSHUP_SETUP）
+        // 跪撑到位（四条判据全在 `d.gateOk` 里，见 engines.js 的 KNEE_PUSHUP_SETUP）
         // + 手臂大致撑直（跪姿**不要求躯干接近水平**，所以不问 torsoIncl）
         check: (f, d) => !!d.gateOk && Number.isFinite(f.elbowAngle) && f.elbowAngle >= 150,
         hint: (f, d) => (d.gateOk ? H('steps.kneePushup.setup.straight') : H('steps.kneePushup.setup.pose')),

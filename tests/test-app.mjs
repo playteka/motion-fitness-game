@@ -703,11 +703,12 @@ console.log('\n[1b] 运动设定弹窗（入口在主页、两步流程）');
     ok('跪姿俯卧撑：计次线（≤155°）与满分深度（≤133°）都列在关键帧上',
       kneeRaw.includes('155') && kneeRaw.includes('133'), kneeRaw.slice(0, 400));
     // 用户后续要求「去掉膝盖 90 度的要求」→ 判据只剩四条（膝角仍在画面上标出来，但不再参与判定）
-    ok('跪姿俯卧撑：第一格「跪撑」列的是四条判据（髋 160°–180° / 髋比膝高 / 肩高于髋 / 膝离地），**没有膝关节角度**',
-      kneeRaw.includes('跪撑') && kneeRaw.includes('髋关节角度 160°–180°')
+    // 第二轮反馈「似乎没有计数」→ 四条判据整体放宽（髋 120°–180° / 0.15 / 0.1 / 0.5）
+    ok('跪姿俯卧撑：第一格「跪撑」列的是四条判据（髋 120°–180° / 髋比膝高 / 肩高于髋 / 膝离地），**没有膝关节角度**',
+      kneeRaw.includes('跪撑') && kneeRaw.includes('髋关节角度 120°–180°')
       && !kneeRaw.includes('膝关节角度')
       && kneeRaw.includes('髋比膝高')
-      && kneeRaw.includes('肩高于髋') && kneeRaw.includes('膝离地高度 ≤ 0.35×躯干长')
+      && kneeRaw.includes('肩高于髋') && kneeRaw.includes('膝离地高度 ≤ 0.5×躯干长')
       && !kneeRaw.includes('躯干倾角 ≥ 32') && !kneeRaw.includes('50°–158°'),
       kneeRaw.slice(0, 600));
     ok('跪姿俯卧撑：分数的分配与 stagePoints 一致（5 / 7 / 14 / 8 + 满轮 6 = 40）',

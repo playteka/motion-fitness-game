@@ -258,7 +258,19 @@ export default {
       // Crunch: the starting pose is "lie down with knees bent" (different from the bridge / leg raise start)
       crunchLying: 'Lie on the mat with your knees bent: trunk flat (tilt about 90°), knees bent to about 90°, feet planted',
       quadruped: 'Get on all fours: hands and knees on the floor',
-      kneelPushup: 'Set up the kneel: knees on the floor, knee-to-shoulder in one line (hip ≈180°), knees bent ≈90°, hands under your shoulders',
+      kneelPushup: 'Set up the kneel: knees on the floor, hips above your knees, shoulders above your hips, back roughly in one line (hip angle ≥120°)',
+      /**
+       * **Which** kneel criterion failed (engines.js GATE_FAIL_HINT picks one).
+       * A single generic "set up the kneel" line leaves the user unable to tell what is
+       * wrong ("I am kneeling, why doesn't it count?"), so each criterion says what to fix;
+       * the actual numbers are still in the 🐞 row (hip / hipAboveKnee / shoulderAboveHip / kneeClear).
+       */
+      kneelPushupFail: {
+        hip: 'Flatten your back: from knees to shoulders should be roughly one line (hip angle ≥120° — don’t sit your hips back onto your heels)',
+        hipAboveKnee: 'Get your hips above your knees: knees on the floor as the pivot, hips lifted (right now your hips are lower than your knees — looks like lying or sitting)',
+        shoulderAboveHip: 'Prop your upper body up: hands under your shoulders, shoulders above your hips (right now your shoulders have dropped below your hips)',
+        kneeClear: 'Knees really on the floor: kneel on the mat instead of hovering; if you are already kneeling, raise the camera a little so the calibrated floor line lines up',
+      },
       kneel: 'Kneel down: knees on the floor, torso tall',
       seated: 'Sit down on the mat and set up for the move',
       side: 'Lie on your side toward the camera, resting on your forearm',
@@ -424,8 +436,8 @@ export default {
     /**
      * Knee Push-up (a regression of the push-up, added at the user's request): the counting line is
      * looser than the standard push-up (155° vs 148°) and it does **not** require a near-horizontal
-     * trunk (the straight back of the kneel is judged by the hip angle ≈180°, not by the trunk tilt) —
-     * see kneePushup in catalog.js.
+     * trunk (how straight the back is gets judged by the hip angle, not by the trunk tilt) —
+     * see kneePushup in catalog.js and KNEE_PUSHUP_SETUP in engines.js.
      */
     kneePushup: {
       name: 'Knee Push-up',
@@ -570,9 +582,9 @@ export default {
     /* Knee push-up (the easier version): the same four steps as the push-up, with looser lines */
     kneePushup: {
       setup: {
-        label: 'Kneel: one line from knee to shoulder (hip ≈180°), knees bent to ≈90°, knees on the floor',
+        label: 'Kneel: knees on the floor, hips above your knees, shoulders above your hips, back roughly one line (hip angle ≥120°)',
         pose: 'Get into the kneel first: knees on the floor, hands right under your shoulders',
-        straight: 'Straighten your arms and keep one line from your knees to your shoulders',
+        straight: 'Straighten your arms and keep one line from your knees to your shoulders (don’t pike your hips up)',
       },
       lower: { label: 'Bend your elbows and lower your chest', hint: 'Start lowering: bend your elbows and bring your chest toward the floor' },
       depth: { label: 'Elbows to about 133°, chest close to the floor (top-scoring step)', hint: 'A little deeper — your elbow angle is about {deg}°' },
@@ -1026,8 +1038,8 @@ export default {
       standUpright: 'Standing upright (no floor line needed)',
       // Push-up / mountain climber gate: same idea as the upright stance, avoiding the floor line
       proneUpright: 'Push-up position (no floor line needed)',
-      // Knee push-up: kneeling prop (knees on the floor + straight back hip ≈180° + knee ≈90° + hips above knees + shoulders above hips)
-      kneelPushup: 'Kneeling prop (hip ≈180°, knees ≈90°, knees on the floor, shoulders above hips)',
+      // Knee push-up: kneeling prop (knees on the floor + back roughly one line, hip angle ≥120° + hips above knees + shoulders above hips) — knee angle is not judged
+      kneelPushup: 'Kneeling prop (hip angle ≥120°, hips above knees, shoulders above hips, knees on the floor)',
       standWide: 'Standing, legs apart',
       prone: 'Push-up position',
       supine: 'Lying on your back, knees bent',
