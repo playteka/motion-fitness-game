@@ -1336,6 +1336,177 @@ kbd {
 .corner-ring .ring-label--icon { font-size: calc(var(--ring-px) * 0.62); }
 .corner-ring .ring-timer { font-size: clamp(12px, 1.1vw, 15px); }
 
+/* ---- 右上角「设置」环按下去之后，屏幕**中间那一层圆环**（每组次数 / 每组秒数）----
+   用户要求：「在每一个运动的页面的右上角『退出』圆环下方增加一个『设置』圆环，当用户选择之后，
+   在**界面中间出现多个圆环**，让用户选择该运动每组运动的次数或者秒数」。
+
+   层次（z-index）是刻意排的：
+     · 遮罩 / 标题 / 关闭按钮 = 5（盖住 HUD 4 与判定条 5 的同一层，画面安静下来）；
+     · 右上角那两颗圆环仍在自己那一层（`.corner-ring` = 6）→ **「设置」环始终露在上面**，
+       所以「再点一次设置环把它关掉」这条交互在任何时候都成立；
+     · 猫爪层（8）还在最上面 → 手掌的位置照样看得见（新环也照样能显示猫爪）。
+   圆环本身的坐标 / 直径由 app.js 的 setChooserLayout() 一处算好写进行内样式（绘制 = 判定）。 */
+.set-picker {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;   /* 只有遮罩、圆环、关闭按钮自己吃事件，空白处交给遮罩 */
+}
+.set-picker[hidden] { display: none; }
+/* 点空白处 = 关闭（用户要求的关闭方式之一；这块遮罩铺满整个舞台） */
+.set-picker-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 14, 0.72);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* 标题（「每组次数 · 当前每组 12 次」）与提示（怎么操作 / 怎么关）：贴画面上方居中。
+   ⚠️ 这两个 top 与 app.js 的 SET_CHOOSER_PAD_TOP（54~64px）是一起定下来的：
+   标题 6 + 约 26px 高、提示 36 + 一行约 16px = 52px —— 所以圆环永远不会钻到字底下。 */
+.set-picker-title {
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 5px 18px;
+  border-radius: 999px;
+  background: rgba(8, 15, 26, 0.86);
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.22);
+  color: #dcf2ff;
+  font-size: clamp(13px, 1.4vw, 18px);
+  font-weight: 800;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.set-picker-hint {
+  position: absolute;
+  left: 50%;
+  top: 36px;
+  transform: translateX(-50%);
+  margin: 0;
+  max-width: 92%;
+  color: #9fb6cf;
+  font-size: clamp(11px, 1.05vw, 14px);
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* 圆环的容器：铺满舞台（每个按钮自己按舞台像素绝对定位，和 .gesture-rings 同一个做法） */
+.set-picker-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+/* 一颗「可选数值」圆环：圆 + 大号数字 + 小号单位（字号由 app.js 按直径写行内 font-size，
+   大屏的环里数字大、小屏的环里数字小，但都完整落在圈里） */
+.set-choice {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(6, 12, 20, 0.55);
+  color: #e6f1ff;
+  cursor: pointer;
+  pointer-events: auto;
+  /* 触屏热区 ≥44px：小屏也不会缩到手指点不着（app.js 的 SET_CHOOSER_MIN_PX 也是 44） */
+  min-width: 44px;
+  min-height: 44px;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.18s ease, box-shadow 0.18s ease, color 0.18s ease;
+}
+.set-choice:hover { background: rgba(8, 30, 46, 0.66); }
+.set-choice:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+.set-choice-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);   /* 从 12 点开始 → 顺时针蓄力，和别的圆环同一套 */
+  pointer-events: none;
+}
+.set-choice-track { fill: none; stroke: rgba(148, 163, 184, 0.35); stroke-width: 7; }
+.set-choice-fill {
+  fill: none;
+  stroke: rgba(56, 189, 248, 0.55);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-dasharray: 326.7;     /* 2πr，r = 52（与 .ring-fill 同一个数） */
+  stroke-dashoffset: 326.7;
+  transition: stroke 0.18s linear;
+}
+.set-choice.dwelling { background: rgba(8, 30, 22, 0.55); box-shadow: 0 0 26px rgba(74, 222, 128, 0.35); }
+.set-choice.dwelling .set-choice-fill { stroke: #4ade80; filter: drop-shadow(0 0 8px rgba(74, 222, 128, 0.85)); }
+/* 当前值高亮（选中态）：环变品牌青 + 数字变青 + 一圈实心描边。
+   只改颜色 / 光晕，不改任何尺寸（和整套圆环「不抖」的原则一致）。 */
+.set-choice.is-current {
+  background: rgba(56, 189, 248, 0.2);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 3px rgba(56, 189, 248, 0.85), 0 0 22px rgba(56, 189, 248, 0.4);
+}
+.set-choice.is-current .set-choice-track { stroke: rgba(56, 189, 248, 0.9); }
+.set-choice-num {
+  position: relative;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+  pointer-events: none;
+}
+.set-choice-unit {
+  position: relative;
+  color: #9fb6cf;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+.set-choice.is-current .set-choice-unit { color: #cfe9ff; }
+/* 关闭按钮（「关闭」/ Close）：贴画面下方居中，图标 + 文字，热区够大 */
+.set-picker-close {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 8px 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  background: rgba(10, 18, 30, 0.9);
+  color: #dbeafe;
+  font-size: clamp(13px, 1.2vw, 15px);
+  font-weight: 800;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.set-picker-close:hover, .set-picker-close:focus-visible {
+  border-color: rgba(56, 189, 248, 0.75);
+  color: #fff;
+}
+.set-picker-close .ui-icon { width: 1.1em; height: 1.1em; }
+/* 手机 / 很矮的舞台：标题与提示再收一点，圆环让出位置（版面本身由 JS 按比例算） */
+@media (max-width: 560px) {
+  .set-picker-title { font-size: 12px; padding: 3px 12px; top: 4px; }
+  .set-picker-hint { font-size: 10px; top: 30px; }
+  .set-picker-close { padding: 7px 14px; font-size: 12.5px; }
+}
+
 /* 小屏：两个圆环一起收（同一个变量），所以永远还是等大 */
 @media (max-width: 720px) {
   :root { --ring-px: 84px; }

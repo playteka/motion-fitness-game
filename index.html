@@ -261,6 +261,41 @@
               <span class="ring-label" id="ringQuickExitLabel"></span>
               <span class="ring-timer" id="ringQuickExitTimer"></span>
             </button>
+            <!-- 「设置」圆环：用户要求「在每一个运动的页面的右上角『退出』圆环**下方**增加一个
+                 『设置』圆环」。尺寸与退出环相同（同一个 --ring-px）、水平中心对齐，
+                 圆心 = 退出环圆心 +（直径 + 间距），一处定义在 app.js 的 ringCenter('settings')
+                 / settingsRingLayout()；圈里是齿轮线条图标（`ui:settings`，不是 emoji），
+                 文字含义在 title / aria-label 上（中英都有，随语言切换）。
+                 点一下 = 开 / 关中间那一层「每组次数 / 每组秒数」的圆环；手/脚停满 3 秒也一样。 -->
+            <button class="ring-btn" id="ringQuickSet" type="button"
+                    data-i18n-title="ui.gestureSet" data-i18n-aria="ui.gestureSet">
+              <svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+                <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+                <circle class="ring-fill" cx="60" cy="60" r="52"></circle>
+              </svg>
+              <span class="ring-label" id="ringQuickSetLabel"></span>
+              <span class="ring-timer" id="ringQuickSetTimer"></span>
+            </button>
+          </div>
+
+          <!-- 屏幕中间那一层「每组次数 / 每组秒数」的圆环（点右上角「设置」环之后出现）：
+               · 计数类动作给 5 / 8 / 10 / 12 / 15 / 20 次，计时类给 15 / 20 / 30 / 45 / 60 / 90 秒
+                 （一处定义见 app.js 的 SET_REP_CHOICES / SET_SEC_CHOICES）；
+               · 每颗圆环里是「大号数字 + 小号单位」，当前值高亮；点一下、或者手掌停满 3 秒就选中；
+               · 关闭：点空白处（这块遮罩）/ Esc / 再点一次「设置」环（三样都实现了）；
+               · 选项按钮由 app.js 的 renderSetPicker() 按 setChooserLayout() 摆到舞台像素坐标上，
+                 所以画出来的位置就是判定的位置。遮罩的 z-index 比圆环低一层 —— 右上角那颗
+                 「设置」环始终露在上面，可以再点一次把它关掉。 -->
+          <div class="set-picker" id="setPicker" hidden>
+            <div class="set-picker-backdrop" id="setPickerBackdrop"></div>
+            <p class="set-picker-title" id="setPickerTitle"></p>
+            <p class="set-picker-hint" id="setPickerHint"></p>
+            <div class="set-picker-grid" id="setPickerGrid"></div>
+            <button class="set-picker-close" id="setPickerClose" type="button"
+                    data-i18n-title="ui.setPickerClose" data-i18n-aria="ui.setPickerClose">
+              <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span>
+              <span class="set-picker-close-text" data-i18n="ui.setPickerClose"></span>
+            </button>
           </div>
 
           <!-- 手掌指针（猫爪）：出现在手掌当前的位置，让用户知道自己的手在哪儿。

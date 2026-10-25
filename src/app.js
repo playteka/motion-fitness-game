@@ -85,6 +85,20 @@ const HOLD_TARGETS = [20, 30, 45, 60, 90];
 // 限时计数（开合跳）的时长预设：单位是秒，不是次数
 const TIME_TARGETS = [30, 45, 60, 90, 120];
 
+/**
+ * 动作页右上角「设置」圆环 → 屏幕**中间那一层圆环**里可选的数值（**一处定义**：
+ * 界面渲染、键盘顺序、测试断言全部从这两个常量读，见 `openSetPicker()` / `setChooserLayout()`）。
+ *
+ *   - 计数类动作（俯卧撑 / 深蹲这类 `kind === 'rep'`，且不是限时计数）→ **每组次数**，`SET_REP_CHOICES`；
+ *   - 计时类动作（平板支撑这类 `kind === 'hold'`）以及限时计数 → **每组秒数**，`SET_SEC_CHOICES`。
+ *
+ * 选完写进去的仍然是仓库本来就有的那一份存储（`settings.targets[id]` / `settings.seconds[id]`，
+ * 见 `setTarget()`），所以 HUD 左上角的目标文案、运动设定弹窗里的数字框、选择页上的小字会一起跟着变
+ * —— 没有新造任何存储。
+ */
+const SET_REP_CHOICES = [5, 8, 10, 12, 15, 20];
+const SET_SEC_CHOICES = [15, 20, 30, 45, 60, 90];
+
 /** 这个动作的目标预设：计时类与限时计数类都是秒，其余是次数 */
 function targetPresetsFor(ex) {
   if (ex.kind === 'hold' || ex.timed) return [...(ex.timed ? TIME_TARGETS : HOLD_TARGETS)];
@@ -126,6 +140,15 @@ const state = {
   menuLevel: 0,             // 手势菜单的层级：0 = 分类、1 = 该分类下的动作 +「返回」
   menuCategory: '',         // 第二级当前是哪个分类
   menuPage: 0,              // 当前这一层的页码（一页 4 个；向上 / 向下挥手翻页）
+  /**
+   * 右上角「设置」圆环按下去之后，**屏幕中间那一层圆环**的状态（每组次数 / 每组秒数）。
+   * 只在这里记「开着没有、是次数还是秒数、有哪些选项、单位是什么」—— 数值本身不存这里，
+   * 选中后照旧写进 `settings.targets[id]` / `settings.seconds[id]`（见 setTarget）。
+   */
+  setPickerOpen: false,
+  setPickerKind: '',        // 'reps' | 'seconds'（跟当前动作走，见 setPickerKindFor）
+  setPickerChoices: [],     // 当前这一层可选的数值（来自 SET_REP_CHOICES / SET_SEC_CHOICES）
+  setPickerUnit: '',        // 环里那个小号单位（和 HUD 同一份：ex.targetUnit）
   autoStart: false,         // 校准识别完成后是否自动进入运动状态（选好动作后为 true）
   afterSet: false,          // 刚结束一组：先让用户休息，不自动开始；离开轮廓后自动恢复
   detector: null,
@@ -1119,6 +1142,15 @@ const CORNER_RING_INSET_PX = 18;
  */
 const CORNER_RING_TOP_PX = 16;
 /**
+ * 右上角「**设置**」圆环与上面那颗「退出」圆环之间的**间距**（像素，两个圆的外沿之间）。
+ *
+ * 用户要求：「在每一个运动的页面的右上角『退出』圆环**下方**增加一个『设置』圆环……
+ * 尺寸与退出圆环**相同**、水平中心对齐」—— 所以设置环的圆心 y = 退出环圆心 y + **直径 + 本间距**
+ * （圆心的距离 = 一个直径 + 一道缝）。这个数**只有这一处定义**：`ringCenter('settings')` 用它，
+ * `settingsRingLayout()` 把它原样吐给 UI 与测试，判定圈（`anyTouchInRing`）也走同一个圆心。
+ */
+const SET_RING_GAP_PX = 12;
+/**
  * 读不到元素真实尺寸时的兜底直径（与 style.css 里 `--ring-px` 的 clamp 参数保持一致）。
  * 用户要求「退出圆环放大一点」：96/132 → 104/140（HUD 进度环共用同一个变量，一起变大、仍然等大）。
  */
@@ -1273,6 +1305,11 @@ const gestureState = {
   retry: { p: 0, since: 0, lastInside: 0, done: false },
   // 右上角常驻的「退出」圆环：独立显示/隐藏（不跟「一组结束」那两个一起）
   corner: { p: 0, since: 0, lastInside: 0, done: false },
+  /**
+   * 右上角「设置」圆环（在退出圆环**正下方**、同尺寸）：它和退出环**共用一个容器**
+   * （`#cornerExit`），所以显隐由同一个 `cornerVisible` 决定，这里只放自己的蓄力进度。
+   */
+  settings: { p: 0, since: 0, lastInside: 0, at: 0, done: false },
   cornerVisible: false,
   /**
    * 手势菜单里「手掌正停在哪一个圆环里」——同一时刻只有一格在蓄力，
@@ -1385,13 +1422,25 @@ function ringCenter(key, stageW, stageH) {
       y: safe.top + CORNER_RING_TOP_PX + px / 2,
     };
   }
+  /**
+   * 「设置」圆环：**在退出圆环正下方**，水平中心对齐、直径相同（用户要求）。
+   *
+   * ⚠️ 这里**不是另写一套坐标**：x 直接用 `ringCenter('corner')` 的 x，
+   * y = 退出环圆心 y + 直径 + `SET_RING_GAP_PX`（两个圆的边缘之间留一道间距）。
+   * 于是「退出环挪一格、设置环跟着挪一格」，`layoutSetRing()` 绘制与 `anyTouchInRing()` /
+   * `updateSetRing()` 判定拿到的都是这同一个数（看到哪就是判哪）。
+   */
+  if (key === 'settings') {
+    const c = ringCenter('corner', stageW, stageH);
+    return { x: c.x, y: c.y + ringPx('corner') + SET_RING_GAP_PX };
+  }
   const r = GESTURE_RINGS[key];
   return { x: r.x * stageW, y: r.y * stageH };
 }
 
-/** 圆环的判定半径（像素）：中间两个沿用原来的比例口径，右上角退出圆环按自己的直径算 */
+/** 圆环的判定半径（像素）：中间两个沿用原来的比例口径，右上角退出 / 设置圆环按自己的直径算 */
 function ringHitRadius(key, size) {
-  if (key === 'corner') return ringPx('corner') * RING_HIT_RATIO;
+  if (key === 'corner' || key === 'settings') return ringPx('corner') * RING_HIT_RATIO;
   return RING_HIT * size.w;
 }
 
@@ -1435,6 +1484,34 @@ function exitRingLayout(size = stageSize()) {
     hit: ringHitRadius('corner', size) * RING_TOUCH_TOL,
     start: r * MENU_START_RATIO,
     iconSize: px * 0.62,
+  };
+}
+
+/**
+ * **右上角「设置」圆环的完整几何**（用户要求：「在每一个运动的页面的右上角『退出』圆环下方
+ * 增加一个『设置』圆环……尺寸与退出圆环相同、水平中心对齐」）。
+ *
+ * ⚠️ 一处定义：它**不是**另写一套坐标，而是从 `exitRingLayout()` / `ringCenter('settings')` 派生 ——
+ *   - 圆心 = `ringCenter('settings', …)`，也就是「退出环圆心 +（直径 + `SET_RING_GAP_PX`）」的竖直下移；
+ *   - 直径 / 半径 / 判定半径 / 起始迟滞 / 图标尺寸 = 退出环那一份**原样复用**（两颗环永远等大）；
+ *   - `below` 就是「圆心到底比退出环低多少」（= 直径 + 间距，测试直接断言这个等式）。
+ *
+ * 绘制（`layoutSetRing`）与判定（`anyTouchInRing(samples, 'settings', …)` → `ringCenter('settings')`）
+ * 用的是同一份数，所以「看到哪就是判哪」。
+ */
+function settingsRingLayout(size = stageSize()) {
+  const base = exitRingLayout(size);
+  const c = ringCenter('settings', size.w, size.h);
+  return {
+    cx: c.x,
+    cy: c.y,
+    px: base.px,
+    r: base.r,
+    hit: base.hit,
+    start: base.start,
+    iconSize: base.iconSize,
+    gap: SET_RING_GAP_PX,
+    below: c.y - base.cy,       // = px + SET_RING_GAP_PX：圆心之间的竖直距离
   };
 }
 
@@ -1558,7 +1635,7 @@ function distToSegment(px, py, ax, ay, bx, by) {
 /** 有几个采样点落在圆环里（🐞 面板显示用：「环内点 2」说明结论更稳） */
 function pointsInRing(samples, key, size) {
   const c = ringCenter(key, size.w, size.h);
-  const hit = ringHitRadius(key, size) * (key === 'corner' ? RING_TOUCH_TOL : 1);
+  const hit = ringHitRadius(key, size) * (ringKeyNearCorner(key) ? RING_TOUCH_TOL : 1);
   return samples.filter((p) => Math.hypot(p.x - c.x, p.y - c.y) <= hit).length;
 }
 
@@ -1576,8 +1653,23 @@ function pointsInRing(samples, key, size) {
  */
 function anyTouchInRing(samples, key, size) {
   const c = ringCenter(key, size.w, size.h);
-  // 右上角那个退出圆环多给一点宽容度（见 RING_TOUCH_TOL）；中间两个大圆环仍然严格按判定半径
-  const hit = ringHitRadius(key, size) * (key === 'corner' ? RING_TOUCH_TOL : 1);
+  // 右上角那两个圆环（退出 / 设置）多给一点宽容度（见 RING_TOUCH_TOL）；中间两个大圆环仍严格按判定半径
+  const hit = ringHitRadius(key, size) * (ringKeyNearCorner(key) ? RING_TOUCH_TOL : 1);
+  return anyTouchNearPoint(samples, c, hit);
+}
+
+/** 右上角（退出 / 设置）那一对圆环吗 —— 只有它们用 `RING_TOUCH_TOL` 的宽容度 */
+function ringKeyNearCorner(key) {
+  return key === 'corner' || key === 'settings';
+}
+
+/**
+ * 手 / 脚有没有**任意一个采样点**（或整只手/脚那一段）落进「以 c 为圆心、hit 为半径」的圈里。
+ *
+ * `anyTouchInRing()` 只是「先按 key 取圆心与判定半径、再调它」；「设置」环中间那一层选择圆环
+ * （每组次数 / 秒数）也用它 —— 那些圆环的圆心来自 `setChooserLayout()`，绘制与判定同样是同一份数。
+ */
+function anyTouchNearPoint(samples, c, hit) {
   if (!samples || !samples.length) {
     return { inside: false, pointIn: false, spanIn: false, best: null, bestSeg: null, minDist: Infinity, hit };
   }
@@ -1816,12 +1908,16 @@ function applyDeviceDefaults(env = deviceEnv()) {
  * 退出图标可以和返回图标一致，『再试一次』需要设计一个新的图标」）。
  *
  *   - 退出 = 和「返回」同一颗线条箭头（Lucide \`corner-up-left\`，和手势菜单里那颗完全一致）；
- *   - 再试一次 = 新加的 \`ui:retry\`（Lucide \`rotate-ccw\`，逆时针圆箭头，通用的「重来」符号）。
+ *   - 再试一次 = 新加的 \`ui:retry\`（Lucide \`rotate-ccw\`，逆时针圆箭头，通用的「重来」符号）；
+ *   - **设置** = 现成的 \`ui:settings\`（Lucide \`settings\` 齿轮，主页那个 ⚙️ 用的就是它，
+ *     **不是 emoji**）—— 用户要求设置环「图标用项目既有的线条图标」。
  *
  * 文字含义移到按钮的 \`title\` / \`aria-label\` 上 —— 鼠标悬停和读屏仍然知道是「退出」还是「再做一次」。
  */
+const RING_ICON_KEY = { exit: 'back', back: 'back', retry: 'ui:retry', settings: 'ui:settings' };
+
 function setRingIcon(labelEl, btnEl, kind, text) {
-  const key = kind === 'retry' ? 'ui:retry' : 'back';
+  const key = RING_ICON_KEY[kind] || 'back';
   if (labelEl) {
     labelEl.innerHTML = libIconSVG(key, 'ex-pose');
     labelEl.classList?.add('ring-label--icon');
@@ -1864,13 +1960,35 @@ function layoutExitRing(el, size = stageSize()) {
   el.style.height = `${g.px}px`;
 }
 
-/** 右上角退出圆环的位置（右上角、HUD 名称胶囊同一水平线；全屏/横竖屏切换后要重摆） */
+/**
+ * 把右上角那颗「**设置**」圆环摆到退出圆环**正下方**（唯一摆法）。
+ *
+ * 位置 / 直径全部来自 `settingsRingLayout()`（= `ringCenter('settings')` + 退出环那一份尺寸），
+ * 所以绘制坐标与判定圆心是同一个数；和 `layoutExitRing()` 一样**先清行内尺寸再量**，
+ * 免得旧 px 把直径钉住、和退出环不再等大。
+ */
+function layoutSetRing(el, size = stageSize()) {
+  if (!el) return;
+  el.style.width = '';
+  el.style.height = '';
+  const g = settingsRingLayout(size);
+  el.style.left = `${g.cx}px`;
+  el.style.top = `${g.cy}px`;
+  el.style.width = `${g.px}px`;
+  el.style.height = `${g.px}px`;
+}
+
+/** 右上角两颗圆环（退出 + 设置）的位置（右上角、退出环下方；全屏/横竖屏切换后要重摆） */
 function layoutCornerRing() {
   layoutExitRing(ringEl('corner'));
+  layoutSetRing(ringEl('settings'));
+  // 「设置」选择层开着时窗口变了：中间那一排圆环也要按新尺寸重新摆一遍
+  if (state.setPickerOpen) renderSetPicker();
 }
 
 function ringEl(key) {
   if (key === 'corner') return $('ringQuickExit');
+  if (key === 'settings') return $('ringQuickSet');
   if (key === 'hud') return $('hudRing');
   return $(key === 'exit' ? 'ringExit' : 'ringRetry');
 }
@@ -1997,12 +2115,18 @@ function showCornerExit() {
   const st = gestureState.corner;
   st.p = 0; st.since = 0; st.at = 0; st.lastInside = 0; st.done = false;
   ringEl('corner')?.classList.remove('dwelling', 'done', 'near');
+  resetSetRing();                 // 「设置」环（就在退出环正下方）也从 0 开始
   const label = cornerLabelEl();
   // 圆环里只画图标（和「返回」同一颗线条箭头），文字在 title / aria-label 上
   setRingIcon(label, ringEl('corner'), 'exit', t('ui.gestureExit'));
+  // 「设置」环：同样是线条图标（齿轮 `ui:settings`，和主页那颗 ⚙️ 同一个形状），文字在 title / aria-label
+  setRingIcon($('ringQuickSetLabel'), ringEl('settings'), 'settings', t('ui.gestureSet'));
   const timer = $('ringQuickExitTimer');
   if (timer) timer.textContent = '';
+  const setTimer = $('ringQuickSetTimer');
+  if (setTimer) setTimer.textContent = '';
   paintRing('corner', 0);
+  paintRing('settings', 0);
   // ⚠️ 顺序很重要：**先显示再量尺寸**。元素还在 `display: none` 时 `clientWidth` 是 0，
   // 量到的是兜底值，那个值会被写进行内 width/height —— 于是圆环会一直比 HUD 那个进度圆环小一圈
   // （用户反馈「退出圆环放大一点，大小和 HUD 的进度圆环保持一样大小」就是这个原因）。
@@ -2018,6 +2142,8 @@ function hideCornerExit() {
   const st = gestureState.corner;
   st.p = 0; st.since = 0; st.at = 0; st.lastInside = 0; st.done = false;
   ringEl('corner')?.classList.remove('dwelling', 'done', 'near');
+  resetSetRing();
+  closeSetPicker();   // 圆环收起来了，中间那一层选择圆环也不该继续挂着
   state.touchInfo = null;
 }
 
@@ -2123,6 +2249,380 @@ function triggerCornerExit() {
   hideCornerExit();
   if (toHome) showHome();
   else openMenu({ silent: true });
+}
+
+/* ------------------------------------------------------------------ *
+ * 右上角「设置」圆环（就在退出环**正下方**）+ 屏幕中间那一层「每组次数 / 每组秒数」圆环
+ *
+ * 用户要求（原话）：「在每一个运动的页面的右上角『退出』圆环**下方**增加一个『**设置**』圆环，
+ *   当用户选择之后，在**界面中间出现多个圆环**，让用户选择该运动**每组运动的次数或者秒数**，
+ *   比如在俯卧撑界面，则选择每组多少次，在平板支撑界面，则选择多少秒。」
+ *
+ * 三段：
+ *   ① 「设置」环本人 —— 位置 / 直径 / 判定都从 `settingsRingLayout()`（= `ringCenter('settings')`）
+ *      这一处取，和退出环同尺寸、同中心线、只在它正下方；交互与退出环**完全一样**
+ *      （手/脚任意一部分进环停满 `GESTURE_HOLD_MS` 就触发，鼠标 / 触摸点它也行）；
+ *   ② 屏幕中间那一层圆环 —— 计数类动作给 `SET_REP_CHOICES`（每组次数），
+ *      计时类给 `SET_SEC_CHOICES`（每组秒数）；每颗环里是「大号数字 + 小号单位」，
+ *      当前值高亮；点一下或者手掌停满 3 秒就选中；
+ *   ③ 选中后只写**这个动作自己那一份**（`settings.targets[id]` / `settings.seconds[id]`，
+ *      见 `setTarget`）—— 正在练的就是它时 HUD 目标文案立刻跟着变并持久化，没有新造存储。
+ *
+ * 关掉的方式有三个（用户要求「明显的关闭 / 取消方式」）：点空白处、按 `Esc`、再点一次「设置」环。
+ * ------------------------------------------------------------------ */
+
+/** 「设置」环自己的蓄力进度（和退出环同一套时间口径，但**各自独立**，互不干扰） */
+function resetSetRing() {
+  const st = gestureState.settings;
+  st.p = 0; st.since = 0; st.at = 0; st.lastInside = 0; st.done = false;
+  ringEl('settings')?.classList.remove('dwelling', 'done', 'near');
+  const timer = $('ringQuickSetTimer');
+  if (timer) timer.textContent = '';
+}
+
+/**
+ * 每帧更新「设置」环：手 / 脚**任意一部分**进环、保持满 `GESTURE_HOLD_MS` → 打开中间那一层选择圆环。
+ *
+ * 判定与绘制同一份数：圆心来自 `ringCenter('settings')`（= 退出环圆心 + 直径 + 间距），
+ * 半径来自 `ringHitRadius('settings')`（= 画出来的半径 × `RING_TOUCH_TOL`，和退出环同一档宽容度）。
+ * 显隐跟着退出环走（同一个容器 `#cornerExit`、同一个 `cornerVisible`）：
+ * 摄像头没开、菜单里、或者「一组结束」的两个大圆环摆着的时候，两颗环一起收起来。
+ */
+function updateSetRing(landmarks, now) {
+  if (!gestureState.cornerVisible) return false;
+  const st = gestureState.settings;
+  const size = stageSize();
+  const samples = touchSamples(landmarks, size.w, size.h, state.settings.mirror);
+  const res = anyTouchInRing(samples, 'settings', size);
+  const dt = clamp(now - (st.at || now), 0, 250);
+  st.at = now;
+  if (st.done) {
+    // 已经触发过：手 / 脚先离开这颗环，才重新武装（否则停在环里会每 3 秒开 / 关一次）
+    if (!res.inside) {
+      st.done = false;
+      st.p = 0;
+      st.since = 0;
+      st.lastInside = now;
+      const el = ringEl('settings');
+      if (el) el.classList.remove('dwelling', 'done', 'near');
+      paintRing('settings', 0);
+    }
+    return false;
+  }
+  if (res.inside) {
+    st.lastInside = now;
+    st.p = clamp(st.p + dt / GESTURE_HOLD_MS, 0, 1);
+  } else if (now - st.lastInside > GESTURE_GRACE_MS) {
+    st.p = Math.max(0, st.p - dt / GESTURE_DRAIN_MS);
+  }
+  const el = ringEl('settings');
+  if (el) {
+    const near = Number.isFinite(res.minDist) && res.minDist <= res.hit * RING_NEAR_FACTOR;
+    el.classList.toggle('near', near && !res.inside);
+  }
+  paintRing('settings', st.p);
+  const timer = $('ringQuickSetTimer');
+  if (timer) {
+    const left = Math.max(0, GESTURE_HOLD_MS * (1 - st.p)) / 1000;
+    timer.textContent = st.p > 0.02 && st.p < 1 ? `${left.toFixed(1)}s` : '';
+  }
+  if (st.p >= 1) {
+    st.done = true;
+    paintRing('settings', 1);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 「设置」环触发（手/脚停满 3 秒，或者鼠标 / 触摸点它）：**开 / 关切换**中间那一层选择圆环。
+ * 「再点一次设置环」也是用户要的关闭方式之一，所以这里是 toggle 而不是单纯 open。
+ */
+function triggerSetRing() {
+  const st = gestureState.settings;
+  audio.milestone();
+  if (state.setPickerOpen) closeSetPicker();
+  else openSetPicker();
+  // ⚠️ 「已触发」要在 open / close **之后**再写：closeSetPicker() 里会 resetSetRing（把 done 清掉），
+  // 而这里必须把它重新立起来 —— 手 / 脚先离开圆环才会重新武装，否则一直停在环里会每 3 秒开 / 关一次。
+  st.done = true;
+  st.p = 1;
+  st.since = 0;
+  paintRing('settings', 1);
+  return state.setPickerOpen;
+}
+
+/* ---------------- 中间那一层选择圆环的版面（一处定义：绘制 / 判定 / 测试都读它） ---------------- */
+
+/** 圆环之间的间距（像素） */
+const SET_CHOOSER_GAP_PX = 14;
+/** 左右各留这么多边距（圆环不会贴到画面边上） */
+const SET_CHOOSER_PAD_X = 16;
+/** 上方留给标题 / 提示、下方留给关闭按钮的高度上限（屏幕矮的时候按比例收，见 setChooserLayout） */
+const SET_CHOOSER_PAD_TOP = 64;
+const SET_CHOOSER_PAD_BOTTOM = 84;
+/**
+ * 上下留白的**下限**：屏幕上再矮也不能把标题（「每组次数 · 当前 12 次」）和关闭按钮压到圆环上 ——
+ * 54px 刚好放下一行标题（6 + 约 26px）+ 一行提示（36 → 52），68px 刚好放下 44px 高的关闭按钮。
+ */
+const SET_CHOOSER_PAD_TOP_MIN = 54;
+const SET_CHOOSER_PAD_BOTTOM_MIN = 68;
+/** 一颗圆环最大 / 最小直径：最小 44px 是「触屏热区 ≥44px」那条无障碍底线 */
+const SET_CHOOSER_MAX_PX = 132;
+const SET_CHOOSER_MIN_PX = 44;
+/** 想排成「一整排」时每颗至少要有这么大（排不下就退成 3 列 / 2 列） */
+const SET_CHOOSER_ONE_ROW_MIN_PX = 88;
+
+/**
+ * 这一层用几列：**先尽量排成一排**（{n} 颗并排在画面中间），排不下才退成 3×2（再不行 2 列 / 1 列）。
+ * 只看宽度决定列数 —— 这样同一层里每颗圆环永远等大（和手势菜单「每页圆环一样大」同一个原则）。
+ */
+function setChooserCols(count, size = stageSize()) {
+  const n = Math.max(1, Math.round(Number(count) || 0));
+  const availW = Math.max(0, size.w - 2 * SET_CHOOSER_PAD_X);
+  const fit = (cols) => (availW - SET_CHOOSER_GAP_PX * (cols - 1)) / cols;
+  const oneRow = Math.min(n, 6);
+  if (fit(oneRow) >= SET_CHOOSER_ONE_ROW_MIN_PX) return oneRow;
+  if (n > 1 && fit(3) >= SET_CHOOSER_MIN_PX) return Math.min(n, 3);
+  if (n > 1 && fit(2) >= SET_CHOOSER_MIN_PX) return Math.min(n, 2);
+  return 1;
+}
+
+/**
+ * 中间那一层选择圆环的**完整版面**（纯函数，测试直接调它断言「大屏小屏都不越界」）。
+ *
+ * 返回 `{ cols, rows, gap, cell, gw, gh, left, top, items }`，其中 `items[i] = { i, cx, cy, px }`
+ * 是**舞台像素坐标**（和 `ringCenter()` / `layoutExitRing()` 同一套口径）：
+ *   - 绘制：`renderSetPicker()` 把第 i 颗按钮摆到 `(cx, cy)`、宽高 `px`；
+ *   - 判定：`updateSetPicker()` 用同一个 `(cx, cy)` 与 `px × RING_HIT_RATIO` 判手掌在不在环里。
+ * 所以「看到哪就是判哪」，不会各说一套。
+ */
+function setChooserLayout(count, size = stageSize()) {
+  const n = Math.max(1, Math.round(Number(count) || 0));
+  const cols = setChooserCols(n, size);
+  const rows = Math.ceil(n / cols);
+  const gap = SET_CHOOSER_GAP_PX;
+  // 屏幕矮的时候上下留白按比例收，但有**下限**：标题 / 提示 / 关闭按钮都不能压到圆环上
+  const padTop = clamp(Math.round(size.h * 0.16), SET_CHOOSER_PAD_TOP_MIN, SET_CHOOSER_PAD_TOP);
+  const padBottom = clamp(Math.round(size.h * 0.2), SET_CHOOSER_PAD_BOTTOM_MIN, SET_CHOOSER_PAD_BOTTOM);
+  const availW = Math.max(0, size.w - 2 * SET_CHOOSER_PAD_X);
+  const availH = Math.max(0, size.h - padTop - padBottom);
+  const byW = (availW - gap * (cols - 1)) / cols;
+  const byH = (availH - gap * (rows - 1)) / rows;
+  const cell = clamp(Math.floor(Math.min(byW, byH)), SET_CHOOSER_MIN_PX, SET_CHOOSER_MAX_PX);
+  const gw = cols * cell + gap * (cols - 1);
+  const gh = rows * cell + gap * (rows - 1);
+  const left = Math.round((size.w - gw) / 2);
+  const top = Math.round(padTop + Math.max(0, (availH - gh) / 2));
+  const items = [];
+  for (let i = 0; i < n; i += 1) {
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    // 最后一行不满时整行居中（和手势菜单最后一页一样）
+    const inRow = Math.min(cols, n - row * cols);
+    const rowW = inRow * cell + gap * (inRow - 1);
+    const rowLeft = left + (gw - rowW) / 2;
+    items.push({
+      i,
+      row,
+      col,
+      px: cell,
+      cx: rowLeft + col * (cell + gap) + cell / 2,
+      cy: top + row * (cell + gap) + cell / 2,
+    });
+  }
+  return { count: n, cols, rows, gap, cell, gw, gh, left, top, padTop, padBottom, items };
+}
+
+/** 这个动作选的是「每组次数」还是「每组秒数」：计时类，以及限时计数类，都是秒 */
+function setPickerKindFor(id = state.exerciseId) {
+  const ex = localizedExercise(id);
+  if (!ex) return 'reps';
+  return ex.kind === 'hold' || ex.timed ? 'seconds' : 'reps';
+}
+
+/** 这个 kind 可选的数值（**一处定义**：`SET_REP_CHOICES` / `SET_SEC_CHOICES`） */
+function setChoicesFor(kind) {
+  return (kind === 'seconds' ? SET_SEC_CHOICES : SET_REP_CHOICES).slice();
+}
+
+/** 选择层开着时手掌的蓄力状态（同一时刻只有一颗在蓄力） */
+const setPickerHold = { idx: -1, p: 0, since: 0, lastInside: 0, at: 0 };
+
+/** 把某颗选择圆环的蓄力进度画出来（和 `.ring-fill` 同一套 dashoffset 口径） */
+function paintSetChoice(btn, p) {
+  if (!btn) return;
+  const clamped = clamp(p, 0, 1);
+  const circle = btn.querySelector?.('.set-choice-fill');
+  if (circle) circle.style.strokeDashoffset = String(326.7 * (1 - clamped));
+  btn.classList?.toggle('dwelling', clamped > 0.001);
+}
+
+/**
+ * 把中间那一层选择圆环画出来（每颗 = 一圈 + 大号数字 + 小号单位；当前值高亮 `is-current`）。
+ *
+ * 版面全部来自 `setChooserLayout()`：`left/top` 就是圆心（`.set-choice` 用
+ * `transform: translate(-50%, -50%)` 定位，和 `.ring-btn` 一样），宽高就是圆环直径。
+ * ⚠️ 行内字号也跟着直径算 —— 大屏的环里数字大、小屏的环里数字小，但都完整落在圈里。
+ */
+function renderSetPicker({ focus = false } = {}) {
+  if (!state.setPickerOpen) return null;
+  const grid = $('setPickerGrid');
+  if (!grid) return null;
+  const size = stageSize();
+  const choices = state.setPickerChoices;
+  const unit = state.setPickerUnit;
+  const current = targetForExercise(state.exerciseId);
+  const layout = setChooserLayout(choices.length, size);
+  const kind = state.setPickerKind;
+  grid.innerHTML = '';
+  const titleEl = $('setPickerTitle');
+  if (titleEl) {
+    // 标题 = 主题 + 当前值（一行放下：「每组次数 · 当前每组 12 次」）；当前值**同时**高亮在那颗圆环上
+    titleEl.textContent = `${t(kind === 'seconds' ? 'ui.setPickerSeconds' : 'ui.setPickerReps')}`
+      + ` · ${t('ui.setPickerCurrent', { n: current, unit })}`;
+  }
+  const hintEl = $('setPickerHint');
+  if (hintEl) hintEl.textContent = t('ui.setPickerHint');
+  const numPx = Math.max(14, Math.round(layout.cell * 0.36));
+  const unitPx = Math.max(10, Math.round(layout.cell * 0.16));
+  let currentBtn = null;
+  for (const it of layout.items) {
+    const v = choices[it.i];
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'set-choice';
+    btn.dataset.v = String(v);
+    btn.dataset.idx = String(it.i);
+    btn.style.left = `${it.cx}px`;
+    btn.style.top = `${it.cy}px`;
+    btn.style.width = `${it.px}px`;
+    btn.style.height = `${it.px}px`;
+    const label = t('ui.setPickerChoice', { n: v, unit });
+    btn.innerHTML = '<svg class="set-choice-svg" viewBox="0 0 120 120" aria-hidden="true">'
+      + '<circle class="set-choice-track" cx="60" cy="60" r="52"></circle>'
+      + '<circle class="set-choice-fill" cx="60" cy="60" r="52"></circle>'
+      + '</svg>'
+      + `<span class="set-choice-num" style="font-size:${numPx}px">${v}</span>`
+      + `<span class="set-choice-unit" style="font-size:${unitPx}px">${esc(unit)}</span>`;
+    btn.classList.toggle('is-current', v === current);
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('title', label);
+    btn.setAttribute('aria-pressed', String(v === current));
+    btn.addEventListener('click', () => chooseSetValue(v));
+    grid.appendChild(btn);
+    if (v === current && !currentBtn) currentBtn = btn;
+  }
+  // 键盘用户：打开时焦点落在「当前值」那一颗上，Tab / Shift+Tab 换选项、回车 / 空格选中
+  if (focus) {
+    const first = currentBtn || grid.children[0];
+    first?.focus?.({ preventScroll: true });
+  }
+  return layout;
+}
+
+/** 打开中间那一层选择圆环（按**正在练的这个动作**决定是次数还是秒数） */
+function openSetPicker() {
+  if (state.homeMode || state.menuMode) return false;   // 只有动作页才有这颗圆环
+  const id = state.exerciseId;
+  const ex = localizedExercise(id);
+  if (!ex) return false;
+  const kind = setPickerKindFor(id);
+  state.setPickerOpen = true;
+  state.setPickerKind = kind;
+  state.setPickerChoices = setChoicesFor(kind);
+  state.setPickerUnit = ex.targetUnit;      // 和 HUD / 弹窗同一份单位（次 / 秒）
+  setPickerHold.idx = -1;
+  setPickerHold.p = 0;
+  setPickerHold.since = 0;
+  setPickerHold.lastInside = 0;
+  setPickerHold.at = 0;
+  const box = $('setPicker');
+  if (box) box.hidden = false;
+  renderSetPicker({ focus: true });
+  return true;
+}
+
+/** 关掉中间那一层选择圆环（点空白处 / Esc / 再点一次设置环 / 换动作 / 回主页都走它） */
+function closeSetPicker() {
+  const was = state.setPickerOpen;
+  state.setPickerOpen = false;
+  state.setPickerKind = '';
+  state.setPickerChoices = [];
+  state.setPickerUnit = '';
+  setPickerHold.idx = -1;
+  setPickerHold.p = 0;
+  setPickerHold.since = 0;
+  setPickerHold.lastInside = 0;
+  setPickerHold.at = 0;
+  const box = $('setPicker');
+  if (box) box.hidden = true;
+  const grid = $('setPickerGrid');
+  if (grid) grid.innerHTML = '';
+  resetSetRing();
+  return was;
+}
+
+/**
+ * 选中一个值：写进**这个动作自己那一份**（`setTarget` 里只有 `settings.targets` / `settings.seconds`），
+ * 然后关掉选择层。改的正是当前动作时，HUD 左上角的目标文案（「20 次」/「45 秒」）会立刻跟着变，
+ * 并且 `saveSettings()` 已经持久化了 —— 刷新页面还是这个数。
+ */
+function chooseSetValue(v) {
+  if (!state.setPickerOpen) return 0;
+  const n = setTarget(v, state.exerciseId);
+  closeSetPicker();
+  audio.milestone();
+  return n;
+}
+
+/**
+ * 每帧更新中间那一层选择圆环：手掌停在某一颗里满 `GESTURE_HOLD_MS` 就选中它。
+ *
+ * 判定半径 = 那颗圆环**画出来的半径**（`px × RING_HIT_RATIO`，和右上角那些环同一个口径），
+ * 圆心就是 `setChooserLayout()` 给的 `(cx, cy)` —— 绘制与判定同一份数。
+ * 手掌换到别的一颗时，之前那颗的进度**立刻归零**（和手势菜单「一格一格地选」一样）。
+ */
+function updateSetPicker(landmarks, now) {
+  if (!state.setPickerOpen) return -1;
+  const size = stageSize();
+  const palms = palmPoints(landmarks, size.w, size.h, state.settings.mirror);
+  const layout = setChooserLayout(state.setPickerChoices.length, size);
+  let idx = -1;
+  for (const it of layout.items) {
+    if (anyTouchNearPoint(palms, { x: it.cx, y: it.cy }, it.px * RING_HIT_RATIO).inside) {
+      idx = it.i;
+      break;
+    }
+  }
+  const st = setPickerHold;
+  const dt = clamp(now - (st.at || now), 0, 250);
+  st.at = now;
+  if (idx >= 0 && idx !== st.idx) {
+    st.idx = idx;
+    st.p = 0;
+    st.since = now;
+  }
+  if (idx >= 0) {
+    st.lastInside = now;
+    if (!st.since) st.since = now;
+    st.p = clamp((now - st.since) / GESTURE_HOLD_MS, 0, 1);
+  } else if (now - st.lastInside > GESTURE_GRACE_MS) {
+    st.p = Math.max(0, st.p - dt / GESTURE_DRAIN_MS);
+    if (st.p <= 0) st.idx = -1;
+  }
+  const btns = $('setPickerGrid')?.children || [];
+  for (let i = 0; i < btns.length; i += 1) paintSetChoice(btns[i], i === st.idx ? st.p : 0);
+  if (st.p >= 1 && st.idx >= 0) {
+    const v = state.setPickerChoices[st.idx];
+    st.idx = -1;
+    st.p = 0;
+    st.since = 0;
+    st.lastInside = 0;
+    chooseSetValue(v);
+    return v;
+  }
+  return -1;
 }
 
 /** 一组做完后的两个选择里那个「退出」圆环（手势停满 3 秒，或者用户直接点它） */
@@ -3089,6 +3589,8 @@ function syncCornerLabel() {
   const txt = t('ui.gestureExit');
   // 圆环里只画图标（和「返回」同一颗），文字放到 title / aria-label 上
   setRingIcon(cornerLabelEl(), ringEl('corner'), 'exit', txt);
+  // 「设置」环也一样：齿轮线条图标（`ui:settings`）+ title / aria-label（中英随语言切换）
+  setRingIcon($('ringQuickSetLabel'), ringEl('settings'), 'settings', t('ui.gestureSet'));
 }
 
 /** 进手势菜单（首页「开始」按钮，或者从训练里退出） */
@@ -3303,10 +3805,17 @@ function toggleStageFullscreen() {
   return stageFullscreenOn();
 }
 
-/** 右上角退出圆环的每帧维护（菜单与训练页共用）：对齐显隐 → 更新进度 → 触发 */
+/** 右上角两颗圆环的每帧维护（菜单与训练页共用）：对齐显隐 → 更新进度 → 触发 */
 function tickCornerExit(landmarks, now) {
   syncCornerExit();
-  if (gestureState.cornerVisible && updateCornerExit(landmarks || null, now)) triggerCornerExit();
+  if (!gestureState.cornerVisible) return;
+  // 先攒「退出」的进度：它一旦触发就会把整个容器（含设置环）收起来
+  if (updateCornerExit(landmarks || null, now)) {
+    triggerCornerExit();
+    return;
+  }
+  // 设置环在退出环正下方，判定 / 蓄力各算各的，不会互相干扰
+  if (updateSetRing(landmarks || null, now)) triggerSetRing();
 }
 
 /** 舞台尺寸变化（横竖屏切换、全屏）时把圆环重新摆一次，并按新的圆环直径重算 HUD 数字字号 */
@@ -3561,6 +4070,7 @@ function selectExercise(id) {
     stopSession('switch');
   }
   hideGestureRings();   // 换动作：上一组的手势圆环不该留着（必须在 stopSession 之后收）
+  closeSetPicker();     // 换动作：中间那一层「每组次数 / 秒数」的选项属于上一个动作，收掉
   state.exerciseId = id;
   state.settings.exerciseId = id;
   // 运动设定第二步的「编辑指针」跟着当前动作走：刚练过的动作就是选择页里高亮的那一个
@@ -3661,11 +4171,20 @@ function buildTargetChips() {
   }
 }
 
-function setTarget(v) {
-  // 弹窗第二步在编辑哪个动作，就写这个动作自己那一份（目标本来就是按动作分别存的）
-  const id = settingsExerciseId();
+/**
+ * 写某一个动作的目标（次数 / 秒数）。
+ *
+ * 目标本来就是**按动作分别存**的：计时 / 限时计数类存 `settings.seconds[id]`（时长），
+ * 其余存 `settings.targets[id]`（次数）—— 所以两个动作互不影响。
+ *
+ * `forId` 省略时写「运动设定弹窗第二步正在编辑的那个动作」（老行为）；
+ * 动作页右上角「设置」环会显式传**正在练的这个动作**（`state.exerciseId`），
+ * 因为那颗环属于当前这一屏，和弹窗里选中的是哪一个无关。
+ */
+function setTarget(v, forId) {
+  const id = forId && EXERCISE_MAP[forId] ? forId : settingsExerciseId();
   const ex = localizedExercise(id);
-  if (!ex) return;
+  if (!ex) return 0;
   const n = clamp(Math.round(Number(v) || ex.defaultTarget), 1, 999);
   // 限时计数存到 seconds（时长），其他动作存到 targets（次数）
   if (ex.timed) {
@@ -3679,10 +4198,12 @@ function setTarget(v) {
     state.target = n;
     updateHud();
   }
-  $('targetInput').value = String(n);
+  // 弹窗里的数字框只在它编辑的正是这个动作时才跟着改（设置环改的是**当前动作**，可能不是它）
+  if (id === settingsExerciseId()) $('targetInput').value = String(n);
   saveSettings();
   renderExerciseSettings();
   renderExercisePicker();   // 第一步每一项上的「15 次」小字也跟着更新
+  return n;
 }
 
 /* ------------------------------------------------------------------ *
@@ -4972,6 +5493,8 @@ function loop() {
   // 右上角常驻的「退出」圆环：手或脚进去停满 3 秒 → 训练里回手势菜单（菜单里不显示）
   // （显示与否由摄像头开着没有决定，见 syncCornerExit）
   tickCornerExit(res ? res.landmarks : null, now);
+  // 「设置」环打开后，中间那一层「每组次数 / 秒数」的圆环：手掌停在某一颗里满 3 秒就选中它
+  if (state.setPickerOpen) updateSetPicker(res ? res.landmarks : null, now);
   // 手掌指针（猫爪）：运动界面里也跟手（「一组结束」/ 右上角退出圆环摆着时，
   // 手一伸进画面就能看见自己的手在哪 —— 用户要求「像菜单界面一样出现猫爪」）
   updatePaws(res ? res.landmarks : null);
@@ -5260,6 +5783,8 @@ function refreshForLang() {
   buildLanguageSelect();
   buildHome();
   const prevId = state.exerciseId;
+  // 切语言不该把「设置」选择层弄丢（selectExercise 里会把它收掉）—— 记下来，最后按新语言重开一次
+  const pickerWasOpen = state.setPickerOpen;
   // 重新渲染当前动作的文案；切换语言不该丢掉已经拿到的分和要领进度
   const det = state.detector;
   const keep = det ? {
@@ -5296,6 +5821,7 @@ function refreshForLang() {
   if (gestureState.visible) showGestureRings({ speak: false });   // 圆环上的字也要跟着换
   if (state.menuMode) renderMenu();                               // 手势菜单的文案也要跟着换
   syncCornerLabel();
+  if (pickerWasOpen) openSetPicker();   // 「设置」选择层：标题 / 单位 / 提示 / 无障碍名换成新语言
   setCueLine('');
 }
 
@@ -5338,6 +5864,11 @@ function bindUI() {
   $('ringRetry')?.addEventListener('click', () => triggerGesture('retry'));
   // 右上角常驻的「退出」圆环：手或脚停 3 秒是主路径，点一下同样有效
   $('ringQuickExit')?.addEventListener('click', () => triggerCornerExit());
+  // 「设置」环（就在退出环正下方）：点一下 = 开 / 关中间那一层选择圆环
+  $('ringQuickSet')?.addEventListener('click', () => triggerSetRing());
+  $('setPickerClose')?.addEventListener('click', () => closeSetPicker());
+  // 点空白处（遮罩）关掉选择层 —— 用户要求的「明显的关闭 / 取消方式」之一
+  $('setPickerBackdrop')?.addEventListener('click', () => closeSetPicker());
   // 手势菜单右上角那颗「↩ 返回」（和动作页退出圆环同位置同尺寸）：鼠标 / 触屏点一下同样有效
   menuBackEl()?.addEventListener('click', () => selectFromMenu('back'));
   // resize 统一走 onViewportChange（它顺带重算 --vh / 设备类名 / 竖屏遮罩），别再单独挂 onStageResize
@@ -5629,6 +6160,26 @@ function bindUI() {
       }
       return;
     }
+    /**
+     * 「设置」选择层（中间那一排「每组次数 / 每组秒数」圆环）开着的时候，键盘只服务这一层：
+     *   - `Esc` 关掉它（用户要求的关闭方式之一）；
+     *   - 数字键 `1`~`9` 直接选第几个（比 Tab 过去按回车快）；
+     *   - `Tab` / `Shift+Tab` 照常走浏览器默认行为（每颗圆环都是真 `<button>`，能 Tab 到、能回车选中）；
+     *   - 其余按键**不穿透**到训练快捷键（否则按空格会开始训练、按 H 会回主页 —— 选择层还没关）。
+     */
+    if (state.setPickerOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSetPicker();
+        return;
+      }
+      const pick = Number(e.key);
+      if (Number.isFinite(pick) && pick >= 1 && pick <= state.setPickerChoices.length) {
+        e.preventDefault();
+        chooseSetValue(state.setPickerChoices[pick - 1]);
+      }
+      return;
+    }
     if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) {
       // 搜索框里按 Esc 先退出搜索，而不是结束整组
       if (e.key === 'Escape' && e.target.id === 'exSearch') {
@@ -5840,7 +6391,20 @@ window.__mfg = {
   gestureState, GESTURE_RINGS, GESTURE_HOLD_MS, RING_HIT,
   // 右上角常驻的「退出」圆环（手或脚进去停 3 秒 → 退出这一组）
   showCornerExit, hideCornerExit, updateCornerExit, triggerCornerExit, syncCornerExit,
-  layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, touchSamples, anyTouchInRing, stageSize, onStageResize,
+  // 右上角「设置」圆环（在退出环**正下方**、同尺寸）+ 屏幕中间那一层「每组次数 / 秒数」圆环：
+  //   geometry  : settingsRingLayout / layoutSetRing / SET_RING_GAP_PX
+  //   interaction: updateSetRing / triggerSetRing / resetSetRing
+  //   picker    : openSetPicker / closeSetPicker / renderSetPicker / updateSetPicker / chooseSetValue
+  //   layout    : setChooserLayout / setChooserCols（纯函数，测试直接断言「大屏小屏都不越界」）
+  //   choices   : SET_REP_CHOICES / SET_SEC_CHOICES（**一处定义**，界面与测试都从这里读）
+  settingsRingLayout, layoutSetRing, SET_RING_GAP_PX,
+  updateSetRing, triggerSetRing, resetSetRing,
+  openSetPicker, closeSetPicker, renderSetPicker, updateSetPicker, chooseSetValue,
+  setChooserLayout, setChooserCols, setPickerKindFor, setChoicesFor,
+  SET_REP_CHOICES, SET_SEC_CHOICES,
+  SET_CHOOSER_GAP_PX, SET_CHOOSER_PAD_X, SET_CHOOSER_PAD_TOP, SET_CHOOSER_PAD_BOTTOM,
+  SET_CHOOSER_MAX_PX, SET_CHOOSER_MIN_PX, SET_CHOOSER_ONE_ROW_MIN_PX,
+  layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, touchSamples, anyTouchInRing, anyTouchNearPoint, stageSize, onStageResize,
   // 右上角「退出 / 返回」圆环共用的**唯一**几何与摆放（动作页退出圆环 + 菜单返回圆环）
   exitRingLayout, layoutExitRing, menuBackItem, menuBackEl, syncMenuBackIcon,
   CORNER_RING_INSET_PX, CORNER_RING_TOP_PX, RING_PX_FALLBACK, RING_HIT_RATIO,

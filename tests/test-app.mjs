@@ -5851,6 +5851,270 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * [18] 右上角「设置」环 → 屏幕中间选择「每组次数 / 每组秒数」圆环
+ *
+ * 用户要求（原话）：「在每一个运动的页面的右上角『退出』圆环**下方**增加一个『设置』圆环，
+ * 当用户选择之后，在**界面中间出现多个圆环**，让用户选择该运动**每组运动的次数或者秒数**，
+ * 比如在俯卧撑界面，则选择每组多少次，在平板支撑界面，则选择多少秒。」
+ *
+ * 钉住五件事：
+ *   ① 「设置」环的几何：圆心 = 退出环圆心 +（直径 + 间距），同直径 / 同 cx，
+ *      判定圆心与 DOM 里的 left/top 是同一个数（不存在「另写一套坐标」）；
+ *   ② 计数类动作（俯卧撑）→ 中间有 `SET_REP_CHOICES.length` 颗圆环、当前值高亮、每颗是
+ *      「大号数字 + 小号单位」；选 12 → `settings.targets[id]`、HUD「12 次」、持久化、选择层关闭；
+ *   ③ 计时类动作（平板支撑）→ 中间是 `SET_SEC_CHOICES`，选 30 → `settings.seconds[id]`、HUD「30 秒」；
+ *   ④ 两个动作互不影响；
+ *   ⑤ 版式（大屏 / 手机横屏 / 小屏都不越界、小屏退成 3×2）、三种关闭方式（点空白处 / Esc / 再点设置环）、
+ *      键盘（数字键、Tab 可达）、手掌停满 3 秒也能选。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[18] 右上角「设置」环 → 中间选择每组次数 / 秒数');
+{
+  const api = windowStub.__mfg;
+  const { t: tSet } = await import('../src/i18n.js');
+  const { LM } = await import('../src/geometry.js');
+  const { standingPose } = await import('./synthetic-pose.mjs');
+  api.changeLang('zh');            // 后面的「12 次 / 30 秒」按中文断言
+  api.state.settings.mirror = false;
+
+  const setBox = () => elements.get('cornerExit');
+  const setBtn = () => elements.get('ringQuickSet');
+  const picker = () => elements.get('setPicker');
+  const grid = () => elements.get('setPickerGrid');
+  const choices = () => grid().children;
+  const btnOf = (v) => choices().find((b) => String(b.dataset.v) === String(v));
+  const hudTarget = () => elements.get('hudTarget').textContent;
+  const UNITS = { reps: tSet('ui.repsUnit'), sec: tSet('ui.secondsUnit') };
+
+  /** 一只手（手腕 + 食指 + 小指 + 拇指）放在指定的**归一化**坐标上 */
+  const handAt = (nx, ny, visibility = 1) => {
+    const lm = standingPose({ knee: 175, ankleX: 1.0, view: 'front' }).map((p) => ({ ...p, visibility }));
+    for (const w of [LM.L_WRIST, LM.R_WRIST]) {
+      for (const off of [0, 2, 4, 6]) lm[w + off] = { x: nx, y: ny, z: 0, visibility };
+    }
+    return lm;
+  };
+
+  api.openExercise('pushup');
+  const size = api.stageSize();
+
+  /* ---- ① 几何：在退出环正下方、同直径、判定圆心 = 绘制坐标 ---- */
+  const exit = api.exitRingLayout(size);
+  const set = api.settingsRingLayout(size);
+  ok('「设置」环的圆心 = 退出环圆心 +（直径 + 间距）：cx 相同、cy 正好低一个直径 + 一道间距',
+    set.cx === exit.cx && set.cy === exit.cy + exit.px + api.SET_RING_GAP_PX,
+    `exit=(${exit.cx},${exit.cy}) set=(${set.cx},${set.cy}) px=${exit.px} gap=${api.SET_RING_GAP_PX}`);
+  ok('「设置」环与退出环**同直径**（px / r / 判定半径全部复用退出环那一份）',
+    set.px === exit.px && set.r === exit.r && set.hit === exit.hit && set.below === exit.px + api.SET_RING_GAP_PX,
+    JSON.stringify({ px: set.px, r: set.r, below: set.below }));
+  ok('间距是一处定义的常量（SET_RING_GAP_PX = 12），圆心距离 = 直径 + 间距 = ' + (set.px + 12) + 'px',
+    api.SET_RING_GAP_PX === 12 && set.cy - exit.cy === set.px + api.SET_RING_GAP_PX);
+  api.layoutCornerRing();
+  {
+    const c = api.ringCenter('settings', size.w, size.h);
+    ok('判定圆心 = 绘制坐标（ringCenter(\'settings\') 与行内 left/top/宽高是同一个数）',
+      c.x === set.cx && c.y === set.cy
+      && setBtn().style.left === `${c.x}px` && setBtn().style.top === `${c.y}px`
+      && setBtn().style.width === `${set.px}px` && setBtn().style.height === `${set.px}px`,
+      JSON.stringify(setBtn().style));
+    ok('判定半径与退出环同一档口径（画出来的半径 × RING_HIT_RATIO）',
+      api.ringHitRadius('settings', size) === api.ringPx('corner') * api.RING_HIT_RATIO,
+      `${api.ringHitRadius('settings', size)} vs ${api.ringPx('corner') * api.RING_HIT_RATIO}`);
+    ok('「设置」环用的是和退出环同一套圆环动画（ring-btn / ring-svg，里面能拿到 .ring-fill）',
+      setBtn().className.includes('ring-btn') && !!setBtn().querySelector?.('.ring-fill'));
+    ok('「设置」环里是齿轮线条图标（icons.js 的 `ui:settings`，和主页那颗同一个），不是 emoji；文字在 aria-label 上',
+      elements.get('ringQuickSetLabel').innerHTML === api.libIconSVG('ui:settings', 'ex-pose')
+      && /class="ex-pose"/.test(elements.get('ringQuickSetLabel').innerHTML)
+      && setBtn().attributes['aria-label'] === tSet('ui.gestureSet')
+      && tSet('ui.gestureSet') === '设置', setBtn().attributes['aria-label']);
+  }
+
+  // 摄像头开着 → 两颗环（同一个容器）一起出现
+  const fakeStream = { getTracks: () => [] };
+  api.camera.stream = fakeStream;
+  api.syncCornerExit();
+  ok('摄像头开着时「设置」环和「退出」环一起摆出来（共用一个容器 / 一套显隐）',
+    setBox().hidden === false && setBtn().hidden !== true);
+  ok('「设置」环摆着的时候猫爪指针层照样生效（它和退出环共用一个显示条件，手在哪看得见）',
+    api.pawsWanted() === true);
+
+  /* ---- ② 计数类动作（俯卧撑）：每组次数 ---- */
+  api.setTarget(8, 'pushup');      // 先把当前值改成 8，才能验证「当前值高亮」
+  ok('准备：俯卧撑当前目标是 8 次（HUD 也是「8 次」）',
+    api.state.target === 8 && hudTarget() === `8 ${UNITS.reps}`, hudTarget());
+  setBtn().dispatch('click');
+  ok('点「设置」环 → 屏幕中间出现选择层（原本 hidden）',
+    picker().hidden === false && api.state.setPickerOpen === true);
+  ok('计数类动作给的是「每组次数」：圆环数量 = SET_REP_CHOICES.length（一处定义）',
+    choices().length === api.SET_REP_CHOICES.length
+    && choices().every((b, i) => String(b.dataset.v) === String(api.SET_REP_CHOICES[i]))
+    && api.state.setPickerKind === 'reps'
+    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerReps'))
+    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerCurrent', { n: 8, unit: UNITS.reps })),
+    `${choices().length} / ${api.SET_REP_CHOICES.length} · ${elements.get('setPickerTitle').textContent}`);
+  ok('当前值高亮（8 那颗 is-current + aria-pressed=true，12 那颗不是）',
+    !!btnOf(8) && btnOf(8).classList.contains('is-current')
+    && btnOf(8).attributes['aria-pressed'] === 'true'
+    && !btnOf(12).classList.contains('is-current'));
+  ok('每颗圆环里是「大号数字 + 小号单位」（单位与 HUD 同一份：次 / 秒）',
+    api.SET_REP_CHOICES.every((v) => {
+      const b = btnOf(v);
+      return !!b && /set-choice-num/.test(b.innerHTML) && /set-choice-unit/.test(b.innerHTML)
+        && b.innerHTML.includes(`>${v}</span>`) && b.innerHTML.includes(UNITS.reps);
+    }), btnOf(12)?.innerHTML?.slice(0, 160));
+  ok('每颗都是真 <button>（键盘可 Tab / 回车选中）且有无障碍名字（「每组 N 次」）',
+    choices().every((b) => b.tagName === 'BUTTON'
+      && (b.attributes['aria-label'] || '').includes(UNITS.reps)
+      && (b.attributes['aria-label'] || '').includes('12') === (String(b.dataset.v) === '12')));
+  btnOf(12).dispatch('click');
+  ok('选 12 → 写进**这个动作自己那一份** settings.targets.pushup',
+    api.state.settings.targets.pushup === 12, JSON.stringify(api.state.settings.targets));
+  ok('HUD 左上角的目标文案立刻变成「12 次」', hudTarget() === `12 ${UNITS.reps}`, hudTarget());
+  ok('已经持久化（localStorage 里那份 settings 的 targets.pushup = 12）',
+    JSON.parse(store.get('mfg.settings.v1') || '{}').targets?.pushup === 12,
+    store.get('mfg.settings.v1'));
+  ok('选完选择层自己关掉（hidden + 状态复位 + 圆环清空）',
+    picker().hidden === true && api.state.setPickerOpen === false && choices().length === 0);
+
+  /* ---- 三种关闭方式（用户要求「明显的关闭 / 取消方式」） ---- */
+  setBtn().dispatch('click');
+  const openedOnce = picker().hidden === false;
+  elements.get('setPickerBackdrop').dispatch('click');
+  ok('点空白处（遮罩）就关掉', openedOnce && picker().hidden === true && api.state.setPickerOpen === false);
+  setBtn().dispatch('click');
+  documentStub.dispatch('keydown', { key: 'Escape' });
+  ok('按 Esc 关掉（而且不会顺手把这一组结束掉）',
+    picker().hidden === true && api.state.setPickerOpen === false && api.state.session !== 'idle',
+    `session=${api.state.session}`);
+  setBtn().dispatch('click');
+  const reopened = picker().hidden === false;
+  setBtn().dispatch('click');
+  ok('再点一次「设置」环也关掉（toggle：打开 → 再点 → 关）',
+    reopened && picker().hidden === true && api.state.setPickerOpen === false);
+
+  // 键盘：数字键直接选第几个
+  setBtn().dispatch('click');
+  documentStub.dispatch('keydown', { key: '3' });
+  ok('键盘数字键 3 → 选中第 3 个选项（10 次），选择层同时关掉',
+    api.state.settings.targets.pushup === api.SET_REP_CHOICES[2] && picker().hidden === true,
+    `${api.state.settings.targets.pushup} / ${api.SET_REP_CHOICES[2]}`);
+
+  // 手掌停满 3 秒也能选（用户要求「点/停满选择后」）
+  api.setTarget(8, 'pushup');
+  setBtn().dispatch('click');
+  {
+    const lay = api.setChooserLayout(api.SET_REP_CHOICES.length, api.stageSize());
+    const it = lay.items[api.SET_REP_CHOICES.indexOf(15)];
+    let fired = false;
+    for (let ms = 90000; ms <= 90000 + 3400; ms += 33) {
+      fired = api.updateSetPicker(handAt(it.cx / size.w, it.cy / size.h), Math.round(ms)) >= 0 || fired;
+    }
+    ok('手掌停在「15」那颗圆环里满 3 秒也能选中（和点它一样），圆心就是版面算出来的坐标',
+      fired && api.state.settings.targets.pushup === 15 && picker().hidden === true,
+      `fired=${fired} target=${api.state.settings.targets.pushup}`);
+  }
+  // 手停在「设置」环里满 3 秒 → 打开选择层（和点它一样；离开后才会重新武装）
+  {
+    api.closeSetPicker();
+    const sc = api.ringCenter('settings', size.w, size.h);
+    const st = api.gestureState.settings;
+    st.p = 0; st.done = false; st.at = 0; st.since = 0; st.lastInside = 0;
+    let fired = false;
+    for (let ms = 120000; ms <= 120000 + 3400; ms += 33) {
+      if (api.updateSetRing(handAt(sc.x / size.w, sc.y / size.h), Math.round(ms))) {
+        fired = true;
+        api.triggerSetRing();
+        break;
+      }
+    }
+    ok('手停满 3 秒也能触发「设置」环（打开中间那一层，不用鼠标）',
+      fired && api.state.setPickerOpen === true, `fired=${fired}`);
+    api.closeSetPicker();
+  }
+
+  /* ---- ③ 计时类动作（平板支撑）：每组秒数 ---- */
+  api.openExercise('plank');
+  setBtn().dispatch('click');
+  ok('计时类动作给的是「每组秒数」：数量 = SET_SEC_CHOICES.length，单位是秒',
+    choices().length === api.SET_SEC_CHOICES.length
+    && choices().every((b, i) => String(b.dataset.v) === String(api.SET_SEC_CHOICES[i])
+      && b.innerHTML.includes(UNITS.sec))
+    && api.state.setPickerKind === 'seconds'
+    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerSeconds')),
+    `${choices().length} / ${api.SET_SEC_CHOICES.length}`);
+  ok('平板支撑当前值（默认 45 秒）高亮', !!btnOf(45) && btnOf(45).classList.contains('is-current'));
+  btnOf(30).dispatch('click');
+  /**
+   * ⚠️ 落在**哪一份存储**由 `setTarget()` 的既定口径决定，两种动作不一样：
+   *   - 计时类（`kind === 'hold'`，平板支撑）→ `settings.targets[id]`（这个动作的「目标秒数」）；
+   *   - **限时计数**（开合跳 / 勾腿跳，`timed`）→ `settings.seconds[id]`（那一组固定多少秒）。
+   * 所以这里断言的是「这个动作自己那一份目标 = 30 秒」，同时钉住**没有顺手在另一份里再抄一遍**
+   * （新造存储 / 两份数据源会让 HUD 和弹窗各说一套）。
+   */
+  ok('选 30 秒 → 写进**这个动作自己那一份**目标（settings.targets.plank = 30，与「运动设定」弹窗同一个口径）',
+    api.targetForExercise('plank') === 30
+    && api.state.settings.targets.plank === 30
+    && api.state.settings.seconds.plank === undefined,
+    JSON.stringify({ targets: api.state.settings.targets, seconds: api.state.settings.seconds }));
+  ok('HUD 目标文案变成「30 秒」', hudTarget() === `30 ${UNITS.sec}`, hudTarget());
+
+  /* ---- ④ 两个动作互不影响 ---- */
+  ok('改平板支撑不会动到俯卧撑（targets.pushup 仍是 15 次；平板支撑也没有被写进 seconds 那一份）',
+    api.state.settings.targets.pushup === 15 && api.state.settings.seconds.plank === undefined,
+    JSON.stringify({ targets: api.state.settings.targets, seconds: api.state.settings.seconds }));
+  api.openExercise('pushup');
+  ok('换回俯卧撑：目标还是自己那一份（15 次），HUD 跟着切回来',
+    api.state.target === 15 && hudTarget() === `15 ${UNITS.reps}`, hudTarget());
+
+  /* ---- ⑤ 版式：大屏 / 手机横屏 / 小屏都不越界 ---- */
+  {
+    const sizes = [
+      { w: 1280, h: 720, label: '大屏 1280×720' },
+      { w: 900, h: 520, label: '中等 900×520' },
+      { w: 667, h: 375, label: '手机横屏 667×375' },
+      { w: 560, h: 320, label: '小屏 560×320' },
+      { w: 390, h: 220, label: '极窄 390×220' },
+    ];
+    for (const s of sizes) {
+      const L = api.setChooserLayout(api.SET_REP_CHOICES.length, s);
+      const inside = L.items.length === api.SET_REP_CHOICES.length && L.items.every((it) => it.cx - it.px / 2 >= 0
+        && it.cx + it.px / 2 <= s.w && it.cy - it.px / 2 >= 0 && it.cy + it.px / 2 <= s.h
+        && it.px >= api.SET_CHOOSER_MIN_PX && it.px >= 44);
+      ok(`${s.label}：${L.cols} 列 × ${L.rows} 行、每颗 Ø${L.cell}px，全部落在舞台内（热区 ≥44px）`,
+        inside, JSON.stringify({ cols: L.cols, rows: L.rows, cell: L.cell, items: L.items.length }));
+    }
+    const small = api.setChooserLayout(api.SET_REP_CHOICES.length, { w: 560, h: 320 });
+    ok('小屏自动退成 3×2（一排排不下就不硬排，圆环也不会缩到点不着）',
+      small.cols === 3 && small.rows === 2, `${small.cols}×${small.rows}`);
+    ok('大屏排成一整排（6 颗一行、圆心在同一根水平线上）', (() => {
+      const L = api.setChooserLayout(api.SET_REP_CHOICES.length, { w: 1280, h: 720 });
+      return L.cols === 6 && L.rows === 1 && L.items.every((it) => it.cy === L.items[0].cy);
+    })());
+    ok('小屏 3×2 的两行圆心都落在舞台内（cy 不是负的、也没掉出底部）', (() => {
+      const ys = small.items.map((it) => it.cy);
+      return Math.min(...ys) - small.cell / 2 >= 0
+        && Math.max(...ys) + small.cell / 2 <= 320;
+    })(), JSON.stringify(small.items.map((it) => Math.round(it.cy))));
+  }
+
+  /* ---- 语言切换：图标 / 无障碍名跟着换 ---- */
+  api.changeLang('en');
+  const enAria = elements.get('ringQuickSet').attributes['aria-label'];
+  ok('「设置」环的 aria-label 跟着语言切换（设置 → Settings），图标不变',
+    enAria === tSet('ui.gestureSet') && /settings/i.test(enAria)
+    && elements.get('ringQuickSetLabel').innerHTML === api.libIconSVG('ui:settings', 'ex-pose'),
+    enAria);
+  api.changeLang('zh');
+  ok('切回中文后 aria-label 又变回「设置」',
+    elements.get('ringQuickSet').attributes['aria-label'] === '设置',
+    elements.get('ringQuickSet').attributes['aria-label']);
+
+  // 收尾：把两颗环收起来，免得影响后面（这一组测试是最后一段，但保持状态干净）
+  api.hideCornerExit();
+  api.closeSetPicker();
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {
   console.log('失败项：');
   for (const f of failures) console.log('  - ' + f);

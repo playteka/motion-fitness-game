@@ -255,9 +255,76 @@ console.log('\n[3] 静态资源与模型文件');
       && /const extend = \(/.test(ringSrc));
     ok('外延点有「别伸太远」的上限（按手臂 / 小腿长度卡住，误检的脚跟不会把脚尖送进圆环）',
       /HAND_EXT_MAX_ARM/.test(ringSrc) && /FOOT_TIP_MAX_SHIN/.test(ringSrc));
-    ok('只有退出圆环的判定半径放宽 12%（中间两个大圆环仍然严格按画出来的半径判）',
+    ok('只有右上角那两颗（退出 / 设置）的判定半径放宽 12%（中间两个大圆环仍然严格按画出来的半径判）',
       /RING_TOUCH_TOL\s*=\s*1\.12/.test(ringSrc)
-      && (ringSrc.match(/key === 'corner' \? RING_TOUCH_TOL : 1/g) || []).length >= 2);
+      && /function ringKeyNearCorner\(key\) \{[\s\S]{0,160}key === 'corner' \|\| key === 'settings'/.test(ringSrc)
+      && (ringSrc.match(/ringKeyNearCorner\(key\) \? RING_TOUCH_TOL : 1/g) || []).length >= 2);
+
+    /* ---- 用户要求：「在每一个运动的页面的右上角『退出』圆环**下方**增加一个『设置』圆环，
+       尺寸与退出圆环相同、水平中心对齐；图标用项目既有的线条图标；点它以后在界面中间
+       出现多个圆环，让用户选每组次数 / 秒数。」
+       这里钉住**静态**那一半（DOM + 样式 + 一处定义）；真实点击流程在 test-app 的 [8f]。 */
+    {
+      const setTree = ancestorIds(html, 'ringQuickSet') || [];
+      const setBtnTag = html.match(/<button[^>]*id="ringQuickSet"[^>]*>/)?.[0] || '';
+      const setBtnBody = html.slice(html.indexOf('id="ringQuickSet"'), html.indexOf('</button>', html.indexOf('id="ringQuickSet"')));
+      ok('动作页有「设置」圆环：和「退出」在同一个容器里（`#cornerExit` → 显隐同一套）',
+        setBtnTag !== '' && setTree[setTree.length - 1] === 'cornerExit',
+        JSON.stringify(setTree));
+      // HTML 里**不该有文字**（图标由 icons.js 填进去）；title / aria 的中英词条必须齐全
+      ok('「设置」圆环的 data-i18n-title / data-i18n-aria 都指向同一个词条（中英都有：ui.gestureSet）',
+        (setBtnTag.match(/data-i18n-title="ui\.gestureSet"/) || []).length === 1
+        && (setBtnTag.match(/data-i18n-aria="ui\.gestureSet"/) || []).length === 1
+        && typeof LOCALES.zh.ui.gestureSet === 'string' && LOCALES.zh.ui.gestureSet.length > 0
+        && typeof LOCALES.en.ui.gestureSet === 'string' && LOCALES.en.ui.gestureSet.length > 0,
+        setBtnTag.slice(0, 160));
+      ok('「设置」圆环里没有 emoji（图标走 icons.js 的 `ui:settings` 齿轮线条图标）',
+        !/[\u{1F300}-\u{1FAFF}\u2600-\u27BF]/u.test(setBtnTag + setBtnBody)
+        && /'ui:settings': '<path d="M9\.671 4\.136/.test(read('src/icons.js')));
+      ok('「设置」圆环和退出圆环**同尺寸**（同一组 ring-btn / ring-svg 结构、宽度仍是 var(--ring-px)）',
+        /class="ring-btn" id="ringQuickSet"/.test(html)
+        && /<svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">/.test(setBtnBody)
+        && /\.corner-ring \.ring-btn \{[^}]*width: var\(--ring-px\)/.test(css)
+        // 「设置」环自己没有另写宽高（否则就不再等大了）
+        && !/#ringQuickSet\s*\{[^}]*width/.test(css));
+      // 位置必须与退出环**同源**：圆心 = ringCenter('corner') 的 x、y + 直径 + 间距（不另写一套坐标）
+      const appSrc = read('src/app.js');
+      const setCenter = /if \(key === 'settings'\) \{([\s\S]*?)\n  \}/.exec(appSrc)?.[1] || '';
+      ok('「设置」环的圆心由 `ringCenter(\'settings\')` 一处算出：x 直接取退出环的 x、y = 退出环 y + 直径 + 间距',
+        !!setCenter
+        && /const c = ringCenter\('corner', stageW, stageH\);/.test(setCenter)
+        && /return \{ x: c\.x, y: c\.y \+ ringPx\('corner'\) \+ SET_RING_GAP_PX \};/.test(setCenter),
+        setCenter.trim());
+      ok('「设置」环的摆放 / 几何各有唯一入口（layoutSetRing → settingsRingLayout → ringCenter）',
+        /function layoutSetRing\(el, size = stageSize\(\)\) \{/.test(appSrc)
+        && /const g = settingsRingLayout\(size\);/.test(appSrc)
+        && /function settingsRingLayout\(size = stageSize\(\)\) \{/.test(appSrc)
+        && /function layoutCornerRing\(\) \{\n  layoutExitRing\(ringEl\('corner'\)\);\n  layoutSetRing\(ringEl\('settings'\)\);/.test(appSrc));
+      // 中间那一层选择圆环：DOM 默认藏着，标题 / 提示 / 关闭按钮都在，遮罩能吃点击
+      ok('中间那层选择圆环默认是 `hidden`（`#setPicker` 在 HTML 里就藏着，样式里 hidden = display:none）',
+        /<div class="set-picker" id="setPicker" hidden>/.test(html)
+        && /\.set-picker\[hidden\] \{ display: none; \}/.test(css));
+      ok('选择层有标题 / 提示 / 关闭按钮 / 遮罩（点空白处、Esc、再点设置环都能关）',
+        /id="setPickerTitle"/.test(html) && /id="setPickerHint"/.test(html)
+        && /id="setPickerClose"/.test(html) && /id="setPickerBackdrop"/.test(html)
+        && /data-i18n-title="ui\.setPickerClose"/.test(html)
+        && /\.set-picker-backdrop\s*\{[^}]*pointer-events:\s*auto/.test(css));
+      // 选择层的圆环是**按钮**（能 Tab 到、能回车选中），热区 ≥44px
+      const choiceBlock = /\.set-choice \{([\s\S]*?)\}/.exec(css)?.[1] || '';
+      ok('选择层的圆环是 <button> + 热区 ≥44px（键盘能 Tab 过去、触屏点得着）',
+        /min-width: 44px;/.test(choiceBlock) && /min-height: 44px;/.test(choiceBlock)
+        && /const SET_CHOOSER_MIN_PX = 44;/.test(appSrc)
+        && /const btn = document\.createElement\('button'\);\n    btn\.type = 'button';\n    btn\.className = 'set-choice';/.test(appSrc),
+        choiceBlock.trim().slice(0, 120));
+      // 遮罩比右上角圆环低一层 → 「再点一次设置环」始终点得到
+      const pickerBlock = /\.set-picker \{([\s\S]*?)\}/.exec(css)?.[1] || '';
+      ok('选择层的 z-index 低于右上角圆环（`.corner-ring` 6）→ 盖不住「设置」环，可以再点一次关掉',
+        /z-index:\s*5;/.test(pickerBlock), pickerBlock.trim());
+      ok('可选数值是一处定义（SET_REP_CHOICES / SET_SEC_CHOICES，界面与测试都从这里读）',
+        /const SET_REP_CHOICES = \[5, 8, 10, 12, 15, 20\];/.test(appSrc)
+        && /const SET_SEC_CHOICES = \[15, 20, 30, 45, 60, 90\];/.test(appSrc)
+        && /state\.setPickerChoices = setChoicesFor\(kind\);/.test(appSrc));
+    }
   }
 
   /* ---- 新版 HUD 版面（用户要求，含「名称回到左上角」这一笔）----
@@ -1337,14 +1404,18 @@ console.log('\n[3] 静态资源与模型文件');
         && (html.match(/class="ui-icon"/g) || []).length >= 4);
       /* 用户要求：「把圆环中的文字退出和再试一次都改为图标表示，退出图标可以和返回图标一致，
        『再试一次』需要设计一个新的图标。」 */
-    ok('圆环里的「退出 / 再试一次」是线条图标（退出 = 返回同款 corner-up-left；再试一次 = 新加的 rotate-ccw）',
+    ok('圆环里的「退出 / 设置 / 再试一次」是线条图标（退出 = 返回同款 corner-up-left；设置 = 现成的齿轮；再试一次 = 新加的 rotate-ccw）',
       /'ui:retry': '<path d="M3 12a9 9 0 1 0 9-9/.test(read('src/icons.js'))
+      && /'ui:settings': '<path d="M9\.671 4\.136/.test(read('src/icons.js'))
       && /function setRingIcon\(labelEl, btnEl, kind, text\)/.test(app)
-      && /const key = kind === 'retry' \? 'ui:retry' : 'back';/.test(app)
+      && /const RING_ICON_KEY = \{ exit: 'back', back: 'back', retry: 'ui:retry', settings: 'ui:settings' \};/.test(app)
+      && /const key = RING_ICON_KEY\[kind\] \|\| 'back';/.test(app)
       && /labelEl\.innerHTML = libIconSVG\(key, 'ex-pose'\);/.test(app)
       && /btnEl\.setAttribute\('aria-label', text\);/.test(app)
       && /setRingIcon\(\$\(key === 'exit' \? 'ringExitLabel' : 'ringRetryLabel'\), el, key, t\(GESTURE_RINGS\[key\]\.labelKey\)\);/.test(app)
-      && /setRingIcon\(cornerLabelEl\(\), ringEl\('corner'\), 'exit', txt\)/.test(app));
+      && /setRingIcon\(cornerLabelEl\(\), ringEl\('corner'\), 'exit', txt\)/.test(app)
+      // 「设置」环那颗：齿轮线条图标 + title / aria-label（中英词条 ui.gestureSet）
+      && /setRingIcon\(\$\('ringQuickSetLabel'\), ringEl\('settings'\), 'settings', t\('ui\.gestureSet'\)\);/.test(app));
     ok('图标态的圆环标签放大居中（CSS），文字含义仍在 title / aria-label',
       /\.ring-label--icon \{ font-size: calc\(var\(--ring-px\) \* 0\.62\); line-height: 0; \}/.test(css)
       // 和菜单里那三颗导航圆环同一比例（62%），所以粗细尺寸一致
