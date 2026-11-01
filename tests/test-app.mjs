@@ -5939,45 +5939,120 @@ console.log('\n[18] 右上角「设置」环 → 中间选择每组次数 / 秒�
   ok('「设置」环摆着的时候猫爪指针层照样生效（它和退出环共用一个显示条件，手在哪看得见）',
     api.pawsWanted() === true);
 
-  /* ---- ② 计数类动作（俯卧撑）：每组次数 ---- */
+  /* ---- ② 计数类动作（俯卧撑）：每组次数 · 一页 5 个 + 两端「向前 / 向后」箭头 ---- */
+  // 一页 5 个（SET_PICKER_PER_PAGE）+ 两端箭头；下面反复要按「这一页摆了哪几颗」断言，所以先备几个 helper
+  const allBtns = () => grid().children;
+  const choiceBtns = () => allBtns().filter((b) => b.dataset.v !== undefined);
+  const choiceVals = () => choiceBtns().map((b) => Number(b.dataset.v));
+  const arrowBtn = (dir) => allBtns().find((b) => b.dataset.role === (dir < 0 ? 'prev' : 'next'));
+  /** 某个值在这一页排第几颗（0 是「向前」箭头，所以选项从 1 开始） */
+  const ringIndexFor = (v) => api.setPickerPageRings().rings
+    .findIndex((r) => r.role === 'choice' && r.value === v);
+  const lastPage = () => api.setPickerPages(api.SET_REP_CHOICES.length) - 1;
+
   api.setTarget(8, 'pushup');      // 先把当前值改成 8，才能验证「当前值高亮」
   ok('准备：俯卧撑当前目标是 8 次（HUD 也是「8 次」）',
     api.state.target === 8 && hudTarget() === `8 ${UNITS.reps}`, hudTarget());
   setBtn().dispatch('click');
   ok('点「设置」环 → 屏幕中间出现选择层（原本 hidden）',
     picker().hidden === false && api.state.setPickerOpen === true);
-  ok('计数类动作给的是「每组次数」：圆环数量 = SET_REP_CHOICES.length（一处定义）',
-    choices().length === api.SET_REP_CHOICES.length
-    && choices().every((b, i) => String(b.dataset.v) === String(api.SET_REP_CHOICES[i]))
-    && api.state.setPickerKind === 'reps'
+  ok('一页只摆 5 个选项（SET_PICKER_PER_PAGE = 5）+ 两端各一颗箭头 = 7 颗圆环',
+    api.SET_PICKER_PER_PAGE === 5 && choiceBtns().length === 5 && allBtns().length === 7,
+    `${choiceBtns().length} 选项 / ${allBtns().length} 颗`);
+  ok(`第一页就是列表最前面那 5 个（${api.SET_REP_CHOICES.slice(0, 5).join(' / ')}，一处定义）`,
+    choiceVals().every((v, i) => v === api.SET_REP_CHOICES[i]),
+    choiceVals().join(','));
+  ok('计数类动作给的是「每组次数」：标题里有主题 + 当前值「当前每组 8 次」+ 页码',
+    api.state.setPickerKind === 'reps'
     && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerReps'))
-    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerCurrent', { n: 8, unit: UNITS.reps })),
-    `${choices().length} / ${api.SET_REP_CHOICES.length} · ${elements.get('setPickerTitle').textContent}`);
-  ok('当前值高亮（8 那颗 is-current + aria-pressed=true，12 那颗不是）',
+    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerCurrent', { n: 8, unit: UNITS.reps }))
+    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerPage', { n: 1, total: api.setPickerPages() })),
+    elements.get('setPickerTitle').textContent);
+  ok('当前值高亮（8 那颗 is-current + aria-pressed=true，10 那颗不是）',
     !!btnOf(8) && btnOf(8).classList.contains('is-current')
     && btnOf(8).attributes['aria-pressed'] === 'true'
-    && !btnOf(12).classList.contains('is-current'));
-  ok('每颗圆环里是「大号数字 + 小号单位」（单位与 HUD 同一份：次 / 秒）',
-    api.SET_REP_CHOICES.every((v) => {
+    && !btnOf(10).classList.contains('is-current'));
+  ok('每颗数字圆环里是「大号数字 + 小号单位」（单位与 HUD 同一份：次 / 秒）',
+    choiceVals().every((v) => {
       const b = btnOf(v);
       return !!b && /set-choice-num/.test(b.innerHTML) && /set-choice-unit/.test(b.innerHTML)
         && b.innerHTML.includes(`>${v}</span>`) && b.innerHTML.includes(UNITS.reps);
-    }), btnOf(12)?.innerHTML?.slice(0, 160));
-  ok('每颗都是真 <button>（键盘可 Tab / 回车选中）且有无障碍名字（「每组 N 次」）',
-    choices().every((b) => b.tagName === 'BUTTON'
+    }), btnOf(8)?.innerHTML?.slice(0, 160));
+  ok('每颗数字环都是真 <button>（键盘可 Tab / 回车选中）且有无障碍名字（「每组 N 次」）',
+    choiceBtns().every((b) => b.tagName === 'BUTTON'
       && (b.attributes['aria-label'] || '').includes(UNITS.reps)
-      && (b.attributes['aria-label'] || '').includes('12') === (String(b.dataset.v) === '12')));
-  btnOf(12).dispatch('click');
-  ok('选 12 → 写进**这个动作自己那一份** settings.targets.pushup',
-    api.state.settings.targets.pushup === 12, JSON.stringify(api.state.settings.targets));
-  ok('HUD 左上角的目标文案立刻变成「12 次」', hudTarget() === `12 ${UNITS.reps}`, hudTarget());
-  ok('已经持久化（localStorage 里那份 settings 的 targets.pushup = 12）',
-    JSON.parse(store.get('mfg.settings.v1') || '{}').targets?.pushup === 12,
+      && (b.attributes['aria-label'] || '').includes(String(b.dataset.v))));
+  ok('那一排两端各是一颗「向前」「向后」箭头圆环（.set-choice--arrow + data-role，顺序 = 最前 / 最后）',
+    !!arrowBtn(-1) && !!arrowBtn(1)
+    && allBtns()[0] === arrowBtn(-1) && allBtns()[allBtns().length - 1] === arrowBtn(1)
+    && arrowBtn(-1).classList.contains('set-choice--arrow')
+    && arrowBtn(1).classList.contains('set-choice--arrow'));
+  ok('箭头里是项目的线条箭头图标（libIconSVG 的 prev / next），不是 emoji、不是 ◀ ▶ 字形、也没有数字',
+    arrowBtn(-1).innerHTML.includes(api.libIconSVG('prev', 'ex-pose'))
+    && arrowBtn(1).innerHTML.includes(api.libIconSVG('next', 'ex-pose'))
+    && !/[◀▶←→]/.test(arrowBtn(-1).innerHTML + arrowBtn(1).innerHTML)
+    && !/set-choice-num/.test(arrowBtn(-1).innerHTML + arrowBtn(1).innerHTML));
+  ok('箭头的 title / aria-label 走 i18n（中文就是「向前」「向后」）',
+    arrowBtn(-1).attributes['aria-label'] === '向前' && arrowBtn(-1).attributes.title === '向前'
+    && arrowBtn(1).attributes['aria-label'] === '向后' && arrowBtn(1).attributes.title === '向后',
+    `${arrowBtn(-1).attributes['aria-label']} / ${arrowBtn(1).attributes['aria-label']}`);
+  ok('箭头与选项**同直径 / 同一排**（7 颗的行内宽高完全一样 → 判定半径也同源）',
+    new Set(allBtns().map((b) => b.style.width)).size === 1
+    && new Set(allBtns().map((b) => b.style.height)).size === 1
+    && new Set(allBtns().map((b) => b.style.top)).size === 1,
+    allBtns().map((b) => b.style.width).join(','));
+
+  arrowBtn(1).dispatch('click');   // 点「向后」→ 第 2 页
+  ok(`点「向后」→ 翻到第 2 页，出现另外 5 个值（${api.SET_REP_CHOICES.slice(5, 10).join(' / ')}）`,
+    api.state.setPickerPage === 1 && choiceBtns().length === 5
+    && choiceVals().every((v, i) => v === api.SET_REP_CHOICES[i + 5]),
+    `page=${api.state.setPickerPage} ${choiceVals().join(',')}`);
+  ok('翻页后标题页码跟着变（第 2/N 页），而且**当前值提示仍在**（信息不丢）',
+    elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerPage', { n: 2, total: api.setPickerPages() }))
+    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerCurrent', { n: 8, unit: UNITS.reps })),
+    elements.get('setPickerTitle').textContent);
+  ok('当前值不在这页时不会有错误的高亮（8 不在第 2 页 → 一颗都不亮）',
+    choiceBtns().every((b) => !b.classList.contains('is-current')));
+  btnOf(20).dispatch('click');
+  ok('选第 2 页的 20 → 写进**这个动作自己那一份** settings.targets.pushup',
+    api.state.settings.targets.pushup === 20, JSON.stringify(api.state.settings.targets));
+  ok('HUD 左上角的目标文案立刻变成「20 次」', hudTarget() === `20 ${UNITS.reps}`, hudTarget());
+  ok('已经持久化（localStorage 里那份 settings 的 targets.pushup = 20）',
+    JSON.parse(store.get('mfg.settings.v1') || '{}').targets?.pushup === 20,
     store.get('mfg.settings.v1'));
   ok('选完选择层自己关掉（hidden + 状态复位 + 圆环清空）',
-    picker().hidden === true && api.state.setPickerOpen === false && choices().length === 0);
+    picker().hidden === true && api.state.setPickerOpen === false && allBtns().length === 0);
+
+  /* ---- 循环翻页：第 1 页「向前」→ 最后一页；最后一页「向后」→ 第 1 页 ---- */
+  api.setTarget(8, 'pushup');
+  setBtn().dispatch('click');
+  ok('打开时停在第 1 页（当前值 8 就在第 1 页）', api.state.setPickerPage === 0);
+  arrowBtn(-1).dispatch('click');
+  ok('第 1 页点「向前」→ **循环**到最后一页（不是夹在第 1 页不动）',
+    api.state.setPickerPage === lastPage(), `${api.state.setPickerPage} / ${lastPage()}`);
+  ok('最后一页只剩 4 个值（14 = 5 + 5 + 4）+ 2 个箭头 = 6 颗圆环',
+    choiceBtns().length === 4 && allBtns().length === 6
+    && choiceVals().every((v, i) => v === api.SET_REP_CHOICES[i + 10]),
+    `${choiceBtns().length} 选项 / ${allBtns().length} 颗 · ${choiceVals().join(',')}`);
+  arrowBtn(1).dispatch('click');
+  ok('最后一页点「向后」→ 循环回第 1 页',
+    api.state.setPickerPage === 0 && choiceVals()[0] === api.SET_REP_CHOICES[0]);
+
+  /* ---- 当前值不在第 1 页：打开就定位 + 高亮 + 标题里也有页码提示 ---- */
+  api.closeSetPicker();
+  api.setTarget(60, 'pushup');     // 60 在列表里是第 12 个 → 第 3 页
+  setBtn().dispatch('click');
+  ok('当前值不在第 1 页时，**打开就定位到它所在的那一页**（60 → 第 3/3 页），不用先翻页找它',
+    api.state.setPickerPage === api.setPickerPages() - 1
+    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerPage', { n: 3, total: api.setPickerPages() })),
+    `page=${api.state.setPickerPage} · ${elements.get('setPickerTitle').textContent}`);
+  ok('而且那颗「60」就是高亮的（is-current + aria-pressed）',
+    !!btnOf(60) && btnOf(60).classList.contains('is-current')
+    && btnOf(60).attributes['aria-pressed'] === 'true');
+  api.closeSetPicker();
 
   /* ---- 三种关闭方式（用户要求「明显的关闭 / 取消方式」） ---- */
+  api.setTarget(8, 'pushup');
   setBtn().dispatch('click');
   const openedOnce = picker().hidden === false;
   elements.get('setPickerBackdrop').dispatch('click');
@@ -5993,30 +6068,71 @@ console.log('\n[18] 右上角「设置」环 → 中间选择每组次数 / 秒�
   ok('再点一次「设置」环也关掉（toggle：打开 → 再点 → 关）',
     reopened && picker().hidden === true && api.state.setPickerOpen === false);
 
-  // 键盘：数字键直接选第几个
+  /* ---- 键盘：数字键选「这一页第几个」，← →（PageUp / PageDown）翻页 ---- */
   setBtn().dispatch('click');
-  documentStub.dispatch('keydown', { key: '3' });
-  ok('键盘数字键 3 → 选中第 3 个选项（10 次），选择层同时关掉',
-    api.state.settings.targets.pushup === api.SET_REP_CHOICES[2] && picker().hidden === true,
-    `${api.state.settings.targets.pushup} / ${api.SET_REP_CHOICES[2]}`);
+  documentStub.dispatch('keydown', { key: '4' });
+  ok('键盘数字键 4 → 选中这一页第 4 个（10 次），选择层同时关掉',
+    api.state.settings.targets.pushup === api.SET_REP_CHOICES[3] && picker().hidden === true,
+    `${api.state.settings.targets.pushup} / ${api.SET_REP_CHOICES[3]}`);
+  setBtn().dispatch('click');
+  documentStub.dispatch('keydown', { key: 'ArrowRight' });
+  const kbNext = api.state.setPickerPage === 1 && api.state.setPickerOpen === true;
+  documentStub.dispatch('keydown', { key: 'ArrowLeft' });
+  ok('键盘 → / ← 也能翻页（选择层不关，也不穿透到训练快捷键）',
+    kbNext && api.state.setPickerPage === 0, `page=${api.state.setPickerPage}`);
+  documentStub.dispatch('keydown', { key: 'ArrowLeft' });
+  ok('键盘 ← 在第 1 页同样是**循环**到最后一页', api.state.setPickerPage === lastPage());
+  api.closeSetPicker();
 
-  // 手掌停满 3 秒也能选（用户要求「点/停满选择后」）
+  /* ---- 手掌停满 3 秒：选值 / 翻页都能干（用户要求「点 / 停满 / 键盘」三种都一样） ---- */
   api.setTarget(8, 'pushup');
   setBtn().dispatch('click');
+  arrowBtn(1).dispatch('click');   // 先翻到第 2 页，验证「停在第 2 页的某一颗上也能选」
   {
-    const lay = api.setChooserLayout(api.SET_REP_CHOICES.length, api.stageSize());
-    const it = lay.items[api.SET_REP_CHOICES.indexOf(15)];
+    const info = api.setPickerPageRings();
+    const lay = api.setChooserLayout(info.rings.length, api.stageSize());
+    const it = lay.items[ringIndexFor(20)];
     let fired = false;
     for (let ms = 90000; ms <= 90000 + 3400; ms += 33) {
       fired = api.updateSetPicker(handAt(it.cx / size.w, it.cy / size.h), Math.round(ms)) >= 0 || fired;
     }
-    ok('手掌停在「15」那颗圆环里满 3 秒也能选中（和点它一样），圆心就是版面算出来的坐标',
-      fired && api.state.settings.targets.pushup === 15 && picker().hidden === true,
+    ok('手掌停在「20」那颗圆环里满 3 秒也能选中（和点它一样），圆心就是版面算出来的坐标',
+      fired && api.state.settings.targets.pushup === 20 && picker().hidden === true,
       `fired=${fired} target=${api.state.settings.targets.pushup}`);
   }
+  api.setTarget(8, 'pushup');
+  setBtn().dispatch('click');
+  {
+    const info = api.setPickerPageRings();
+    const lay = api.setChooserLayout(info.rings.length, api.stageSize());
+    const it = lay.items[info.rings.findIndex((r) => r.role === 'next')];
+    for (let ms = 95000; ms <= 95000 + 3400; ms += 33) {
+      api.updateSetPicker(handAt(it.cx / size.w, it.cy / size.h), Math.round(ms));
+    }
+    ok('手掌停在「向后」箭头上满 3 秒也能翻页（翻页不算选中，选择层不关）',
+      api.state.setPickerPage === 1 && api.state.setPickerOpen === true,
+      `page=${api.state.setPickerPage}`);
+  }
+  api.closeSetPicker();
+
+  /* ---- 选项 ≤5 时：一颗箭头都不出现（也就没有翻页） ---- */
+  api.setTarget(12, 'pushup');
+  setBtn().dispatch('click');
+  {
+    // 把列表临时收窄成「一页放得下」的 5 个，再走真实的 renderSetPicker() 重画
+    api.state.setPickerChoices = [5, 10, 12, 15, 20];
+    api.state.setPickerPage = 0;
+    api.renderSetPicker();
+    ok('选项 ≤5 时不渲染箭头、也不分页（5 颗数字圆环、标题里没有页码）',
+      allBtns().length === 5 && !arrowBtn(-1) && !arrowBtn(1)
+      && choiceBtns().length === 5 && choiceVals().join(',') === '5,10,12,15,20'
+      && !elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerPage', { n: 1, total: 1 })));
+    api.closeSetPicker();
+  }
+
   // 手停在「设置」环里满 3 秒 → 打开选择层（和点它一样；离开后才会重新武装）
   {
-    api.closeSetPicker();
+    api.setTarget(8, 'pushup');
     const sc = api.ringCenter('settings', size.w, size.h);
     const st = api.gestureState.settings;
     st.p = 0; st.done = false; st.at = 0; st.since = 0; st.lastInside = 0;
@@ -6033,16 +6149,17 @@ console.log('\n[18] 右上角「设置」环 → 中间选择每组次数 / 秒�
     api.closeSetPicker();
   }
 
-  /* ---- ③ 计时类动作（平板支撑）：每组秒数 ---- */
+  /* ---- ③ 计时类动作（平板支撑）：每组秒数（同样一页 5 个 + 两端箭头） ---- */
   api.openExercise('plank');
   setBtn().dispatch('click');
-  ok('计时类动作给的是「每组秒数」：数量 = SET_SEC_CHOICES.length，单位是秒',
-    choices().length === api.SET_SEC_CHOICES.length
-    && choices().every((b, i) => String(b.dataset.v) === String(api.SET_SEC_CHOICES[i])
-      && b.innerHTML.includes(UNITS.sec))
+  ok('计时类动作给的是「每组秒数」：第一页 5 个（10 / 15 / 20 / 30 / 45）+ 2 个箭头 = 7 颗，单位是秒',
+    choiceVals().every((v, i) => v === api.SET_SEC_CHOICES[i])
+    && choiceBtns().length === 5 && allBtns().length === 7
+    && choiceBtns().every((b) => b.innerHTML.includes(UNITS.sec))
     && api.state.setPickerKind === 'seconds'
-    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerSeconds')),
-    `${choices().length} / ${api.SET_SEC_CHOICES.length}`);
+    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerSeconds'))
+    && elements.get('setPickerTitle').textContent.includes(tSet('ui.setPickerPage', { n: 1, total: api.setPickerPages(api.SET_SEC_CHOICES.length) })),
+    `${choiceVals().join(',')} · ${elements.get('setPickerTitle').textContent}`);
   ok('平板支撑当前值（默认 45 秒）高亮', !!btnOf(45) && btnOf(45).classList.contains('is-current'));
   btnOf(30).dispatch('click');
   /**
@@ -6058,8 +6175,20 @@ console.log('\n[18] 右上角「设置」环 → 中间选择每组次数 / 秒�
     && api.state.settings.seconds.plank === undefined,
     JSON.stringify({ targets: api.state.settings.targets, seconds: api.state.settings.seconds }));
   ok('HUD 目标文案变成「30 秒」', hudTarget() === `30 ${UNITS.sec}`, hudTarget());
+  // 计时类也要能翻页选（第 2 页 = 60 / 90 / 120 / 150 / 180）
+  setBtn().dispatch('click');
+  arrowBtn(1).dispatch('click');
+  ok('计时类同样能翻页：第 2 页是 60 / 90 / 120 / 150 / 180 秒',
+    api.state.setPickerPage === 1
+    && choiceVals().every((v, i) => v === api.SET_SEC_CHOICES[i + 5]),
+    choiceVals().join(','));
+  btnOf(120).dispatch('click');
+  ok('第 2 页选 120 秒 → settings.targets.plank = 120 且 HUD「120 秒」',
+    api.state.settings.targets.plank === 120 && hudTarget() === `120 ${UNITS.sec}`,
+    `${api.state.settings.targets.plank} · ${hudTarget()}`);
 
   /* ---- ④ 两个动作互不影响 ---- */
+  api.setTarget(15, 'pushup');
   ok('改平板支撑不会动到俯卧撑（targets.pushup 仍是 15 次；平板支撑也没有被写进 seconds 那一份）',
     api.state.settings.targets.pushup === 15 && api.state.settings.seconds.plank === undefined,
     JSON.stringify({ targets: api.state.settings.targets, seconds: api.state.settings.seconds }));
@@ -6067,7 +6196,7 @@ console.log('\n[18] 右上角「设置」环 → 中间选择每组次数 / 秒�
   ok('换回俯卧撑：目标还是自己那一份（15 次），HUD 跟着切回来',
     api.state.target === 15 && hudTarget() === `15 ${UNITS.reps}`, hudTarget());
 
-  /* ---- ⑤ 版式：大屏 / 手机横屏 / 小屏都不越界 ---- */
+  /* ---- ⑤ 版式：一页 7 颗（5 选项 + 2 箭头）在大屏 / 手机横屏 / 小屏都不越界 ---- */
   {
     const sizes = [
       { w: 1280, h: 720, label: '大屏 1280×720' },
@@ -6076,26 +6205,31 @@ console.log('\n[18] 右上角「设置」环 → 中间选择每组次数 / 秒�
       { w: 560, h: 320, label: '小屏 560×320' },
       { w: 390, h: 220, label: '极窄 390×220' },
     ];
+    // 满页 7 颗（5 选项 + 2 箭头）和最后一页 6 颗（4 选项 + 2 箭头）都要不越界
     for (const s of sizes) {
-      const L = api.setChooserLayout(api.SET_REP_CHOICES.length, s);
-      const inside = L.items.length === api.SET_REP_CHOICES.length && L.items.every((it) => it.cx - it.px / 2 >= 0
-        && it.cx + it.px / 2 <= s.w && it.cy - it.px / 2 >= 0 && it.cy + it.px / 2 <= s.h
-        && it.px >= api.SET_CHOOSER_MIN_PX && it.px >= 44);
-      ok(`${s.label}：${L.cols} 列 × ${L.rows} 行、每颗 Ø${L.cell}px，全部落在舞台内（热区 ≥44px）`,
-        inside, JSON.stringify({ cols: L.cols, rows: L.rows, cell: L.cell, items: L.items.length }));
+      for (const rings of [7, 6]) {
+        const L = api.setChooserLayout(rings, s);
+        const inside = L.items.length === rings && L.items.every((it) => it.cx - it.px / 2 >= 0
+          && it.cx + it.px / 2 <= s.w && it.cy - it.px / 2 >= 0 && it.cy + it.px / 2 <= s.h
+          && it.px >= api.SET_CHOOSER_MIN_PX && it.px >= 44);
+        ok(`${s.label} · ${rings} 颗：${L.cols} 列 × ${L.rows} 行、每颗 Ø${L.cell}px，全部落在舞台内（热区 ≥44px）`,
+          inside, JSON.stringify({ cols: L.cols, rows: L.rows, cell: L.cell, items: L.items.length }));
+      }
     }
-    const small = api.setChooserLayout(api.SET_REP_CHOICES.length, { w: 560, h: 320 });
-    ok('小屏自动退成 3×2（一排排不下就不硬排，圆环也不会缩到点不着）',
-      small.cols === 3 && small.rows === 2, `${small.cols}×${small.rows}`);
-    ok('大屏排成一整排（6 颗一行、圆心在同一根水平线上）', (() => {
-      const L = api.setChooserLayout(api.SET_REP_CHOICES.length, { w: 1280, h: 720 });
-      return L.cols === 6 && L.rows === 1 && L.items.every((it) => it.cy === L.items[0].cy);
+    const small = api.setChooserLayout(7, { w: 560, h: 320 });
+    ok('小屏 560×320 退成 4 列 × 2 行（4 + 3，两行都比 3 + 3 + 1 三行大得多）',
+      small.cols === 4 && small.rows === 2, `${small.cols}×${small.rows} Ø${small.cell}`);
+    ok('大屏 1280×720 排成一整排 7 颗（圆心在同一根水平线上、尺寸相同）', (() => {
+      const L = api.setChooserLayout(7, { w: 1280, h: 720 });
+      return L.cols === 7 && L.rows === 1 && L.items.every((it) => it.cy === L.items[0].cy && it.px === L.items[0].px);
     })());
-    ok('小屏 3×2 的两行圆心都落在舞台内（cy 不是负的、也没掉出底部）', (() => {
+    ok('小屏 560×320 的 7 个圆心都在舞台内、热区 ≥44px（箭头和选项同一份尺寸）', (() => {
       const ys = small.items.map((it) => it.cy);
-      return Math.min(...ys) - small.cell / 2 >= 0
-        && Math.max(...ys) + small.cell / 2 <= 320;
-    })(), JSON.stringify(small.items.map((it) => Math.round(it.cy))));
+      const xs = small.items.map((it) => it.cx);
+      return Math.min(...ys) - small.cell / 2 >= 0 && Math.max(...ys) + small.cell / 2 <= 320
+        && Math.min(...xs) - small.cell / 2 >= 0 && Math.max(...xs) + small.cell / 2 <= 560
+        && small.cell >= 44 && new Set(small.items.map((it) => it.px)).size === 1;
+    })(), JSON.stringify({ cell: small.cell, ys: small.items.map((it) => Math.round(it.cy)) }));
   }
 
   /* ---- 语言切换：图标 / 无障碍名跟着换 ---- */

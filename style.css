@@ -1475,6 +1475,23 @@ kbd {
   pointer-events: none;
 }
 .set-choice.is-current .set-choice-unit { color: #cfe9ff; }
+/* 「向前 / 向后」箭头圆环（选项超过一页时，那一排两端出现两颗）：
+   和数字环**完全同尺寸、同一套蓄力圈 / 高亮 / 热区**，圈里只有一个线条箭头（icons.js 的 prev / next，
+   不是 emoji，也不是字体里的 ◀ ▶）。图标字号由 app.js 按直径写行内 font-size（= 直径的一半左右）。 */
+.set-choice--arrow { gap: 0; background: rgba(8, 16, 28, 0.62); }
+.set-choice--arrow .set-choice-track { stroke: rgba(148, 163, 184, 0.5); }
+.set-choice--arrow:hover { background: rgba(12, 34, 52, 0.72); }
+.set-choice-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #dcf2ff;
+  line-height: 0;
+  pointer-events: none;
+}
+.set-choice-icon .ex-pose { width: 1em; height: 1em; stroke-width: 2.4; }
+.set-choice--arrow.dwelling .set-choice-icon { color: #bbf7d0; }
 /* 关闭按钮（「关闭」/ Close）：贴画面下方居中，图标 + 文字，热区够大 */
 .set-picker-close {
   position: absolute;

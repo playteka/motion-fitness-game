@@ -95,9 +95,21 @@ const TIME_TARGETS = [30, 45, 60, 90, 120];
  * 选完写进去的仍然是仓库本来就有的那一份存储（`settings.targets[id]` / `settings.seconds[id]`，
  * 见 `setTarget()`），所以 HUD 左上角的目标文案、运动设定弹窗里的数字框、选择页上的小字会一起跟着变
  * —— 没有新造任何存储。
+ *
+ * 用户后来又要求：「在运动设置中，可选的次数、秒数都应该**大幅度增加**，如果一个页面放不下，
+ * **超过 5 个选项，就要使用『向前』『向后』这样的箭头圆环**，让用户能翻页选择。」
+ *
+ * → 两份列表各扩到 14 / 12 档（覆盖「一次一百个」到「5 分钟」这种大范围，仍然升序），
+ *   一页只摆 `SET_PICKER_PER_PAGE`（5）个 → 多出来的靠「向前 / 向后」两颗箭头圆环翻页
+ *   （见 `setPickerPageRings()` / `flipSetPickerPage()`）。**翻页是循环的**：最后一页的「向后」回到第一页。
  */
-const SET_REP_CHOICES = [5, 8, 10, 12, 15, 20];
-const SET_SEC_CHOICES = [15, 20, 30, 45, 60, 90];
+const SET_REP_CHOICES = [3, 5, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 80, 100];
+const SET_SEC_CHOICES = [10, 15, 20, 30, 45, 60, 90, 120, 150, 180, 240, 300];
+/**
+ * 中间那一层**一页最多摆几颗「可选数值」圆环**（箭头不算在 5 个里面）。
+ * 选项总数 > 这个数时，那一排两端才会出现「向前 / 向后」箭头圆环（≤ 这个数就一颗箭头都没有）。
+ */
+const SET_PICKER_PER_PAGE = 5;
 
 /** 这个动作的目标预设：计时类与限时计数类都是秒，其余是次数 */
 function targetPresetsFor(ex) {
@@ -148,6 +160,7 @@ const state = {
   setPickerOpen: false,
   setPickerKind: '',        // 'reps' | 'seconds'（跟当前动作走，见 setPickerKindFor）
   setPickerChoices: [],     // 当前这一层可选的数值（来自 SET_REP_CHOICES / SET_SEC_CHOICES）
+  setPickerPage: 0,         // 现在停在第几页（0 起；一页 SET_PICKER_PER_PAGE 个，见 setPickerPageRings）
   setPickerUnit: '',        // 环里那个小号单位（和 HUD 同一份：ex.targetUnit）
   autoStart: false,         // 校准识别完成后是否自动进入运动状态（选好动作后为 true）
   afterSet: false,          // 刚结束一组：先让用户休息，不自动开始；离开轮廓后自动恢复
@@ -2370,21 +2383,61 @@ const SET_CHOOSER_PAD_BOTTOM_MIN = 68;
 /** 一颗圆环最大 / 最小直径：最小 44px 是「触屏热区 ≥44px」那条无障碍底线 */
 const SET_CHOOSER_MAX_PX = 132;
 const SET_CHOOSER_MIN_PX = 44;
-/** 想排成「一整排」时每颗至少要有这么大（排不下就退成 3 列 / 2 列） */
+/** 想排成「一整排」时每颗至少要有这么大（排不下就退成 4 列 / 3 列 / 2 列） */
 const SET_CHOOSER_ONE_ROW_MIN_PX = 88;
+/**
+ * 一页最多排几个格子（**同一排里 5 个选项 + 2 个箭头 = 7 个环**）。
+ * 以前是 6（一页就 6 个选项、没有箭头），现在一页固定 5 个选项，两端各加一颗箭头，所以放到 7。
+ */
+const SET_CHOOSER_ONE_ROW_MAX = SET_PICKER_PER_PAGE + 2;
+
+/** 上方留给标题 / 提示的那一条（矮屏按比例收，但有下限 —— 见 SET_CHOOSER_PAD_TOP_MIN） */
+function chooserPadTop(size = stageSize()) {
+  return clamp(Math.round(size.h * 0.16), SET_CHOOSER_PAD_TOP_MIN, SET_CHOOSER_PAD_TOP);
+}
+
+/** 下方留给关闭按钮的那一条（同理） */
+function chooserPadBottom(size = stageSize()) {
+  return clamp(Math.round(size.h * 0.2), SET_CHOOSER_PAD_BOTTOM_MIN, SET_CHOOSER_PAD_BOTTOM);
+}
 
 /**
- * 这一层用几列：**先尽量排成一排**（{n} 颗并排在画面中间），排不下才退成 3×2（再不行 2 列 / 1 列）。
- * 只看宽度决定列数 —— 这样同一层里每颗圆环永远等大（和手势菜单「每页圆环一样大」同一个原则）。
+ * 按 `cols` 列摆 `count` 颗时，每颗最多能有多大（取「宽度够不够」与「高度够不够」的较小者）。
+ * 宽 / 高都要看 —— 否则窄屏上按宽度能排 4 列、高度却只放得下 2 行，圆环会顶出画面。
+ */
+function setChooserCellFor(cols, count, size = stageSize()) {
+  const n = Math.max(1, Math.round(Number(count) || 0));
+  const c = Math.max(1, Math.round(Number(cols) || 0));
+  const rows = Math.ceil(n / c);
+  const availW = Math.max(0, size.w - 2 * SET_CHOOSER_PAD_X);
+  const availH = Math.max(0, size.h - chooserPadTop(size) - chooserPadBottom(size));
+  const byW = (availW - SET_CHOOSER_GAP_PX * (c - 1)) / c;
+  const byH = (availH - SET_CHOOSER_GAP_PX * (rows - 1)) / rows;
+  return Math.min(byW, byH);
+}
+
+/**
+ * 这一层用几列：
+ *   ① 先尽量排成**一整排**（一页 7 颗 = 5 选项 + 2 箭头，宽屏 1280×720 上一排正好摆开）；
+ *   ② 排不成一排就退成 **4 列**（7 颗 → 4 + 3 两行，小屏上比 3 + 3 + 1 三行大得多）；
+ *   ③ 再不行 3 列 / 2 列，最后一列。
+ * 宽度按「一排能不能放下」判；退成网格时还要求**整块网格按 44px 的最小直径也塞得进舞台高度**
+ * （否则宁可用更少的列数、更多的行 —— 反正不会把圆环顶出画面）。
+ * 这样同一层里每颗圆环永远等大（和手势菜单「每页圆环一样大」同一个原则）。
  */
 function setChooserCols(count, size = stageSize()) {
   const n = Math.max(1, Math.round(Number(count) || 0));
   const availW = Math.max(0, size.w - 2 * SET_CHOOSER_PAD_X);
-  const fit = (cols) => (availW - SET_CHOOSER_GAP_PX * (cols - 1)) / cols;
-  const oneRow = Math.min(n, 6);
-  if (fit(oneRow) >= SET_CHOOSER_ONE_ROW_MIN_PX) return oneRow;
-  if (n > 1 && fit(3) >= SET_CHOOSER_MIN_PX) return Math.min(n, 3);
-  if (n > 1 && fit(2) >= SET_CHOOSER_MIN_PX) return Math.min(n, 2);
+  const fitW = (cols) => (availW - SET_CHOOSER_GAP_PX * (cols - 1)) / cols;
+  const oneRow = Math.min(n, SET_CHOOSER_ONE_ROW_MAX);
+  if (fitW(oneRow) >= SET_CHOOSER_ONE_ROW_MIN_PX) return oneRow;
+  for (const cols of [4, 3, 2]) {
+    if (n <= cols || fitW(cols) < SET_CHOOSER_MIN_PX) continue;
+    const rows = Math.ceil(n / cols);
+    const blockH = rows * SET_CHOOSER_MIN_PX + SET_CHOOSER_GAP_PX * (rows - 1);
+    if (chooserPadTop(size) + blockH > size.h) continue;   // 竖着塞不下 → 换更小的列数（行更多）
+    return cols;
+  }
   return 1;
 }
 
@@ -2403,13 +2456,11 @@ function setChooserLayout(count, size = stageSize()) {
   const rows = Math.ceil(n / cols);
   const gap = SET_CHOOSER_GAP_PX;
   // 屏幕矮的时候上下留白按比例收，但有**下限**：标题 / 提示 / 关闭按钮都不能压到圆环上
-  const padTop = clamp(Math.round(size.h * 0.16), SET_CHOOSER_PAD_TOP_MIN, SET_CHOOSER_PAD_TOP);
-  const padBottom = clamp(Math.round(size.h * 0.2), SET_CHOOSER_PAD_BOTTOM_MIN, SET_CHOOSER_PAD_BOTTOM);
+  const padTop = chooserPadTop(size);
+  const padBottom = chooserPadBottom(size);
   const availW = Math.max(0, size.w - 2 * SET_CHOOSER_PAD_X);
   const availH = Math.max(0, size.h - padTop - padBottom);
-  const byW = (availW - gap * (cols - 1)) / cols;
-  const byH = (availH - gap * (rows - 1)) / rows;
-  const cell = clamp(Math.floor(Math.min(byW, byH)), SET_CHOOSER_MIN_PX, SET_CHOOSER_MAX_PX);
+  const cell = clamp(Math.floor(setChooserCellFor(cols, n, size)), SET_CHOOSER_MIN_PX, SET_CHOOSER_MAX_PX);
   const gw = cols * cell + gap * (cols - 1);
   const gh = rows * cell + gap * (rows - 1);
   const left = Math.round((size.w - gw) / 2);
@@ -2441,9 +2492,92 @@ function setPickerKindFor(id = state.exerciseId) {
   return ex.kind === 'hold' || ex.timed ? 'seconds' : 'reps';
 }
 
-/** 这个 kind 可选的数值（**一处定义**：`SET_REP_CHOICES` / `SET_SEC_CHOICES`） */
-function setChoicesFor(kind) {
-  return (kind === 'seconds' ? SET_SEC_CHOICES : SET_REP_CHOICES).slice();
+/**
+ * 这个 kind 可选的数值（**一处定义**：`SET_REP_CHOICES` / `SET_SEC_CHOICES`）。
+ *
+ * ⚠️ 用户已经选过的值**必须留在列表里**：如果它不在这份预设里（比如以前版本选过 7 次、
+ * 或者以后有人手动改了 localStorage），就把它**按大小插进去**，而不是让当前值凭空消失。
+ * 顺手做排序 + 去重：列表永远升序、没有重复，翻页顺序才是可预期的。
+ */
+function setChoicesFor(kind, current = targetForExercise(state.exerciseId)) {
+  const base = kind === 'seconds' ? SET_SEC_CHOICES : SET_REP_CHOICES;
+  const list = [...new Set(base)].sort((a, b) => a - b);
+  const n = Math.round(Number(current));
+  if (Number.isFinite(n) && n > 0 && !list.includes(n)) {
+    list.push(n);
+    list.sort((a, b) => a - b);
+  }
+  return list;
+}
+
+/** 一共几页（一页 `SET_PICKER_PER_PAGE` 个选项；选项 ≤ 5 时就是 1 页、没有箭头） */
+function setPickerPages(count = state.setPickerChoices.length) {
+  const total = Math.max(1, Math.round(Number(count) || 0));
+  return Math.max(1, Math.ceil(total / SET_PICKER_PER_PAGE));
+}
+
+/** `value` 落在第几页（`setPickerPageRings()` 的逆运算；找不到就回第 1 页） */
+function setPickerPageOf(value, choices = state.setPickerChoices) {
+  const idx = choices.indexOf(value);
+  if (idx < 0) return 0;
+  return Math.floor(idx / SET_PICKER_PER_PAGE);
+}
+
+/**
+ * **当前这一页到底摆哪些圆环**（选项 + 两端的箭头）—— 绘制 / 判定 / 键盘 / 测试都读它这一份。
+ *
+ * 返回 `{ rings, page, pages, hasNav, first }`，`rings[i]` 的 `role` 只有三种：
+ *   - `'prev'` / `'next'`：翻页箭头（`dir` = −1 / +1），**只有选项总数 > 5 时才出现**；
+ *   - `'choice'`：一个可选数值（`value` = 数值，`index` = 在 `setPickerChoices` 里的下标）。
+ * 排布顺序就是屏幕上从左到右的顺序：`[向前] 选项… [向后]`。
+ */
+function setPickerPageRings(page = state.setPickerPage) {
+  const choices = state.setPickerChoices;
+  const total = choices.length;
+  const pages = setPickerPages(total);
+  const at = clamp(Math.round(Number(page) || 0), 0, pages - 1);
+  const first = at * SET_PICKER_PER_PAGE;
+  const slice = choices.slice(first, first + SET_PICKER_PER_PAGE);
+  const hasNav = total > SET_PICKER_PER_PAGE;
+  const rings = [];
+  if (hasNav) rings.push({ role: 'prev', dir: -1 });
+  for (let i = 0; i < slice.length; i += 1) {
+    rings.push({ role: 'choice', value: slice[i], index: first + i });
+  }
+  if (hasNav) rings.push({ role: 'next', dir: 1 });
+  return { rings, page: at, pages, hasNav, first };
+}
+
+/** 把所有蓄力状态清干净（打开 / 关闭 / 翻页都走它，免得一行行抄） */
+function resetSetPickerHold() {
+  setPickerHold.idx = -1;
+  setPickerHold.p = 0;
+  setPickerHold.since = 0;
+  setPickerHold.lastInside = 0;
+  setPickerHold.at = 0;
+}
+
+/**
+ * 翻页（`dir` = −1 是「向前」、+1 是「向后」）：**循环**，最后一页的「向后」回到第一页、
+ * 第一页的「向前」绕到最后一页（选项是一个圆环状的刻度盘，夹在端点反而会让人以为翻不动了）。
+ *
+ * 只有一页时什么也不做（返回 −1）。翻完立刻重画那一排 —— 当前值高亮由 `renderSetPicker()`
+ * 按**整份列表**重新判，所以切到当前值所在的页时会自动亮起来。
+ */
+function flipSetPickerPage(dir) {
+  if (!state.setPickerOpen) return -1;
+  const pages = setPickerPages();
+  if (pages <= 1) return -1;
+  const step = dir < 0 ? -1 : 1;
+  state.setPickerPage = ((state.setPickerPage + step) % pages + pages) % pages;
+  resetSetPickerHold();
+  renderSetPicker();
+  // 重建 DOM 之后把焦点还给**同一侧那颗箭头**（不清焦点的话，键盘 / 读屏用户翻一页就掉出来了）
+  const role = step < 0 ? 'prev' : 'next';
+  const grid = $('setPickerGrid');
+  const btn = grid ? [...(grid.children || [])].find((b) => b?.dataset?.role === role) : null;
+  btn?.focus?.({ preventScroll: true });
+  return state.setPickerPage;
 }
 
 /** 选择层开着时手掌的蓄力状态（同一时刻只有一颗在蓄力） */
@@ -2459,59 +2593,85 @@ function paintSetChoice(btn, p) {
 }
 
 /**
- * 把中间那一层选择圆环画出来（每颗 = 一圈 + 大号数字 + 小号单位；当前值高亮 `is-current`）。
+ * 把中间那一层选择圆环画出来（数字环 = 一圈 + 大号数字 + 小号单位；箭头环 = 一圈 + 线条箭头）。
  *
  * 版面全部来自 `setChooserLayout()`：`left/top` 就是圆心（`.set-choice` 用
  * `transform: translate(-50%, -50%)` 定位，和 `.ring-btn` 一样），宽高就是圆环直径。
+ * 一页摆什么由 `setPickerPageRings()` 决定（`[向前] + 最多 5 个选项 + [向后]`）。
+ *
  * ⚠️ 行内字号也跟着直径算 —— 大屏的环里数字大、小屏的环里数字小，但都完整落在圈里。
+ * ⚠️ 当前值高亮**按整份列表判**（不是按这一页）：所以翻到当前值所在的页时它会亮，
+ *    翻到别的页时标题里那句「当前每组 12 次」仍然在（信息不丢）。
  */
 function renderSetPicker({ focus = false } = {}) {
   if (!state.setPickerOpen) return null;
   const grid = $('setPickerGrid');
   if (!grid) return null;
   const size = stageSize();
-  const choices = state.setPickerChoices;
   const unit = state.setPickerUnit;
   const current = targetForExercise(state.exerciseId);
-  const layout = setChooserLayout(choices.length, size);
+  const info = setPickerPageRings();
+  const layout = setChooserLayout(info.rings.length, size);
   const kind = state.setPickerKind;
   grid.innerHTML = '';
   const titleEl = $('setPickerTitle');
   if (titleEl) {
-    // 标题 = 主题 + 当前值（一行放下：「每组次数 · 当前每组 12 次」）；当前值**同时**高亮在那颗圆环上
+    // 标题 = 主题 + 当前值 +（有分页时）第几页：一行放下，当前值在翻页时也不会从视线里消失
+    const pageText = info.pages > 1
+      ? ` · ${t('ui.setPickerPage', { n: info.page + 1, total: info.pages })}`
+      : '';
     titleEl.textContent = `${t(kind === 'seconds' ? 'ui.setPickerSeconds' : 'ui.setPickerReps')}`
-      + ` · ${t('ui.setPickerCurrent', { n: current, unit })}`;
+      + ` · ${t('ui.setPickerCurrent', { n: current, unit })}` + pageText;
   }
   const hintEl = $('setPickerHint');
   if (hintEl) hintEl.textContent = t('ui.setPickerHint');
   const numPx = Math.max(14, Math.round(layout.cell * 0.36));
   const unitPx = Math.max(10, Math.round(layout.cell * 0.16));
+  // 箭头和数字一样大：图标占直径的一半左右（小屏也看得清是「向前 / 向后」）
+  const iconPx = Math.max(18, Math.round(layout.cell * 0.5));
   let currentBtn = null;
-  for (const it of layout.items) {
-    const v = choices[it.i];
+  for (let i = 0; i < info.rings.length; i += 1) {
+    const ring = info.rings[i];
+    const it = layout.items[i];
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'set-choice';
-    btn.dataset.v = String(v);
-    btn.dataset.idx = String(it.i);
+    btn.dataset.idx = String(i);
     btn.style.left = `${it.cx}px`;
     btn.style.top = `${it.cy}px`;
     btn.style.width = `${it.px}px`;
     btn.style.height = `${it.px}px`;
-    const label = t('ui.setPickerChoice', { n: v, unit });
-    btn.innerHTML = '<svg class="set-choice-svg" viewBox="0 0 120 120" aria-hidden="true">'
+    const ringSvg = '<svg class="set-choice-svg" viewBox="0 0 120 120" aria-hidden="true">'
       + '<circle class="set-choice-track" cx="60" cy="60" r="52"></circle>'
       + '<circle class="set-choice-fill" cx="60" cy="60" r="52"></circle>'
-      + '</svg>'
-      + `<span class="set-choice-num" style="font-size:${numPx}px">${v}</span>`
-      + `<span class="set-choice-unit" style="font-size:${unitPx}px">${esc(unit)}</span>`;
-    btn.classList.toggle('is-current', v === current);
-    btn.setAttribute('aria-label', label);
-    btn.setAttribute('title', label);
-    btn.setAttribute('aria-pressed', String(v === current));
-    btn.addEventListener('click', () => chooseSetValue(v));
+      + '</svg>';
+    if (ring.role === 'choice') {
+      const v = ring.value;
+      btn.dataset.v = String(v);
+      const label = t('ui.setPickerChoice', { n: v, unit });
+      btn.innerHTML = ringSvg
+        + `<span class="set-choice-num" style="font-size:${numPx}px">${v}</span>`
+        + `<span class="set-choice-unit" style="font-size:${unitPx}px">${esc(unit)}</span>`;
+      btn.classList.toggle('is-current', v === current);
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('title', label);
+      btn.setAttribute('aria-pressed', String(v === current));
+      btn.addEventListener('click', () => chooseSetValue(v));
+      if (v === current && !currentBtn) currentBtn = btn;
+    } else {
+      // 「向前 / 向后」：和选项环同尺寸、同一套蓄力圈，圈里只画线条箭头（不是 emoji、不是字体字形）
+      const label = t(ring.role === 'prev' ? 'ui.setPickerPrev' : 'ui.setPickerNext');
+      btn.classList.add('set-choice--arrow');
+      btn.dataset.role = ring.role;
+      btn.dataset.dir = String(ring.dir);
+      btn.innerHTML = ringSvg
+        + `<span class="set-choice-icon" aria-hidden="true" style="font-size:${iconPx}px">`
+        + `${libIconSVG(ring.role, 'ex-pose')}</span>`;
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('title', label);
+      btn.addEventListener('click', () => flipSetPickerPage(ring.dir));
+    }
     grid.appendChild(btn);
-    if (v === current && !currentBtn) currentBtn = btn;
   }
   // 键盘用户：打开时焦点落在「当前值」那一颗上，Tab / Shift+Tab 换选项、回车 / 空格选中
   if (focus) {
@@ -2528,15 +2688,14 @@ function openSetPicker() {
   const ex = localizedExercise(id);
   if (!ex) return false;
   const kind = setPickerKindFor(id);
+  const current = targetForExercise(id);
   state.setPickerOpen = true;
   state.setPickerKind = kind;
-  state.setPickerChoices = setChoicesFor(kind);
+  state.setPickerChoices = setChoicesFor(kind, current);
   state.setPickerUnit = ex.targetUnit;      // 和 HUD / 弹窗同一份单位（次 / 秒）
-  setPickerHold.idx = -1;
-  setPickerHold.p = 0;
-  setPickerHold.since = 0;
-  setPickerHold.lastInside = 0;
-  setPickerHold.at = 0;
+  // 打开就落在**当前值所在的那一页**（当前值在最后一页也不会让人先翻三页去找它）
+  state.setPickerPage = setPickerPageOf(current, state.setPickerChoices);
+  resetSetPickerHold();
   const box = $('setPicker');
   if (box) box.hidden = false;
   renderSetPicker({ focus: true });
@@ -2549,12 +2708,9 @@ function closeSetPicker() {
   state.setPickerOpen = false;
   state.setPickerKind = '';
   state.setPickerChoices = [];
+  state.setPickerPage = 0;
   state.setPickerUnit = '';
-  setPickerHold.idx = -1;
-  setPickerHold.p = 0;
-  setPickerHold.since = 0;
-  setPickerHold.lastInside = 0;
-  setPickerHold.at = 0;
+  resetSetPickerHold();
   const box = $('setPicker');
   if (box) box.hidden = true;
   const grid = $('setPickerGrid');
@@ -2577,17 +2733,22 @@ function chooseSetValue(v) {
 }
 
 /**
- * 每帧更新中间那一层选择圆环：手掌停在某一颗里满 `GESTURE_HOLD_MS` 就选中它。
+ * 每帧更新中间那一层选择圆环：手掌停在某一颗里满 `GESTURE_HOLD_MS` 就选中它
+ * （停在两端的箭头上就是**翻页**，时间和选值一样 3 秒）。
  *
  * 判定半径 = 那颗圆环**画出来的半径**（`px × RING_HIT_RATIO`，和右上角那些环同一个口径），
- * 圆心就是 `setChooserLayout()` 给的 `(cx, cy)` —— 绘制与判定同一份数。
+ * 圆心就是 `setChooserLayout()` 给的 `(cx, cy)` —— 绘制与判定同一份数；环的种类 / 顺序来自
+ * `setPickerPageRings()`（和绘制同一份）。
  * 手掌换到别的一颗时，之前那颗的进度**立刻归零**（和手势菜单「一格一格地选」一样）。
+ *
+ * 返回值：选中了哪个数值就返回它；翻页 / 没触发返回 −1（翻页不是「选中」，不会关掉选择层）。
  */
 function updateSetPicker(landmarks, now) {
   if (!state.setPickerOpen) return -1;
   const size = stageSize();
   const palms = palmPoints(landmarks, size.w, size.h, state.settings.mirror);
-  const layout = setChooserLayout(state.setPickerChoices.length, size);
+  const info = setPickerPageRings();
+  const layout = setChooserLayout(info.rings.length, size);
   let idx = -1;
   for (const it of layout.items) {
     if (anyTouchNearPoint(palms, { x: it.cx, y: it.cy }, it.px * RING_HIT_RATIO).inside) {
@@ -2614,13 +2775,15 @@ function updateSetPicker(landmarks, now) {
   const btns = $('setPickerGrid')?.children || [];
   for (let i = 0; i < btns.length; i += 1) paintSetChoice(btns[i], i === st.idx ? st.p : 0);
   if (st.p >= 1 && st.idx >= 0) {
-    const v = state.setPickerChoices[st.idx];
-    st.idx = -1;
-    st.p = 0;
-    st.since = 0;
-    st.lastInside = 0;
-    chooseSetValue(v);
-    return v;
+    const ring = info.rings[st.idx];
+    const fired = { role: ring?.role, value: ring?.value, dir: ring?.dir };
+    resetSetPickerHold();
+    if (!fired.role) return -1;
+    if (fired.role === 'choice') {
+      chooseSetValue(fired.value);
+      return fired.value;
+    }
+    flipSetPickerPage(fired.dir);   // 「向前 / 向后」：蓄满 3 秒翻一页，选择层不关
   }
   return -1;
 }
@@ -6163,7 +6326,8 @@ function bindUI() {
     /**
      * 「设置」选择层（中间那一排「每组次数 / 每组秒数」圆环）开着的时候，键盘只服务这一层：
      *   - `Esc` 关掉它（用户要求的关闭方式之一）；
-     *   - 数字键 `1`~`9` 直接选第几个（比 Tab 过去按回车快）；
+     *   - `← / →`（或 `PageUp / PageDown`）翻页：和点「向前 / 向后」箭头、手掌停在箭头上 3 秒完全等价；
+     *   - 数字键 `1`~`5` 直接选**这一页**第几个（比 Tab 过去按回车快）；
      *   - `Tab` / `Shift+Tab` 照常走浏览器默认行为（每颗圆环都是真 `<button>`，能 Tab 到、能回车选中）；
      *   - 其余按键**不穿透**到训练快捷键（否则按空格会开始训练、按 H 会回主页 —— 选择层还没关）。
      */
@@ -6173,10 +6337,17 @@ function bindUI() {
         closeSetPicker();
         return;
       }
-      const pick = Number(e.key);
-      if (Number.isFinite(pick) && pick >= 1 && pick <= state.setPickerChoices.length) {
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp' || e.key === 'ArrowRight' || e.key === 'PageDown') {
         e.preventDefault();
-        chooseSetValue(state.setPickerChoices[pick - 1]);
+        flipSetPickerPage((e.key === 'ArrowRight' || e.key === 'PageDown') ? 1 : -1);
+        return;
+      }
+      const pick = Number(e.key);
+      // 数字键按「这一页上的第几个选项」算（箭头不占号）：第 2 页按 1 选的是这一页第一个值
+      const pageChoices = setPickerPageRings().rings.filter((r) => r.role === 'choice');
+      if (Number.isFinite(pick) && pick >= 1 && pick <= pageChoices.length) {
+        e.preventDefault();
+        chooseSetValue(pageChoices[pick - 1].value);
       }
       return;
     }
@@ -6395,15 +6566,17 @@ window.__mfg = {
   //   geometry  : settingsRingLayout / layoutSetRing / SET_RING_GAP_PX
   //   interaction: updateSetRing / triggerSetRing / resetSetRing
   //   picker    : openSetPicker / closeSetPicker / renderSetPicker / updateSetPicker / chooseSetValue
-  //   layout    : setChooserLayout / setChooserCols（纯函数，测试直接断言「大屏小屏都不越界」）
+  //   paging    : SET_PICKER_PER_PAGE（一页 5 个）/ setPickerPageRings / setPickerPages / flipSetPickerPage
+  //   layout    : setChooserLayout / setChooserCols / setChooserCellFor（纯函数，测试直接断言「大屏小屏都不越界」）
   //   choices   : SET_REP_CHOICES / SET_SEC_CHOICES（**一处定义**，界面与测试都从这里读）
   settingsRingLayout, layoutSetRing, SET_RING_GAP_PX,
   updateSetRing, triggerSetRing, resetSetRing,
   openSetPicker, closeSetPicker, renderSetPicker, updateSetPicker, chooseSetValue,
-  setChooserLayout, setChooserCols, setPickerKindFor, setChoicesFor,
+  SET_PICKER_PER_PAGE, setPickerPageRings, setPickerPages, setPickerPageOf, flipSetPickerPage,
+  setChooserLayout, setChooserCols, setChooserCellFor, setPickerKindFor, setChoicesFor,
   SET_REP_CHOICES, SET_SEC_CHOICES,
   SET_CHOOSER_GAP_PX, SET_CHOOSER_PAD_X, SET_CHOOSER_PAD_TOP, SET_CHOOSER_PAD_BOTTOM,
-  SET_CHOOSER_MAX_PX, SET_CHOOSER_MIN_PX, SET_CHOOSER_ONE_ROW_MIN_PX,
+  SET_CHOOSER_MAX_PX, SET_CHOOSER_MIN_PX, SET_CHOOSER_ONE_ROW_MIN_PX, SET_CHOOSER_ONE_ROW_MAX,
   layoutCornerRing, ringCenter, ringPx, ringHitRadius, touchPoints, touchSamples, anyTouchInRing, anyTouchNearPoint, stageSize, onStageResize,
   // 右上角「退出 / 返回」圆环共用的**唯一**几何与摆放（动作页退出圆环 + 菜单返回圆环）
   exitRingLayout, layoutExitRing, menuBackItem, menuBackEl, syncMenuBackIcon,

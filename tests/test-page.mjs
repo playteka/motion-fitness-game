@@ -321,9 +321,69 @@ console.log('\n[3] 静态资源与模型文件');
       ok('选择层的 z-index 低于右上角圆环（`.corner-ring` 6）→ 盖不住「设置」环，可以再点一次关掉',
         /z-index:\s*5;/.test(pickerBlock), pickerBlock.trim());
       ok('可选数值是一处定义（SET_REP_CHOICES / SET_SEC_CHOICES，界面与测试都从这里读）',
-        /const SET_REP_CHOICES = \[5, 8, 10, 12, 15, 20\];/.test(appSrc)
-        && /const SET_SEC_CHOICES = \[15, 20, 30, 45, 60, 90\];/.test(appSrc)
-        && /state\.setPickerChoices = setChoicesFor\(kind\);/.test(appSrc));
+        /const SET_REP_CHOICES = \[/.test(appSrc)
+        && /const SET_SEC_CHOICES = \[/.test(appSrc)
+        && /state\.setPickerChoices = setChoicesFor\(kind, current\);/.test(appSrc));
+      /* ---- 用户新要求：「可选的次数、秒数都应该大幅度增加；超过 5 个选项就用『向前』『向后』箭头圆环翻页」 ---- */
+      const parseChoices = (name) => {
+        const body = new RegExp(`const ${name} = \\[([^\\]]*)\\];`).exec(appSrc)?.[1] || '';
+        return body.split(',').map((s) => Number(s.trim())).filter((v) => Number.isFinite(v));
+      };
+      const repChoices = parseChoices('SET_REP_CHOICES');
+      const secChoices = parseChoices('SET_SEC_CHOICES');
+      const ascUnique = (a) => a.length > 0 && a.every((v, i) => Number.isInteger(v) && v > 0
+        && (i === 0 || v > a[i - 1]));
+      ok(`每组次数的选项**大幅度增加**（${repChoices.length} 个：${repChoices.join(' / ')}，升序、无重复）`,
+        repChoices.length > 5 && repChoices.length >= 12 && ascUnique(repChoices),
+        repChoices.join(','));
+      ok(`每组秒数的选项**大幅度增加**（${secChoices.length} 个：${secChoices.join(' / ')}，升序、无重复）`,
+        secChoices.length > 5 && secChoices.length >= 10 && ascUnique(secChoices),
+        secChoices.join(','));
+      ok('一页最多摆 5 个选项是一处定义的常量（SET_PICKER_PER_PAGE = 5，箭头不算在这 5 个里面）',
+        /const SET_PICKER_PER_PAGE = 5;/.test(appSrc)
+        && /const SET_CHOOSER_ONE_ROW_MAX = SET_PICKER_PER_PAGE \+ 2;/.test(appSrc));
+      const pagingSrc = /function setPickerPageRings\([\s\S]*?\n\}/.exec(appSrc)?.[0] || '';
+      ok('选项 ≤5 时不渲染箭头（源码：两颗箭头都只在 `if (hasNav)` 里 push，hasNav = 总数 > SET_PICKER_PER_PAGE）',
+        /const hasNav = total > SET_PICKER_PER_PAGE;/.test(pagingSrc)
+        && /if \(hasNav\) rings\.push\(\{ role: 'prev', dir: -1 \}\);/.test(pagingSrc)
+        && /if \(hasNav\) rings\.push\(\{ role: 'next', dir: 1 \}\);/.test(pagingSrc),
+        pagingSrc.trim().slice(0, 160));
+      ok('箭头和选项是**同一套**圆环结构（同一个 .set-choice <button> + 同一套 set-choice-svg 蓄力圈，只多一个 .set-choice--arrow 类）',
+        /btn\.className = 'set-choice';/.test(appSrc)
+        && /if \(ring\.role === 'choice'\) \{/.test(appSrc)
+        && /btn\.classList\.add\('set-choice--arrow'\);/.test(appSrc)
+        && /const ringSvg = '<svg class="set-choice-svg"/.test(appSrc)
+        && /\.set-choice--arrow \{/.test(css)
+        // 热区仍是 .set-choice 上的 44px（箭头没有另写一套尺寸）
+        && /\.set-choice \{/.test(css) && !/\.set-choice--arrow \{[^}]*min-width/.test(css));
+      ok('箭头用的是项目既有的线性箭头图标（icons.js 的 prev / next，经 libIconSVG），**不是 emoji、也不是 ◀ ▶ 字形**',
+        /libIconSVG\(ring\.role, 'ex-pose'\)/.test(appSrc)
+        && /prev: '<path d="m15 18-6-6 6-6"\/>'/.test(read('src/icons.js'))
+        && /next: '<path d="m9 18 6-6-6-6"\/>'/.test(read('src/icons.js'))
+        && !/[◀▶←→]/.test(/btn\.innerHTML = ringSvg[\s\S]{0,400}?set-choice-icon/.exec(appSrc)?.[0] || ''),
+        /const label = t\(ring\.role === 'prev' \? 'ui\.setPickerPrev' : 'ui\.setPickerNext'\);/.test(appSrc) ? '' : 'label 没走 i18n');
+      ok('箭头的 title / aria-label 走 i18n 词条（ui.setPickerPrev / ui.setPickerNext，中英都有，中文就是「向前」「向后」）',
+        /const label = t\(ring\.role === 'prev' \? 'ui\.setPickerPrev' : 'ui\.setPickerNext'\);/.test(appSrc)
+        && /btn\.setAttribute\('title', label\);/.test(appSrc)
+        && /btn\.setAttribute\('aria-label', label\);/.test(appSrc)
+        && LOCALES.zh.ui.setPickerPrev === '向前' && LOCALES.zh.ui.setPickerNext === '向后'
+        && typeof LOCALES.en.ui.setPickerPrev === 'string' && typeof LOCALES.en.ui.setPickerNext === 'string'
+        && LOCALES.en.ui.setPickerPrev.length > 0 && LOCALES.en.ui.setPickerNext.length > 0,
+        `${LOCALES.zh.ui.setPickerPrev}/${LOCALES.zh.ui.setPickerNext} · ${LOCALES.en.ui.setPickerPrev}/${LOCALES.en.ui.setPickerNext}`);
+      ok('翻页提示也有 i18n 词条（ui.setPickerPage「第 {n}/{total} 页」，中英占位符一致）',
+        /\{total\}/.test(LOCALES.zh.ui.setPickerPage || '')
+        && /\{total\}/.test(LOCALES.en.ui.setPickerPage || '')
+        && /t\('ui\.setPickerPage', \{ n: info\.page \+ 1, total: info\.pages \}\)/.test(appSrc),
+        `${LOCALES.zh.ui.setPickerPage} · ${LOCALES.en.ui.setPickerPage}`);
+      ok('翻页是**循环**的（最后一页的「向后」回到第一页；源码里取模归一化，不夹在端点）',
+        /state\.setPickerPage = \(\(state\.setPickerPage \+ step\) % pages \+ pages\) % pages;/.test(appSrc)
+        && /function flipSetPickerPage\(dir\) \{/.test(appSrc));
+      ok('打开选择层就落在**当前值所在的那一页**（不会让人先去翻页找当前值）',
+        /state\.setPickerPage = setPickerPageOf\(current, state\.setPickerChoices\);/.test(appSrc)
+        && /function setPickerPageOf\(value, choices = state\.setPickerChoices\) \{/.test(appSrc));
+      ok('当前值不在预设列表里也不会消失（setChoicesFor 会把它按大小插进去 + 排序去重）',
+        /const list = \[\.\.\.new Set\(base\)\]\.sort\(\(a, b\) => a - b\);/.test(appSrc)
+        && /if \(Number\.isFinite\(n\) && n > 0 && !list\.includes\(n\)\) \{/.test(appSrc));
     }
   }
 
