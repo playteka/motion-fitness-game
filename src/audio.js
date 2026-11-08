@@ -190,6 +190,14 @@ export class AudioKit {
     this.ctx = null;
     this.sfxOn = true;
     this.voiceOn = true;
+    /**
+     * 系统语音提示的**总开关**（和用户自己的「语音」偏好 voiceOn 分开）。
+     * AI 语音教练开启时 app.js 会把它关掉（`setVoiceEnabled(false)`）：
+     *   - 教练自己会用 TTS 说话，系统提示再念一遍就是重复；
+     *   - 更关键的是 `say()` 里的 `speechSynthesis.cancel()` 会把教练正在说的那句掐断。
+     * 关掉后 `say()` 直接 return（**连 cancel 都不调**）；WebAudio 提示音完全不受影响。
+     */
+    this.voiceAllowed = true;
     this.musicOn = false;
     this.volume = 0.8;
     this._voice = null;
@@ -239,8 +247,26 @@ export class AudioKit {
       voices = (typeof speechSynthesis !== 'undefined' && speechSynthesis.getVoices?.() || []).length;
     } catch { voices = 0; }
     return {
-      ctx, voices, voiceOn: !!this.voiceOn, sfxOn: !!this.sfxOn, unlocked: !!this._unlocked,
+      ctx, voices, voiceOn: !!this.voiceOn, voiceAllowed: !!this.voiceAllowed,
+      sfxOn: !!this.sfxOn, unlocked: !!this._unlocked,
     };
+  }
+
+  /**
+   * 系统语音提示的总开关（由 app.js 跟随 AI 语音教练联动）。
+   *
+   * 关闭时 `say()` 会**直接 return，连 `speechSynthesis.cancel()` 都不调** ——
+   * 那句 cancel 正是会掐断教练 TTS 的元凶。这里顺手把「正在说」的状态清干净，
+   * 重新打开后不会被卡住的 `_speaking` / 节流时间挡住。
+   * **提示音（WebAudio 的 tone / rep / tick / 错误蜂鸣等）完全不受影响。**
+   */
+  setVoiceEnabled(on) {
+    this.voiceAllowed = !!on;
+    if (!this.voiceAllowed) {
+      this._speaking = false;
+      this._speakingSince = 0;
+      this._lastVoiceAt = 0;
+    }
   }
 
   ensureCtx() {
@@ -344,6 +370,8 @@ export class AudioKit {
   /* ---------- 语音 ---------- */
 
   say(text, { rate = 1.25, pitch = 1.05, force = false, minGapMs = 250 } = {}) {
+    // 总开关关掉（AI 语音教练开着）→ 直接返回：**连 cancel 都不能调**，否则会把教练正在说的那句掐断
+    if (!this.voiceAllowed) return;
     if (!this.voiceOn || typeof speechSynthesis === 'undefined' || !text) return;
     const now = performance.now();
     // 兜底：某些浏览器不会给「被 cancel 掉的那句」触发 onend，_speaking 会一直卡在 true，
@@ -370,7 +398,11 @@ export class AudioKit {
       u.onstart = () => { this._speaking = true; this._speakingSince = performance.now(); };
       u.onend = () => { this._speaking = false; };
       u.onerror = () => { this._speaking = false; };
-      setTimeout(() => { try { speechSynthesis.speak(u); } catch { this._speaking = false; } }, 0);
+      setTimeout(() => {
+        // 排队这一拍里教练可能刚被打开：这时候不能再开口（否则会和教练撞上）
+        if (!this.voiceAllowed) { this._speaking = false; return; }
+        try { speechSynthesis.speak(u); } catch { this._speaking = false; }
+      }, 0);
     } catch { this._speaking = false; }
   }
 
@@ -417,7 +449,11 @@ export class AudioKit {
   sayCountdown(n) { this.say(String(n), { rate: 1.1, force: true }); }
   sayStart() { this.say(t('speech.start'), { rate: 1.3, force: true }); }
   sayCue(text) { this.say(text, { rate: 1.15, minGapMs: 6000 }); }
-  stopSpeech() { try { speechSynthesis.cancel(); } catch { /* ignore */ } }
+  stopSpeech() {
+    // 教练开着时系统语音已经被接管：不要 cancel，否则会连教练那句一起停掉
+    if (!this.voiceAllowed) return;
+    try { speechSynthesis.cancel(); } catch { /* ignore */ }
+  }
 
   /* ---------- 背景音乐 ---------- */
 

@@ -995,6 +995,7 @@ console.log('\n[3] 静态资源与模型文件');
     const coachSrc = read('src/voice/coach.js');
     const sessionSrc = read('src/voice/session.js');
     const providersSrc = read('src/voice/providers.js');
+    const audioSrc = read('src/audio.js');
     const setStart = html.indexOf('id="settingsModal"');
     const exStart = html.indexOf('id="exerciseModal"');
     const btnAt = html.indexOf('id="btnCoach"');
@@ -1015,6 +1016,26 @@ console.log('\n[3] 静态资源与模型文件');
       && /Ctrl\+I/.test(LOCALES.zh.settings.coachMic)
       && /first workout asks for microphone access/i.test(LOCALES.en.settings.coachMic)
       && /Ctrl\+I/.test(LOCALES.en.settings.coachMic));
+    ok('设置里说明「教练开启时系统语音自动关闭、提示音不受影响」（中英）',
+      /data-i18n="settings\.coachMute"/.test(html)
+      && /开启 AI 教练时，系统的语音提示会自动关闭/.test(LOCALES.zh.settings.coachMute)
+      && /提示音不受影响/.test(LOCALES.zh.settings.coachMute)
+      && /While the AI coach is on/.test(LOCALES.en.settings.coachMute)
+      && /unaffected/.test(LOCALES.en.settings.coachMute));
+    ok('教练开关联动系统语音：setCoachEnabled 里 setVoiceEnabled(!next)，启动静默恢复也先关掉',
+      /audio\.setVoiceEnabled\(!next\);/.test(app)
+      && /if \(state\.settings\.coachEnabled\) \{\s*\n\s*audio\.setVoiceEnabled\(false\);/.test(app),
+      'setCoachEnabled / boot 的联动没找到');
+    ok('audio.say() 的语音总开关在 cancel **之前** return；tone() 完全没碰它（提示音不变）',
+      (() => {
+        const sayAt = audioSrc.indexOf('say(text,');
+        const cancelAt = audioSrc.indexOf('speechSynthesis.cancel()', sayAt);
+        const toneAt = audioSrc.indexOf('tone({ freq = 660');
+        const toneBody = audioSrc.slice(toneAt, audioSrc.indexOf('rep(index)', toneAt));
+        return sayAt >= 0 && cancelAt > sayAt
+          && audioSrc.slice(sayAt, cancelAt).includes('if (!this.voiceAllowed) return;')
+          && toneAt >= 0 && !toneBody.includes('voiceAllowed');
+      })(), 'say 的守卫顺序或 tone 被改了');
     ok('开关默认关闭且持久化字段叫 coachEnabled（DEFAULT_SETTINGS）',
       /coachEnabled:\s*false/.test(app)
       && /state\.settings\.coachEnabled = next;/.test(app)

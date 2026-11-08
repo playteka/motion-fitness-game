@@ -593,6 +593,134 @@ console.log('\n[1c] AI 语音教练（P3.0 基座：Ctrl+I + 设置开关 + 麦�
 }
 
 /* ------------------------------------------------------------------ *
+ * [1d] AI 教练开启 → 系统语音提示自动关闭（提示音不变）
+ *
+ * 用户要求：「一旦 AI 语音教练开启，则原来的系统语音提示可以关闭，避免重复。
+ * 但是原来的提示音（如滴、叮、错误蜂鸣、计次滴答）可以保持原样，不要变。」
+ *
+ * 这不只是重复问题：audio.say() 在说话前会 speechSynthesis.cancel()，
+ * 而教练的 mock TTS 也走 speechSynthesis → 系统一句提示会把教练掐断。
+ * 所以这里最关键的断言是：教练开启时 say() **连 cancel 都不调**。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[1d] AI 教练开启时系统语音让位（避免重复 / 避免 cancel 掐断教练），提示音不变');
+{
+  const api = windowStub.__mfg;
+  const flush = async () => {
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  // 假 WebAudio：只数 createOscillator 的次数，证明「提示音照常」
+  const savedAudioCtx = windowStub.AudioContext;
+  const savedCtx = api.audio.ctx;
+  let oscCount = 0;
+  function FakeCtx() {
+    this.state = 'running';
+    this.currentTime = 0;
+    this.destination = {};
+  }
+  FakeCtx.prototype.createOscillator = function createOscillator() {
+    oscCount += 1;
+    return {
+      type: '',
+      frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+      connect: (node) => node,
+      start() {},
+      stop() {},
+    };
+  };
+  FakeCtx.prototype.createGain = function createGain() {
+    return {
+      gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+      connect: (node) => node,
+    };
+  };
+  windowStub.AudioContext = FakeCtx;
+  api.audio.ctx = null;
+  api.audio.unlock();
+  ok('假 WebAudio 已接管（后面靠 createOscillator 数提示音）', api.audio.ctx instanceof FakeCtx);
+
+  // 教练开 → 系统语音让位
+  await api.setCoachEnabled(true);
+  await flush();
+  ok('教练开启后系统语音总开关关闭（voiceAllowed=false，audio.state 也反映出来）',
+    api.audio.voiceAllowed === false && api.state.voice.enabled === true
+    && api.audio.state().voiceAllowed === false,
+    JSON.stringify({ allowed: api.audio.voiceAllowed, state: api.state.voice.state }));
+
+  const cancelBeforeSay = coachStubs.cancelled;
+  const utterBeforeSay = coachStubs.utterances.length;
+  api.audio.say('这是一句系统提示', { force: true });
+  await flush();
+  ok('教练开启时 audio.say() 完全不发声（没有新的 utterance 交给 speechSynthesis）',
+    coachStubs.utterances.length === utterBeforeSay,
+    `${utterBeforeSay} → ${coachStubs.utterances.length}`);
+  ok('教练开启时 audio.say() **没有调用 speechSynthesis.cancel()**（那条 cancel 会掐断教练）',
+    coachStubs.cancelled === cancelBeforeSay,
+    `${cancelBeforeSay} → ${coachStubs.cancelled}`);
+  const cancelBeforeStop = coachStubs.cancelled;
+  api.audio.stopSpeech();
+  ok('教练开启时 stopSpeech() 也不会 cancel（不会顺手把教练停掉）',
+    coachStubs.cancelled === cancelBeforeStop, `${cancelBeforeStop} → ${coachStubs.cancelled}`);
+
+  const oscBefore = oscCount;
+  api.audio.rep(1);
+  api.audio.tick();
+  api.audio.finish();
+  ok('教练开启时提示音照常：WebAudio 振荡器仍被创建（滴 / 叮 / 计次 / 错误蜂鸣不走语音开关）',
+    oscCount - oscBefore >= 4, `新建 ${oscCount - oscBefore} 个振荡器`);
+
+  // 教练关 → 系统语音完全恢复
+  await api.setCoachEnabled(false);
+  await flush();
+  ok('教练关闭后系统语音恢复（voiceAllowed=true）', api.audio.voiceAllowed === true);
+
+  const cancelBeforeSay2 = coachStubs.cancelled;
+  const utterBeforeSay2 = coachStubs.utterances.length;
+  api.audio.say('系统提示回来了', { force: true });
+  await flush();
+  ok('教练关闭后 audio.say() 恢复工作：新 utterance 交给 speechSynthesis',
+    coachStubs.utterances.length === utterBeforeSay2 + 1
+    && coachStubs.utterances.at(-1)?.text === '系统提示回来了',
+    coachStubs.utterances.at(-1)?.text);
+  ok('教练关闭后 cancel 照旧调用（切句行为与以前完全一样）',
+    coachStubs.cancelled === cancelBeforeSay2 + 1,
+    `${cancelBeforeSay2} → ${coachStubs.cancelled}`);
+  const oscBefore2 = oscCount;
+  api.audio.rep(2);
+  ok('教练关闭时提示音同样照常（振荡器仍被创建）',
+    oscCount - oscBefore2 >= 2, `新建 ${oscCount - oscBefore2} 个振荡器`);
+
+  // 来回切换多次：状态不残留
+  for (let i = 0; i < 3; i += 1) {
+    await api.setCoachEnabled(true);
+    await flush();
+    await api.setCoachEnabled(false);
+    await flush();
+  }
+  ok('教练开关来回 3 次后状态正确：关闭态、系统语音允许、没有卡住的 _speaking',
+    api.state.voice.state === 'off' && api.audio.voiceAllowed === true
+    && api.audio._speaking === false,
+    JSON.stringify({ voice: api.state.voice.state, allowed: api.audio.voiceAllowed,
+      speaking: api.audio._speaking }));
+  api.audio.say('切换后还能说', { force: true });
+  await flush();
+  ok('来回切换后 say() 仍然正常（没有残留的静音状态）',
+    coachStubs.utterances.at(-1)?.text === '切换后还能说',
+    coachStubs.utterances.at(-1)?.text);
+
+  // 恢复现场（不要给后面「声音自检」留一个假 AudioContext）
+  windowStub.AudioContext = savedAudioCtx;
+  api.audio.ctx = savedCtx;
+  api.audio._speaking = false;
+  api.audio._speakingSince = 0;
+  api.audio._lastVoiceAt = 0;
+  api.audio.voiceAllowed = true;
+  api.showHome();
+}
+
+/* ------------------------------------------------------------------ *
  * 运动设定弹窗（两步：① 先选动作 → ② 再设这个动作的目标 / 判据 / 机位）
  *
  * 用户要求：「将目标设定从运动页面中删除，放到主页的右上方和『设置』在一起。

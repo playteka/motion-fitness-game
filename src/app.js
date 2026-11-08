@@ -321,6 +321,15 @@ function syncCoachToggle(on) {
  */
 async function setCoachEnabled(on, { silent = false } = {}) {
   const next = !!on;
+  /**
+   * 用户要求：「一旦 AI 语音教练开启，则原来的系统语音提示可以关闭，避免重复。
+   * 但是原来的提示音（如滴、叮、错误蜂鸣、计次滴答）可以保持原样，不要变。」
+   *
+   * 这里**先**切系统语音再启动教练：`audio.say()` 里的 `speechSynthesis.cancel()`
+   * 会把教练正在说的那句掐断，所以要在教练开口之前就让系统语音闭嘴。
+   * 关掉教练时恢复系统语音 —— 完全回到原来的体验。提示音（WebAudio）一点没动。
+   */
+  audio.setVoiceEnabled(!next);
   state.settings.coachEnabled = next;
   saveSettings();
   syncCoachToggle(next);
@@ -6685,7 +6694,10 @@ function boot() {
 
   // AI 语音教练：用户上次把它开着 → 这次进来接着开（权限已授权时不会重复弹框）。
   // 放在首屏渲染之后，失败也只会在状态环 / 字幕里提示，不影响训练流程。
+  // 教练开着时系统语音要让位（避免重复，也避免 speechSynthesis.cancel 掐断教练）——
+  // 这里先同步关一次，setCoachEnabled 里面还会再按最终状态对齐。
   if (state.settings.coachEnabled) {
+    audio.setVoiceEnabled(false);
     setTimeout(() => setCoachEnabled(true, { silent: true }), 0);
   }
 
