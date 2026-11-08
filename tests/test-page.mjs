@@ -1142,7 +1142,10 @@ console.log('\n[3] 静态资源与模型文件');
       /\$\('btnStartGesture'\)\?\.addEventListener\('click', \(\) => startGestureMode\(\)\)/.test(app)
       && /function startGestureMode\(\)/.test(app)
       && /requestStageFullscreen\(\)/.test(app)
-      && /if \(!camera\.active\) startCamera\(state\.settings\.camDeviceId \|\| null, \{ mic: true \}\)/.test(app),
+      // 带 mic 的请求只在「麦克风没被拒」那一支；被拒时改走不带 mic 的纯视频（麦克风失败不拦训练）
+      && /if \(wantMic\) startCamera\(state\.settings\.camDeviceId \|\| null, \{ mic: true \}\)/.test(app)
+      && /else startCamera\(state\.settings\.camDeviceId \|\| null, \{ mic: false \}\)/.test(app)
+      && /const wantMic = gestureWantsMic\(perm\)/.test(app),
       '按钮接线不对');
     ok('只有首页「开始训练」这一条路径申请麦克风（其它 startCamera 调用都不带 mic，不重复弹框）',
       (app.match(/startCamera\([^;\n]*\{ mic: true \}/g) || []).length === 1

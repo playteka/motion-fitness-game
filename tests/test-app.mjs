@@ -6144,21 +6144,24 @@ console.log('\n[17b] 首页「开始体感训练」一并请求麦克风（失�
 }
 
 /* ------------------------------------------------------------------ *
- * [17c] 点「开始体感训练」：已授权直接全屏 / 未授权先弹框再全屏 / 被拒不再请求
+ * [17c] 点「开始体感训练」：已授权直接全屏 / 未授权先弹框再全屏 / 摄像头被拒不再请求
  *
  * 用户原话：「点击『开始体感训练』，如果已经完成了【摄像头 + 麦克风】组合授权，
  * 则不用弹窗授权，直接进入全屏状态，否则应该弹窗要求客户授权，再进入全屏状态。」
  *
- * 钉住四件事（全部用假 permissions / 假 getUserMedia，不需要真摄像头）：
+ * 钉住这几件事（全部用假 permissions / 假 getUserMedia，不需要真摄像头）：
  *   ① 已授权（camera + microphone 都 granted）：`requestFullscreen` 在 `getUserMedia`
  *      **之前**被调用，遮罩上是「已授权」的说法 —— 没有任何「请允许」的授权提示；
  *   ② 未授权（prompt）：先请求全屏、再 `getUserMedia`，遮罩上出现「需要授权」的提示；
  *      权限流程走完时原生全屏那条路失败 → **伪全屏被打开**（伪全屏不需要手势）；
- *   ③ 被拒绝（denied）：一次 `getUserMedia` 都不发，直接落到摄像头诊断面板 + 地址栏提示；
- *   ④ permissions API 不存在 / query 抛错 → 当作「未知」，不崩、流程照常（照旧请求授权）。
+ *   ③ **摄像头**被拒（denied）：一次 `getUserMedia` 都不发，直接落到摄像头诊断面板 + 地址栏提示；
+ *      反过来「摄像头被拒 + 麦克风允许」也一样不请求；
+ *   ④ **只有麦克风**被拒：**不拦训练**（821c30a 的硬要求）—— 只请求摄像头（`audio: false`）、
+ *      照常开始，只给一句轻量说明，绝不进错误 / 诊断面板；
+ *   ⑤ permissions API 不存在 / query 抛错 → 当作「未知」，不崩、流程照常（照旧请求授权）。
  * ------------------------------------------------------------------ */
 
-console.log('\n[17c] 点「开始体感训练」：已授权直接全屏 / 未授权先弹框 / 被拒不再请求');
+console.log('\n[17c] 点「开始体感训练」：已授权直接全屏 / 未授权先弹框 / 摄像头被拒不再请求');
 {
   const api = windowStub.__mfg;
   const { t: tMic } = await import('../src/i18n.js');
@@ -6340,16 +6343,16 @@ console.log('\n[17c] 点「开始体感训练」：已授权直接全屏 / 未�
       `toggle=${stillFullscreen} pseudo=${stageEl.classList.contains(PSEUDO_FS_CLASS)}`);
   }
 
-  // ④ 被拒绝（denied）：一次 getUserMedia 都不发，直接出诊断面板 + 地址栏提示
+  // ④ 摄像头被拒（denied）：一次 getUserMedia 都不发，直接出诊断面板 + 地址栏提示
   {
     fullscreenWorks();
     permissions('denied', 'denied');
     const calls = [];
     media.getUserMedia = async (constraints) => { calls.push(constraints); return gumStream(); };
     await begin();
-    ok('已被拒绝（denied）：一次 getUserMedia 都不发（请求也不会弹框，省得白等）',
+    ok('摄像头被拒（camera=denied）：一次 getUserMedia 都不发（请求也不会弹框，省得白等）',
       calls.length === 0, JSON.stringify(calls.length));
-    ok('被拒绝：走现有的摄像头错误 / 诊断面板分支，遮罩提示「请在地址栏左侧允许摄像头与麦克风」',
+    ok('摄像头被拒：走现有的摄像头错误 / 诊断面板分支，遮罩提示「请在地址栏左侧允许摄像头与麦克风」',
       mask.classList.contains('hidden') === false
       && elements.get('camDiag').hidden === false
       && elements.get('maskText').textContent.includes(tMic('ui.maskPermDeniedText'))
@@ -6360,9 +6363,59 @@ console.log('\n[17c] 点「开始体感训练」：已授权直接全屏 / 未�
         diag: elements.get('camDiag').hidden,
         err: api.state.camErrName,
       }));
-    ok('被拒绝：诊断面板给出的建议是「权限被拒」那一条（diag.adviceNotAllowed）',
+    ok('摄像头被拒：诊断面板给出的建议是「权限被拒」那一条（diag.adviceNotAllowed）',
       elements.get('camDiagAdvice').textContent.includes(tMic('diag.adviceNotAllowed')),
       elements.get('camDiagAdvice').textContent);
+  }
+
+  // ④b 只有**麦克风**被拒（camera=granted）→ 训练不能停（821c30a 的硬要求）：
+  //     改成只请求摄像头（audio:false），照常开始，只在画面上给一句轻量说明。
+  {
+    fullscreenWorks();
+    permissions('granted', 'denied');
+    const calls = [];
+    media.getUserMedia = async (constraints) => { calls.push(constraints); order.push('gum'); return gumStream(); };
+    await begin();
+    ok('只有麦克风被拒（camera=granted + microphone=denied）：**仍然调用 getUserMedia**，而且 audio 为 false',
+      calls.length === 1 && calls[0].audio === false && !!calls[0].video,
+      JSON.stringify(calls.map((c) => ({ audio: c.audio, video: !!c.video }))));
+    ok('只有麦克风被拒：训练照常开始（摄像头起来、遮罩收起、不写 camErr）',
+      !!api.camera.stream && api.camera.video.srcObject !== null
+      && mask.classList.contains('hidden') === true && api.state.camErrName === '',
+      JSON.stringify({ cam: !!api.camera.stream, maskHidden: mask.classList.contains('hidden'), err: api.state.camErrName }));
+    ok('只有麦克风被拒：**不进**错误 / 诊断面板（不拦训练）',
+      elements.get('camDiag').hidden === true
+      && elements.get('maskTitle').textContent !== tMic('ui.maskCamFailTitle'),
+      JSON.stringify({ diag: elements.get('camDiag').hidden, title: elements.get('maskTitle').textContent }));
+    ok('只有麦克风被拒：给一句轻量说明（画面 6 秒提示 + 侧栏状态行 + 遮罩上都写了 ui.micDeniedHint）',
+      elements.get('poseHint').hidden === false
+      && elements.get('poseHint').textContent === tMic('ui.micDeniedHint')
+      && elements.get('cueLine').textContent === tMic('ui.micDeniedHint')
+      && elements.get('maskText').textContent.includes(tMic('ui.micDeniedHint')),
+      JSON.stringify({
+        hint: elements.get('poseHint').textContent.slice(0, 20),
+        cue: elements.get('cueLine').textContent.slice(0, 20),
+        mask: elements.get('maskText').textContent.slice(-20),
+      }));
+    ok('只有麦克风被拒：仍然进了全屏（原生全屏已进），不需要伪全屏兜底',
+      api.stageFullscreenOn() === true && stageEl.classList.contains(PSEUDO_FS_CLASS) === false,
+      JSON.stringify({ fs: api.stageFullscreenOn(), pseudo: stageEl.classList.contains(PSEUDO_FS_CLASS) }));
+  }
+
+  // ④c 反过来：摄像头被拒 + 麦克风允许 → 照样不请求（摄像头才是练不了的那一个）
+  {
+    fullscreenWorks();
+    permissions('denied', 'granted');
+    const calls = [];
+    media.getUserMedia = async (constraints) => { calls.push(constraints); return gumStream(); };
+    await begin();
+    ok('摄像头被拒 + 麦克风允许：仍然**一次 getUserMedia 都不发**（麦克风允许也救不了摄像头）',
+      calls.length === 0, JSON.stringify(calls.length));
+    ok('摄像头被拒 + 麦克风允许：照旧进错误 / 诊断面板（与两个都拒绝时同一条路）',
+      elements.get('camDiag').hidden === false
+      && elements.get('maskText').textContent.includes(tMic('ui.maskPermDeniedText'))
+      && api.state.camErrName === 'NotAllowedError',
+      JSON.stringify({ diag: elements.get('camDiag').hidden, err: api.state.camErrName }));
   }
 
   // ⑤ permissions API 不存在（Firefox / 老浏览器）→ 当作「未知」，流程照常
@@ -6391,25 +6444,36 @@ console.log('\n[17c] 点「开始体感训练」：已授权直接全屏 / 未�
     ok('permissions.query 抛错（不认这个权限名）→ 按「未知」处理，不把异常抛出去、流程照常',
       order.join(',') === 'fullscreen,gum' && calls.length === 1 && !!api.camera.stream,
       JSON.stringify({ order: order.join(','), n: calls.length, cam: !!api.camera.stream }));
-    ok('组合判定：一个 granted 一个抛错（未知）→ 仍然算「需要授权」',
-      await api.queryGesturePermission() === 'prompt',
-      await api.queryGesturePermission());
+    const perm6 = await api.queryGesturePermission();
+    ok('权限判定：一个抛错（未知）→ 两个状态各自如实报 unknown / granted（不再一刀切）',
+      perm6.camera === 'unknown' && perm6.microphone === 'granted', JSON.stringify(perm6));
   }
 
-  // ⑦ 纯函数：三态判定（两个 granted 才算已授权；任一 denied 就算被拒）
+  // ⑦ 纯函数：摄像头 / 麦克风**分开判**（摄像头 denied 才拦训练；麦克风 denied 只降级成纯视频）
   {
     permissions('granted', 'granted');
-    ok('queryGesturePermission：两个都 granted → granted（不弹框）',
-      await api.queryGesturePermission() === 'granted');
-    permissions('granted', 'prompt');
-    ok('queryGesturePermission：一个 prompt → prompt（要弹框）',
-      await api.queryGesturePermission() === 'prompt');
+    const both = await api.queryGesturePermission();
+    ok('queryGesturePermission：两个权限分开返回（camera / microphone 都 granted）',
+      both.camera === 'granted' && both.microphone === 'granted', JSON.stringify(both));
     permissions('granted', 'denied');
-    ok('queryGesturePermission：任一 denied → denied（不再请求）',
-      await api.queryGesturePermission() === 'denied');
+    const micOff = await api.queryGesturePermission();
+    ok('queryGesturePermission：camera=granted + microphone=denied → 两个状态各自如实报出来',
+      micOff.camera === 'granted' && micOff.microphone === 'denied', JSON.stringify(micOff));
+    ok('gestureWantsMic：麦克风被拒 → 不要麦克风（只请求摄像头，训练照常开始）',
+      api.gestureWantsMic(micOff) === false);
+    permissions('denied', 'granted');
+    const camOff = await api.queryGesturePermission();
+    ok('gestureWantsMic：麦克风允许 → 带麦克风（摄像头那边单独判：camera=denied 才拦）',
+      api.gestureWantsMic(camOff) === true && camOff.camera === 'denied');
+    permissions('prompt', 'prompt');
+    ok('gestureWantsMic：麦克风只是 prompt / 未知 → 照样带（这一步才会弹组合授权框）',
+      api.gestureWantsMic(await api.queryGesturePermission()) === true
+      && api.gestureWantsMic({ microphone: 'unknown' }) === true);
     permissions('unknown', 'unknown');
-    ok('queryGesturePermission：浏览器返回非三态的值 → 也只当作未知（prompt）',
-      await api.queryGesturePermission() === 'prompt');
+    ok('queryGesturePermission：浏览器返回非三态的值 → 各自都报 unknown',
+      JSON.stringify(await api.queryGesturePermission())
+        === JSON.stringify({ camera: 'unknown', microphone: 'unknown' }),
+      JSON.stringify(await api.queryGesturePermission()));
     navigatorStub.permissions = undefined;
     ok('queryMediaPermission：没有 permissions API → unknown（不抛异常）',
       await api.queryMediaPermission('camera') === 'unknown');

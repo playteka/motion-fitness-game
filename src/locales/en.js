@@ -127,6 +127,8 @@ export default {
     maskGrantedTitle: 'Already allowed — going full screen…',
     maskGrantedText: 'If the picture never shows up, tap the button below to retry.',
     maskPermDeniedText: 'Camera / microphone access is blocked: click the padlock at the left of the address bar, set both “Camera” and “Microphone” to “Allow”, then tap the button below to retry.',
+    // Shown when only the microphone is blocked: training still starts, the AI coach just stays unavailable
+    micDeniedHint: 'Microphone access is blocked: training starts anyway, only the AI coach (Ctrl+I) is unavailable — set “Microphone” back to “Allow” in the address bar to get it.',
     maskCamFailTitle: 'Couldn’t open the camera',
     maskCamFailSuffix: '. Check your browser permission settings, and make sure no other app is using the camera.',
     maskModelLoading: 'Loading the pose model…',

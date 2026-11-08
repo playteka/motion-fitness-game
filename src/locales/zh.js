@@ -126,6 +126,8 @@ export default {
     maskGrantedTitle: '已授权，正在进入全屏训练…',
     maskGrantedText: '如果画面一直没出来，点下面的按钮重试。',
     maskPermDeniedText: '摄像头 / 麦克风权限被拒绝了：请在地址栏左侧点锁图标，把「摄像头」和「麦克风」都改成「允许」，然后点下面的按钮重试。',
+    // 只有**麦克风**被拒时的一句轻量说明：训练照常开始，只是没有 AI 教练（不拦训练）
+    micDeniedHint: '麦克风权限被拒绝了：训练照常开始，只是 AI 教练（Ctrl+I）用不了；要恢复就在地址栏左侧把「麦克风」改成「允许」。',
     maskCamFailTitle: '摄像头打开失败',
     maskCamFailSuffix: '。请检查浏览器权限设置，或确认没有其它程序占用摄像头。',
     maskModelLoading: '正在加载姿态模型…',

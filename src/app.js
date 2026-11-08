@@ -3983,9 +3983,11 @@ function startGestureMode() {
  *
  * 查的是 `navigator.permissions.query({ name: 'camera' | 'microphone' })`：
  *   · Firefox 不认这两个名字（直接抛 TypeError）、部分浏览器根本没有 `navigator.permissions`
- *     → 一律当作「未知」，按「需要授权」处理（让浏览器自己弹框），**异常绝不往外抛**；
- *   · 两个都 `granted` 才算「已授权」；任一 `denied` 就算「被拒」（这时再请求也不会弹框）；
- *   · 其余（`prompt` / 未知 / 只授权了其中一个）都走「需要授权」。
+ *     → 一律当作「未知」，按「需要授权」处理（让浏览器自己弹框），**异常绝不往外抛**。
+ *
+ * ⚠️ 两个权限**分开判**（别一刀切）：`821c30a` 的硬要求是「麦克风失败不能影响训练」，
+ * 所以只有**摄像头**被拒才算练不了（不再请求 → 错误 / 诊断面板）；麦克风被拒只降级成
+ * 「只请求摄像头」，训练照常开始 —— 否则「摄像头已允许、只拒了麦克风」的用户会完全练不了。
  * ------------------------------------------------------------------ */
 
 /**
@@ -4007,31 +4009,57 @@ async function queryMediaPermission(name) {
 }
 
 /**
- * 「摄像头 + 麦克风」组合权限的判定（给 startGestureCamera 用）。
- * @returns {Promise<'granted'|'prompt'|'denied'>}
+ * 摄像头 / 麦克风各自的权限状态（两个分开返回，怎么处置由调用方按「谁被拒」决定）。
+ * @returns {Promise<{camera:'granted'|'prompt'|'denied'|'unknown', microphone:'granted'|'prompt'|'denied'|'unknown'}>}
  */
 async function queryGesturePermission() {
-  const [cameraState, micState] = await Promise.all([
+  const [camera, microphone] = await Promise.all([
     queryMediaPermission('camera'),
     queryMediaPermission('microphone'),
   ]);
-  if (cameraState === 'denied' || micState === 'denied') return 'denied';
-  if (cameraState === 'granted' && micState === 'granted') return 'granted';
-  return 'prompt';
-}
-
-/** 遮罩上那两句话按授权状态换说法（已授权时一句「请允许」都不提） */
-function applyGestureMaskText(perm) {
-  const granted = perm === 'granted';
-  $('maskIcon').textContent = '⏳';
-  $('maskTitle').textContent = t(granted ? 'ui.maskGrantedTitle' : 'ui.maskPermTitle');
-  $('maskText').textContent = t(granted ? 'ui.maskGrantedText' : 'ui.maskPermText');
+  return { camera, microphone };
 }
 
 /**
- * 权限已经是 `denied`：**不要再请求**（浏览器不会再弹框，请求只会立刻失败），
+ * 这一次请求要不要带麦克风（纯函数）：**只有麦克风被拒时不要**。
+ *
+ * 被拒时还带 `audio: true` 只会让整次组合请求立刻失败（不会再弹框），白白多走一轮
+ * `Camera.start` 的降级 —— 直接请求摄像头更干脆；麦克风被拒绝不能拦住训练。
+ */
+function gestureWantsMic(perm = {}) {
+  return (perm && perm.microphone) !== 'denied';
+}
+
+/**
+ * 遮罩上那两句话按授权状态换说法（摄像头已授权时一句「请允许」都不提）。
+ * 麦克风被拒时再补一句说明 —— 摄像头打开前遮罩正好在眼前，用户一眼能看到「训练照常、只少了 AI 教练」。
+ * @param {object} perm     queryGesturePermission() 的结果
+ * @param {{micDenied?:boolean}} [opts]
+ */
+function applyGestureMaskText(perm = {}, { micDenied = false } = {}) {
+  const granted = (perm && perm.camera) === 'granted';
+  const base = t(granted ? 'ui.maskGrantedText' : 'ui.maskPermText');
+  $('maskIcon').textContent = '⏳';
+  $('maskTitle').textContent = t(granted ? 'ui.maskGrantedTitle' : 'ui.maskPermTitle');
+  $('maskText').textContent = micDenied ? `${base}${t('ui.micDeniedHint')}` : base;
+}
+
+/**
+ * 麦克风被拒（但摄像头还能用）：**不拦训练**，只给一句轻量说明 ——
+ * 画面上一句 6 秒的提示（全屏里也看得见）+ 侧栏状态行留一句。
+ * 用途说明白（AI 教练需要它），并告诉用户去哪儿重新允许。
+ */
+function showMicDeniedHint() {
+  const hint = t('ui.micDeniedHint');
+  setHint(hint, 'warn', 6000);     // 视频画面上的临时提示（不挡画面、6 秒后自己消失）
+  setCueLine(hint, 'warn');        // 侧栏状态行：留着一句，直到被下一次状态更新覆盖
+}
+
+/**
+ * **摄像头**权限已经是 `denied`：**不要再请求**（浏览器不会再弹框，请求只会立刻失败），
  * 直接把现有的摄像头错误 / 诊断面板那一套摆出来 —— 遮罩 + 诊断面板 + 处置建议，
  * 并明确告诉用户「请在地址栏左侧允许摄像头与麦克风」。
+ * （麦克风被拒**不走这里**：那只是少了 AI 教练，训练照常，见 showMicDeniedHint。）
  */
 function showGesturePermissionDenied() {
   const hint = t('ui.maskPermDeniedText');
@@ -4052,10 +4080,11 @@ function showGesturePermissionDenied() {
 
 /**
  * 点击「开始体感训练」之后的异步部分（点击回调里已经**同步**进过全屏了）：
- *   ① 先查组合权限；
- *   ② 已授权 → 直接开摄像头（不显示任何授权提示，getUserMedia 也不会再弹框）；
- *   ③ 需要授权 → 遮罩上换成「需要授权」的说法，再开（这一步才弹组合授权框）；
- *   ④ 被拒绝 → 不再请求，直接走错误 / 诊断面板；
+ *   ① 先查摄像头 / 麦克风各自的权限；
+ *   ② **摄像头被拒** → 不再请求，直接走错误 / 诊断面板（这时练不了）；
+ *   ③ 摄像头已授权 → 不显示任何「请允许」的提示，直接开（getUserMedia 也不会再弹框）；
+ *      摄像头待授权 / 未知 → 遮罩上换成「需要授权」的说法，再开（这一步才弹组合授权框）；
+ *   ④ **麦克风被拒不影响训练**：改成只请求摄像头（`{ mic: false }`）+ 一句轻量说明；
  *   ⑤ 最后确认还在全屏里：原生全屏那条路没成（权限框打断了手势 / 浏览器没有元素级全屏）
  *      → CSS 伪全屏兜底（伪全屏不需要手势，所以「授权完 → 也是全屏」）。
  * 不 `await` 它：调用方（点击回调）必须保持同步。
@@ -4063,12 +4092,18 @@ function showGesturePermissionDenied() {
 async function startGestureCamera() {
   try {
     const perm = await queryGesturePermission();
-    if (perm === 'denied') { showGesturePermissionDenied(); return; }
+    // 只有摄像头被拒才拦训练（麦克风被拒只是没有 AI 教练，见下面 wantMic）
+    if (perm.camera === 'denied') { showGesturePermissionDenied(); return; }
+    const wantMic = gestureWantsMic(perm);
+    if (!wantMic) showMicDeniedHint();
     // 用户要求：「在首页点击『开始体感训练』的时候就提示授权麦克风」
     // → 这一次 getUserMedia 同时带 video + audio，只弹一次组合授权框；拿到后音轨立刻 stop。
     // 其它任何 startCamera 调用都不带 mic（不重复弹框）。
-    if (!camera.active) startCamera(state.settings.camDeviceId || null, { mic: true });
-    applyGestureMaskText(perm);
+    if (!camera.active) {
+      if (wantMic) startCamera(state.settings.camDeviceId || null, { mic: true });
+      else startCamera(state.settings.camDeviceId || null, { mic: false });
+    }
+    applyGestureMaskText(perm, { micDenied: !wantMic });
     await ensureGestureFullscreen();
   } catch (err) {
     console.warn('[camera] permission flow failed:', err?.name || err);
@@ -6922,7 +6957,11 @@ window.__mfg = {
   pickFullscreenMode, fullscreenCaps, pseudoFullscreenOn, setPseudoFullscreen, exitFullscreen,
   stageFullscreenOn, toggleStageFullscreen, ensureGestureFullscreen, PSEUDO_FS_CLASS,
   // 摄像头 + 麦克风授权：先查权限（permissions.query）再决定要不要弹框
-  queryMediaPermission, queryGesturePermission, startGestureCamera, showGesturePermissionDenied,
+  //   queryGesturePermission → { camera, microphone }（两个分开判）
+  //   gestureWantsMic        → 只有麦克风被拒时不要它（麦克风失败不拦训练）
+  //   showMicDeniedHint      → 麦克风被拒时的轻量说明（画面 6 秒提示 + 侧栏一句）
+  queryMediaPermission, queryGesturePermission, gestureWantsMic, startGestureCamera,
+  showGesturePermissionDenied, showMicDeniedHint,
   tickCornerExit, syncCornerLabel,
   MENU_COLS, MENU_ROWS, MENU_HIT_RATIO, MENU_START_RATIO, MENU_NAV_HIT_RATIO, MENU_RING_MAX,
   MENU_NAV_HOLD_MS, MENU_ANNOUNCE_P, MENU_CELL_MIN_PX,
