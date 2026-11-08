@@ -95,10 +95,15 @@ const asr = loadAsrConfig();
 const asrLogger = createAsrLogger();
 
 /**
- * 能 gzip 的后缀（文本类 + wasm）。模型 `.task` 本身就是压缩包，再压没意义，跳过。
+ * 能 gzip 的后缀（文本类）。
+ *
+ * ⚠️ **不要把 `.wasm` 放进来**：本地 127.0.0.1 的原始吞吐已经 200MB/s 级别（实测 9.3MB/41ms），
+ * 而 gzip 9.3MB 要花 0.3~1.7 秒 ✗ —— 在本机上「压缩」比「直接发」还慢（实测 curl --compressed
+ * 1741ms vs 不压缩 86ms ✗）。只有跨网络（手机 / 隧道）才值得压，那种场景我们另有 HTTPS 隧道方案。
+ * 模型 `.task` 本身就是压缩包，也不压。
  */
 export const GZIP_EXTS = new Set(['.html', '.css', '.js', '.mjs', '.json', '.webmanifest',
-  '.wasm', '.svg', '.md', '.txt']);
+  '.svg', '.md', '.txt']);
 
 /** gzip 结果的内存缓存：绝对路径 → { key: `mtime:size`, gz }。同一个文件只压一次，文件改了就重压。 */
 const gzipCache = new Map();
