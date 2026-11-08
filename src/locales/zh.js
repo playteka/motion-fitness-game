@@ -915,6 +915,7 @@ export default {
       + '现在还是 P3.0 的 mock 基座，之后才接真正的 ASR / LLM / TTS。',
     coachToggle: 'AI 语音教练',
     coachHotkey: '快捷键：Ctrl+I（在视频界面按一下开启，再按一下关闭；和这个开关同步）',
+    coachMic: '首次开始训练时会一并请求麦克风权限（只弹一次和摄像头一起的授权框，拿到后立即释放，不会一直占用）；也可以随时按 Ctrl+I 开启 / 关闭 AI 教练。',
     coachPrivacy: '本轮音频只在浏览器本地处理，不上传；Chromium 系浏览器可用，Firefox / iOS 暂不支持语音识别。',
   },
 

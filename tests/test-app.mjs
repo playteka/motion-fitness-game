@@ -267,13 +267,26 @@ const navigatorStub = {
   languages: ['zh-CN'],
   mediaDevices: {
     getUserMedia: async (constraints) => {
+      // 真实的 { video, audio:true } 组合请求会一次给回两条轨：音轨用来验证「拿到权限就 stop」，
+      // 视频轨用来让 Camera.start 照常取 deviceId / facingMode。
+      const video = {
+        kind: 'video',
+        stopped: false,
+        stop() { this.stopped = true; },
+        getSettings: () => ({ deviceId: 'cam-stub', facingMode: constraints?.video?.facingMode || 'user' }),
+      };
+      const tracks = [video];
       if (constraints && constraints.audio) {
         const track = { kind: 'audio', stopped: false, stop() { this.stopped = true; } };
         coachStubs.micCalls.push(constraints);
         coachStubs.micTracks.push(track);
-        return { getTracks: () => [track], getAudioTracks: () => [track] };
+        tracks.push(track);
       }
-      return { getTracks: () => [], getVideoTracks: () => [] };
+      return {
+        getTracks: () => tracks,
+        getVideoTracks: () => tracks.filter((t) => t.kind === 'video'),
+        getAudioTracks: () => tracks.filter((t) => t.kind === 'audio'),
+      };
     },
     enumerateDevices: async () => [],
   },
@@ -5814,6 +5827,191 @@ console.log('\n[17] 全手势操作：首页「开始」→ 手势菜单 → 选
   api.state.settings.mirror = savedMirror;
   api.camera.video.readyState = savedReady;
   api.camera.stream = savedStream6;
+  api.state.session = 'idle';
+}
+
+/* ------------------------------------------------------------------ *
+ * [17b] 首页「开始体感训练」= 摄像头 + 麦克风一次请求（用户要求）
+ *
+ * 用户原话：「关于打开 mic 的授权，当用户在首页点击『开始体感训练』的时候就要提示用户授权。」
+ *
+ * 钉住五件事（全部用假 getUserMedia，不需要真麦克风）：
+ *   ① 这一次只发**一次** `getUserMedia({ video…, audio: true })`（组合授权框只弹一次）；
+ *   ② 拿到流之后**音轨立刻 stop**（只要权限、不长期占麦，免得和 SpeechRecognition 抢）；
+ *   ③ 组合请求失败（没麦克风 / 拒绝麦克风）→ **自动降级成只有 video**，摄像头照常起来；
+ *   ④ 摄像头本身被拒（NotAllowedError）时仍然「不换来换去重试」，只是不会因为麦克风而误判；
+ *   ⑤ 其它路径（遮罩上的「开启摄像头」/ 切镜头 / 自动重开）不再请求 audio，不重复弹框。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[17b] 首页「开始体感训练」一并请求麦克风（失败自动降级，不挡摄像头）');
+{
+  const api = windowStub.__mfg;
+  const {
+    cameraWithMic, stopAudioTracks, cameraConstraintsFor, shouldRetryCamera,
+  } = await import('../src/pose-engine.js');
+  const media = navigatorStub.mediaDevices;
+  const savedGum = media.getUserMedia;
+  const saved = {
+    stream: api.camera.stream,
+    ready: api.camera.video.readyState,
+    src: api.camera.video.srcObject,
+    camStopped: api.state.camStoppedForHome,
+    camErr: api.state.camErrName,
+    engineReady: api.state.engineReady,
+  };
+  api.state.engineReady = true;   // 不让这一段去加载真模型
+
+  const makeTrack = (kind) => ({ kind, stops: 0, stop() { this.stops += 1; } });
+  const makeStream = ({ audio = true } = {}) => {
+    const tracks = [makeTrack('video')];
+    if (audio) tracks.push(makeTrack('audio'));
+    return {
+      tracks,
+      getTracks: () => tracks,
+      getVideoTracks: () => tracks.filter((t) => t.kind === 'video'),
+      getAudioTracks: () => tracks.filter((t) => t.kind === 'audio'),
+    };
+  };
+  const tick = () => new Promise((r) => setTimeout(r, 40));
+
+  /** 模拟用户回到首页 → 点「开始体感训练」：先回首页（有流时会把遮罩亮出来）再开 */
+  const beginFromHome = async () => {
+    api.showHome();
+    api.camera.stream = null;
+    api.camera.video.readyState = 4;
+    api.camera.video.srcObject = null;
+    api.startGestureMode();
+    await tick();
+  };
+
+  // ① 正常：一次组合请求，音轨立刻 stop，摄像头照常起来
+  {
+    const calls = [];
+    let stream = null;
+    media.getUserMedia = async (constraints) => {
+      calls.push(constraints);
+      stream = makeStream();
+      return stream;
+    };
+    await beginFromHome();
+    ok('首页「开始体感训练」只发一次 getUserMedia，约束同时包含 video 与 audio: true',
+      calls.length === 1 && calls[0].audio === true && !!calls[0].video,
+      JSON.stringify(calls.map((c) => ({ audio: c.audio, video: !!c.video }))));
+    ok('拿到组合流后音轨立刻 stop（只要权限、不长期占麦克风），视频轨不停',
+      stream.tracks.length === 2 && stream.tracks[1].stops === 1 && stream.tracks[0].stops === 0,
+      stream.tracks.map((t) => `${t.kind}:${t.stops}`).join(','));
+    ok('摄像头照常起来：stream / srcObject 都接上，麦克风成功不会弹任何错误',
+      !!api.camera.stream && api.camera.video.srcObject === stream
+      && api.camera.active === true
+      && elements.get('stageMask').classList.contains('hidden') && api.state.camErrName === '',
+      `stream=${!!api.camera.stream} mask=${elements.get('stageMask').className} err=${api.state.camErrName}`);
+  }
+
+  // ② 没有麦克风（NotFoundError）→ 自动降级成只请求摄像头，训练照常
+  {
+    const calls = [];
+    let stream = null;
+    media.getUserMedia = async (constraints) => {
+      calls.push(constraints);
+      if (constraints.audio) {
+        const err = new Error('Requested device not found');
+        err.name = 'NotFoundError';
+        throw err;
+      }
+      stream = makeStream({ audio: false });
+      return stream;
+    };
+    await beginFromHome();
+    ok('没有麦克风（组合请求 NotFoundError）→ 自动降级成「只有 video」的请求（同一条摄像头约束）',
+      calls.length === 2 && calls[0].audio === true && calls[1].audio === false
+      && JSON.stringify(calls[0].video) === JSON.stringify(calls[1].video),
+      JSON.stringify(calls.map((c) => ({ audio: c.audio, video: !!c.video }))));
+    ok('降级后摄像头仍然起来、麦克风失败不算致命错误（遮罩收起、不写 camErr）',
+      !!api.camera.stream && api.camera.video.srcObject === stream
+      && elements.get('stageMask').classList.contains('hidden') && api.state.camErrName === '',
+      `stream=${!!api.camera.stream} mask=${elements.get('stageMask').className} err=${api.state.camErrName}`);
+  }
+
+  // ③ 麦克风被单独拒（NotAllowedError，Chrome 有时会这样）→ 同样降级，摄像头照常
+  {
+    const calls = [];
+    let stream = null;
+    media.getUserMedia = async (constraints) => {
+      calls.push(constraints);
+      if (constraints.audio) {
+        const err = new Error('Permission denied');
+        err.name = 'NotAllowedError';
+        throw err;
+      }
+      stream = makeStream({ audio: false });
+      return stream;
+    };
+    await beginFromHome();
+    ok('麦克风被单独拒（audio 那条 NotAllowedError）→ 也降级成纯视频请求，不放弃摄像头',
+      calls.length === 2 && calls[1].audio === false
+      && !!api.camera.stream && api.camera.video.srcObject === stream
+      && api.state.camErrName === '',
+      JSON.stringify({ n: calls.length, secondAudio: calls[1]?.audio, cam: !!api.camera.stream }));
+  }
+
+  // ④ 摄像头本身也被拒：组合 + 纯视频各试一次就停手（权限被拒不换来换去）
+  {
+    const calls = [];
+    media.getUserMedia = async (constraints) => {
+      calls.push(constraints);
+      const err = new Error('Permission denied');
+      err.name = 'NotAllowedError';
+      throw err;
+    };
+    await beginFromHome();
+    ok('摄像头权限被拒时：组合 + 纯视频**各一次**就停手，不会继续换镜头（不重复弹框）',
+      calls.length === 2 && calls[0].audio === true && calls[1].audio === false,
+      JSON.stringify(calls.map((c) => ({ audio: c.audio, video: !!c.video }))));
+    ok('这种「摄像头真打不开」仍然照旧是致命错误（遮罩 + 诊断面板亮着），没被麦克风降级吞掉',
+      !api.camera.stream && api.state.camErrName === 'NotAllowedError'
+      && elements.get('stageMask').classList.contains('hidden') === false,
+      `cam=${!!api.camera.stream} err=${api.state.camErrName} hidden=${elements.get('stageMask').classList.contains('hidden')}`);
+  }
+
+  // ⑤ 不重复弹框：其它路径（遮罩上的「开启摄像头」）不再请求麦克风
+  {
+    const calls = [];
+    media.getUserMedia = async (constraints) => {
+      calls.push(constraints);
+      return makeStream();
+    };
+    api.camera.stream = null;
+    api.camera.video.readyState = 0;
+    api.camera.video.srcObject = null;
+    elements.get('btnStartCam').dispatch('click');
+    await tick();
+    ok('遮罩上的「开启摄像头」（以及切镜头 / 自动重开）不再请求麦克风，不会重复弹框',
+      calls.length === 1 && calls[0].audio === false && !!calls[0].video,
+      JSON.stringify(calls.map((c) => ({ audio: c.audio, video: !!c.video }))));
+  }
+
+  // ⑥ 纯函数：只在副本上加 audio、只停音轨、权限语义不变
+  {
+    const base = cameraConstraintsFor({ facing: 'user', tier: 'high' });
+    const withMic = cameraWithMic(base);
+    const stream = makeStream();
+    ok('cameraWithMic 不改原约束（第一条 attempt 的副本才带 audio: true）',
+      base.audio === false && withMic.audio === true && withMic.video === base.video);
+    ok('stopAudioTracks 只停音轨、不碰视频轨，并返回停掉的条数',
+      stopAudioTracks(stream) === 1 && stream.tracks[1].stops === 1 && stream.tracks[0].stops === 0);
+    ok('shouldRetryCamera 语义没变：权限被拒不重试（麦克风降级是 Camera.start 里单独的一步）',
+      shouldRetryCamera('NotAllowedError') === false && shouldRetryCamera('NotFoundError') === true);
+  }
+
+  // 恢复现场
+  api.showHome();
+  media.getUserMedia = savedGum;
+  api.camera.stream = saved.stream;
+  api.camera.video.readyState = saved.ready;
+  api.camera.video.srcObject = saved.src;
+  api.state.camStoppedForHome = saved.camStopped;
+  api.state.camErrName = saved.camErr;
+  api.state.engineReady = saved.engineReady;
   api.state.session = 'idle';
 }
 

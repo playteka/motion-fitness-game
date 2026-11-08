@@ -141,6 +141,39 @@ export function shouldRetryCamera(errName = '') {
     'DevicesNotFoundError', 'TypeError'].includes(errName);
 }
 
+/**
+ * 「开始体感训练」那一下要**一并申请麦克风权限**（用户要求：不要等按 Ctrl+I 才弹）。
+ *
+ * 做法是给**第一条**摄像头约束加上 `audio: true`，让浏览器只弹**一次**「摄像头 + 麦克风」
+ * 组合授权框；拿到流之后 `Camera.start()` 会立刻把音轨 stop 掉（见 `stopAudioTracks`）——
+ * 我们只要**权限**，不长期占用麦克风（否则会和 `SpeechRecognition` 抢麦）。
+ *
+ * 纯函数：返回新的约束，不改传进来的对象；**只有首页那条「开始训练」路径**会用它。
+ */
+export function cameraWithMic(constraints = {}) {
+  return { ...constraints, audio: true };
+}
+
+/**
+ * 把流里的音轨全部停掉（只要权限，不要占用）。视频轨不动。
+ * 返回停掉的音轨数，方便测试与诊断；浏览器没给音轨 / 拿不到轨道时返回 0，
+ * **任何异常都吞掉** —— 麦克风这边怎么坏都不能影响摄像头与训练。
+ */
+export function stopAudioTracks(stream) {
+  let tracks = [];
+  try {
+    tracks = typeof stream?.getAudioTracks === 'function'
+      ? stream.getAudioTracks()
+      : (typeof stream?.getTracks === 'function'
+        ? stream.getTracks().filter((track) => track?.kind === 'audio')
+        : []);
+  } catch { tracks = []; }
+  for (const track of tracks) {
+    try { track.stop(); } catch { /* 停不掉也不能影响训练 */ }
+  }
+  return tracks.length;
+}
+
 export class Camera {
   constructor(videoEl) {
     this.video = videoEl;
@@ -168,21 +201,42 @@ export class Camera {
 
   /**
    * @param {string|null} deviceId 指定镜头（工具栏「镜头」选的）
-   * @param {{facing?:'user'|'environment'|'auto', tier?:'low'|'high'}} opts
-   *   一个方案失败就按 cameraAttemptsFor 的顺序换下一个；权限被拒则立刻抛出（不重试）
+   * @param {{facing?:'user'|'environment'|'auto', tier?:'low'|'high', mic?:boolean}} opts
+   *   一个方案失败就按 cameraAttemptsFor 的顺序换下一个；权限被拒则立刻抛出（不重试）。
+   *   `mic: true`（**只在首页「开始体感训练」那一下**）→ 第一条约束带 `audio: true`，
+   *   和摄像头只弹一次组合授权框；拿到流后立刻停掉音轨，只留权限。
    */
-  async start(deviceId = null, { facing = 'user', tier = 'high' } = {}) {
+  async start(deviceId = null, { facing = 'user', tier = 'high', mic = false } = {}) {
     this.stop();
-    const attempts = cameraAttemptsFor({ deviceId, facing, tier });
+    const baseAttempts = cameraAttemptsFor({ deviceId, facing, tier });
+    /**
+     * 带麦克风时**只在最前面多试一次**：组合请求（video + audio）→ 同一条约束的纯视频版。
+     * 后面仍是原来的降级链（后置 → 前置 → 无条件），语义不变。
+     *
+     * 组合请求失败**一律**降级重试纯视频（不管错误名是 NotAllowedError 还是 NotFoundError）：
+     * 麦克风 / 蓝牙耳机 / 用户只拒了 audio 都不能拖累摄像头。用户如果连摄像头也拒了，
+     * 这个纯视频重试会被浏览器立刻拒绝（不会弹第二次框），随后按「权限被拒不重试」停手。
+     */
+    const attempts = mic ? [cameraWithMic(baseAttempts[0]), ...baseAttempts] : baseAttempts;
     let lastErr = null;
     for (let i = 0; i < attempts.length; i += 1) {
+      const constraints = attempts[i];
       try {
         // eslint-disable-next-line no-await-in-loop
-        this.stream = await navigator.mediaDevices.getUserMedia(attempts[i]);
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (constraints.audio) {
+          // 拿到授权就够了：立刻释放麦克风，避免和 Ctrl+I 的 SpeechRecognition 抢麦
+          stopAudioTracks(stream);
+        }
+        this.stream = stream;
         lastErr = null;
         break;
       } catch (err) {
         lastErr = err;
+        if (constraints.audio) {
+          console.warn('[camera] camera+mic request failed, retrying camera only:', err?.name || err);
+          continue;   // 下一轮就是同一条约束的「只请求摄像头」版本
+        }
         if (!shouldRetryCamera(err?.name) || i === attempts.length - 1) break;
         console.warn('[camera] constraint attempt failed, trying the next one:', err?.name || err);
       }

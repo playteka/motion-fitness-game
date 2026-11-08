@@ -1009,6 +1009,12 @@ console.log('\n[3] 静态资源与模型文件');
       && typeof LOCALES.en.settings.coachToggle === 'string'
       && /Ctrl\+I/.test(LOCALES.zh.settings.coachHotkey)
       && /Ctrl\+I/.test(LOCALES.en.settings.coachHotkey));
+    ok('设置里说明「首次开始训练会一并请求麦克风」（中英都有，且不把它说成 Ctrl+I 才请求）',
+      /data-i18n="settings\.coachMic"/.test(html)
+      && /首次开始训练时会一并请求麦克风权限/.test(LOCALES.zh.settings.coachMic)
+      && /Ctrl\+I/.test(LOCALES.zh.settings.coachMic)
+      && /first workout asks for microphone access/i.test(LOCALES.en.settings.coachMic)
+      && /Ctrl\+I/.test(LOCALES.en.settings.coachMic));
     ok('开关默认关闭且持久化字段叫 coachEnabled（DEFAULT_SETTINGS）',
       /coachEnabled:\s*false/.test(app)
       && /state\.settings\.coachEnabled = next;/.test(app)
@@ -1110,13 +1116,18 @@ console.log('\n[3] 静态资源与模型文件');
     ok('菜单模式把运动相关面板收起来（侧栏 / 工具栏 / HUD / 进度条）',
       /#workoutView\.menu-mode \.panel/.test(css) && /#stage\.menu-mode \.hud/.test(css)
       && /#stage\.menu-mode \.criteria-bar/.test(css));
-    // 接线：首页按钮 → 开摄像头 + 全屏 + 进菜单；菜单判定 → 选中动作；退出分流
-    ok('首页按钮接的是「开摄像头 → 全屏视频 → 手势菜单」这一套',
+    // 接线：首页按钮 → 开摄像头（**同时申请麦克风权限**）→ 全屏 + 进菜单；菜单判定 → 选中动作；退出分流
+    ok('首页按钮接的是「开摄像头 → 全屏视频 → 手势菜单」这一套，且这一次请求带 mic: true',
       /\$\('btnStartGesture'\)\?\.addEventListener\('click', \(\) => startGestureMode\(\)\)/.test(app)
       && /function startGestureMode\(\)/.test(app)
       && /requestStageFullscreen\(\)/.test(app)
-      && /if \(!camera\.active\) startCamera\(state\.settings\.camDeviceId \|\| null\)/.test(app),
+      && /if \(!camera\.active\) startCamera\(state\.settings\.camDeviceId \|\| null, \{ mic: true \}\)/.test(app),
       '按钮接线不对');
+    ok('只有首页「开始训练」这一条路径申请麦克风（其它 startCamera 调用都不带 mic，不重复弹框）',
+      (app.match(/startCamera\([^;\n]*\{ mic: true \}/g) || []).length === 1
+      && /async function startCamera\(deviceId = null, \{ mic = false \} = \{\}\)/.test(app)
+      && /mic,\n\s*\}\)/.test(app),
+      `带 mic 的调用 ${(app.match(/startCamera\([^;\n]*\{ mic: true \}/g) || []).length} 处`);
     ok('全屏申请的是 #stage（视频框），不是整页',
       /function requestStageFullscreen\(\)/.test(app) && /stage\.requestFullscreen\(\)/.test(app));
     ok('菜单判定用「手掌中心 + 3 秒」，和别的圆环同一套常量',

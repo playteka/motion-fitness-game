@@ -3951,7 +3951,10 @@ function startGestureMode() {
   showWorkout();
   openMenu({ silent: true });
   requestStageFullscreen();
-  if (!camera.active) startCamera(state.settings.camDeviceId || null);
+  // 用户要求：「在首页点击『开始体感训练』的时候就提示授权麦克风」
+  // → 这一次 getUserMedia 同时带 video + audio，只弹一次组合授权框；拿到后音轨立刻 stop。
+  // 其它任何 startCamera 调用都不带 mic（不重复弹框）。
+  if (!camera.active) startCamera(state.settings.camDeviceId || null, { mic: true });
   audio.say(t('menu.title'), { rate: 1.05 });
 }
 
@@ -5938,7 +5941,15 @@ function renderCameraDiag(err = null) {
   return { env, rows, adviceKey };
 }
 
-async function startCamera(deviceId = null) {
+/**
+ * 打开摄像头。
+ *
+ * `mic: true` 只由首页「开始体感训练」那一下传进来（用户要求：**点击开始训练时就一并请求麦克风**，
+ * 不要等按 Ctrl+I 才弹）。它会让 pose-engine 用 `{ video, audio: true }` 只弹一次组合授权框，
+ * 拿到流后立刻把音轨 stop 掉；麦克风失败会自动降级成纯视频，**不影响训练**。
+ * 其它路径（遮罩上的「开启摄像头」/ 切镜头 / 从主页回到动作页）都不传 mic，不会重复弹框。
+ */
+async function startCamera(deviceId = null, { mic = false } = {}) {
   const mask = $('stageMask');
   $('maskIcon').textContent = '⏳';
   $('maskTitle').textContent = t('ui.maskOpening');
@@ -5948,6 +5959,7 @@ async function startCamera(deviceId = null) {
     await withTimeout(camera.start(deviceId, {
       facing: state.settings.cameraFacing || 'user',
       tier: perfTier(deviceEnv()),
+      mic,
     }), 25000, t('ui.maskCamFailTitle'));
   } catch (err) {
     state.camError = `${err?.name || 'Error'}: ${err?.message || err}`;

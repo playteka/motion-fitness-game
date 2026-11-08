@@ -922,6 +922,7 @@ export default {
       + 'This is still the P3.0 mock foundation; real ASR / LLM / TTS come in the next steps.',
     coachToggle: 'AI voice coach',
     coachHotkey: 'Shortcut: Ctrl+I (press once on the video screen to turn it on, again to turn it off; it stays in sync with this switch)',
+    coachMic: 'Starting your first workout asks for microphone access at the same time (one combined prompt with the camera; it is released right after, never held open). You can also turn the AI coach on / off with Ctrl+I at any time.',
     coachPrivacy: 'This round the audio is processed only in your browser and never uploaded; Chromium-based browsers work, Firefox / iOS do not support speech recognition yet.',
   },
 
