@@ -215,11 +215,66 @@ for (const m of html.matchAll(/<([a-zA-Z0-9]+)([^>]*)>/g)) {
 
 const rafQueue = [];
 const store = new Map();
+
+/* ------------------------------------------------------------------ *
+ * AI 语音教练（P3.0）用的浏览器能力桩：
+ *   - SpeechRecognition：记录 start/stop，测试里手动 emit 一句「用户说的话」；
+ *   - speechSynthesis / SpeechSynthesisUtterance：记录真正要念的句子，onend 由测试触发；
+ *   - getUserMedia({ audio:true })：返回一条可 stop 的音频轨道，用来验证麦克风确实释放了。
+ * ------------------------------------------------------------------ */
+const coachStubs = {
+  recognitions: [],
+  utterances: [],
+  micCalls: [],
+  micTracks: [],
+  cancelled: 0,
+};
+class FakeSpeechRecognition {
+  constructor() {
+    this.lang = '';
+    this.continuous = false;
+    this.interimResults = false;
+    this.started = 0;
+    this.stopped = 0;
+    coachStubs.recognitions.push(this);
+  }
+  start() { this.started += 1; this.onstart?.(); }
+  stop() { this.stopped += 1; const end = this.onend; this.onend = null; try { end?.(); } catch { /* ignore */ } }
+  abort() { this.stopped += 1; }
+  /** 模拟浏览器识别出一句话（isFinal=false = 中间结果） */
+  emit(text, isFinal = true) {
+    const item = [{ transcript: text, confidence: 1 }];
+    item.isFinal = isFinal;
+    this.onresult?.({ resultIndex: 0, results: [item] });
+  }
+}
+class FakeUtterance {
+  constructor(text) {
+    this.text = text;
+    this.lang = '';
+    this.rate = 1;
+    this.onend = null;
+    this.onerror = null;
+  }
+}
+const fakeSynth = {
+  speak(u) { coachStubs.utterances.push(u); },
+  cancel() { coachStubs.cancelled += 1; },
+};
+
 const navigatorStub = {
   language: 'zh-CN',
   languages: ['zh-CN'],
   mediaDevices: {
-    getUserMedia: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+    getUserMedia: async (constraints) => {
+      if (constraints && constraints.audio) {
+        const track = { kind: 'audio', stopped: false, stop() { this.stopped = true; } };
+        coachStubs.micCalls.push(constraints);
+        coachStubs.micTracks.push(track);
+        return { getTracks: () => [track], getAudioTracks: () => [track] };
+      }
+      return { getTracks: () => [], getVideoTracks: () => [] };
+    },
     enumerateDevices: async () => [],
   },
 };
@@ -247,7 +302,9 @@ const windowStub = {
   console,
   fetch: async () => ({ ok: true }),
   AudioContext: undefined,
-  speechSynthesis: undefined,
+  SpeechRecognition: FakeSpeechRecognition,
+  SpeechSynthesisUtterance: FakeUtterance,
+  speechSynthesis: fakeSynth,
 };
 
 globalThis.window = windowStub;
@@ -339,6 +396,187 @@ if (app) {
   ok('要领清单已渲染', elements.get('stepList').innerHTML.includes('step-item'));
   ok('没有运行时错误横幅', !documentStub.documentElement.dataset.error,
     documentStub.documentElement.dataset.error);
+}
+
+/* ------------------------------------------------------------------ *
+ * AI 语音教练（P3.0 基座）：Ctrl+I / 设置开关 / 麦克风生命周期 / 不支持时降级
+ * ------------------------------------------------------------------ */
+
+console.log('\n[1c] AI 语音教练（P3.0 基座：Ctrl+I + 设置开关 + 麦克风生命周期）');
+{
+  const api = windowStub.__mfg;
+  const { t: tCoach } = await import('../src/i18n.js');
+  const flush = async () => {
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  api.showHome();
+  ok('AI 教练默认关闭（settings.coachEnabled=false）',
+    api.state.settings.coachEnabled === false && api.state.voice.enabled === false,
+    JSON.stringify({ setting: api.state.settings.coachEnabled, voice: api.state.voice.enabled }));
+  ok('默认关时字幕面板与状态环都藏着（不占画面）',
+    elements.get('coachPanel').hidden === true && elements.get('coachDock').hidden === true);
+
+  api.openExercise('pushup');
+
+  // ① 输入框里按 Ctrl+I 不生效（不能打字时突然开麦）
+  // 桩里的元素默认都是 DIV；index.html 里 #exSearch 是 <input>，这里按真实标签模拟一次
+  const searchEl = elements.get('exSearch');
+  const searchTag = searchEl.tagName;
+  searchEl.tagName = 'INPUT';
+  const micBefore = coachStubs.micCalls.length;
+  documentStub.dispatch('keydown', {
+    key: 'i', ctrlKey: true, target: searchEl, preventDefault() {},
+  });
+  await flush();
+  searchEl.tagName = searchTag;
+  ok('在输入框里按 Ctrl+I 不触发（不会突然开麦）',
+    api.state.settings.coachEnabled === false && coachStubs.micCalls.length === micBefore,
+    `setting=${api.state.settings.coachEnabled} mic=${coachStubs.micCalls.length}`);
+
+  // ② Ctrl+I 打开：权限请求 → listening → 字幕面板 → 自我介绍
+  let prevented = 0;
+  documentStub.dispatch('keydown', {
+    key: 'i', ctrlKey: true, target: documentStub.body, preventDefault() { prevented += 1; },
+  });
+  await flush();
+  ok('Ctrl+I 会 preventDefault（不把组合键交给浏览器）', prevented === 1, String(prevented));
+  ok('Ctrl+I 打开 AI 教练：状态 listening、开关写进 settings',
+    api.state.voice.state === 'listening' && api.state.voice.enabled === true
+    && api.state.settings.coachEnabled === true,
+    JSON.stringify({ state: api.state.voice.state, enabled: api.state.voice.enabled }));
+  ok('字幕面板出现，教练自我介绍来自 coach.intro 词条',
+    elements.get('coachPanel').hidden === false
+    && elements.get('coachCoachText').textContent === tCoach('coach.intro'),
+    elements.get('coachCoachText').textContent);
+  ok('打开时真的请求了麦克风（getUserMedia({ audio: true })）',
+    coachStubs.micCalls.length === micBefore + 1
+    && coachStubs.micCalls.at(-1).audio === true,
+    JSON.stringify(coachStubs.micCalls.at(-1) || null));
+  const rec = coachStubs.recognitions.at(-1);
+  ok('mock ASR 按约定初始化：continuous / interimResults / 语言跟随界面',
+    !!rec && rec.continuous === true && rec.interimResults === true && rec.lang === 'zh-CN',
+    JSON.stringify(rec ? { lang: rec.lang, continuous: rec.continuous, interim: rec.interimResults } : null));
+
+  // ③ 用户说一句 → 字幕 → 罐头回复 → TTS → 回到聆听
+  rec.emit('你好');
+  await new Promise((r) => setTimeout(r, 450));   // app 里 thinkDelay = 360ms
+  ok('用户说话后字幕出现「你」这一行（来自识别结果）',
+    elements.get('coachYouText').textContent.includes('你好'),
+    elements.get('coachYouText').textContent);
+  ok('mock LLM 回复非空 → 状态 speaking，教练字幕更新',
+    api.state.voice.state === 'speaking'
+    && elements.get('coachCoachText').textContent.length > 0
+    && elements.get('coachCoachText').textContent !== tCoach('coach.intro'),
+    elements.get('coachCoachText').textContent);
+  const utter = coachStubs.utterances.at(-1);
+  ok('mock TTS 把回复交给 speechSynthesis（语言跟随界面、语速可配）',
+    !!utter && utter.lang === 'zh-CN' && utter.rate === 1
+    && utter.text === elements.get('coachCoachText').textContent,
+    JSON.stringify(utter ? { lang: utter.lang, rate: utter.rate, text: utter.text } : null));
+  utter.onend?.();
+  await flush();
+  ok('TTS 念完 → 回到 listening（还能继续问下一句）',
+    api.state.voice.state === 'listening', api.state.voice.state);
+
+  // ④ 页面隐藏自动暂停聆听，回到前台恢复
+  documentStub.hidden = true;
+  documentStub.dispatch('visibilitychange');
+  await flush();
+  ok('页面隐藏 → 自动暂停聆听（状态 listening + paused，状态环还在）',
+    api.state.voice.paused === true && api.state.voice.state === 'listening'
+    && elements.get('coachPanel').hidden === false,
+    JSON.stringify({ state: api.state.voice.state, paused: api.state.voice.paused }));
+  documentStub.hidden = false;
+  documentStub.dispatch('visibilitychange');
+  await flush();
+  ok('回到前台且仍开着 → 恢复聆听',
+    api.state.voice.paused === false && api.state.voice.state === 'listening',
+    JSON.stringify({ state: api.state.voice.state, paused: api.state.voice.paused }));
+
+  // ⑤ 再按一次 Ctrl+I：必须释放麦克风 + 停 TTS + 隐藏字幕 + 状态环灰掉
+  const track = coachStubs.micTracks.at(-1);
+  const recBefore = coachStubs.recognitions.at(-1);
+  const cancelledBefore = coachStubs.cancelled;
+  documentStub.dispatch('keydown', {
+    key: 'I', ctrlKey: true, target: documentStub.body, preventDefault() {},
+  });
+  await flush();
+  ok('再按 Ctrl+I 关闭：状态 off、字幕面板隐藏、状态环灰掉',
+    api.state.voice.state === 'off' && elements.get('coachPanel').hidden === true
+    && elements.get('coachDock').dataset.state === 'off',
+    JSON.stringify({ state: api.state.voice.state, panel: elements.get('coachPanel').hidden,
+      dock: elements.get('coachDock').dataset.state }));
+  ok('关闭时释放麦克风（track.stop）并停掉 ASR / TTS',
+    track.stopped === true && recBefore.stopped > 0 && coachStubs.cancelled > cancelledBefore,
+    JSON.stringify({ track: track.stopped, rec: recBefore.stopped, cancel: coachStubs.cancelled }));
+  ok('关闭写回 settings.coachEnabled=false 并持久化',
+    api.state.settings.coachEnabled === false
+    && JSON.parse(store.get('mfg.settings.v1')).coachEnabled === false,
+    store.get('mfg.settings.v1'));
+
+  // ⑥ 设置里的开关与 Ctrl+I 同步（设置里打开 = 按了 Ctrl+I）
+  api.openSettings();
+  const btn = elements.get('btnCoach');
+  ok('设置里新增「AI 语音教练」开关（默认 aria-pressed=false）',
+    !!btn && btn.getAttribute('aria-pressed') === 'false');
+  btn.dispatch('click');
+  await flush();
+  ok('设置里打开 = 按 Ctrl+I：状态 listening、按钮 aria-pressed=true、settings 同步',
+    api.state.settings.coachEnabled === true && api.state.voice.state === 'listening'
+    && btn.getAttribute('aria-pressed') === 'true'
+    && JSON.parse(store.get('mfg.settings.v1')).coachEnabled === true,
+    JSON.stringify({ setting: api.state.settings.coachEnabled, state: api.state.voice.state,
+      pressed: btn.getAttribute('aria-pressed') }));
+  btn.dispatch('click');
+  await flush();
+  ok('设置里再点一次关闭：状态 off、按钮 aria-pressed=false、settings 同步',
+    api.state.settings.coachEnabled === false && api.state.voice.state === 'off'
+    && btn.getAttribute('aria-pressed') === 'false'
+    && JSON.parse(store.get('mfg.settings.v1')).coachEnabled === false,
+    JSON.stringify({ setting: api.state.settings.coachEnabled, state: api.state.voice.state,
+      pressed: btn.getAttribute('aria-pressed') }));
+  api.closeSettings();
+
+  // ⑦ 浏览器不支持 SpeechRecognition：明确提示、落 error，而不是崩
+  const savedCtor = windowStub.SpeechRecognition;
+  delete windowStub.SpeechRecognition;
+  delete windowStub.webkitSpeechRecognition;
+  await api.setCoachEnabled(true);
+  await flush();
+  ok('不支持语音识别时落 error 而不是崩溃（不会抛异常 / 不会有运行时错误横幅）',
+    api.state.voice.state === 'error' && api.state.voice.error?.code === 'asr-unsupported'
+    && !documentStub.documentElement.dataset.error,
+    JSON.stringify({ state: api.state.voice.state, error: api.state.voice.error || null,
+      banner: documentStub.documentElement.dataset.error || null }));
+  ok('错误提示明确（coach.error.unsupported + 状态文字 voice.status.error）',
+    elements.get('coachCoachText').textContent === tCoach('coach.error.unsupported')
+    && elements.get('coachStatus').textContent === tCoach('voice.status.error'),
+    `${elements.get('coachStatus').textContent} / ${elements.get('coachCoachText').textContent}`);
+  await api.setCoachEnabled(false);
+  await flush();
+  windowStub.SpeechRecognition = savedCtor;
+
+  // ⑧ 版面：小屏 560×320 / 大屏 1280×720 都不越界、不压 HUD / 圆环 / 判定条
+  {
+    const { rectsOverlap } = await import('../src/voice/coach.js');
+    for (const size of [{ w: 1280, h: 720, label: '大屏 1280×720' }, { w: 560, h: 320, label: '小屏 560×320' }]) {
+      const L = api.coachLayout(size);
+      const inside = L.panel.left >= 0 && L.panel.right <= size.w && L.panel.top >= 0
+        && L.panel.bottom <= size.h && L.dock.left >= 0 && L.dock.right <= size.w
+        && L.dock.top >= 0 && L.dock.bottom <= size.h;
+      ok(`${size.label}：字幕面板 / 状态环都落在舞台内（宽 ${Math.round(L.panel.width)}px）`,
+        inside, JSON.stringify({ panel: L.panel, dock: L.dock }));
+      ok(`${size.label}：字幕面板不压 HUD、右上角两颗圆环、判定进度条与状态环`,
+        !rectsOverlap(L.panel, L.hud) && !rectsOverlap(L.panel, L.cornerExit)
+        && !rectsOverlap(L.panel, L.cornerSettings) && !rectsOverlap(L.panel, L.criteria)
+        && !rectsOverlap(L.panel, L.dock),
+        JSON.stringify({ panel: L.panel, hud: L.hud, criteria: L.criteria }));
+    }
+  }
+
+  api.showHome();
 }
 
 /* ------------------------------------------------------------------ *
@@ -3598,10 +3836,15 @@ console.log('\n[10] 声音自检');
 
   // 浏览器要求「页面先有过一次交互」才允许出声：第一次点击/按键/触摸就要把音频解锁
   const keydownBefore = (documentStub._listeners.keydown || []).length;
+  const wasUnlocked = api.audio._unlocked === true;
   documentStub.dispatch('pointerdown');
   ok('第一次用户交互后音频被解锁', api.audio._unlocked === true);
+  // 正常情况：这次 pointerdown 把三个「首次手势」监听器一起撤掉，keydown 上少一个。
+  // 前面的 AI 教练测试也按过 Ctrl+I，那种情况下解锁监听器已经在那次 keydown 里撤掉了
+  // （before 就只剩主监听器），这里保持「已撤」也算通过 —— 钉的是「用完即撤」，不是「必须由这次撤」。
   ok('解锁用的监听器用完即撤（keydown 上少了一个）',
-    (documentStub._listeners.keydown || []).length === keydownBefore - 1,
+    (documentStub._listeners.keydown || []).length === keydownBefore - 1
+    || (wasUnlocked && (documentStub._listeners.keydown || []).length === keydownBefore),
     `before=${keydownBefore} after=${(documentStub._listeners.keydown || []).length}`);
   documentStub.dispatch('pointerdown');   // 再点一次也不该报错
   ok('重复点击不会报错', true);

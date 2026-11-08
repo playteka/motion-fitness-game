@@ -26,7 +26,7 @@ export default {
     kindTimed: "Timed reps",
     // Remaining time on the HUD: “⏱ 42 / 60 sec left”
     timeLeft: '{left} / {total} sec left',
-    shortcutsText: "<kbd>1</kbd>–<kbd>9</kbd> Quick switch · <kbd>H</kbd> Home · <kbd>G</kbd> Settings · <kbd>Space</kbd> Start/Pause · <kbd>R</kbd> Reset · <kbd>Esc</kbd> End set · <kbd>M</kbd> Mirror · <kbd>S</kbd> Skeleton · <kbd>F</kbd> Fullscreen",
+    shortcutsText: "<kbd>1</kbd>–<kbd>9</kbd> Quick switch · <kbd>H</kbd> Home · <kbd>G</kbd> Settings · <kbd>Space</kbd> Start/Pause · <kbd>R</kbd> Reset · <kbd>Esc</kbd> End set · <kbd>M</kbd> Mirror · <kbd>S</kbd> Skeleton · <kbd>F</kbd> Fullscreen · <kbd>Ctrl</kbd>+<kbd>I</kbd> AI coach",
     language: 'Language',
     model: 'Model',
     modelLite: 'Lite (smoother)',
@@ -224,6 +224,9 @@ export default {
     poseLogKeyOn: '⌨️ Debug logging started: {file} (press Ctrl+H again to stop)',
     poseLogKeyOff: '⌨️ Debug logging stopped: {file} · {frames} frames',
     poseLogFailed: 'Debug data cannot be written: {err} (is the preview server still running? You can also use “Save / download file”)',
+    // AI voice coach (P3.0 foundation): status line shown when the coach is toggled
+    coachOn: 'AI voice coach is on: speak into the microphone and the subtitles will appear at the bottom of the video (press Ctrl+I again to turn it off)',
+    coachOff: 'AI voice coach is off (that is all for now).',
     needCamera: 'Start the camera first',
     countdownGo: 'Go! Follow the cues — partial reps don’t count.',
     paused: 'Paused. Tap “Resume” to keep going.',
@@ -913,6 +916,13 @@ export default {
     logError: ' (writing failed: {err}; use “Save / download file” to grab the data)',
     logQueued: '{n} rows still unsent (is the server running?)',
     logDropped: '{n} batches were dropped because they could never be sent',
+    // AI voice coach (P3.0 foundation): the switch lives in Settings and stays in sync with Ctrl+I
+    coachGroup: 'AI voice coach',
+    coachLead: 'Turning this on asks for the microphone: you speak → subtitles appear → the coach answers with a canned line plus system speech. '
+      + 'This is still the P3.0 mock foundation; real ASR / LLM / TTS come in the next steps.',
+    coachToggle: 'AI voice coach',
+    coachHotkey: 'Shortcut: Ctrl+I (press once on the video screen to turn it on, again to turn it off; it stays in sync with this switch)',
+    coachPrivacy: 'This round the audio is processed only in your browser and never uploaded; Chromium-based browsers work, Firefox / iOS do not support speech recognition yet.',
   },
 
   /* ---------------- What each exercise is scored by ---------------- */
@@ -1370,5 +1380,56 @@ export default {
     // Runs of timed counting: remaining-time calls (periodic + the last five seconds)
     timeLeft: '{n} seconds left',
     timeLast5: 'Last 5 seconds — push!',
+  },
+
+  /* ---------------- AI voice coach (P3.0 foundation) ---------------- */
+  /**
+   * Everything the coach says: the opening line, error messages and **all canned mock replies**.
+   * Keeping the lines here (instead of in providers.js) is what lets the i18n tests check that
+   * Chinese and English stay symmetric, and lets the voice tests prove every reply comes from a locale entry.
+   */
+  coach: {
+    title: 'AI coach',
+    // First time the coach is switched on (shown as a subtitle, not forced to speak)
+    intro: 'I am here — just talk to me.',
+    listeningHint: 'Speak into the microphone; your words and my answer will appear here.',
+    hint: 'Press Ctrl+I to turn it off',
+    error: {
+      mic: 'The microphone will not open: allow microphone access in the browser, then press Ctrl+I to retry.',
+      unsupported: 'This browser has no speech recognition: use Chrome / Edge (Firefox / iOS are not supported yet).',
+      asr: 'Speech recognition kept failing, so listening has stopped; press Ctrl+I to retry.',
+      llm: 'The coach could not come up with an answer this time; press Ctrl+I to retry.',
+      generic: 'The AI coach hit a problem; press Ctrl+I to retry.',
+    },
+    reply: {
+      greeting: 'I am here. Which exercise would you like to train? Tell me.',
+      question: 'Good question. Slow the movement down and stand steady first — I will stay with you.',
+      thanks: 'You are welcome — keep this rhythm going.',
+      fallback: 'I am listening, go on.',
+    },
+    // Canned encouraging / coaching lines for every other input (mock LLM picks one at random)
+    encourage: [
+      'Nice — keep breathing.',
+      'Slow the movement down a little and it will feel more.',
+      'Good rhythm in this set, keep going.',
+      'Brace your core and relax your shoulders.',
+      'Stay steady — you are doing better than it looks.',
+      'A few more if you still have energy.',
+    ],
+  },
+
+  voice: {
+    // Speaker labels on the two subtitle lines
+    you: 'You: ',
+    coach: 'Coach: ',
+    // Status ring / panel text
+    status: {
+      off: 'Off',
+      listening: 'Listening…',
+      thinking: 'Thinking…',
+      speaking: 'Coach is speaking…',
+      paused: 'Paused (resumes when you come back)',
+      error: 'Something went wrong',
+    },
   },
 };

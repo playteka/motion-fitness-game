@@ -23,7 +23,7 @@
   `src/catalog.js` 与识别器常量里取），改一个数界面跟着变，不许另抄一份。
 - **识别器**：绝大多数动作走 `src/engines.js` 的配置驱动引擎（bend / alt / twist / sequence / hold）；
   手写识别器只在需要精细判定的动作上（squat / lunge / bridge / plank / crunch / boxJump）。
-- **测试**：`npm test` 跑六套（i18n / detectors / engines / specs / page / app），改完必须全绿；
+- **测试**：`npm test` 跑七套（i18n / detectors / engines / specs / page / app / voice），改完必须全绿；
   新增功能要补断言，用户反馈过的现象要钉住（README 里 `tests/*.mjs` 的说明与测试数也要同步刷新）。
 - **中英两份 README 结构必须一致**（`tests/test-i18n.mjs` 会对照标题数 / 表格行数 / 代码块数 / 目录条目）。
 - **临时脚本**：调试用的探针写 `tests/probe_*.mjs`、提交信息写 `commitmsg*.tmp`，

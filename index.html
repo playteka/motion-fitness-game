@@ -155,6 +155,37 @@
 
           <div class="score-pop" id="scorePop"></div>
 
+          <!-- AI 语音教练（P3.0 基座）：Ctrl+I 开关。
+               · 左下角状态环：麦克风是否在听（聆听时缓慢呼吸；关闭后灰掉，刷新页面才彻底消失）；
+               · 底部字幕面板：两行「你：… / 教练：…」，aria-live="polite"，读屏会念；
+               · 教练头像走 icons.js 的线条图标（ui:coach，不是 emoji），状态文字在聆听 / 思考 / 说话 / 出错之间切换。
+               位置与尺寸由 src/voice/coach.js 的 coachLayout() 一处给出，style.css 用同一组常量写死。 -->
+          <div class="coach-dock" id="coachDock" hidden>
+            <div class="coach-ring" id="coachRing" data-state="off" aria-hidden="true">
+              <svg class="coach-ring-svg" viewBox="0 0 56 56" aria-hidden="true">
+                <circle class="coach-ring-track" cx="28" cy="28" r="24"></circle>
+                <circle class="coach-ring-fill" cx="28" cy="28" r="24"></circle>
+              </svg>
+              <span class="coach-ring-icon" id="coachRingIcon" aria-hidden="true"></span>
+            </div>
+          </div>
+          <div class="coach-panel" id="coachPanel" role="region" data-i18n-aria="coach.title" hidden>
+            <div class="coach-head">
+              <span class="coach-avatar" id="coachAvatar" aria-hidden="true"></span>
+              <span class="coach-title" data-i18n="coach.title"></span>
+              <span class="coach-status" id="coachStatus"></span>
+            </div>
+            <div class="coach-subtitles" id="coachSubtitles" aria-live="polite" aria-atomic="true">
+              <p class="coach-line coach-line--you">
+                <span class="coach-who" data-i18n="voice.you"></span><span class="coach-text" id="coachYouText"></span>
+              </p>
+              <p class="coach-line coach-line--coach">
+                <span class="coach-who" data-i18n="voice.coach"></span><span class="coach-text" id="coachCoachText"></span>
+              </p>
+            </div>
+            <p class="coach-hint" id="coachHint" data-i18n="coach.hint"></p>
+          </div>
+
           <!-- 判定进度条：每识别到一个关键帧姿态就点亮一格线条图标（不写文字，鼠标移上去看判据） -->
           <div class="criteria-bar" id="criteriaBar" hidden>
             <div class="criteria-tip" id="criteriaTip" hidden></div>
@@ -476,6 +507,19 @@
             <button class="toggle" id="btnAngles" type="button" aria-pressed="true" data-i18n="ui.angles"></button>
             <button class="toggle" id="btnDebug" type="button" aria-pressed="false" data-i18n="ui.debug"></button>
           </div>
+        </div>
+
+        <!-- AI 语音教练（P3.0 基座）：开关同时保存在 settings.coachEnabled，
+             和视频界面里的 Ctrl+I 完全同步（设置里打开 = 按了 Ctrl+I）。 -->
+        <div class="modal-group">
+          <h3 class="modal-group-title" data-i18n="settings.coachGroup"></h3>
+          <p class="modal-hint" data-i18n="settings.coachLead"></p>
+          <div class="toggle-grid">
+            <button class="toggle" id="btnCoach" type="button" aria-pressed="false"
+                    data-i18n="settings.coachToggle"></button>
+          </div>
+          <p class="modal-hint" data-i18n="settings.coachHotkey"></p>
+          <p class="modal-hint" data-i18n="settings.coachPrivacy"></p>
         </div>
 
         <!-- 调试数据记录（用户要求）：**全局配置**里的隐藏分组 ——

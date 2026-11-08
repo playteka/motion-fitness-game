@@ -22,6 +22,11 @@ import { PoseLogger } from './pose-log.js';
 import {
   t, setLang, getLang, getMeta, applyI18n, detectLang, LOCALES, LANG_ORDER,
 } from './i18n.js';
+// AI 语音教练（P3.0 基座）：会话状态机 + 适配器 + 界面层。
+// app.js 只做接线（热键 / 设置开关 / 生命周期 / 把 snapshot 交给 coach.render）。
+import { createVoiceSession, voiceErrorKey } from './voice/session.js';
+import { createMic, createAsr, createLlm, createTts } from './voice/providers.js';
+import { createCoach, coachLayout } from './voice/coach.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -78,6 +83,11 @@ const DEFAULT_SETTINGS = {
   // 所以时长另开一份 settings.seconds，老字段原样留着不读。
   seconds: {},
   camDeviceId: null,
+  /**
+   * AI 语音教练（P3.0 基座）的开关：**默认关**。
+   * 设置弹窗里的开关与视频界面的 Ctrl+I 写的是同一个字段，所以两边永远同步。
+   */
+  coachEnabled: false,
 };
 
 const REP_TARGETS = [8, 12, 15, 20, 30];
@@ -218,7 +228,36 @@ const state = {
   // ---- 计时类读秒（每 5 秒播报一次）----
   holdCountNext: 5,      // 下一个要读的秒数（5 / 10 / 15 …）
   holdCountAt: 0,        // 上一次读秒的时刻（用来让要领语音避让）
+  // ---- AI 语音教练（P3.0 基座）----
+  voice: null,           // session.snapshot() 的最近一份（只在 coach.js 里渲染，app 不直接改）
 };
+
+/* ------------------------------------------------------------------ *
+ * AI 语音教练（P3.0 基座）
+ *
+ * 链路：开关（Ctrl+I / 设置）→ mic 权限 → mock ASR → 字幕 → mock LLM → mock TTS。
+ * 三个适配器的接口都在 src/voice/providers.js（P3.1 / P3.3 / P3.4 各换一块），
+ * 状态机在 src/voice/session.js（纯逻辑），DOM 只在 src/voice/coach.js。
+ * 这里只做接线：创建会话、订阅 snapshot、同步设置开关与状态条。
+ * ------------------------------------------------------------------ */
+
+const coach = createCoach();
+const voice = createVoiceSession({
+  mic: createMic(),
+  asr: createAsr(),
+  llm: createLlm(),
+  tts: createTts({ rate: 1 }),
+  thinkDelay: 360,       // 让「正在想…」真的看得见，不然 thinking 一闪而过
+});
+/** 第一次打开才说自我介绍（同一次页面生命周期里不重复） */
+let coachIntroSaid = false;
+
+state.voice = voice.snapshot();
+voice.subscribe((snap) => {
+  state.voice = snap;
+  coach.render(snap);
+  syncCoachToggle(!!snap.enabled);
+});
 
 /** 一次动作完成后，进度条保持「空的」多久（让清零看得见） */
 const CRITERIA_CLEAR_MS = 650;
@@ -259,6 +298,56 @@ function loadSettings() {
 }
 function saveSettings() {
   try { localStorage.setItem(STORE.settings, JSON.stringify(state.settings)); } catch { /* ignore */ }
+}
+
+/* ------------------------------------------------------------------ *
+ * AI 语音教练：开关（设置弹窗与 Ctrl+I 共用这一对函数）
+ * ------------------------------------------------------------------ */
+
+/** 设置弹窗里那个开关按钮与当前状态对齐（Ctrl+I 改完状态也会走到这里） */
+function syncCoachToggle(on) {
+  const btn = $('btnCoach');
+  if (btn) btn.setAttribute('aria-pressed', String(!!on));
+}
+
+/**
+ * 开 / 关 AI 语音教练。
+ *
+ * **设置里的开关和 Ctrl+I 是同一个入口**：都改 `state.settings.coachEnabled`、都走这里，
+ * 所以「设置里打开 = 按了 Ctrl+I」。
+ *
+ * 打开：`voice.start()`（请求麦克风 → 启动 mock ASR），成功时第一次给一句自我介绍；
+ * 关闭：`voice.stop()`（停识别 / 停 TTS / 释放麦克风轨道），并在状态条留一句收尾。
+ */
+async function setCoachEnabled(on, { silent = false } = {}) {
+  const next = !!on;
+  state.settings.coachEnabled = next;
+  saveSettings();
+  syncCoachToggle(next);
+
+  if (next) {
+    const snap = await voice.start();
+    if (!snap.enabled || snap.state === 'off') return snap;   // 等权限时被关掉了
+    if (snap.state === 'error') {
+      setCueLine(t(voiceErrorKey(snap.error?.code)), 'warn');  // 拒绝 / 不支持：明确提示，不静默
+      return snap;
+    }
+    if (!coachIntroSaid) {
+      coachIntroSaid = true;
+      // 自我介绍只上字幕、不抢着发声：开启瞬间用户可能还没准备好听
+      voice.onCoachText(t('coach.intro'), { speak: false });
+    }
+    if (!silent) setCueLine(t('status.coachOn'), 'info');
+  } else {
+    voice.stop();
+    if (!silent) setCueLine(t('status.coachOff'), 'info');
+  }
+  return voice.snapshot();
+}
+
+/** Ctrl+I：有开就关，没开就开 */
+function toggleCoach() {
+  return setCoachEnabled(!state.settings.coachEnabled);
 }
 function loadList(key) {
   try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -608,6 +697,8 @@ function openSettings() {
   // 临时状态对齐（刷新页面回到隐藏），顺便刷一遍状态行上的帧数。
   setPoseLogUi(poseLogUiVisible);
   renderPoseLogStatus();
+  // AI 教练开关：Ctrl+I 在弹窗外面也能改状态，打开弹窗时按最新值对齐一次
+  syncCoachToggle(!!state.settings.coachEnabled);
   const first = modal.querySelector('select, button');
   if (first) first.focus({ preventScroll: true });
 }
@@ -5984,6 +6075,7 @@ function refreshForLang() {
   if (gestureState.visible) showGestureRings({ speak: false });   // 圆环上的字也要跟着换
   if (state.menuMode) renderMenu();                               // 手势菜单的文案也要跟着换
   syncCornerLabel();
+  coach.render(voice.snapshot());                                 // AI 教练的状态 / 字幕也换语言
   if (pickerWasOpen) openSetPicker();   // 「设置」选择层：标题 / 单位 / 提示 / 无障碍名换成新语言
   setCueLine('');
 }
@@ -6017,6 +6109,10 @@ function syncFullscreenSupport() {
 }
 
 function bindUI() {
+  // AI 语音教练的界面层：先把线条图标（麦克风 / 头戴耳麦）放好，再按当前 snapshot 画一次
+  coach.mount();
+  coach.render(voice.snapshot());
+
   $('btnStartCam').addEventListener('click', () => {
     try { audio.unlock(); } catch { /* ignore */ }   // 最早的合法用户手势，先把声音解锁
     startCamera();
@@ -6144,6 +6240,20 @@ function bindUI() {
   $('exerciseBackdrop').addEventListener('click', () => closeExerciseSettings());
 
   // ---- 调试数据记录（**设置（全局配置）**弹窗里的隐藏分组）----
+  {
+    // AI 语音教练：设置里的开关（与视频界面的 Ctrl+I 完全同步）
+    const btn = $('btnCoach');
+    if (btn) {
+      btn.setAttribute('aria-pressed', String(!!state.settings.coachEnabled));
+      btn.addEventListener('click', () => {
+        const v = !(btn.getAttribute('aria-pressed') === 'true');
+        setCoachEnabled(v);   // 打开 = 请求麦克风；关闭 = 停 TTS + 释放轨道
+      });
+    }
+    // 页面被关掉 / 进 bfcache 时也把麦克风与 TTS 收掉，绝不留后台录音
+    window.addEventListener('pagehide', () => voice.stop());
+  }
+
   {
     const btn = $('btnPoseLog');
     if (btn) {
@@ -6294,6 +6404,25 @@ function bindUI() {
 
   document.addEventListener('keydown', (e) => {
     /**
+     * **Ctrl+I**：开 / 关「AI 语音教练」（用户要求：「在全屏界面如果按下 Ctrl+I，
+     * 那么代表启动语音 AI 教练…再次按 Ctrl+I 则关闭」）。
+     *
+     * 三条约束：
+     *   ① 全局生效（动作页 / 全屏 / 主页都行），并且 `preventDefault()`；
+     *   ② **在输入框里按不生效**（搜索框、数字框、下拉框里 Ctrl+I 可能被浏览器 / 输入法用到，
+     *      而且不该在打字时突然开麦）；
+     *   ③ 和设置弹窗里的「AI 语音教练」开关走同一个 `setCoachEnabled`，所以两边状态永远同步。
+     */
+    const typingInField = !!e.target && (
+      /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName || '') || e.target.isContentEditable === true
+    );
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'i' || e.key === 'I')) {
+      if (typingInField) return;
+      e.preventDefault();
+      toggleCoach();
+      return;
+    }
+    /**
      * **Ctrl+H（macOS 上是 Cmd+H）**：在「运动设定」弹窗里显 / 隐「调试数据记录」那一组。
      *
      * 用户要求两轮：
@@ -6395,9 +6524,16 @@ function bindUI() {
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && state.session === 'running') pauseSession();
-    // 屏幕常亮：切到后台时浏览器会把 wakeLock 收回去，回到前台且还在练就重新申请一次
-    else if (!document.hidden && state.session === 'running' && !state.wakeLock) requestWakeLock();
+    if (document.hidden) {
+      if (state.session === 'running') pauseSession();
+      // AI 教练：页面隐藏时自动暂停聆听（麦克风保持，避免回来又弹一次权限）
+      voice.pause();
+    } else {
+      // 屏幕常亮：切到后台时浏览器会把 wakeLock 收回去，回到前台且还在练就重新申请一次
+      if (state.session === 'running' && !state.wakeLock) requestWakeLock();
+      // 回到前台且用户还开着 AI 教练 → 恢复聆听
+      voice.resume();
+    }
   });
 }
 
@@ -6535,6 +6671,12 @@ function boot() {
     setCueLine(t('status.fileProtocol'), 'warn');
   }
 
+  // AI 语音教练：用户上次把它开着 → 这次进来接着开（权限已授权时不会重复弹框）。
+  // 放在首屏渲染之后，失败也只会在状态环 / 字幕里提示，不影响训练流程。
+  if (state.settings.coachEnabled) {
+    setTimeout(() => setCoachEnabled(true, { silent: true }), 0);
+  }
+
   if (params.has('autostart') && Camera.supported()) {
     setTimeout(() => startCamera(), 60);
   }
@@ -6619,6 +6761,12 @@ window.__mfg = {
   MENU_SWIPE_TRAVEL, MENU_SWIPE_MS, MENU_SWIPE_CHAIN_MS, MENU_SWIPE_COOLDOWN_MS,
   MENU_SWIPE_QUIET, MENU_SWIPE_QUIET_MS, updateMenuSwipe, menuRowsFor,
   animateMenuSwap, menuBackHome, menuBandGeom, MENU_ANIM_OUT_MS, MENU_ANIM_IN_MS,
+  // AI 语音教练（P3.0 基座）：会话状态机 / 界面控制器 / 开关函数 / 版面纯函数
+  //   voice         : { state, enabled, paused, userText, coachText, error, snapshot(), start/stop }
+  //   coach         : coach.render(snapshot())
+  //   setCoachEnabled / toggleCoach : 设置开关与 Ctrl+I 共用的唯一入口
+  //   coachLayout   : 字幕面板 / 状态环 / HUD / 判定条 / 右上角圆环的纯几何（测试断言不越界）
+  voice, coach, setCoachEnabled, toggleCoach, syncCoachToggle, coachLayout, voiceErrorKey,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
 };

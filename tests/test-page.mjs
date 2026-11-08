@@ -63,22 +63,26 @@ const html = read('index.html');
 console.log('\n[1] index.html 与 app.js 的 DOM 接线');
 {
   const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
-  const app = read('src/app.js');
+  // DOM 引用不只来自 app.js：AI 语音教练的界面层（src/voice/coach.js）也直接取元素
+  const domFiles = ['src/app.js', 'src/voice/coach.js'];
   const refs = new Set();
-  for (const m of app.matchAll(/\$\('([^']+)'\)/g)) refs.add(m[1]);
-  for (const m of app.matchAll(/getElementById\('([^']+)'\)/g)) refs.add(m[1]);
-  // 以变量形式传递的元素 id（例如批量绑定开关按钮）
-  for (const m of app.matchAll(/'([A-Za-z][\w-]*)'/g)) if (ids.has(m[1])) refs.add(m[1]);
+  for (const file of domFiles) {
+    const src = read(file);
+    for (const m of src.matchAll(/\$\('([^']+)'\)/g)) refs.add(m[1]);
+    for (const m of src.matchAll(/getElementById\('([^']+)'\)/g)) refs.add(m[1]);
+    // 以变量形式传递的元素 id（例如批量绑定开关按钮）
+    for (const m of src.matchAll(/'([A-Za-z][\w-]*)'/g)) if (ids.has(m[1])) refs.add(m[1]);
+  }
 
   const missing = [...refs].filter((r) => !ids.has(r));
-  ok(`app.js 引用的 ${refs.size} 个元素 id 都存在于 index.html`, missing.length === 0,
+  ok(`app.js + voice/coach.js 引用的 ${refs.size} 个元素 id 都存在于 index.html`, missing.length === 0,
     missing.length ? '缺失: ' + missing.join(', ') : '');
 
   const unused = [...ids].filter((i) => !refs.has(i));
   ok('index.html 中的 id 都被用到（无死元素）', unused.length === 0, unused.join(', '));
 
   // 其它文件是否也直接取 DOM
-  for (const f of ['src/render.js', 'src/audio.js', 'src/pose-engine.js']) {
+  for (const f of ['src/render.js', 'src/audio.js', 'src/pose-engine.js', 'src/voice/coach.js']) {
     const src = read(f);
     const bad = [...src.matchAll(/\$\('([^']+)'\)/g)].map((m) => m[1]).filter((i) => !ids.has(i));
     ok(`${f} 没有引用不存在的 id`, bad.length === 0, bad.join(', '));
@@ -88,7 +92,16 @@ console.log('\n[1] index.html 与 app.js 的 DOM 接线');
 /* ---------- 2. ESM 导入/导出对应 ---------- */
 console.log('\n[2] 模块导入导出一致性');
 {
-  const files = fs.readdirSync(path.join(ROOT, 'src')).filter((f) => f.endsWith('.js')).map((f) => 'src/' + f);
+  // 递归收集 src/（含 src/voice/ 下的 AI 教练模块）
+  const files = [];
+  const walkSrc = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      if (fs.statSync(full).isDirectory()) walkSrc(full);
+      else if (name.endsWith('.js')) files.push(path.relative(ROOT, full).split(path.sep).join('/'));
+    }
+  };
+  walkSrc(path.join(ROOT, 'src'));
   const exportCache = new Map();
 
   function exportsOf(file) {
@@ -972,6 +985,91 @@ console.log('\n[3] 静态资源与模型文件');
     ok('设置弹窗打开时按上次的临时状态对齐这一组的显隐（刷新页面回到隐藏）',
       /function openSettings\(\)/.test(app)
       && /setPoseLogUi\(poseLogUiVisible\);\s*\n\s*renderPoseLogStatus\(\);/.test(app));
+  }
+
+  /* ---- AI 语音教练（P3.0 基座）：开关 / Ctrl+I / 字幕面板 / 线条图标 / 版面 ----
+     用户要求：「AI 教练功能要有一个开关项。在全屏界面如果按下 Ctrl+I，那么代表启动语音 AI 教练，
+     麦克风打开，用户对麦克风说话→字幕出现→教练假语音答。再次按 Ctrl+I 则关闭。」 */
+  {
+    const coachCss = read('style.css');
+    const coachSrc = read('src/voice/coach.js');
+    const sessionSrc = read('src/voice/session.js');
+    const providersSrc = read('src/voice/providers.js');
+    const setStart = html.indexOf('id="settingsModal"');
+    const exStart = html.indexOf('id="exerciseModal"');
+    const btnAt = html.indexOf('id="btnCoach"');
+    ok('设置弹窗里新增「AI 语音教练」一节（在全局配置里，不在运动设定弹窗里）',
+      btnAt > setStart && btnAt < exStart && /data-i18n="settings\.coachGroup"/.test(html),
+      `settings=${setStart} btn=${btnAt} exercise=${exStart}`);
+    ok('开关 / 说明 / Ctrl+I 快捷键提示 / 隐私说明都在（中英词条齐全）',
+      /data-i18n="settings\.coachLead"/.test(html)
+      && /data-i18n="settings\.coachHotkey"/.test(html)
+      && /data-i18n="settings\.coachPrivacy"/.test(html)
+      && typeof LOCALES.zh.settings.coachToggle === 'string'
+      && typeof LOCALES.en.settings.coachToggle === 'string'
+      && /Ctrl\+I/.test(LOCALES.zh.settings.coachHotkey)
+      && /Ctrl\+I/.test(LOCALES.en.settings.coachHotkey));
+    ok('开关默认关闭且持久化字段叫 coachEnabled（DEFAULT_SETTINGS）',
+      /coachEnabled:\s*false/.test(app)
+      && /state\.settings\.coachEnabled = next;/.test(app)
+      && /saveSettings\(\);/.test(app));
+    ok('Ctrl+I 全局热键：判 ctrlKey（兼容 Cmd）+ i/I，preventDefault，输入框内不触发',
+      /\(e\.ctrlKey \|\| e\.metaKey\) && \(e\.key === 'i' \|\| e\.key === 'I'\)/
+        .test(app)
+      && /if \(typingInField\) return;/.test(app)
+      && /e\.preventDefault\(\);\s*\n\s*toggleCoach\(\);/.test(app)
+      && /INPUT\|SELECT\|TEXTAREA/.test(app)
+      && /isContentEditable/.test(app),
+      'Ctrl+I 的 keydown 分支 / 输入框守卫没找到');
+    ok('设置开关与 Ctrl+I 共用同一个 setCoachEnabled（互相同步，设置里打开 = 按了 Ctrl+I）',
+      /function setCoachEnabled\(on, \{ silent = false \} = \{\}\)/.test(app)
+      && /function toggleCoach\(\)[\s\S]{0,160}setCoachEnabled\(!state\.settings\.coachEnabled\)/.test(app)
+      && /const btn = \$\('btnCoach'\);[\s\S]{0,260}setCoachEnabled\(v\)/.test(app)
+      && /syncCoachToggle\(next\)/.test(app));
+    ok('字幕面板：两行「你 / 教练」+ aria-live="polite"，状态环和头像都在 #stage 里',
+      /id="coachSubtitles"[^>]*aria-live="polite"/.test(html)
+      && /aria-atomic="true"/.test(html)
+      && /id="coachYouText"/.test(html) && /id="coachCoachText"/.test(html)
+      && /data-i18n="voice\.you"/.test(html) && /data-i18n="voice\.coach"/.test(html)
+      && /id="coachDock"/.test(html) && /id="coachAvatar"/.test(html)
+      && (ancestorIds(html, 'coachPanel') || []).includes('stage'));
+    ok('教练头像 / 麦克风都是线条图标（libIconSVG 的 ui:coach / ui:mic，不是 emoji）',
+      /libIconSVG\('ui:coach'/.test(coachSrc) && /libIconSVG\('ui:mic'/.test(coachSrc)
+      && !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(coachSrc));
+    ok('会话状态机 / providers 不碰 DOM（DOM 只在 coach.js 里）',
+      !/document\.|\$\('|querySelector|getElementById/.test(sessionSrc + providersSrc)
+      && /document/.test(coachSrc));
+    ok('状态环：聆听时缓慢呼吸，prefers-reduced-motion 下关掉动画',
+      /\.coach-dock\[data-state="listening"\] \.coach-ring-fill[\s\S]{0,120}animation: coachBreath/
+        .test(coachCss)
+      && /@keyframes coachBreath/.test(coachCss)
+      && /prefers-reduced-motion[\s\S]{0,160}\.coach-dock \.coach-ring-fill[\s\S]{0,80}animation: none/
+        .test(coachCss));
+    ok('字幕面板：宽屏在判定进度条上方（吃 --criteria-bar-h），窄屏贴底 + 让出两侧圆环空间',
+      /bottom: calc\(10px \+ var\(--criteria-bar-h\) \+ 8px\)/.test(coachCss)
+      && /width: min\(560px, calc\(100% - 2 \* var\(--bar-side-space\)\)\)/.test(coachCss)
+      && /@media \(max-width: 560px\)[\s\S]{0,900}\.coach-panel \{[\s\S]{0,120}bottom: 12px/
+        .test(coachCss));
+    // 几何：与 coach.js 的 coachLayout() 同一份模型，小屏 560×320 不越界、不遮 HUD / 圆环 / 判定条
+    const { coachLayout, rectsOverlap } = await import('../src/voice/coach.js');
+    for (const size of [{ w: 1280, h: 720 }, { w: 560, h: 320 }]) {
+      const L = coachLayout(size);
+      ok(`${size.w}×${size.h}：字幕面板 / 状态环都在舞台内且互不遮挡 HUD / 右上角圆环 / 判定条`,
+        L.panel.left >= 0 && L.panel.right <= size.w && L.panel.top >= 0 && L.panel.bottom <= size.h
+        && !rectsOverlap(L.panel, L.hud) && !rectsOverlap(L.panel, L.cornerExit)
+        && !rectsOverlap(L.panel, L.cornerSettings) && !rectsOverlap(L.panel, L.criteria)
+        && !rectsOverlap(L.panel, L.dock),
+        JSON.stringify({ panel: L.panel, hud: L.hud, criteria: L.criteria }));
+    }
+    ok('coach.* / voice.* 词条中英对称（coach.reply / coach.encourage / voice.status 三层都在）',
+      typeof LOCALES.zh.coach?.reply?.greeting === 'string'
+      && typeof LOCALES.en.coach?.reply?.greeting === 'string'
+      && Array.isArray(LOCALES.zh.coach?.encourage)
+      && Array.isArray(LOCALES.en.coach?.encourage)
+      && LOCALES.zh.coach.encourage.length === LOCALES.en.coach.encourage.length
+      && ['off', 'listening', 'thinking', 'speaking', 'paused', 'error']
+        .every((k) => typeof LOCALES.zh.voice?.status?.[k] === 'string'
+          && typeof LOCALES.en.voice?.status?.[k] === 'string'));
   }
 
   /* ---- 用户要求：「我希望把界面改造为全手势操作。请在首页增加一个大的『开始』按钮，点击后就打开

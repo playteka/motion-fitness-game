@@ -26,7 +26,7 @@ export default {
     kindTimed: "限时计数",
     // HUD 上的剩余时间：「⏱ 剩余 42 / 60 秒」
     timeLeft: '剩余 {left} / {total} 秒',
-    shortcutsText: "<kbd>1</kbd>~<kbd>9</kbd> 快速切动作 · <kbd>H</kbd> 主页 · <kbd>G</kbd> 设置 · <kbd>空格</kbd> 开始/暂停 · <kbd>R</kbd> 重置计数 · <kbd>Esc</kbd> 结束本组 · <kbd>M</kbd> 镜像 · <kbd>S</kbd> 火柴人 · <kbd>F</kbd> 全屏",
+    shortcutsText: "<kbd>1</kbd>~<kbd>9</kbd> 快速切动作 · <kbd>H</kbd> 主页 · <kbd>G</kbd> 设置 · <kbd>空格</kbd> 开始/暂停 · <kbd>R</kbd> 重置计数 · <kbd>Esc</kbd> 结束本组 · <kbd>M</kbd> 镜像 · <kbd>S</kbd> 火柴人 · <kbd>F</kbd> 全屏 · <kbd>Ctrl</kbd>+<kbd>I</kbd> AI 教练",
     language: '语言',
     model: '模型',
     modelLite: '轻量（流畅）',
@@ -223,6 +223,9 @@ export default {
     poseLogKeyOn: '⌨️ 开始记录调试数据：{file}（再按一次 Ctrl+H 停止）',
     poseLogKeyOff: '⌨️ 已停止记录调试数据：{file} · 共 {frames} 帧',
     poseLogFailed: '调试数据写不进去：{err}（预览服务器还在跑吗？也可以点「保存/下载文件」把数据下载下来）',
+    // AI 语音教练（P3.0 基座）：开关时给一条状态条提示
+    coachOn: 'AI 语音教练已开启：对着麦克风说话，字幕会出现在画面下方（再按 Ctrl+I 关闭）',
+    coachOff: 'AI 语音教练已关闭（先到这里）。',
     needCamera: '请先开启摄像头',
     countdownGo: '开始！跟着提示做动作，半程动作不会计入次数。',
     paused: '已暂停，点“继续”接着练。',
@@ -906,6 +909,13 @@ export default {
     logError: '（写文件失败：{err}；可以点「保存/下载文件」拿到数据）',
     logQueued: '还有 {n} 行没发出去（服务器没起来？）',
     logDropped: '有 {n} 批数据因为一直发不出去被丢掉',
+    // AI 语音教练（P3.0 基座）：开关在设置里，和 Ctrl+I 完全同步
+    coachGroup: 'AI 语音教练',
+    coachLead: '打开后会请求麦克风：你说话 → 字幕出现 → 教练用罐头回复 + 系统语音答。'
+      + '现在还是 P3.0 的 mock 基座，之后才接真正的 ASR / LLM / TTS。',
+    coachToggle: 'AI 语音教练',
+    coachHotkey: '快捷键：Ctrl+I（在视频界面按一下开启，再按一下关闭；和这个开关同步）',
+    coachPrivacy: '本轮音频只在浏览器本地处理，不上传；Chromium 系浏览器可用，Firefox / iOS 暂不支持语音识别。',
   },
 
   judge: {
@@ -1377,5 +1387,56 @@ export default {
     // 限时计数进行中：报剩余时间（每隔一段时间 + 最后 5 秒）
     timeLeft: '还剩 {n} 秒',
     timeLast5: '最后 5 秒，冲刺！',
+  },
+
+  /* ---------------- AI 语音教练（P3.0 基座） ---------------- */
+  /**
+   * 教练说的话：开场白、错误提示，以及 mock LLM 的**全部罐头回复**。
+   * 台词集中在这里（而不是 providers.js 的字符串里），是为了让中英对称检查
+   * （tests/test-i18n.mjs）和「回复必须能追溯到词条」的测试都能核对。
+   */
+  coach: {
+    title: 'AI 教练',
+    // 第一次打开时的自我介绍（只显示，不强制发声）
+    intro: '我在，说话就行。',
+    listeningHint: '对着麦克风说话，这里会出现你的话和我的回答。',
+    hint: '按 Ctrl+I 关闭',
+    error: {
+      mic: '麦克风打不开：请在浏览器里允许麦克风权限，然后按 Ctrl+I 重试。',
+      unsupported: '这个浏览器不支持语音识别：请用 Chrome / Edge（Firefox / iOS 暂不支持）。',
+      asr: '语音识别连续失败，已经停止聆听；按 Ctrl+I 重试。',
+      llm: '教练这一轮没想出来，按 Ctrl+I 重试。',
+      generic: 'AI 教练出了点问题，按 Ctrl+I 重试。',
+    },
+    reply: {
+      greeting: '我在。想练哪个动作，说给我听就行。',
+      question: '问得好。先把动作做慢一点、站稳一点，我陪着你练。',
+      thanks: '不客气，继续保持这个节奏。',
+      fallback: '我在听，继续说。',
+    },
+    // 其它输入的随机罐头句（mock LLM 从这里取，P3.3 接入真 LLM 后仍可当兜底）
+    encourage: [
+      '很好，保持呼吸。',
+      '动作再慢一点，感觉会更明显。',
+      '这一组节奏不错，继续。',
+      '核心收紧，肩膀放松。',
+      '稳住，你做得比我看到的还要好。',
+      '还有力气就再来几次。',
+    ],
+  },
+
+  voice: {
+    // 字幕两行的说话人标签
+    you: '你：',
+    coach: '教练：',
+    // 状态环 / 面板上的状态文字
+    status: {
+      off: '未开启',
+      listening: '正在聆听…',
+      thinking: '正在想…',
+      speaking: '教练在说…',
+      paused: '已暂停（切回页面自动恢复）',
+      error: '出了点问题',
+    },
   },
 };

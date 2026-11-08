@@ -1296,6 +1296,135 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .rec-badge .rec-dot { animation: none; }
 }
+
+/* ---------- AI 语音教练（P3.0 基座） ----------
+   左下角一颗小状态环（和现有圆环同一套线条 / 深色底风格，直径小一号，不抢 HUD 圆环的位置）：
+     listening = 青色缓慢呼吸；thinking = 琥珀色滚动；speaking = 绿色；error = 红色；off = 灰色。
+   字幕面板：宽屏在判定进度条**正上方**；窄屏（≤560px）判定条已让到圆环上方，面板改贴舞台底部。
+   位置 / 尺寸与 src/voice/coach.js 的 coachLayout() 是同一组常量，测试两边一起核对。 */
+.coach-dock {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 5;
+  pointer-events: none;
+}
+.coach-dock[hidden] { display: none; }
+.coach-ring {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  opacity: 0.92;
+  transition: opacity 0.2s ease;
+}
+.coach-ring-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+.coach-ring-track { fill: none; stroke: rgba(255, 255, 255, 0.14); stroke-width: 7; }
+.coach-ring-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-dasharray: 150.8;
+  stroke-dashoffset: 0;
+  transition: stroke 0.25s ease;
+}
+.coach-ring-icon { position: relative; display: grid; place-items: center; color: #dbe9ff; }
+.coach-ring-icon .ui-icon { width: 22px; height: 22px; }
+/* 聆听：缓慢呼吸（动效敏感的用户在下面的 reduced-motion 里关掉） */
+.coach-dock[data-state="listening"] .coach-ring-fill {
+  stroke: var(--accent);
+  animation: coachBreath 2.8s ease-in-out infinite;
+}
+@keyframes coachBreath {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+/* 思考：琥珀色虚线慢慢转，表示「在等教练」 */
+.coach-dock[data-state="thinking"] .coach-ring-fill {
+  stroke: var(--warn);
+  stroke-dasharray: 92 59;
+}
+.coach-dock[data-state="thinking"] .coach-ring-svg {
+  animation: coachSpin 1.8s linear infinite;
+}
+@keyframes coachSpin {
+  from { transform: rotate(-90deg); }
+  to { transform: rotate(270deg); }
+}
+.coach-dock[data-state="speaking"] .coach-ring-fill { stroke: var(--good); }
+.coach-dock[data-state="error"] .coach-ring-fill { stroke: var(--bad); }
+/* 关闭：环灰掉但留着（让用户一眼看到「现在没在听」） */
+.coach-dock[data-state="off"] { opacity: 0.55; }
+.coach-dock[data-state="off"] .coach-ring-fill { stroke: rgba(148, 163, 184, 0.55); }
+
+.coach-panel {
+  position: absolute;
+  left: 50%;
+  bottom: calc(10px + var(--criteria-bar-h) + 8px);
+  transform: translateX(-50%);
+  z-index: 5;
+  width: min(560px, calc(100% - 2 * var(--bar-side-space)));
+  padding: 8px 12px 9px;
+  border-radius: 14px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  background: rgba(8, 15, 26, 0.8);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  text-align: left;
+}
+.coach-panel[hidden] { display: none; }
+.coach-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.coach-avatar { display: grid; place-items: center; color: var(--accent-2); }
+.coach-avatar .ui-icon { width: 18px; height: 18px; }
+.coach-title { font-size: 12px; font-weight: 800; color: #cfe4f7; letter-spacing: 0.3px; }
+.coach-status {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* 两行字幕固定单行省略：面板高度不随句子长度变，才不会被顶到 HUD / 判定条上 */
+.coach-line { margin: 0; display: flex; gap: 4px; font-size: 12.5px; line-height: 1.35; min-height: 17px; }
+.coach-who { flex: 0 0 auto; color: var(--muted); }
+.coach-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coach-line--you .coach-text { color: #dbe9ff; }
+.coach-line--coach .coach-text { color: #99f6e4; }
+.coach-hint { margin: 3px 0 0; font-size: 10.5px; line-height: 1.2; color: var(--muted); }
+
+/* 窄屏：判定进度条已经被抬到圆环上方（见本文件下面 max-width:560px 的规则），
+   字幕面板改贴舞台底部；同时把状态环收小、去掉提示行，给画面留空间。 */
+@media (max-width: 560px) {
+  .coach-dock { left: 10px; bottom: 10px; }
+  .coach-ring { width: 48px; height: 48px; }
+  .coach-ring-icon .ui-icon { width: 19px; height: 19px; }
+  .coach-panel {
+    bottom: 12px;
+    width: calc(100% - 2 * var(--bar-side-space));
+    padding: 6px 10px 7px;
+    border-radius: 12px;
+  }
+  .coach-title { font-size: 11px; }
+  .coach-status { font-size: 10.5px; }
+  .coach-line { font-size: 11.5px; line-height: 1.3; min-height: 15px; }
+  .coach-hint { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coach-dock .coach-ring-fill,
+  .coach-dock .coach-ring-svg { animation: none; }
+}
+
 .corner-ring .ring-btn {
   /* 直径与「一组结束后」的圆环**同一个变量**（用户要求「各个圆环大小一样」）；
      圆心位置由 JS 按舞台尺寸设（**右上角**：右边距 = HUD 的右边距 18px，
