@@ -156,15 +156,17 @@
           <div class="score-pop" id="scorePop"></div>
 
           <!-- AI 语音教练（P3.0 基座）：Ctrl+I 开关。
-               · 左下角状态环：麦克风是否在听（聆听时缓慢呼吸；关闭后灰掉，刷新页面才彻底消失）；
+               · 左下角状态环：麦克风是否在听（聆听时缓慢呼吸；说话时按音量大小从灰→青→薄荷绿，
+                 第二路音频打不开就退回按状态呼吸）；关闭后灰掉，刷新页面才彻底消失；
                · 底部字幕面板：两行「你：… / 教练：…」，aria-live="polite"，读屏会念；
+                 另有一行状态 / 错误提示（网络异常、没听到声音、权限被拒…）；
                · 教练头像走 icons.js 的线条图标（ui:coach，不是 emoji），状态文字在聆听 / 思考 / 说话 / 出错之间切换。
                位置与尺寸由 src/voice/coach.js 的 coachLayout() 一处给出，style.css 用同一组常量写死。 -->
           <div class="coach-dock" id="coachDock" hidden>
             <div class="coach-ring" id="coachRing" data-state="off" aria-hidden="true">
-              <svg class="coach-ring-svg" viewBox="0 0 56 56" aria-hidden="true">
+              <svg class="coach-ring-svg" id="coachRingSvg" viewBox="0 0 56 56" aria-hidden="true">
                 <circle class="coach-ring-track" cx="28" cy="28" r="24"></circle>
-                <circle class="coach-ring-fill" cx="28" cy="28" r="24"></circle>
+                <circle class="coach-ring-fill" id="coachRingFill" cx="28" cy="28" r="24"></circle>
               </svg>
               <span class="coach-ring-icon" id="coachRingIcon" aria-hidden="true"></span>
             </div>
@@ -183,6 +185,7 @@
                 <span class="coach-who" data-i18n="voice.coach"></span><span class="coach-text" id="coachCoachText"></span>
               </p>
             </div>
+            <p class="coach-notice" id="coachNotice" role="status" hidden></p>
             <p class="coach-hint" id="coachHint" data-i18n="coach.hint"></p>
           </div>
 

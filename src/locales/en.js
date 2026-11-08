@@ -1406,10 +1406,21 @@ export default {
     hint: 'Press Ctrl+I to turn it off',
     error: {
       mic: 'The microphone will not open: allow microphone access in the browser, then press Ctrl+I to retry.',
+      micBusy: 'The microphone is busy or missing: close other pages / apps that are recording, then press Ctrl+I to retry.',
       unsupported: 'This browser has no speech recognition: use Chrome / Edge (Firefox / iOS are not supported yet).',
+      service: 'The browser does not allow the speech recognition service: check the permissions in the address bar or your company policy, then press Ctrl+I to retry.',
+      language: 'This browser does not support speech recognition for the current language (zh-CN / en-US).',
       asr: 'Speech recognition kept failing, so listening has stopped; press Ctrl+I to retry.',
       llm: 'The coach could not come up with an answer this time; press Ctrl+I to retry.',
       generic: 'The AI coach hit a problem; press Ctrl+I to retry.',
+    },
+    // Non-fatal notices: listening keeps running; the subtitle panel just adds a line explaining the silence
+    notice: {
+      network: 'Network problem: Chrome speech recognition needs a connection to its speech service. Check the network, then press Ctrl+I to retry.',
+      noSpeech: 'I did not hear anything — come a little closer to the microphone and try again.',
+      noResult: 'I have not heard anything: no result at all in 8 seconds. Say something into the microphone (this does not turn itself off).',
+      aborted: 'Recognition was interrupted; reconnecting automatically…',
+      asr: 'Speech recognition error ({code}); retrying automatically…',
     },
     reply: {
       greeting: 'I am here. Which exercise would you like to train? Tell me.',

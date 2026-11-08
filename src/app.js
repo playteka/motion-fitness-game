@@ -25,7 +25,7 @@ import {
 // AI 语音教练（P3.0 基座）：会话状态机 + 适配器 + 界面层。
 // app.js 只做接线（热键 / 设置开关 / 生命周期 / 把 snapshot 交给 coach.render）。
 import { createVoiceSession, voiceErrorKey } from './voice/session.js';
-import { createMic, createAsr, createLlm, createTts } from './voice/providers.js';
+import { createMic, createAsr, createLlm, createTts, createVuMeter } from './voice/providers.js';
 import { createCoach, coachLayout } from './voice/coach.js';
 
 const $ = (id) => document.getElementById(id);
@@ -241,7 +241,7 @@ const state = {
  * 这里只做接线：创建会话、订阅 snapshot、同步设置开关与状态条。
  * ------------------------------------------------------------------ */
 
-const coach = createCoach();
+const coach = createCoach({ vuFactory: () => createVuMeter() });
 const voice = createVoiceSession({
   mic: createMic(),
   asr: createAsr(),
@@ -257,6 +257,8 @@ voice.subscribe((snap) => {
   state.voice = snap;
   coach.render(snap);
   syncCoachToggle(!!snap.enabled);
+  // 关闭 / 出错：把音量表那一路音频就地释放（render 里也兜了一次，这里保证状态变化即释放）
+  if (!snap.enabled || snap.state === 'off' || snap.state === 'error') coach.stopVu();
 });
 
 /** 一次动作完成后，进度条保持「空的」多久（让清零看得见） */
@@ -338,9 +340,13 @@ async function setCoachEnabled(on, { silent = false } = {}) {
     const snap = await voice.start();
     if (!snap.enabled || snap.state === 'off') return snap;   // 等权限时被关掉了
     if (snap.state === 'error') {
+      coach.stopVu();
       setCueLine(t(voiceErrorKey(snap.error?.code)), 'warn');  // 拒绝 / 不支持：明确提示，不静默
       return snap;
     }
+    // 第二路麦克风做音量表：拿到权限之后再开（不会多弹一次授权框）；
+    // 打不开就静默降级（coach.js 里 catch 掉，只留状态呼吸），不影响聆听
+    coach.startVu();
     if (!coachIntroSaid) {
       coachIntroSaid = true;
       // 自我介绍只上字幕、不抢着发声：开启瞬间用户可能还没准备好听
@@ -349,6 +355,7 @@ async function setCoachEnabled(on, { silent = false } = {}) {
     if (!silent) setCueLine(t('status.coachOn'), 'info');
   } else {
     voice.stop();
+    coach.stopVu();
     if (!silent) setCueLine(t('status.coachOff'), 'info');
   }
   return voice.snapshot();
@@ -6310,6 +6317,7 @@ function syncFullscreenSupport() {
 function bindUI() {
   // AI 语音教练的界面层：先把线条图标（麦克风 / 头戴耳麦）放好，再按当前 snapshot 画一次
   coach.mount();
+  coach.setDebug(!!state.settings.debug);
   coach.render(voice.snapshot());
 
   $('btnStartCam').addEventListener('click', () => {
@@ -6392,7 +6400,12 @@ function bindUI() {
       // 关掉后立刻清一次画布，避免残影留到下一帧
       if (!v) renderer.clear();
     }, (v) => setCueLine(t(v ? 'status.skeletonOn' : 'status.skeletonOff'))],
-    ['btnDebug', 'debug', (v) => { if (!v) $('debugLine').hidden = true; }, null],
+    ['btnDebug', 'debug', (v) => {
+      if (!v) $('debugLine').hidden = true;
+      // 🐞 调试行之外，教练面板也把「最后一次 ASR 原始错误名」露出来，方便排查没字幕
+      coach.setDebug(v);
+      coach.render(voice.snapshot());
+    }, null],
   ];
   for (const [ids, key, apply, announce] of toggles) {
     const btns = (Array.isArray(ids) ? ids : [ids]).map((id) => $(id)).filter(Boolean);

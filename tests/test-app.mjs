@@ -247,6 +247,8 @@ class FakeSpeechRecognition {
     item.isFinal = isFinal;
     this.onresult?.({ resultIndex: 0, results: [item] });
   }
+  /** 模拟识别服务报错（network / no-speech / not-allowed / audio-capture …） */
+  emitError(name) { this.onerror?.({ error: name }); }
 }
 class FakeUtterance {
   constructor(text) {
@@ -472,6 +474,35 @@ console.log('\n[1c] AI 语音教练（P3.0 基座：Ctrl+I + 设置开关 + 麦�
     !!rec && rec.continuous === true && rec.interimResults === true && rec.lang === 'zh-CN',
     JSON.stringify(rec ? { lang: rec.lang, continuous: rec.continuous, interim: rec.interimResults } : null));
 
+  // ②b 音量表打不开（测试环境没有 AudioContext）→ 静默降级成按状态呼吸，不报错、不影响聆听
+  ok('音量表第二路音频打不开时静默降级：仍 listening、状态环标 data-vu="off"、不抛错',
+    api.state.voice.state === 'listening' && elements.get('coachDock').dataset.vu === 'off'
+    && !documentStub.documentElement.dataset.error,
+    JSON.stringify({ state: api.state.voice.state, vu: elements.get('coachDock').dataset.vu,
+      banner: documentStub.documentElement.dataset.error || null }));
+
+  // ②c 用户反馈「我说话没有出现字幕」：8 秒没结果要**说出来**，而不是一直静默聆听
+  api.voice.silenceMs = 30;
+  await new Promise((r) => setTimeout(r, 80));
+  ok('进入聆听后 8 秒没有任何 interim/final → 面板出现「还没听到你说话」提示（不自动关闭）',
+    api.state.voice.state === 'listening'
+    && elements.get('coachNotice').hidden === false
+    && elements.get('coachNotice').textContent === tCoach('coach.notice.noResult'),
+    JSON.stringify({ state: api.state.voice.state, notice: elements.get('coachNotice').textContent }));
+  api.voice.silenceMs = 8000;   // 恢复默认（顺手重开计时，后面的 final 会清掉它）
+
+  // ②d interim（临时结果）必须**立刻**上屏：不能等 final（Chrome 的 final 可能很久才来）
+  rec.emit('我在', false);
+  ok('interim 结果立刻更新字幕「你：我在」（同步，不用等 final / 定时器）',
+    elements.get('coachYouText').textContent === '我在'
+    && elements.get('coachNotice').hidden === true,
+    JSON.stringify({ you: elements.get('coachYouText').textContent,
+      notice: elements.get('coachNotice').textContent }));
+  rec.emit('我在听', false);
+  ok('interim 逐字变化（「我在」→「我在听」）',
+    elements.get('coachYouText').textContent === '我在听',
+    elements.get('coachYouText').textContent);
+
   // ③ 用户说一句 → 字幕 → 罐头回复 → TTS → 回到聆听
   rec.emit('你好');
   await new Promise((r) => setTimeout(r, 450));   // app 里 thinkDelay = 360ms
@@ -507,6 +538,55 @@ console.log('\n[1c] AI 语音教练（P3.0 基座：Ctrl+I + 设置开关 + 麦�
   ok('回到前台且仍开着 → 恢复聆听',
     api.state.voice.paused === false && api.state.voice.state === 'listening',
     JSON.stringify({ state: api.state.voice.state, paused: api.state.voice.paused }));
+
+  // ④b 识别服务的三种常见错误都必须在面板上**看得见**（用户不再对着静默界面猜）
+  const recNow = coachStubs.recognitions.at(-1);
+  recNow.emitError('network');
+  await flush();
+  ok('ASR error.network → 面板出现「网络异常」提示（仍在 listening，自动重试）',
+    api.state.voice.state === 'listening'
+    && elements.get('coachNotice').hidden === false
+    && elements.get('coachNotice').textContent === tCoach('coach.notice.network'),
+    JSON.stringify({ state: api.state.voice.state, notice: elements.get('coachNotice').textContent }));
+  recNow.emitError('no-speech');
+  await flush();
+  ok('ASR error.no-speech → 面板出现「没听到声音，靠近一点」提示（不自动关闭）',
+    api.state.voice.state === 'listening'
+    && elements.get('coachNotice').textContent === tCoach('coach.notice.noSpeech'),
+    elements.get('coachNotice').textContent);
+
+  const micTrackBeforeErr = coachStubs.micTracks.at(-1);
+  recNow.emitError('not-allowed');
+  await flush();
+  ok('ASR error.not-allowed → 立刻进 error，面板给出「去地址栏允许麦克风」的处置建议',
+    api.state.voice.state === 'error' && api.state.voice.error?.code === 'mic'
+    && elements.get('coachCoachText').textContent === tCoach('coach.error.mic')
+    && elements.get('coachStatus').textContent === tCoach('voice.status.error'),
+    JSON.stringify({ state: api.state.voice.state, error: api.state.voice.error || null,
+      coach: elements.get('coachCoachText').textContent }));
+  ok('not-allowed 时把主麦克风轨道释放掉（出错后不留后台录音）',
+    micTrackBeforeErr.stopped === true, String(micTrackBeforeErr.stopped));
+
+  // ④c 🐞 调试模式：教练面板追加**最后一个原始错误名**（排查「没字幕」时一眼看到 network / not-allowed）
+  api.coach.setDebug(true);
+  api.coach.render(api.voice.snapshot());
+  ok('🐞 调试模式下面板显示最后一个 ASR 原始错误名（lastError）',
+    elements.get('coachNotice').hidden === false
+    && elements.get('coachNotice').textContent.includes('🐞')
+    && elements.get('coachNotice').textContent.includes('not-allowed'),
+    elements.get('coachNotice').textContent);
+  api.coach.setDebug(false);
+  api.coach.render(api.voice.snapshot());
+  ok('关掉 🐞 后那行调试后缀消失（不打扰普通用户）',
+    elements.get('coachNotice').hidden === true,
+    elements.get('coachNotice').textContent);
+
+  // 从 error 状态重新 start()：能恢复聆听，接着测关闭
+  await api.setCoachEnabled(true);
+  await flush();
+  ok('权限错误后重新开启 → 退出 error、回到 listening（会话还能重试）',
+    api.state.voice.state === 'listening' && api.state.voice.error === null,
+    JSON.stringify({ state: api.state.voice.state, error: api.state.voice.error || null }));
 
   // ⑤ 再按一次 Ctrl+I：必须释放麦克风 + 停 TTS + 隐藏字幕 + 状态环灰掉
   const track = coachStubs.micTracks.at(-1);
@@ -589,6 +669,110 @@ console.log('\n[1c] AI 语音教练（P3.0 基座：Ctrl+I + 设置开关 + 麦�
     }
   }
 
+  api.showHome();
+}
+
+/* ------------------------------------------------------------------ *
+ * [1c2] 音量表（VU）：状态环真的随音量变色（假 AudioContext，不需要真麦克风）
+ * ------------------------------------------------------------------ */
+
+console.log('\n[1c2] 音量表：状态环按音量从灰 → 青 → 薄荷亮绿，关闭时释放');
+{
+  const api = windowStub.__mfg;
+  const flush = async () => {
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  /** 把队列里的 rAF 回调各跑一帧（coach 的 VU 循环会再排下一帧） */
+  const runFrame = () => {
+    const cbs = rafQueue.splice(0, rafQueue.length);
+    for (const cb of cbs) { try { cb(performance.now()); } catch { /* ignore */ } }
+    return cbs.length;
+  };
+
+  const vu = { samples: 190, closed: 0, tracks: [] };
+  const savedCtx = windowStub.AudioContext;
+  function FakeAudioContext() { this.state = 'running'; }
+  FakeAudioContext.prototype.createMediaStreamSource = function (stream) {
+    vu.tracks.push(...stream.getAudioTracks());
+    return { connect() {}, disconnect() {} };
+  };
+  FakeAudioContext.prototype.createAnalyser = function () {
+    return {
+      fftSize: 64,
+      smoothingTimeConstant: 0,
+      getByteTimeDomainData(buf) {
+        for (let i = 0; i < buf.length; i += 1) buf[i] = vu.samples;
+      },
+    };
+  };
+  FakeAudioContext.prototype.resume = () => Promise.resolve();
+  FakeAudioContext.prototype.close = function () {
+    vu.closed += 1;
+    this.state = 'closed';
+    return Promise.resolve();
+  };
+  windowStub.AudioContext = FakeAudioContext;
+
+  // ① 大声：state ring 变薄荷亮绿 + 轻微放大
+  await api.setCoachEnabled(true);
+  await flush();
+  runFrame();
+  const fill = elements.get('coachRingFill');
+  const ring = elements.get('coachRing');
+  ok('大声波形 → 状态环变成薄荷亮绿（#34e5c4），并轻微放大 / 发光',
+    fill.style.stroke === '#34e5c4' && String(ring.style.transform).includes('scale(')
+    && String(ring.style.boxShadow).includes('#34e5c4'),
+    JSON.stringify({ stroke: fill.style.stroke, transform: ring.style.transform,
+      glow: ring.style.boxShadow }));
+  ok('音量表工作时状态环标记 data-vu="active"（样式 / 测试都靠它判断有没有第二路音频）',
+    elements.get('coachDock').dataset.vu === 'active');
+
+  // 关闭教练：第二路音轨停掉、AudioContext.close()（不留后台麦克风）
+  const vuTrack = vu.tracks.at(-1);
+  await api.setCoachEnabled(false);
+  await flush();
+  rafQueue.length = 0;
+  ok('关闭教练 → 音量表音轨 stop + AudioContext.close()（不留后台麦克风）',
+    !!vuTrack && vuTrack.stopped === true && vu.closed >= 1,
+    JSON.stringify({ stopped: vuTrack?.stopped, closed: vu.closed }));
+  ok('关闭后状态环回到灰掉（data-state="off"、内联音量色清空）',
+    elements.get('coachDock').dataset.state === 'off' && fill.style.stroke === '',
+    JSON.stringify({ state: elements.get('coachDock').dataset.state, stroke: fill.style.stroke }));
+
+  // ② 静音：重新打开（level 从 0 开始）→ 灰
+  vu.samples = 128;
+  await api.setCoachEnabled(true);
+  await flush();
+  runFrame();
+  ok('静音波形 → 状态环是灰色（#8fa1bb），不放大也不发光',
+    fill.style.stroke === '#8fa1bb' && !String(ring.style.transform).includes('scale(')
+    && !String(ring.style.boxShadow).includes('px'),
+    JSON.stringify({ stroke: fill.style.stroke, transform: ring.style.transform,
+      glow: ring.style.boxShadow }));
+  await api.setCoachEnabled(false);
+  await flush();
+  windowStub.AudioContext = savedCtx;
+  rafQueue.length = 0;
+
+  // ③ prefers-reduced-motion：只换颜色、不放大（复用同一套假 AudioContext）
+  windowStub.AudioContext = FakeAudioContext;
+  vu.samples = 190;
+  const savedMatchMedia = windowStub.matchMedia;
+  windowStub.matchMedia = (q) => ({ matches: q === '(prefers-reduced-motion: reduce)', addEventListener() {} });
+  await api.setCoachEnabled(true);
+  await flush();
+  runFrame();
+  ok('prefers-reduced-motion 下仍按音量变色，但**不**放大 / 发光',
+    fill.style.stroke === '#34e5c4' && fill.style.stroke !== ''
+    && !String(ring.style.transform).includes('scale(') && ring.style.boxShadow === '',
+    JSON.stringify({ stroke: fill.style.stroke, transform: ring.style.transform,
+      glow: ring.style.boxShadow }));
+  await api.setCoachEnabled(false);
+  await flush();
+  windowStub.matchMedia = savedMatchMedia;
+  windowStub.AudioContext = savedCtx;
+  rafQueue.length = 0;
   api.showHome();
 }
 

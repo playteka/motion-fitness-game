@@ -26,14 +26,37 @@ export const VOICE_ERROR_KEYS = Object.freeze({
   mic: 'coach.error.mic',
   'mic-unsupported': 'coach.error.mic',
   'mic-empty': 'coach.error.mic',
+  'mic-busy': 'coach.error.micBusy',
   'asr-unsupported': 'coach.error.unsupported',
+  'asr-service': 'coach.error.service',
+  'asr-language': 'coach.error.language',
   asr: 'coach.error.asr',
   llm: 'coach.error.llm',
   generic: 'coach.error.generic',
 });
 
+/**
+ * 非致命的**提示**（不落 error 状态，只是字幕面板上多一行）：
+ * 识别没跑起来 / 网络连不上 / 没听到声音 / 识别被中断。
+ * 用户反馈「说话没字幕」里最难受的正是这种情况：状态一直「聆听」，但什么都没说。
+ */
+export const VOICE_NOTICE_KEYS = Object.freeze({
+  network: 'coach.notice.network',
+  'no-speech': 'coach.notice.noSpeech',
+  'no-result': 'coach.notice.noResult',
+  aborted: 'coach.notice.aborted',
+  asr: 'coach.notice.asr',
+});
+
+/** 进入 listening 后多久没听到任何 interim / final 就提示「没听到声音」 */
+export const VOICE_SILENCE_MS = 8000;
+
 export function voiceErrorKey(code) {
   return VOICE_ERROR_KEYS[code] || VOICE_ERROR_KEYS.generic;
+}
+
+export function voiceNoticeKey(code) {
+  return VOICE_NOTICE_KEYS[code] || VOICE_NOTICE_KEYS.asr;
 }
 
 /**
@@ -45,6 +68,7 @@ export function voiceErrorKey(code) {
  * @param {object}   [opts.llm]        回复适配器（reply(text) → { text } | Promise）
  * @param {object}   [opts.tts]        语音合成适配器（speak / cancel / supported）
  * @param {number}   [opts.thinkDelay] 「思考中」至少停留多久（毫秒；0 = 同步，测试用）
+ * @param {number}   [opts.silenceMs]  进入聆听后多久没结果就提示「没听到声音」（0 = 关闭）
  * @param {Function} [opts.setTimer]   可注入的 setTimeout（测试模拟时间用）
  * @param {Function} [opts.clearTimer] 可注入的 clearTimeout
  */
@@ -54,6 +78,7 @@ export function createVoiceSession({
   llm = null,
   tts = null,
   thinkDelay = 0,
+  silenceMs = VOICE_SILENCE_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 } = {}) {
@@ -64,6 +89,13 @@ export function createVoiceSession({
   let interimText = '';
   let coachText = '';
   let error = null;
+  /** 非致命提示：{ code, at }（网络 / 没听到 / 中断），字幕面板会显示一行 */
+  let notice = null;
+  /** 最近一次 ASR 原始错误名（🐞 调试行显示；不会当文案用） */
+  let lastError = '';
+  /** 从进入 listening / 上次听到声音到现在的静音计时（8 秒无结果 → 提示「没听到声音」） */
+  let silenceTimer = null;
+  let silenceMsValue = Number.isFinite(Number(silenceMs)) ? Math.max(0, Number(silenceMs)) : VOICE_SILENCE_MS;
   /** 每次 start / stop / 新一轮对话都 +1；异步回调靠它判断「这一轮还算数吗」 */
   let epoch = 0;
   let thinkTimer = null;
@@ -79,6 +111,8 @@ export function createVoiceSession({
       interimText,
       coachText,
       error: error ? { ...error } : null,
+      notice: notice ? { ...notice } : null,
+      lastError,
     };
   }
 
@@ -100,6 +134,36 @@ export function createVoiceSession({
     if (speakTimer !== null) { try { clearTimer(speakTimer); } catch { /* ignore */ } speakTimer = null; }
   }
 
+  /** 取消「没听到声音」的静音计时（离开聆听 / 已经听到声音时） */
+  function clearSilence() {
+    if (silenceTimer !== null) {
+      try { clearTimer(silenceTimer); } catch { /* ignore */ }
+      silenceTimer = null;
+    }
+  }
+
+  /** 重新开始静音计时：8 秒内没有任何 interim / final → 面板上提示「没听到声音」（不自动关闭） */
+  function armSilence() {
+    clearSilence();
+    if (!(silenceMsValue > 0) || !enabled || paused || state !== 'listening') return;
+    silenceTimer = setTimer(() => {
+      silenceTimer = null;
+      if (!enabled || paused || state !== 'listening') return;
+      // 已经有更具体的提示（网络异常 / 没听到声音 / 识别中断）就别盖掉它
+      if (notice) return;
+      notice = { code: 'no-result', at: Date.now() };
+      emit();
+    }, silenceMsValue);
+  }
+
+  /** 非致命提示：只更新字幕面板上那一行，不动状态机（error 才是致命） */
+  function setNotice(code, extra = {}) {
+    const next = code ? { code, at: Date.now(), ...extra } : null;
+    if ((notice && notice.code) === (next && next.code)) return snapshot();
+    notice = next;
+    return emit();
+  }
+
   function releaseAudio() {
     try { asr?.stop?.(); } catch { /* ignore */ }
     try { tts?.cancel?.(); } catch { /* ignore */ }
@@ -111,11 +175,17 @@ export function createVoiceSession({
    */
   function fail(code, err = null) {
     if (state === 'off') return snapshot();
+    const raw = err && (err.raw || err.code);
+    if (raw) lastError = String(raw);
     error = {
       code: code || 'generic',
       message: err && err.message ? String(err.message) : String(err || ''),
     };
+    // 连续 3 次「网络错误」停手时，把「Chrome 语音识别要联网」那行提示留在面板上；
+    // 其它致命错误（权限 / 麦被占）就不要再留着旧提示了。
+    if (!(code === 'asr' && lastError === 'network')) notice = null;
     clearTimers();
+    clearSilence();
     releaseAudio();
     try { mic?.close?.(); } catch { /* ignore */ }
     enabled = true;   // 用户的「开」这个意愿还在；settings.coachEnabled 由 app 同步
@@ -126,6 +196,7 @@ export function createVoiceSession({
     if (myEpoch !== epoch || !enabled || paused || state !== 'speaking') return;
     speakTimer = null;
     setState('listening');
+    armSilence();
   }
 
   /** 说一句教练的话：先上字幕（speaking），TTS 结束 / 不可用时回到聆听 */
@@ -134,6 +205,8 @@ export function createVoiceSession({
     if (!body || !enabled || state === 'off') return false;
     coachText = body;
     interimText = '';
+    notice = null;
+    clearSilence();
     // 打断上一句 TTS（P3.4 的打断也走这里）；**不要停 ASR** —— 说完还要继续听
     try { tts?.cancel?.(); } catch { /* ignore */ }
     const myEpoch = ++epoch;
@@ -141,6 +214,7 @@ export function createVoiceSession({
     if (speak === false) {
       // 自我介绍 / 收尾这类「只显示不念」的台词：不占用 speaking 状态
       if (state === 'thinking') setState('listening'); else emit();
+      if (state === 'listening') armSilence();
       return true;
     }
 
@@ -165,17 +239,32 @@ export function createVoiceSession({
   /** 识别到一句用户的话（最终结果才会推进状态；中间结果只更新字幕） */
   function onUserText(text, info = {}) {
     const body = String(text == null ? '' : text).trim();
-    if (!body) return false;
     if (info && info.isFinal === false) {
+      // 迟到的 interim 不能在 thinking / speaking 里把已经定稿的那句话盖掉
+      if (state !== 'listening' || paused) {
+        if ((info.clear === true || !body) && interimText) { interimText = ''; emit(); }
+        return false;
+      }
+      if (info.clear === true || !body) {
+        if (!interimText) return false;
+        interimText = '';   // 识别器把临时结果收回了
+        emit();
+        return false;
+      }
       interimText = body;
+      notice = null;        // 听到声音了：清掉「网络异常 / 没听到声音」的提示
       emit();
+      armSilence();         // 有结果就重新计时（不是「8 秒内一直没有结果」）
       return false;
     }
+    if (!body) return false;
     if (!enabled || state !== 'listening' || paused) return false;
     userText = body;
     interimText = '';
     coachText = '';
     error = null;
+    notice = null;
+    clearSilence();
     setState('thinking');
     const myEpoch = ++epoch;
 
@@ -210,9 +299,11 @@ export function createVoiceSession({
     if (enabled && state !== 'off' && state !== 'error') return snapshot();
     epoch += 1;
     clearTimers();
+    clearSilence();
     enabled = true;
     paused = false;
     error = null;
+    notice = null;
     userText = '';
     interimText = '';
     coachText = '';
@@ -236,6 +327,8 @@ export function createVoiceSession({
       started = false;
     }
     if (!started) return fail('asr-unsupported');
+    // 权限框可能开了很久：ASR 真正跑起来之后才开始算「8 秒没听到声音」
+    armSilence();
     return snapshot();
   }
 
@@ -243,6 +336,7 @@ export function createVoiceSession({
   function stop() {
     epoch += 1;
     clearTimers();
+    clearSilence();
     enabled = false;
     paused = false;
     releaseAudio();
@@ -251,6 +345,7 @@ export function createVoiceSession({
     interimText = '';
     coachText = '';
     error = null;
+    notice = null;
     state = 'off';
     return emit();
   }
@@ -260,8 +355,10 @@ export function createVoiceSession({
     if (!enabled || state === 'off' || state === 'error' || paused) return snapshot();
     epoch += 1;
     clearTimers();
+    clearSilence();
     releaseAudio();
     paused = true;
+    notice = null;
     state = 'listening';
     return emit();
   }
@@ -275,6 +372,7 @@ export function createVoiceSession({
     let started = true;
     try { started = asr ? asr.start() !== false : true; } catch { started = false; }
     if (!started) return fail('asr-unsupported');
+    armSilence();
     return snapshot();
   }
 
@@ -292,10 +390,16 @@ export function createVoiceSession({
   // 把适配器回调接到状态机上（P3.1 的流式 ASR 也照这个接）
   if (asr) {
     asr.onResult?.((text, info) => onUserText(text, info || { isFinal: true }));
-    asr.onInterim?.((text) => onUserText(text, { isFinal: false }));
+    asr.onInterim?.((text, info) => onUserText(text, { ...(info || {}), isFinal: false }));
     asr.onError?.((err) => {
       const code = err && err.code ? err.code : 'asr';
       fail(code === 'unsupported' ? 'asr-unsupported' : code, err);
+    });
+    // 非致命错误（network / no-speech / aborted）：只上提示，不打断聆听
+    asr.onNotice?.((info) => {
+      if (!enabled || state === 'off' || state === 'error') return;
+      if (info && info.raw) lastError = String(info.raw);
+      setNotice((info && info.code) || 'asr', { raw: (info && info.raw) || '' });
     });
   }
 
@@ -315,5 +419,15 @@ export function createVoiceSession({
     get enabled() { return enabled; },
     get paused() { return paused; },
     get error() { return error ? { ...error } : null; },
+    get notice() { return notice ? { ...notice } : null; },
+    get lastError() { return lastError; },
+    /** 测试可以调小（甚至设 0 关掉）；运行时重新调会重开静音计时 */
+    get silenceMs() { return silenceMsValue; },
+    set silenceMs(ms) {
+      const v = Number(ms);
+      if (!Number.isFinite(v) || v < 0) return;
+      silenceMsValue = v;
+      if (state === 'listening' && enabled && !paused) armSilence();
+    },
   };
 }

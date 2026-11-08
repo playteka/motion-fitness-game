@@ -1,12 +1,17 @@
 /**
  * AI 语音教练的界面层（P3.0 基座）。
  *
- * 只做三件事：
+ * 只做四件事：
  *   1) **状态环**：舞台左下角一颗小圆环（和现有圆环同一套线条 / 深色底风格），
  *      聆听时缓慢呼吸、思考 / 说话 / 出错换颜色，关闭后灰掉；
  *   2) **字幕面板**：舞台底部两行（`你：…` / `教练：…`），`aria-live="polite"`，读屏会念；
+ *      外加一行**状态 / 错误提示**（网络异常、没听到声音、权限被拒…）——用户反馈
+ *      「说话没字幕」时，最怕的就是界面对着一片安静什么也不说；
  *   3) **教练头像 + 状态文字**：头像走 `icons.js` 的线条图标（`ui:coach`），状态文字在
- *      「聆听 / 思考 / 说话 / 出错」之间切换。
+ *      「聆听 / 思考 / 说话 / 出错」之间切换；
+ *   4) **音量表（VU）**：教练开启期间用第二路麦克风 + AnalyserNode 读音量，
+ *      状态环按 level 变色（灰 → 青 → 薄荷亮绿）+ 轻微放大 / 发光；第二路打不开时
+ *      静默降级成「按状态呼吸」，绝不报错。关闭教练时停音轨 + `AudioContext.close()`。
  *
  * 这里**不碰会话状态机**：app.js 把 `session.snapshot()` 交给 `render(state)`，
  * 所有文案走 locales（`coach.*` / `voice.*`），所以中英切换只要重新 render 一次。
@@ -19,7 +24,8 @@
 
 import { t } from '../i18n.js';
 import { libIconSVG } from '../icons.js';
-import { voiceErrorKey } from './session.js';
+import { voiceErrorKey, voiceNoticeKey } from './session.js';
+import { createVuMeter, smoothLevel, levelToColor } from './providers.js';
 
 /** 状态 → 文案键（`voice.status.*`） */
 export const COACH_STATUS_KEYS = Object.freeze({
@@ -163,17 +169,35 @@ export function coachStatusKey(state, paused = false) {
  *   render(snap)   根据 session.snapshot() 更新状态环 / 字幕 / 状态文字
  *   destroy()      收起并清掉引用
  */
-export function createCoach({ doc = null } = {}) {
+export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
   const d = doc || (typeof document !== 'undefined' ? document : null);
+  const w = win || (typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : {}));
   const $ = (id) => (d ? d.getElementById(id) : null);
   const el = {};
   let mounted = false;
   let everUsed = false;
+  let debug = false;
+  let lastSnap = {};
+  // ---- 音量表（VU）状态 ----
+  let vu = null;
+  let vuStarting = false;
+  let vuFailed = false;
+  let vuLogged = false;
+  let vuRaf = null;
+  let vuLevel = 0;
+  let vuLastAt = 0;
+  let vuActive = false;
+  function queryMotion() {
+    try { return w.matchMedia ? w.matchMedia('(prefers-reduced-motion: reduce)') : null; } catch { return null; }
+  }
+  let motionQuery = queryMotion();
+  const reduceMotion = () => !!(motionQuery && motionQuery.matches);
 
   function mount() {
     if (mounted || !d) return api;
-    for (const id of ['coachDock', 'coachRing', 'coachRingIcon', 'coachPanel', 'coachAvatar',
-      'coachStatus', 'coachSubtitles', 'coachYouText', 'coachCoachText', 'coachHint']) {
+    for (const id of ['coachDock', 'coachRing', 'coachRingSvg', 'coachRingFill', 'coachRingIcon',
+      'coachPanel', 'coachAvatar', 'coachStatus', 'coachSubtitles', 'coachYouText', 'coachCoachText',
+      'coachNotice', 'coachHint']) {
       el[id] = $(id);
     }
     if (el.coachAvatar) el.coachAvatar.innerHTML = libIconSVG('ui:coach', 'ui-icon coach-avatar-icon');
@@ -182,8 +206,119 @@ export function createCoach({ doc = null } = {}) {
     return api;
   }
 
+  /* ---------------- 音量表：开 / 关 / 每帧上色 ---------------- */
+  function clearVuStyle() {
+    if (el.coachRingFill) {
+      el.coachRingFill.style.stroke = '';
+      el.coachRingFill.style.opacity = '';
+    }
+    if (el.coachRing) {
+      el.coachRing.style.transform = '';
+      el.coachRing.style.boxShadow = '';
+    }
+    if (el.coachDock) el.coachDock.dataset.vu = vu ? 'active' : 'off';
+  }
+
+  function stopVu() {
+    vuActive = false;
+    vuLevel = 0;
+    vuLastAt = 0;
+    vuFailed = false;      // 下次开启教练时重新试一次（可能是暂时的「麦克风被占用」）
+    if (vuRaf !== null && w.cancelAnimationFrame) {
+      try { w.cancelAnimationFrame(vuRaf); } catch { /* ignore */ }
+    }
+    vuRaf = null;
+    const meter = vu;
+    vu = null;
+    if (meter) {
+      try { meter.close(); } catch { /* ignore */ }
+    }
+    clearVuStyle();
+    return api;
+  }
+
+  function applyVuStyle(snap) {
+    const listening = snap.state === 'listening' && !snap.paused && vuActive;
+    if (!listening) { clearVuStyle(); return; }
+    const color = levelToColor(vuLevel);
+    const l = Math.max(0, Math.min(1, vuLevel));
+    if (el.coachRingFill) {
+      el.coachRingFill.style.stroke = color;
+      el.coachRingFill.style.opacity = String(0.65 + 0.35 * l);
+    }
+    if (el.coachRing) {
+      // 尊重 prefers-reduced-motion：只换颜色，不放大 / 不加发光
+      if (reduceMotion() || l < 0.02) {
+        el.coachRing.style.transform = '';
+        el.coachRing.style.boxShadow = '';
+      } else {
+        el.coachRing.style.transform = `scale(${(1 + 0.10 * l).toFixed(3)})`;
+        el.coachRing.style.boxShadow = `0 0 ${(6 + 18 * l).toFixed(1)}px ${color}66`;
+      }
+    }
+  }
+
+  function tickVu() {
+    vuRaf = null;
+    if (!vu) return;
+    const now = (w.performance && typeof w.performance.now === 'function') ? w.performance.now() : Date.now();
+    const dt = vuLastAt ? Math.min(200, Math.max(0, now - vuLastAt)) : 50;
+    vuLastAt = now;
+    vuLevel = smoothLevel(vuLevel, vu.readLevel(), dt);
+    applyVuStyle(lastSnap || {});
+    if (vu && typeof w.requestAnimationFrame === 'function') {
+      vuRaf = w.requestAnimationFrame(tickVu);
+    }
+  }
+
+  /**
+   * 开第二路音频做音量表。失败**绝不抛错**：静默降级成「按状态呼吸」，
+   * 只在 console 记一条（用户反馈里「有的环境不允许两路同时占用麦克风」）。
+   */
+  async function startVu() {
+    if (vu || vuStarting || vuFailed || !d) return api;
+    const factory = vuFactory || (() => (d && w ? createVuMeter({ win: w }) : null));
+    vuStarting = true;
+    motionQuery = queryMotion();   // 每次开启都重新读一次系统「减少动效」设置
+    let meter = null;
+    try {
+      meter = factory();
+      if (!meter) throw Object.assign(new Error('no VU meter'), { code: 'vu-unsupported' });
+      await meter.open();
+      if (!meter.active) throw Object.assign(new Error('VU meter inactive'), { code: 'vu-inactive' });
+      // 等权限 / AudioContext 的这几百毫秒里用户可能已经把教练关了：别把麦克风留在后台
+      if (!lastSnap || !lastSnap.enabled || lastSnap.state === 'off' || lastSnap.state === 'error') {
+        try { meter.close(); } catch { /* ignore */ }
+        return api;
+      }
+      vu = meter;
+      vuActive = true;
+      vuLevel = 0;
+      vuLastAt = 0;
+      if (el.coachDock) el.coachDock.dataset.vu = 'active';
+      if (typeof w.requestAnimationFrame === 'function') vuRaf = w.requestAnimationFrame(tickVu);
+    } catch (err) {
+      vuFailed = true;
+      try { meter?.close?.(); } catch { /* ignore */ }
+      vu = null;
+      vuActive = false;
+      if (el.coachDock) el.coachDock.dataset.vu = 'off';
+      if (!vuLogged) {
+        vuLogged = true;
+        try {
+          w.console?.info?.('[voice] VU meter unavailable, using state animation:',
+            (err && (err.code || err.message)) || err);
+        } catch { /* ignore */ }
+      }
+    } finally {
+      vuStarting = false;
+    }
+    return api;
+  }
+
   function render(snap = {}) {
     if (!mounted) mount();
+    lastSnap = snap;
     const state = snap.state || 'off';
     const enabled = !!snap.enabled;
     if (enabled && state !== 'off') everUsed = true;
@@ -201,6 +336,9 @@ export function createCoach({ doc = null } = {}) {
     }
     if (el.coachRing) el.coachRing.dataset.state = state;
 
+    // 关闭 / 出错时把第二路麦克风释放掉（绝不留后台录音）
+    if (!enabled || state === 'off' || state === 'error') stopVu();
+
     // 字幕面板：只在开启时出现；关闭时连字幕一起收起（状态环单独灰着）
     const showPanel = enabled && state !== 'off';
     if (el.coachPanel) {
@@ -214,24 +352,57 @@ export function createCoach({ doc = null } = {}) {
     const coach = errorText
       || String(snap.coachText || '').trim()
       || (state === 'listening' ? t('coach.listeningHint') : statusText);
+
+    // 状态 / 错误提示行：网络异常、没听到声音、识别被中断……
+    // debug 模式追加**最后一个原始 ASR 错误名**（例如 network / not-allowed）
+    const noticeCode = snap.notice && snap.notice.code;
+    const noticeRaw = (snap.notice && snap.notice.raw) || noticeCode;
+    let noticeText = noticeCode ? t(voiceNoticeKey(noticeCode), { code: noticeRaw }) : '';
+    if (debug && snap.lastError) {
+      const tag = `\u{1F41E} ${snap.lastError}`;   // 小虫子 emoji（用转义写，源码里不留 emoji）
+      noticeText = noticeText ? `${noticeText} · ${tag}` : tag;
+    }
+
     if (el.coachStatus) el.coachStatus.textContent = statusText;
     if (el.coachYouText) el.coachYouText.textContent = user;
     if (el.coachCoachText) el.coachCoachText.textContent = coach;
+    if (el.coachNotice) {
+      el.coachNotice.hidden = !noticeText;
+      el.coachNotice.textContent = noticeText;
+    }
     if (el.coachHint) el.coachHint.textContent = t('coach.hint');
     if (el.coachSubtitles) {
       el.coachSubtitles.setAttribute('aria-live', 'polite');
       el.coachSubtitles.setAttribute('aria-atomic', 'true');
     }
+    // 状态变化后马上按新状态上色（VU 每帧也会再调一次）
+    applyVuStyle(snap);
+    return api;
+  }
+
+  function setDebug(on) {
+    debug = !!on;
     return api;
   }
 
   function destroy() {
+    stopVu();
     if (el.coachPanel) el.coachPanel.hidden = true;
     if (el.coachDock) el.coachDock.hidden = true;
     everUsed = false;
     return api;
   }
 
-  const api = { mount, render, destroy, get mounted() { return mounted; } };
+  const api = {
+    mount,
+    render,
+    destroy,
+    setDebug,
+    startVu,
+    stopVu,
+    get mounted() { return mounted; },
+    get vuActive() { return vuActive; },
+    get vuLevel() { return vuLevel; },
+  };
   return api;
 }

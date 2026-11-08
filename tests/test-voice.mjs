@@ -12,8 +12,12 @@
  * 运行：node tests/test-voice.mjs
  */
 
-import { createVoiceSession, VOICE_STATES } from '../src/voice/session.js';
-import { createLlm } from '../src/voice/providers.js';
+import { createVoiceSession, VOICE_STATES, VOICE_NOTICE_KEYS } from '../src/voice/session.js';
+import {
+  createLlm, createAsr, createVuMeter,
+  rmsToLevel, smoothLevel, levelToColor,
+  VU_COLORS, VU_LEVEL_VOICE, VU_LEVEL_LOUD,
+} from '../src/voice/providers.js';
 import { LOCALES, setLang, t } from '../src/i18n.js';
 
 let passed = 0;
@@ -306,10 +310,11 @@ console.log('\n[6] 只上字幕 / 不抢发声 / TTS 不可用');
   });
   await s2.start();
   s2.onCoachText('只出字幕的一句话');
+  const speakTimers = timers.filter((x) => x.ms >= 1200 && x.ms <= 6000);
   ok('没有 speechSynthesis：仍然进入 speaking（字幕在），并安排一个展示计时',
-    s2.snapshot().state === 'speaking' && timers.length === 1 && timers[0].ms >= 1200,
+    s2.snapshot().state === 'speaking' && speakTimers.length === 1 && speakTimers[0].ms >= 1200,
     JSON.stringify({ state: s2.snapshot().state, timers: timers.map((x) => x.ms) }));
-  timers[0].fn();
+  speakTimers[0].fn();
   ok('展示计时到 → 回到 listening（没有声音也不会卡在 speaking）',
     s2.snapshot().state === 'listening', s2.snapshot().state);
   s2.stop();
@@ -387,6 +392,320 @@ console.log('\n[7] mockLlm：中英罐头回复都能追溯到 coach.* 词条');
     } catch { bad += 1; }
   }
   ok('9 组中英输入全部返回非空回复（没有抛异常 / 空话）', bad === 0, `${bad} 个失败`);
+}
+
+/* ================================================================== *
+ * 8. ASR 适配器（浏览器 SpeechRecognition 的替身）
+ *    用户反馈「我说话没有出现字幕」：这里钉住三条最容易静默失败的路
+ *    —— interim 必须立刻上交、错误必须分流、重复 start() 不许抛错。
+ * ================================================================== */
+console.log('\n[8] ASR 适配器：interim 立即可见 / 错误分流 / 退避重启 / 重复 start() 不抛错');
+
+/** 假的 SpeechRecognition 环境：recs 里的实例由测试手动触发事件 */
+function fakeSpeechWindow() {
+  const recs = [];
+  class FakeRec {
+    constructor() {
+      this.lang = '';
+      this.continuous = false;
+      this.interimResults = false;
+      this.started = 0;
+      this.stopped = 0;
+      this.onstart = null;
+      this.onresult = null;
+      this.onerror = null;
+      this.onend = null;
+      recs.push(this);
+    }
+    start() { this.started += 1; this.onstart?.(); }
+    stop() { this.stopped += 1; }
+    abort() { this.stopped += 1; }
+    result(text, isFinal, resultIndex = 0) {
+      const item = [{ transcript: text }];
+      item.isFinal = isFinal;
+      this.onresult?.({ resultIndex, results: [item] });
+    }
+    clearResults() { this.onresult?.({ resultIndex: 0, results: [] }); }
+    error(name) { this.onerror?.({ error: name }); }
+    end() { this.onend?.(); }
+  }
+  return { win: { SpeechRecognition: FakeRec }, recs };
+}
+
+function makeFakeTimers() {
+  const timers = [];
+  return {
+    timers,
+    setTimer: (fn, ms) => { timers.push({ fn, ms, cleared: false }); return timers.length; },
+    clearTimer: (id) => { if (timers[id - 1]) timers[id - 1].cleared = true; },
+    last() { return timers.filter((x) => !x.cleared).at(-1); },
+    run() { const tmr = this.last(); if (tmr) tmr.fn(); return tmr; },
+  };
+}
+
+{
+  const { win, recs } = fakeSpeechWindow();
+  const clock = makeFakeTimers();
+  const asr = createAsr({ win, lang: 'zh-CN', setTimer: clock.setTimer, clearTimer: clock.clearTimer });
+  const got = { result: [], interim: [], notice: [], error: [], state: [] };
+  asr.onResult((text, info) => got.result.push({ text, info }));
+  asr.onInterim((text, info) => got.interim.push({ text, info }));
+  asr.onNotice((info) => got.notice.push(info));
+  asr.onError((info) => got.error.push(info));
+  asr.onState((phase, info) => got.state.push({ phase, info }));
+
+  ok('start() 真的启动识别：lang / continuous / interimResults 都对',
+    asr.start() === true && asr.active === true
+    && recs[0].lang === 'zh-CN' && recs[0].continuous === true && recs[0].interimResults === true,
+    JSON.stringify(asr.supported ? { lang: recs[0]?.lang, continuous: recs[0]?.continuous } : null));
+  ok('重复 start() 直接返回 true、不再新建实例（不会 InvalidStateError）',
+    asr.start() === true && recs.length === 1);
+
+  recs[0].result('我', false);
+  ok('interim 立刻交给 onInterim（此刻还没有 final）',
+    got.interim.length === 1 && got.interim[0].text === '我' && got.result.length === 0,
+    JSON.stringify({ interim: got.interim, result: got.result }));
+  recs[0].result('我在', false);
+  ok('interim 逐字更新（「我」→「我在」）',
+    got.interim.at(-1).text === '我在' && got.result.length === 0);
+
+  recs[0].result('我在', true);
+  ok('final 交给 onResult（isFinal:true），interim 不重复算结果',
+    got.result.length === 1 && got.result[0].text === '我在' && got.result[0].info.isFinal === true);
+
+  recs[0].clearResults();
+  ok('识别器收回临时结果 → onInterim("", { clear:true })（不留半截字幕）',
+    got.interim.at(-1).text === '' && got.interim.at(-1).info.clear === true,
+    JSON.stringify(got.interim.at(-1)));
+
+  recs[0].error('network');
+  ok('error.network → 非致命 notice（不落 error，继续聆听）',
+    got.notice.at(-1).code === 'network' && got.error.length === 0 && asr.active === true,
+    JSON.stringify(got.notice));
+  recs[0].error('no-speech');
+  ok('error.no-speech → notice.no-speech（提示靠近一点，不停止聆听）',
+    got.notice.at(-1).code === 'no-speech' && asr.active === true);
+  recs[0].error('aborted');
+  ok('error.aborted（不是自己 stop 的）→ notice.aborted',
+    got.notice.at(-1).code === 'aborted' && asr.active === true);
+
+  recs[0].end();
+  ok('第一次 end → 退避 400ms 后自动重启（onState restarting）',
+    got.state.at(-1).phase === 'restarting' && got.state.at(-1).info.delay === 400
+    && clock.timers.length === 1,
+    JSON.stringify(got.state.at(-1)));
+  clock.run();
+  ok('退避到点 → 新建识别实例并重新 start（不会复用正在关闭的实例）',
+    recs.length === 2 && recs[1].started === 1 && asr.active === true);
+  asr.stop();
+  ok('stop() 之后 active=false，且不会再把 aborted 当异常提示出来',
+    asr.active === false && recs[1].stopped >= 1);
+}
+
+{
+  // 每一种「重试没用」的错误都要有独立错误码（界面才能给出不同处置建议）
+  const fatalCases = [
+    ['not-allowed', 'mic'],
+    ['audio-capture', 'mic-busy'],
+    ['service-not-allowed', 'asr-service'],
+    ['language-not-supported', 'asr-language'],
+    ['unsupported', 'asr-unsupported'],
+  ];
+  for (const [raw, code] of fatalCases) {
+    const { win, recs } = fakeSpeechWindow();
+    const asr = createAsr({ win, setTimer: () => 0, clearTimer: () => {} });
+    const errors = [];
+    asr.onError((info) => errors.push(info));
+    asr.start();
+    recs[0].error(raw);
+    ok(`error.${raw} → 致命错误 ${code}（停手，不再重启）`,
+      errors.length === 1 && errors[0].code === code && errors[0].fatal === true
+      && errors[0].raw === raw && asr.active === false,
+      JSON.stringify(errors));
+  }
+}
+
+{
+  // 连续 3 次「没有任何结果」才停手；interim 也算结果，不能把正在说话的人踢掉
+  const { win, recs } = fakeSpeechWindow();
+  const clock = makeFakeTimers();
+  const asr = createAsr({ win, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
+  const errors = [];
+  asr.onError((info) => errors.push(info));
+  asr.start();
+  recs[0].end();
+  const d1 = clock.timers.at(-1).ms;
+  clock.run();
+  recs[1].end();
+  const d2 = clock.timers.at(-1).ms;
+  clock.run();
+  recs[2].end();
+  ok('连续 3 次没有结果 → 停手并报 asr（400ms → 800ms 退避，第 3 次不再重启）',
+    errors.length === 1 && errors[0].code === 'asr' && errors[0].fatal === true
+    && errors[0].attempts === 3 && asr.active === false && d1 === 400 && d2 === 800,
+    JSON.stringify({ errors, d1, d2, recs: recs.length }));
+
+  const { win: win2, recs: recs2 } = fakeSpeechWindow();
+  const clock2 = makeFakeTimers();
+  const asr2 = createAsr({ win: win2, setTimer: clock2.setTimer, clearTimer: clock2.clearTimer });
+  asr2.start();
+  recs2[0].end();
+  clock2.run();
+  recs2[1].result('喂', false);   // 有 interim：证明真的识别出了东西
+  recs2[1].end();
+  ok('interim 也算「识别出了东西」：失败计数清零，退避回到 400ms（不会被连续模式踢掉）',
+    clock2.last() && clock2.last().ms === 400,
+    JSON.stringify(clock2.timers.map((x) => x.ms)));
+  asr2.stop();
+}
+
+{
+  // 识别实例自己抛 InvalidStateError：start() 返回 false，绝不把异常抛给会话
+  const win = {
+    SpeechRecognition: class {
+      constructor() { this.lang = ''; this.continuous = false; this.interimResults = false; }
+      start() { const err = new Error('already started'); err.name = 'InvalidStateError'; throw err; }
+      stop() {}
+    },
+  };
+  const asr = createAsr({ win });
+  let threw = false;
+  let started = true;
+  try { started = asr.start(); } catch { threw = true; }
+  ok('识别实例抛出 InvalidStateError → start() 返回 false（调用方落 error，不吞异常到界面）',
+    threw === false && started === false && asr.lastError === 'InvalidStateError',
+    JSON.stringify({ threw, started, lastError: asr.lastError }));
+
+  const bare = createAsr({ win: {} });
+  ok('浏览器没有 SpeechRecognition → start() 返回 false（会话落 asr-unsupported）',
+    bare.start() === false && bare.supported === false);
+}
+
+{
+  // 每一种非致命提示都必须有中英词条（界面才说得出来；i18n 测试另外保证键结构对称）
+  const keys = Object.values(VOICE_NOTICE_KEYS);
+  const missingZh = keys.filter((k) => typeof flat.zh[k] !== 'string' || !flat.zh[k].trim());
+  const missingEn = keys.filter((k) => typeof flat.en[k] !== 'string' || !flat.en[k].trim());
+  ok('所有非致命提示（网络 / 没听到 / 8 秒没结果 / 中断 / 未知）都有中英词条',
+    keys.length >= 5 && missingZh.length === 0 && missingEn.length === 0,
+    JSON.stringify({ keys, missingZh, missingEn }));
+}
+
+/* ================================================================== *
+ * 9. 音量表：RMS → level → 颜色 / 平滑（纯函数，不需要麦克风）
+ * ================================================================== */
+console.log('\n[9] 音量表：rmsToLevel / smoothLevel / levelToColor（纯函数）');
+
+/** 生成一段 128 为中点的正弦采样（amp 越大越响） */
+function sineBytes(n, amp) {
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i += 1) out[i] = 128 + Math.round(amp * Math.sin(i / 2));
+  return out;
+}
+
+{
+  ok('静音（全是 128）→ level = 0（灰）',
+    rmsToLevel(new Uint8Array(64).fill(128)) === 0 && rmsToLevel([]) === 0);
+  const quiet = rmsToLevel(sineBytes(256, 8));
+  const normal = rmsToLevel(sineBytes(256, 24));
+  const loud = rmsToLevel(sineBytes(256, 100));
+  ok('小声 / 正常 / 大声三档 level 依次变大，且都落在 0~1',
+    quiet > 0 && normal > quiet && loud > normal && loud <= 1,
+    JSON.stringify({ quiet, normal, loud }));
+
+  const steps = [0, 4, 8, 16, 24, 32, 48, 64, 100].map((a) => rmsToLevel(sineBytes(256, a)));
+  ok('level 随音量单调不减（9 档线性递增的振幅全部有序）',
+    steps.every((v, i) => i === 0 || v >= steps[i - 1]),
+    JSON.stringify(steps.map((v) => Number(v.toFixed(3)))));
+
+  ok('同一段采样反复计算结果一致（纯函数）',
+    rmsToLevel(sineBytes(256, 24)) === normal);
+  ok('静音 / 正常 / 大声 → 三种不同颜色（灰 / 青 / 薄荷亮绿）',
+    levelToColor(0) === VU_COLORS.silent && levelToColor(0.3) === VU_COLORS.voice
+    && levelToColor(0.9) === VU_COLORS.loud
+    && new Set([levelToColor(0), levelToColor(0.3), levelToColor(0.9)]).size === 3,
+    JSON.stringify([levelToColor(0), levelToColor(0.3), levelToColor(0.9)]));
+  ok('颜色阈值就是导出的 VOICE / LOUD 两个常量（不是另抄一份）',
+    levelToColor(VU_LEVEL_VOICE) === VU_COLORS.voice
+    && levelToColor(VU_LEVEL_LOUD - 0.01) === VU_COLORS.voice
+    && levelToColor(VU_LEVEL_LOUD) === VU_COLORS.loud);
+  ok('越界 level 会被夹到 0~1（不会返回 undefined）',
+    levelToColor(-3) === VU_COLORS.silent && levelToColor(9) === VU_COLORS.loud);
+
+  ok('平滑：同一帧 dt=0 时保持原值；相同值不动',
+    smoothLevel(0.2, 0.9, 0) === 0.2 && Math.abs(smoothLevel(0.5, 0.5, 50) - 0.5) < 1e-9);
+  const rise = smoothLevel(0, 1, 50);
+  const fall = 1 - smoothLevel(1, 0, 50);
+  ok('平滑是「快升慢降」：50ms 内上升 > 0.6，下降 < 0.35',
+    rise > 0.6 && fall < 0.35, `rise=${rise.toFixed(3)} fall=${fall.toFixed(3)}`);
+  const seq = [0.1, 0.3, 0.6, 0.9].map((v) => smoothLevel(0.2, v, 40));
+  ok('平滑对输入 level 单调（输入越大输出越大）',
+    seq.every((v, i) => i === 0 || v >= seq[i - 1]), JSON.stringify(seq.map((v) => Number(v.toFixed(3)))));
+  ok('平滑输出始终夹在 0~1（负输入 / 超界输入也不会跑出去）',
+    smoothLevel(-2, 3, 50) <= 1 && smoothLevel(-2, 3, 50) >= 0 && smoothLevel(2, -1, 50) >= 0);
+}
+
+/* ================================================================== *
+ * 10. createVuMeter：第二路音频的开关与释放（假 AudioContext）
+ * ================================================================== */
+console.log('\n[10] createVuMeter：打开 / 读数 / 关闭（停音轨 + 关 AudioContext）');
+
+function fakeVuWindow({ samples = 190, ctxState = 'running' } = {}) {
+  const log = { tracks: [], closed: 0, contexts: 0 };
+  const win = {
+    navigator: {
+      mediaDevices: {
+        getUserMedia: async () => {
+          const track = { stopped: false, stop() { this.stopped = true; } };
+          log.tracks.push(track);
+          return { getTracks: () => [track], getAudioTracks: () => [track] };
+        },
+      },
+    },
+    AudioContext: class {
+      constructor() { this.state = ctxState; log.contexts += 1; }
+      createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+      createAnalyser() {
+        return {
+          fftSize: 512,
+          smoothingTimeConstant: 0,
+          getByteTimeDomainData(buf) { for (let i = 0; i < buf.length; i += 1) buf[i] = samples; },
+        };
+      }
+      resume() { this.state = 'running'; return Promise.resolve(); }
+      close() { log.closed += 1; this.state = 'closed'; return Promise.resolve(); }
+    },
+  };
+  return { win, log };
+}
+
+{
+  const { win, log } = fakeVuWindow({ samples: 190 });
+  const meter = createVuMeter({ win });
+  ok('open() 拿到第二路音频 + Analyser，active=true',
+    (await meter.open()) === true && meter.active === true && log.contexts === 1);
+  const lv = meter.readLevel();
+  ok('readLevel() 把大声波形读成高 level（> 0.6）', lv > 0.6, String(lv));
+  meter.close();
+  ok('close() 停掉音轨并 AudioContext.close()（不留后台麦克风）',
+    meter.active === false && log.tracks[0].stopped === true && log.closed === 1,
+    JSON.stringify({ stopped: log.tracks[0].stopped, closed: log.closed }));
+
+  const silentMeter = createVuMeter({ win: fakeVuWindow({ samples: 128 }).win });
+  await silentMeter.open();
+  ok('静音波形读数为 0（灰环）', silentMeter.readLevel() === 0);
+  silentMeter.close();
+
+  const suspended = createVuMeter({ win: fakeVuWindow({ ctxState: 'suspended' }).win });
+  ok('AudioContext 处于 suspended 时会先 resume()，成功就照常打开',
+    (await suspended.open()) === true && suspended.active === true);
+  suspended.close();
+
+  const unsupported = createVuMeter({ win: { navigator: {} } });
+  let code = '';
+  try { await unsupported.open(); } catch (err) { code = err.code; }
+  ok('没有 AudioContext / getUserMedia → open() 明确 reject（调用方静默降级）',
+    code === 'vu-unsupported' && unsupported.active === false, code);
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
