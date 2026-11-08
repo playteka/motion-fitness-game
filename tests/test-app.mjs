@@ -349,6 +349,21 @@ if (app) {
   ok('加载 src/app.js 不报错', true);
   const api = windowStub.__mfg;
   ok('应用暴露内部句柄（供自动化使用）', !!api);
+  /* 姿态模型的真实加载要 wasm + 联网，Node 里跑不了：先装一套「立刻失败」的桩。
+     目的不是省事，而是**隔离**：用例偶尔会意外走到加载路径（例如 [16] 从主页回动作页会
+     resumeCameraFromHome → startCamera），真去下载模型会按 400/900/1800ms 退避重试，
+     后台那一串 setTimeout 会把后面用例刚写好的遮罩文案冲掉（[17c] 就是这么被带歪的）。
+     换成 wasm 阶段的非重试失败 → 只失败一次、不碰 fetch、不留定时器。
+     需要真实驱动加载流程的用例（[17d]）自己替换这三个桩，用完还原。 */
+  api.engine.resolveVision = async () => {
+    const err = new Error('no wasm in node');
+    err.name = 'RuntimeError';
+    throw err;
+  };
+  api.engine.fetchModel = async () => {
+    throw new TypeError('no network in node');
+  };
+  api.engine.createLandmarker = async () => { throw new Error('no landmarker in node'); };
   ok('boot 后已选中一个动作', !!api.state.detector);
   ok('主页渲染了全部动作卡片（按分类展开，动作全部都在）', (() => {
     const ids = new Set(documentStub.querySelectorAll('.ex-card').map((c) => c.dataset.id));
@@ -7195,6 +7210,658 @@ console.log('\n[17c] 点「开始体感训练」：已授权直接全屏 / 未�
   api.state.camStoppedForHome = saved.camStopped;
   api.state.camErrName = saved.camErr;
   api.state.engineReady = saved.engineReady;
+  api.state.session = 'idle';
+}
+
+/* ------------------------------------------------------------------ *
+ * [17d] 姿态模型加载：分阶段报错 / 下载失败自动重试 / GPU → CPU 兜底 / 首帧超时
+ *
+ * 用户反馈：「在首页点击开始按钮，出现『姿态模型加载失败』」——服务器侧资源全是 200，
+ * 所以问题在浏览器里：GPU delegate 建不起来、服务器比页面晚起来（fetch 404 / 连不上），
+ * 或者错误被一句笼统的「加载失败」盖住了。这里钉住四件事（全部用桩，不需要浏览器 / 真模型）：
+ *   ① `createFromOptions(GPU)` 抛错 → **自动用 CPU 重试并成功**，且把 'cpu' 记进 settings，
+ *      下次启动直接走 CPU（不再先失败一次）；
+ *   ② fetch 返回 404 → 退避重试 **3 次**（共 4 次请求）后报错，提示文案带「HTTP 404」，
+ *      期间遮罩上显示「正在重试（n/3）」；诊断日志里留下 `pose:load-fail`；
+ *   ③ 首帧推理超时（GPU 卡住 / CPU 卡住）→ 报错文案带「超时」，GPU 卡住时自动切 CPU
+ *      并成功；wasm 阶段失败**不重试**（重试也没用）；
+ *   ④ 成功路径不回归：只下载一次模型（字节直接喂 createFromOptions）、GPU 正常时不写设置。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[17d] 姿态模型加载：分阶段报错 / 下载重试 / GPU→CPU 兜底 / 首帧超时');
+{
+  const api = windowStub.__mfg;
+  const { t: tPose } = await import('../src/i18n.js');
+  const {
+    PoseLoadError, isRetryableLoadError, normalizeDelegate,
+  } = await import('../src/pose-engine.js');
+  const engine = api.engine;
+  const mask = elements.get('stageMask');
+  const maskTitle = elements.get('maskTitle');
+  const maskText = elements.get('maskText');
+  const btnRetry = elements.get('btnStartCam');
+
+  const saved = {
+    resolveVision: engine.resolveVision,
+    createLandmarker: engine.createLandmarker,
+    fetchModel: engine.fetchModel,
+    sleep: engine.sleep,
+    now: engine.now,
+    modelKey: api.state.settings.modelKey,
+    poseDelegate: api.state.settings.poseDelegate,
+    engineReady: api.state.engineReady,
+    modelError: api.state.modelError,
+    tuning: { ...api.poseLoadTuning },
+    diagEvents: api.coachDiag.snapshot().events,
+  };
+
+  /** 造一个「能跑首帧推理」的假推理器 */
+  const makeLandmarker = ({ detect } = {}) => ({
+    closed: false,
+    close() { this.closed = true; },
+    detectForVideo: detect || (() => ({ landmarks: [[{ x: 0.5, y: 0.5, z: 0, visibility: 1 }]] })),
+  });
+  const bytes = () => new Uint8Array([1, 2, 3, 4]);
+  const resetEngine = () => { engine.close(); engine._vision = null; engine._wasmWarmed = ''; };
+  const diagEvents = () => api.coachDiag.snapshot().events;
+
+  // 重试退避与首帧超时都调到「几乎瞬间」，用例不必真等 3 秒 / 8 秒（1s 是为了让「超时 Ns」可读）
+  api.poseLoadTuning.retryDelays = [0, 0, 0];
+  api.poseLoadTuning.firstDetectTimeoutMs = 1000;
+  api.poseLoadTuning.totalTimeoutMs = 5000;
+  engine.sleep = async () => {};
+  // 这一段只管「下载失败 / GPU 兜底」：文件集不带 wasm 路径 → 不触发预热（预热与进度另有 [17e]）
+  engine.resolveVision = async () => ({});
+
+  /* ---- ① GPU 建不起来 → 自动 CPU 重试并成功，且记住 'cpu' ---- */
+  {
+    resetEngine();
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = '';
+    const delegates = [];
+    let fetched = 0;
+    let createOptions = null;
+    engine.fetchModel = async () => { fetched += 1; return bytes(); };
+    engine.createLandmarker = async (vision, options) => {
+      createOptions = options;
+      delegates.push(options.baseOptions.delegate);
+      if (options.baseOptions.delegate === 'GPU') {
+        const err = new Error('Failed to create WebGL context');
+        err.name = 'RuntimeError';
+        throw err;
+      }
+      return makeLandmarker();
+    };
+    const eventsBefore = diagEvents();
+    const okLoad = await api.loadPoseModel();
+    ok('GPU 建不起来（createFromOptions 抛错）→ 自动用 CPU 重试一次并成功',
+      okLoad === true && delegates.join(',') === 'GPU,CPU'
+      && engine.ready === true && engine.delegate === 'CPU' && api.state.engineReady === true,
+      JSON.stringify({ okLoad, delegates, delegate: engine.delegate, ready: engine.ready }));
+    ok('模型只下载一次：字节直接喂给 createFromOptions（第二次不再联网）',
+      fetched === 1 && createOptions?.baseOptions?.modelAssetBuffer?.byteLength === 4
+      && !createOptions?.baseOptions?.modelAssetPath,
+      JSON.stringify({ fetched, buffer: createOptions?.baseOptions?.modelAssetBuffer?.byteLength || 0 }));
+    ok('兜底成功 → settings.poseDelegate 记成 cpu（写进 localStorage，下次直接用 CPU）',
+      api.state.settings.poseDelegate === 'cpu'
+      && JSON.parse(store.get('mfg.settings.v1') || '{}').poseDelegate === 'cpu',
+      JSON.stringify({ setting: api.state.settings.poseDelegate, saved: JSON.parse(store.get('mfg.settings.v1') || '{}').poseDelegate }));
+    ok('兜底这一次也写进诊断日志（pose:delegate，GPU → CPU）',
+      diagEvents() > eventsBefore && api.coachDiag.snapshot().lastType === 'pose:delegate',
+      `${diagEvents()}/${api.coachDiag.snapshot().lastType}`);
+    ok('成功后遮罩收起、模型加载错误清空（state.modelError=null）',
+      mask.classList.contains('hidden') === true && api.state.modelError === null,
+      JSON.stringify({ hidden: mask.classList.contains('hidden'), modelError: api.state.modelError }));
+
+    // 下次启动：设置里已经是 cpu → 第一次就用 CPU，不再先失败一次
+    resetEngine();
+    api.state.engineReady = false;
+    const again = [];
+    engine.createLandmarker = async (vision, options) => {
+      again.push(options.baseOptions.delegate);
+      return makeLandmarker();
+    };
+    const okAgain = await api.loadPoseModel();
+    ok('下次启动直接用记住的 CPU（不再先试 GPU、不再先失败一次）',
+      okAgain === true && again.join(',') === 'CPU', JSON.stringify(again));
+  }
+
+  /* ---- ② fetch 404 → 重试 3 次后报错，文案带「HTTP 404」，重试期间显示「正在重试（n/3）」 ---- */
+  {
+    resetEngine();
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = '';
+    const retryTexts = [];
+    let fetches = 0;
+    let created = 0;
+    engine.fetchModel = async () => { fetches += 1; return { ok: false, status: 404 }; };
+    engine.createLandmarker = async () => { created += 1; return makeLandmarker(); };
+    // 重试前的退避正好发生在 onRetry 之后：在这里把遮罩上的那句话抄下来
+    engine.sleep = async () => { retryTexts.push(maskText.textContent); };
+    const eventsBefore = diagEvents();
+    const okLoad = await api.loadPoseModel();
+
+    ok('模型下载 404 → 首次 + 3 次重试（共 4 次请求）后才报错，且根本没去创建推理器',
+      okLoad === false && fetches === 4 && created === 0,
+      JSON.stringify({ okLoad, fetches, created }));
+    ok('重试期间遮罩上显示「正在重试（n/3）」（1/3 → 2/3 → 3/3，每次都带原因）',
+      retryTexts.length === 3
+      && retryTexts[0].includes(tPose('ui.poseRetry', { n: '1', max: '3' }))
+      && retryTexts[1].includes(tPose('ui.poseRetry', { n: '2', max: '3' }))
+      && retryTexts[2].includes(tPose('ui.poseRetry', { n: '3', max: '3' }))
+      && retryTexts.every((s) => s.includes('HTTP 404')),
+      JSON.stringify(retryTexts));
+    ok('最终提示是「模型文件下载失败（HTTP 404）」（阶段 + 一句话原因，用户能照念）',
+      maskText.textContent === api.poseFailText({
+        stage: 'model', errName: 'HttpError', reason: 'HTTP 404', status: 404,
+      })
+      && maskText.textContent.includes(tPose('ui.poseStageModel'))
+      && maskText.textContent.includes('HTTP 404'),
+      maskText.textContent);
+    ok('遮罩标题是「姿态模型加载失败」，按钮换成「重试加载模型」',
+      maskTitle.textContent === tPose('ui.maskModelFail')
+      && btnRetry.textContent === tPose('ui.poseRetryBtn')
+      && mask.classList.contains('hidden') === false,
+      JSON.stringify({ title: maskTitle.textContent, btn: btnRetry.textContent }));
+    ok('失败原因结构化留给界面 / 探针（stage=model、name=HttpError、status=404、engineReady=false）',
+      api.state.modelError?.stage === 'model' && api.state.modelError?.name === 'HttpError'
+      && api.state.modelError?.status === 404 && api.state.engineReady === false,
+      JSON.stringify(api.state.modelError));
+    ok('每次尝试都写进诊断日志：pose:load-fail（stage/name/message/attempt），最终 lastError 指向 pose',
+      diagEvents() - eventsBefore === 4
+      && api.coachDiag.snapshot().lastType === 'pose:load-fail'
+      && api.coachDiag.snapshot().lastError.startsWith('pose:')
+      && api.coachDiag.snapshot().lastError.includes('HttpError'),
+      JSON.stringify({ events: diagEvents() - eventsBefore, lastError: api.coachDiag.snapshot().lastError }));
+
+    // 服务器还没起来（fetch 直接抛 TypeError）同样重试 4 次，报错里带真实错误名
+    resetEngine();
+    const netRetryTexts = [];
+    let netFetches = 0;
+    engine.fetchModel = async () => { netFetches += 1; throw new TypeError('Failed to fetch'); };
+    engine.sleep = async () => { netRetryTexts.push(maskText.textContent); };
+    const okNet = await api.loadPoseModel();
+    ok('服务器比页面晚起来（fetch 抛 TypeError）也走同一套重试，提示里带真实错误名',
+      okNet === false && netFetches === 4 && netRetryTexts.length === 3
+      && maskText.textContent.includes('TypeError')
+      && api.state.modelError?.stage === 'model' && api.state.modelError?.name === 'TypeError',
+      JSON.stringify({ netFetches, text: maskText.textContent, modelError: api.state.modelError }));
+  }
+
+  /* ---- ③ 首帧推理超时 / wasm 失败不重试 ---- */
+  {
+    // CPU 也卡住 → 超时失败，文案带「超时」
+    resetEngine();
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = '';
+    engine.fetchModel = async () => bytes();
+    engine.sleep = async () => {};
+    engine.createLandmarker = async () => makeLandmarker({ detect: () => new Promise(() => {}) });
+    const okLoad = await api.loadPoseModel();
+    ok('首帧推理超时（默认 8s，测试里调成 1s）→ 失败，文案带「超时」而不是干等',
+      okLoad === false && api.state.modelError?.stage === 'detect'
+      && api.state.modelError?.name === 'TimeoutError'
+      && maskText.textContent.includes(tPose('ui.poseStageDetect'))
+      && maskText.textContent.includes(tPose('ui.poseReasonTimeout', { sec: '1' })),
+      JSON.stringify({ modelError: api.state.modelError, text: maskText.textContent }));
+
+    // GPU 首帧卡住、CPU 正常 → 自动切 CPU 并成功
+    resetEngine();
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = '';
+    const delegates = [];
+    engine.createLandmarker = async (vision, options) => {
+      delegates.push(options.baseOptions.delegate);
+      if (options.baseOptions.delegate === 'GPU') return makeLandmarker({ detect: () => new Promise(() => {}) });
+      return makeLandmarker();
+    };
+    const okCpu = await api.loadPoseModel();
+    ok('GPU 首帧推理超时 → 自动切 CPU 重试并成功（同样记住 cpu）',
+      okCpu === true && delegates.join(',') === 'GPU,CPU' && engine.delegate === 'CPU'
+      && api.state.settings.poseDelegate === 'cpu',
+      JSON.stringify({ okCpu, delegates, delegate: engine.delegate, setting: api.state.settings.poseDelegate }));
+
+    // wasm 编译失败：重试没用 → 只尝试一次，直接报错
+    resetEngine();
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = '';
+    let resolveCalls = 0;
+    let fetchCalls = 0;
+    engine.resolveVision = async () => {
+      resolveCalls += 1;
+      const err = new Error('RuntimeError: abort(CompileError)');
+      err.name = 'RuntimeError';
+      throw err;
+    };
+    engine.fetchModel = async () => { fetchCalls += 1; return bytes(); };
+    engine.createLandmarker = async () => makeLandmarker();
+    const okWasm = await api.loadPoseModel();
+    ok('wasm 初始化失败（RuntimeError）→ 不重试（只解析一次、模型一次都没下），提示带错误名',
+      okWasm === false && resolveCalls === 1 && fetchCalls === 0
+      && api.state.modelError?.stage === 'wasm'
+      && api.state.modelError?.name === 'RuntimeError'
+      && maskText.textContent.includes(tPose('ui.poseStageWasm'))
+      && maskText.textContent.includes('RuntimeError'),
+      JSON.stringify({ resolveCalls, fetchCalls, modelError: api.state.modelError, text: maskText.textContent }));
+  }
+
+  /* ---- ④ 成功路径不回归 ---- */
+  {
+    resetEngine();
+    engine.resolveVision = async () => ({});
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = '';
+    const delegates = [];
+    let fetched = 0;
+    engine.fetchModel = async () => { fetched += 1; return bytes(); };
+    engine.createLandmarker = async (vision, options) => {
+      delegates.push(options.baseOptions.delegate);
+      return makeLandmarker();
+    };
+    const lastErrorBefore = api.coachDiag.snapshot().lastError;
+    const okLoad = await api.loadPoseModel();
+    ok('成功路径：GPU 一次就建好 → 不写 poseDelegate（保持自动）、遮罩收起、没有失败日志',
+      okLoad === true && delegates.join(',') === 'GPU' && engine.delegate === 'GPU'
+      && api.state.settings.poseDelegate === '' && fetched === 1
+      && mask.classList.contains('hidden') === true
+      && api.state.engineReady === true && api.state.modelError === null
+      && api.coachDiag.snapshot().lastType !== 'pose:load-fail'
+      && api.coachDiag.snapshot().lastError === lastErrorBefore,
+      JSON.stringify({
+        okLoad, delegates, setting: api.state.settings.poseDelegate, lastType: api.coachDiag.snapshot().lastType,
+      }));
+    ok('成功时首帧自检确实跑过（时间戳只在自检成功后被推高，循环里的 detect 从它继续递增）',
+      engine._lastTs >= 0, String(engine._lastTs));
+  }
+
+  /* ---- ⑤ 纯函数：错误分类 / 三句可照念的提示 ---- */
+  {
+    ok('isRetryableLoadError：网络 / HTTP 类重试，WebGL / wasm 编译 / 超时不重试',
+      isRetryableLoadError(new PoseLoadError('model', 'HttpError', 'HTTP 404', { retryable: true })) === true
+      && isRetryableLoadError(new PoseLoadError('model', 'TypeError', 'Failed to fetch', { retryable: true })) === true
+      && isRetryableLoadError(new PoseLoadError('create', 'RuntimeError', 'webgl', { retryable: false })) === false
+      && isRetryableLoadError(new PoseLoadError('detect', 'TimeoutError', 'timeout', { retryable: false })) === false
+      && isRetryableLoadError(Object.assign(new Error('x'), { name: 'TypeError' })) === true
+      && isRetryableLoadError(Object.assign(new Error('x'), { name: 'RuntimeError' })) === false);
+    ok('normalizeDelegate：只认 GPU / CPU，其它（含空）一律 null=自动',
+      normalizeDelegate('gpu') === 'GPU' && normalizeDelegate('CPU') === 'CPU'
+      && normalizeDelegate('') === null && normalizeDelegate('webgpu') === null);
+
+    // 用户能照着念的三句话（中英文都从词条拼，不写死）
+    const http = api.poseFailText(new PoseLoadError('model', 'HttpError', 'HTTP 404', { status: 404 }));
+    const wasm = api.poseFailText(new PoseLoadError('wasm', 'RuntimeError', 'wasm compile failed'));
+    const timeout = api.poseFailText(new PoseLoadError('detect', 'TimeoutError', 'timeout after 8s', { seconds: 8 }));
+    ok('三种典型失败各有可照念的一行：HTTP 404 / wasm 编译失败：RuntimeError / 超时 8s',
+      http === `${tPose('ui.poseStageModel')}（${tPose('ui.poseReasonHttp', { status: '404' })}）`
+      && http.includes('HTTP 404')
+      && wasm.includes(tPose('ui.poseStageWasm')) && wasm.includes('RuntimeError')
+      && timeout.includes(tPose('ui.poseReasonTimeout', { sec: '8' })),
+      JSON.stringify({ http, wasm, timeout }));
+    ok('GPU 兜底的那句提示说清「已切 CPU + 已记住」（下次直接用 CPU）',
+      tPose('ui.poseGpuFallback').includes('CPU')
+      && tPose('ui.poseGpuFallback') !== 'ui.poseGpuFallback',
+      tPose('ui.poseGpuFallback'));
+  }
+
+  /* ---- 恢复现场：把桩换回 [1] 里那套「立刻失败」的隔离桩 ---- */
+  resetEngine();
+  engine.resolveVision = saved.resolveVision;
+  engine.createLandmarker = saved.createLandmarker;
+  engine.fetchModel = saved.fetchModel;
+  engine.sleep = saved.sleep;
+  engine.now = saved.now;
+  api.state.settings.modelKey = saved.modelKey;
+  api.state.settings.poseDelegate = saved.poseDelegate;
+  api.state.engineReady = saved.engineReady;
+  api.state.modelError = saved.modelError;
+  Object.assign(api.poseLoadTuning, saved.tuning);
+  api.showHome();
+  api.state.session = 'idle';
+}
+
+/* ------------------------------------------------------------------ *
+ * [17e] 姿态模型加载进度条 + 每阶段超时（用户反馈「一直显示正在加载姿态模型…但加载不成功」）
+ *
+ * 用户要求：「增加一个进度条，在加载姿态模型的时候通过进度条来反馈进度」。这里钉住：
+ *   ① 进度纯函数 composeProgress：按 运行库 40% / 模型 40% / 初始化 20% 合成，百分比单调不减，
+ *      拿不到总大小 → 不确定态（percent=null，绝不谎报）；
+ *   ② 流式下载：`response.body.getReader()` 逐块读、按 Content-Length 算百分比、进度回调递增，
+ *      字节拼出来的结果与源数据一致；
+ *   ③ 卡住超时：读流一直没有新字节 → 超时（错误里带「已收 / 总共」），提示文案说「超时」，
+ *      不会再出现「永远转圈」；
+ *   ④ 顺序与真实进度：先预热 wasm 两个文件、再下模型（各一次），进度条先出现在遮罩里、
+ *      三段依次变成「完成」，加载完收起；初始化那段的「已用秒数」与不确定态有对应 DOM 状态；
+ *   ⑤ 进度每 2 秒写一条诊断日志（`pose:progress`，只有数字），`done` 那条一定写。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[17e] 姿态模型加载进度条 + 每阶段超时（不再「永远转圈」）');
+{
+  const api = windowStub.__mfg;
+  const { t: tProg } = await import('../src/i18n.js');
+  const {
+    composeProgress, formatMB, PROGRESS_WEIGHTS, DOWNLOAD_STALL_TIMEOUT_MS, INIT_TIMEOUT_MS,
+  } = await import('../src/pose-engine.js');
+  const engine = api.engine;
+  const mask = elements.get('stageMask');
+  const box = elements.get('modelProgress');
+  const pctEl = elements.get('mpPercent');
+
+  const saved = {
+    resolveVision: engine.resolveVision,
+    createLandmarker: engine.createLandmarker,
+    fetchModel: engine.fetchModel,
+    sleep: engine.sleep,
+    poseDelegate: api.state.settings.poseDelegate,
+    engineReady: api.state.engineReady,
+    modelError: api.state.modelError,
+    tuning: { ...api.poseLoadTuning },
+  };
+  const makeLandmarker = ({ detect } = {}) => ({
+    closed: false,
+    close() { this.closed = true; },
+    detectForVideo: detect || (() => ({ landmarks: [[{ x: 0.5, y: 0.5, z: 0, visibility: 1 }]] })),
+  });
+  const resetEngine = () => { engine.close(); engine._vision = null; engine._wasmWarmed = ''; };
+
+  /** 造一个「有流式 body」的假 Response（chunks 逐块吐；total 写 Content-Length） */
+  const streamResponse = (chunks, total) => ({
+    ok: true,
+    headers: { get: (name) => (String(name).toLowerCase() === 'content-length' ? String(total) : null) },
+    body: {
+      getReader() {
+        let i = 0;
+        return {
+          read: async () => {
+            if (i >= chunks.length) return { done: true, value: undefined };
+            const value = chunks[i];
+            i += 1;
+            return { done: false, value };
+          },
+          cancel: async () => {},
+          releaseLock() {},
+        };
+      },
+    },
+  });
+
+  // 纯函数先来：权重、单调、边界
+  ok('超时阈值是这一套：下载 60s 没新字节 / 初始化 20s（一处定义在 pose-engine.js）',
+    DOWNLOAD_STALL_TIMEOUT_MS === 60000 && INIT_TIMEOUT_MS === 20000
+    && PROGRESS_WEIGHTS.wasm === 0.4 && PROGRESS_WEIGHTS.model === 0.4 && PROGRESS_WEIGHTS.init === 0.2,
+    JSON.stringify({ DOWNLOAD_STALL_TIMEOUT_MS, INIT_TIMEOUT_MS, PROGRESS_WEIGHTS }));
+
+  ok('composeProgress：运行库 40% / 模型 40% / 初始化 20%（逐步走完正好 100%）',
+    composeProgress({}).percent === 0
+    && composeProgress({ wasm: { loaded: 5, total: 5 }, model: { loaded: 0, total: 5 } }).percent === 40
+    && composeProgress({ wasm: { loaded: 5, total: 5 }, model: { loaded: 5, total: 5 } }).percent === 80
+    && composeProgress({ wasm: { loaded: 5, total: 5 }, model: { loaded: 5, total: 5 }, init: 0.5 }).percent === 90
+    && composeProgress({
+      wasm: { loaded: 5, total: 5, done: true },
+      model: { loaded: 5, total: 5, done: true },
+      init: 1,
+    }).percent === 100,
+    JSON.stringify(['', 'wasm done', 'both done', 'init half', 'all done'].map((label, i) => [
+      label, [composeProgress({}), composeProgress({ wasm: { loaded: 5, total: 5 }, model: { loaded: 0, total: 5 } }),
+        composeProgress({ wasm: { loaded: 5, total: 5 }, model: { loaded: 5, total: 5 } }),
+        composeProgress({ wasm: { loaded: 5, total: 5 }, model: { loaded: 5, total: 5 }, init: 0.5 }),
+        composeProgress({ wasm: { loaded: 5, total: 5, done: true }, model: { loaded: 5, total: 5, done: true }, init: 1 })][i].percent,
+    ])));
+
+  ok('composeProgress：字节增长时百分比单调不减（进度条不会往回跳）',
+    (() => {
+      const percents = [0, 1, 2, 3, 4, 5].map((loaded) => composeProgress({
+        wasm: { loaded: 5, total: 5, done: true },
+        model: { loaded, total: 5 },
+      }).percent);
+      return percents.every((p, i) => i === 0 || p >= percents[i - 1]) && percents.at(-1) === 80;
+    })(),
+    JSON.stringify([0, 1, 2, 3, 4, 5].map((loaded) => composeProgress({
+      wasm: { loaded: 5, total: 5, done: true }, model: { loaded, total: 5 },
+    }).percent)));
+
+  ok('composeProgress：拿不到 Content-Length（total 未知）→ 不确定态（percent=null），不谎报百分比',
+    (() => {
+      const p = composeProgress({ wasm: { loaded: 1024, total: 0 } });
+      return p.percent === null && p.indeterminate === true && p.wasm.loaded === 1024;
+    })(),
+    JSON.stringify(composeProgress({ wasm: { loaded: 1024, total: 0 } })));
+
+  ok('formatMB：B / KB / MB 三档都写得出来（进度条与失败原因共用同一份）',
+    formatMB(0) === '0B' && formatMB(2048) === '2KB' && formatMB(5.6 * 1024 * 1024) === '5.6MB',
+    `${formatMB(0)} ${formatMB(2048)} ${formatMB(5.6 * 1024 * 1024)}`);
+
+  /* ---- 流式下载：进度递增 + 字节正确 ---- */
+  {
+    const events = [];
+    engine.fetchModel = async () => streamResponse(
+      [new Uint8Array([1, 2]), new Uint8Array([3, 4, 5])], 5,
+    );
+    const got = await engine.downloadWithProgress('model.task', {
+      stage: 'model', timeoutMs: 1000, onProgress: (p) => events.push(p),
+    });
+    ok('流式下载：逐块读完得到的字节与源数据一致（拼装没丢没重）',
+      got.byteLength === 5 && [...got].join(',') === '1,2,3,4,5',
+      `${got.byteLength}:${[...got].join(',')}`);
+    ok('流式下载：进度回调按 Content-Length 递增（0 → 2 → 5 → 完成），最后一条 done=true',
+      events.length >= 3 && events[0].loaded === 0 && events[0].total === 5
+      && events.every((e, i) => i === 0 || e.loaded >= events[i - 1].loaded)
+      && events.at(-1).loaded === 5 && events.at(-1).done === true,
+      JSON.stringify(events.map((e) => [e.loaded, e.total, !!e.done])));
+    ok('流式下载：进度换算成百分比也是单调不减的（进度条不会抖回去）',
+      (() => {
+        const percents = events.map((e) => composeProgress({ model: e }).percent);
+        return percents.every((p, i) => i === 0 || p >= percents[i - 1]);
+      })(),
+      JSON.stringify(events.map((e) => composeProgress({ model: e }).percent)));
+  }
+
+  /* ---- 卡住超时：读流一直没有新字节 → 超时（带「已收 / 总共」）---- */
+  {
+    let reads = 0;
+    engine.fetchModel = async () => ({
+      ok: true,
+      headers: { get: () => '10000' },
+      body: {
+        getReader: () => ({
+          read: () => {
+            reads += 1;
+            if (reads === 1) return Promise.resolve({ done: false, value: new Uint8Array(5000) });
+            return new Promise(() => {});   // 之后永远不返回（就是用户遇到的「卡死」）
+          },
+          cancel: async () => {},
+          releaseLock() {},
+        }),
+      },
+    });
+    let stall = null;
+    try {
+      await engine.downloadWithProgress('model.task', { stage: 'model', timeoutMs: 1000 });
+    } catch (err) { stall = err; }
+    ok('下载卡住（60s 没有新字节，测试里调成 1s）→ 超时失败，而不是永远 await',
+      !!stall && stall.name === 'PoseLoadError' && stall.errName === 'TimeoutError'
+      && stall.stage === 'model' && stall.seconds === 1,
+      JSON.stringify(stall && { name: stall.name, errName: stall.errName, stage: stall.stage, seconds: stall.seconds }));
+    ok('超时错误带着「已收 / 总共」字节（界面才能说清是网慢还是根本没开始）',
+      stall.loaded === 5000 && stall.total === 10000,
+      JSON.stringify({ loaded: stall.loaded, total: stall.total }));
+    const reason = api.poseFailReason(stall);
+    ok('卡住时的提示文案带「超时」+ 已收 / 总共（如「超时 1s（已收 5KB / 10KB）」）',
+      reason === tProg('ui.poseReasonStall', {
+        sec: '1', got: formatMB(5000), total: formatMB(10000),
+      })
+      && reason.includes('超时') && reason.includes(formatMB(5000)),
+      reason);
+  }
+
+  /* ---- 真实加载：先预热 wasm，再下模型，进度条出现在遮罩里并在结束后收起 ---- */
+  {
+    resetEngine();
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = '';
+    const calls = [];
+    engine.resolveVision = async () => ({
+      wasmLoaderPath: '/vendor/tasks-vision/wasm/vision_wasm_internal.js',
+      wasmBinaryPath: '/vendor/tasks-vision/wasm/vision_wasm_internal.wasm',
+    });
+    engine.fetchModel = async (url) => {
+      calls.push(String(url));
+      const isWasm = String(url).endsWith('.wasm');
+      return streamResponse([new Uint8Array(isWasm ? 8 : 2)], isWasm ? 8 : 2);
+    };
+    engine.createLandmarker = async () => makeLandmarker();
+
+    const pending = api.loadPoseModel();
+    ok('加载过程中遮罩里出现进度条（真实进度，不是假转圈）：三段都摆出来了',
+      box.hidden === false
+      && !!elements.get('mpFillWasm') && !!elements.get('mpFillModel') && !!elements.get('mpFillInit'));
+    const okLoad = await pending;
+    ok('加载顺序：先预热运行库两个文件（.js + .wasm），再下模型，各一次（不重复下载）',
+      okLoad === true && calls.length === 3
+      && calls[0].endsWith('vision_wasm_internal.js') && calls[1].endsWith('vision_wasm_internal.wasm')
+      && calls[2].endsWith('pose_landmarker_lite.task'),
+      JSON.stringify(calls));
+    ok('加载完成：整条进度条收起、三段都是「完成」、总百分比 100%',
+      box.hidden === true && api.modelProgressState.shownPercent === 100
+      && elements.get('mpRowWasm').dataset.state === 'done'
+      && elements.get('mpRowModel').dataset.state === 'done'
+      && elements.get('mpRowInit').dataset.state === 'done'
+      && elements.get('mpMetaWasm').textContent === tProg('ui.modelProgressDone'),
+      JSON.stringify({
+        hidden: box.hidden,
+        shown: api.modelProgressState.shownPercent,
+        wasm: elements.get('mpRowWasm').dataset.state,
+        model: elements.get('mpRowModel').dataset.state,
+        init: elements.get('mpRowInit').dataset.state,
+      }));
+    ok('进度也写进了诊断日志（lastType = pose:progress，只有数字、没有二进制）',
+      api.coachDiag.snapshot().lastType === 'pose:progress',
+      api.coachDiag.snapshot().lastType);
+  }
+
+  /* ---- 进度条 DOM：百分比 / 字节 / 不确定态 ---- */
+  {
+    api.resetModelProgress();
+    api.modelProgressState.wasm = { loaded: 250, total: 500, bps: 0, done: false };
+    api.modelProgressState.model = { loaded: 100, total: 500, bps: 0, done: false };
+    const sum = api.renderModelProgress();
+    ok('进度条：按权重算出的百分比直接写在遮罩上（250/500 与 100/500 → 28%）',
+      sum.percent === 28 && pctEl.textContent === '28%'
+      && elements.get('mpMetaWasm').textContent === '250B / 500B'
+      && elements.get('mpRowWasm').dataset.state === 'running',
+      JSON.stringify({ percent: sum.percent, pct: pctEl.textContent, meta: elements.get('mpMetaWasm').textContent }));
+
+    api.resetModelProgress();
+    api.modelProgressState.wasm = { loaded: 999, total: 0, bps: 0, done: false };
+    api.renderModelProgress();
+    ok('进度条：拿不到总大小时显示「进行中…」+ 不确定态（脉冲由 CSS 负责）',
+      pctEl.textContent === tProg('ui.modelProgressIndeterminate')
+      && elements.get('mpRowWasm').dataset.state === 'indeterminate'
+      && elements.get('mpMetaWasm').textContent.includes('999B'),
+      JSON.stringify({ pct: pctEl.textContent, state: elements.get('mpRowWasm').dataset.state }));
+
+    api.resetModelProgress();
+    api.modelProgressState.init = 0;   // 初始化没开始 → 等待中
+    api.renderModelProgress();
+    ok('进度条：还没开始的阶段显示「等待中」，初始化进行中显示已用秒数（数字是真的）',
+      elements.get('mpRowInit').dataset.state === 'waiting'
+      && elements.get('mpMetaInit').textContent === tProg('ui.modelProgressWaiting')
+      && api.modelProgressState.init === 0,
+      JSON.stringify({ state: elements.get('mpRowInit').dataset.state, meta: elements.get('mpMetaInit').textContent }));
+    api.resetModelProgress();
+  }
+
+  /* ---- 进度写日志：每 2 秒一条，done 一定写 ---- */
+  {
+    api.poseProgressLog.lastAt = 0;
+    const before = api.coachDiag.snapshot().events;
+    const first = api.notePoseProgress({ stage: 'model', loaded: 1000, total: 2000, bps: 500 });
+    const second = api.notePoseProgress({ stage: 'model', loaded: 1500, total: 2000, bps: 500 });
+    const afterThrottle = api.coachDiag.snapshot().events;
+    const done = api.notePoseProgress({
+      stage: 'model', loaded: 2000, total: 2000, bps: 500, done: true,
+    });
+    ok('进度日志：2 秒内的重复进度被节流（只写一条），但 done 那条一定写',
+      first === true && second === false && done === true
+      && afterThrottle === before + 1 && api.coachDiag.snapshot().events === before + 2,
+      JSON.stringify({ first, second, done, events: api.coachDiag.snapshot().events - before }));
+  }
+
+  /* ---- 卡死 → 超时 → 失败提示（用户看到的那句话）---- */
+  {
+    resetEngine();
+    api.state.settings.poseDelegate = '';
+    api.state.engineReady = false;
+    api.poseLoadTuning.stallTimeoutMs = 1000;
+    api.poseLoadTuning.attempts = 1;
+    api.poseLoadTuning.retryDelays = [0];
+    engine.sleep = async () => {};
+    engine.resolveVision = async () => ({});
+    engine.fetchModel = async () => ({
+      ok: true,
+      headers: { get: () => '5600000' },
+      body: {
+        getReader: () => ({
+          read: () => new Promise(() => {}),   // 模型：一块都没来（卡死）
+          cancel: async () => {},
+          releaseLock() {},
+        }),
+      },
+    });
+    const okLoad = await api.loadPoseModel();
+    ok('模型下载卡死 → 1s 后失败（不再永远「正在加载」），提示带阶段 + 超时 + 已收 / 总共',
+      okLoad === false
+      && elements.get('maskText').textContent === api.poseFailText({
+        stage: 'model', errName: 'TimeoutError', reason: 'no data', seconds: 1, loaded: 0, total: 5600000,
+      })
+      && elements.get('maskText').textContent.includes(tProg('ui.poseStageModel'))
+      && elements.get('maskText').textContent.includes('超时')
+      && elements.get('maskText').textContent.includes('5.3MB'),
+      elements.get('maskText').textContent);
+    ok('卡死失败后进度条也收起（不会盖着错误提示）', box.hidden === true);
+    ok('卡死失败写进诊断日志：pose:load-fail（stage=model / name=TimeoutError）',
+      api.state.modelError?.stage === 'model' && api.state.modelError?.name === 'TimeoutError'
+      && api.coachDiag.snapshot().lastType === 'pose:load-fail',
+      JSON.stringify(api.state.modelError));
+  }
+
+  /* ---- file:// 打开：fetch 会被浏览器拦住 → 明确报「打开方式不对」，不干等 ---- */
+  {
+    resetEngine();
+    api.state.settings.poseDelegate = '';
+    api.state.engineReady = false;
+    const savedLocation = globalThis.location;
+    const savedFetchModel = engine.fetchModel;
+    let fetched = 0;
+    engine.fetchModel = async () => { fetched += 1; return new Promise(() => {}); };
+    Object.defineProperty(globalThis, 'location', {
+      value: { protocol: 'file:', host: '', search: '', href: 'file:///C:/x/index.html' },
+      configurable: true,
+      writable: true,
+    });
+    const okLoad = await api.loadPoseModel();
+    Object.defineProperty(globalThis, 'location', { value: savedLocation, configurable: true, writable: true });
+    engine.fetchModel = savedFetchModel;
+    ok('从 file:// 打开 → 立刻明确报「打开方式不对」（不是从 http://127.0.0.1:4174 打开的）',
+      okLoad === false && fetched === 0
+      && api.state.modelError?.stage === 'env'
+      && api.state.modelError?.name === 'FileProtocol'
+      && elements.get('maskText').textContent.includes(tProg('ui.poseStageEnv'))
+      && elements.get('maskText').textContent.includes('127.0.0.1:4174'),
+      JSON.stringify({ okLoad, fetched, modelError: api.state.modelError, text: elements.get('maskText').textContent }));
+  }
+
+  // 恢复现场
+  resetEngine();
+  engine.resolveVision = saved.resolveVision;
+  engine.createLandmarker = saved.createLandmarker;
+  engine.fetchModel = saved.fetchModel;
+  engine.sleep = saved.sleep;
+  api.state.settings.poseDelegate = saved.poseDelegate;
+  api.state.engineReady = saved.engineReady;
+  api.state.modelError = saved.modelError;
+  Object.assign(api.poseLoadTuning, saved.tuning);
+  api.resetModelProgress();
+  api.showHome();
   api.state.session = 'idle';
 }
 

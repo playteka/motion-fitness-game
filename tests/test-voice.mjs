@@ -2236,6 +2236,57 @@ console.log('\n[24] 语音诊断：事件收集 / 批量落盘 / snapshot / 脱�
     && !/\bdocument\b/.test(fs.readFileSync(new URL('../src/voice/selftest.js', import.meta.url), 'utf8')));
   ok('自检的四步固定为 mic → ws → send → result（界面与失败文案都按这四步）',
     SELF_TEST_STEPS.join(',') === 'mic,ws,send,result');
+
+  /* ---- 姿态模型加载失败（用户反馈「点开始就姿态模型加载失败」）也走这份诊断日志 ---- */
+  {
+    // app.js 只记这几个字段：阶段 / 真实错误名 / 一句话原因 / delegate / HTTP 状态 / 第几次尝试
+    // —— 没有截图、没有图像、没有音频。
+    const pose = createDiag({ fetch: async () => ({ ok: true }), timer: false, now: () => 1700000001000 });
+    pose.record('pose:load-fail', {
+      stage: 'model',
+      name: 'HttpError',
+      message: 'HTTP 404',
+      delegate: 'GPU',
+      status: 404,
+      attempt: 4,
+      retry: 0,
+    });
+    const snapPose = pose.snapshot();
+    ok('pose:load-fail 进 snapshot：lastType 记类型、lastError 说清阶段与错误名（排障一眼看到）',
+      snapPose.lastType === 'pose:load-fail' && snapPose.events === 1
+      && snapPose.lastError === 'pose: model HttpError',
+      JSON.stringify({ lastType: snapPose.lastType, lastError: snapPose.lastError }));
+
+    // 落盘那一行：字段固定、文本截断、敏感键脱敏，绝不带图像 / 音频 / 凭证
+    const poseFields = {
+      stage: 'model',
+      name: 'HttpError',
+      message: `HTTP 404 ${'x '.repeat(120)}`,
+      delegate: 'GPU',
+      status: 404,
+      attempt: 4,
+      retry: 0,
+    };
+    const entry = makeEntry('pose:load-fail', poseFields, { now: () => 1700000001000 });
+    ok('pose:load-fail 的字段就是「阶段 / 错误名 / 原因 / delegate / 状态 / 尝试次数」（t+type 之外不夹带）',
+      Object.keys(entry).sort().join(',')
+        === ['attempt', 'delegate', 'message', 'name', 'retry', 'stage', 'status', 't', 'type'].sort().join(',')
+      && entry.stage === 'model' && entry.name === 'HttpError' && entry.delegate === 'GPU'
+      && entry.status === 404 && entry.attempt === 4 && entry.retry === 0,
+      Object.keys(entry).join(','));
+    ok('pose:load-fail 的说明文本截断到 80 字（日志不会被一整篇 base64 撑爆）',
+      entry.message.length === 80 && entry.message.startsWith('HTTP 404 '), String(entry.message.length));
+    const dirty = makeEntry('pose:load-fail', {
+      ...poseFields,
+      audio: new Float32Array(4).fill(0.5),
+      pcm: 'raw',
+      apiKey: 'sk-live-1234567890abcdef',
+    }, { now: () => 1700000001000 });
+    ok('pose:load-fail 里的敏感键（audio / pcm / apiKey）一律 [redacted]，不写进日志',
+      dirty.audio === '[redacted]' && dirty.pcm === '[redacted]'
+      && dirty.apiKey === '[redacted]'
+      && !JSON.stringify(dirty).includes('sk-live') && !JSON.stringify(dirty).includes('0.5'));
+  }
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

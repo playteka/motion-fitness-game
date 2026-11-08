@@ -442,6 +442,86 @@ kbd {
 .mask-inner p { color: var(--muted); font-size: 13.5px; margin: 0 0 16px; }
 .mask-hint { margin-top: 14px !important; font-size: 12.5px !important; color: #6f819c !important; }
 
+/* ---------- 姿态模型加载进度条 ----------
+   用户要求：「增加一个进度条，在加载姿态模型的时候通过进度条来反馈进度」。
+   显示的是**真实字节进度**（运行库 40% + 模型 40% + 初始化 20%，见 app.js 的
+   renderModelProgress / pose-engine 的 composeProgress），不是假的转圈：
+     · 有总大小时 → 填充条按 loaded / total 走；
+     · 拿不到 Content-Length → data-state="indeterminate"，条满格 + 脉冲；
+     · 每一步都有一行小字（已收 / 总大小 / 速率，或初始化的已用秒数）。
+   放在开始遮罩里（「正在加载姿态模型…」那句话下面），不挡 HUD 与圆环。 */
+.model-progress {
+  margin: 4px auto 14px;
+  width: min(100%, 420px);
+  text-align: left;
+  background: rgba(9, 16, 26, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+.model-progress[hidden] { display: none; }
+.mp-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: #dbe9fb;
+  font-weight: 600;
+}
+.mp-percent { color: var(--accent); font-variant-numeric: tabular-nums; }
+.mp-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--muted);
+}
+.mp-name { white-space: nowrap; }
+.mp-track {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.mp-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  transition: width 0.25s ease-out;
+}
+.mp-meta {
+  min-width: 96px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #9fb3cd;
+  white-space: nowrap;
+}
+.mp-row[data-state="done"] { color: #cfe9d8; }
+.mp-row[data-state="done"] .mp-fill { background: linear-gradient(90deg, #34d399, var(--good)); }
+/* 不确定态（拿不到总大小 / 初始化那一段）：整条亮着呼吸，只有数字是真的 */
+.mp-row[data-state="indeterminate"] .mp-fill {
+  width: 100% !important;
+  background: repeating-linear-gradient(
+    90deg, rgba(56, 189, 248, 0.5) 0 8px, rgba(56, 189, 248, 0.15) 8px 16px
+  );
+  animation: mp-breathe 1.4s ease-in-out infinite;
+}
+@keyframes mp-breathe {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+/* 关掉动效的用户只看数字 / 填充条（用户要求：prefers-reduced-motion 时不动画） */
+@media (prefers-reduced-motion: reduce) {
+  .mp-row[data-state="indeterminate"] .mp-fill { animation: none; opacity: 0.7; }
+  .mp-fill { transition: none; }
+}
+
 /* ---------- 摄像头诊断面板（打不开时列出客观事实，可折叠） ----------
    手机上打不开摄像头时，用户最需要的是「一眼看出卡在哪」：isSecureContext / 协议 /
    mediaDevices / getUserMedia 报错 / 画面尺寸 / video 属性，最后一句处置建议。

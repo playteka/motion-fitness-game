@@ -98,6 +98,31 @@
               <div class="mask-icon" id="maskIcon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg></div>
               <h2 id="maskTitle" data-i18n="ui.maskTitle"></h2>
               <p id="maskText" data-i18n="ui.maskText"></p>
+              <!-- 姿态模型加载进度条（用户要求：加载时用进度条反馈进度）：
+                   ① 下载运行库 40% ② 下载模型 40% ③ 初始化识别器 20%，都是真实字节进度。
+                   只在加载模型时出现（app.js 的 renderModelProgress 填内容），成功 / 失败后整块隐藏；
+                   prefers-reduced-motion 下不动画（样式在 style.css 的 .model-progress）。 -->
+              <div class="model-progress" id="modelProgress" hidden>
+                <div class="mp-head">
+                  <span id="mpTitle" data-i18n="ui.modelProgressTitle"></span>
+                  <b class="mp-percent" id="mpPercent"></b>
+                </div>
+                <div class="mp-row" id="mpRowWasm" data-state="waiting">
+                  <span class="mp-name" data-i18n="ui.modelStageWasm"></span>
+                  <span class="mp-track"><i class="mp-fill" id="mpFillWasm"></i></span>
+                  <span class="mp-meta" id="mpMetaWasm"></span>
+                </div>
+                <div class="mp-row" id="mpRowModel" data-state="waiting">
+                  <span class="mp-name" data-i18n="ui.modelStageModel"></span>
+                  <span class="mp-track"><i class="mp-fill" id="mpFillModel"></i></span>
+                  <span class="mp-meta" id="mpMetaModel"></span>
+                </div>
+                <div class="mp-row" id="mpRowInit" data-state="waiting">
+                  <span class="mp-name" data-i18n="ui.modelStageInit"></span>
+                  <span class="mp-track"><i class="mp-fill" id="mpFillInit"></i></span>
+                  <span class="mp-meta" id="mpMetaInit"></span>
+                </div>
+              </div>
               <button class="primary-btn" id="btnStartCam" type="button" data-i18n="ui.startCam"></button>
               <p class="mask-hint" data-i18n="ui.maskHint"></p>
               <!-- 摄像头诊断面板（手机 / PC 通用，可折叠）：

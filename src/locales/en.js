@@ -134,6 +134,37 @@ export default {
     maskModelLoading: 'Loading the pose model…',
     maskModelText: 'The first load takes a few seconds (the model is a local file — no internet needed).',
     maskModelFail: 'Couldn’t load the pose model',
+    // The readable failure line (see the stages in pose-engine.js and poseFailText in app.js):
+    // "stage (reason)", e.g. "model download failed (HTTP 404)"
+    poseFailText: '{stage} ({reason})',
+    poseStageWasm: 'wasm setup failed',
+    poseStageModel: 'model download failed',
+    poseStageCreate: 'inference engine creation failed',
+    poseStageDetect: 'first-frame inference failed',
+    poseStageTimeout: 'loading timed out',
+    poseStageUnknown: 'unknown stage',
+    poseReasonHttp: 'HTTP {status}',
+    poseReasonTimeout: 'timed out after {sec}s',
+    poseReasonUnknown: 'unknown reason',
+    // A stalled download (no new bytes for 60s) also says how much arrived
+    poseReasonStall: 'timed out after {sec}s ({got} / {total} received)',
+    // Opened the wrong way (file:// or another protocol): the browser blocks fetch, so the model never arrives
+    poseStageEnv: 'wrong way to open the page',
+    poseReasonFileUrl: 'this page is not opened from http://127.0.0.1:4174 (file:// blocks the model and the camera)',
+    // Progress bar (real byte progress: runtime 40% / model 40% / init 20%)
+    modelProgressTitle: 'Loading the pose model…',
+    modelStageWasm: '① Runtime (wasm)',
+    modelStageModel: '② Model file',
+    modelStageInit: '③ Starting the engine',
+    modelProgressWaiting: 'Waiting',
+    modelProgressDone: 'Done',
+    modelProgressIndeterminate: 'In progress…',
+    modelInitElapsed: '{sec}s elapsed',
+    // Shown on the mask while a download-class failure is being retried (first try + 3 retries)
+    poseRetry: 'Retrying ({n}/{max})',
+    poseRetryBtn: 'Retry loading the model',
+    // GPU could not start → switched to CPU and remembered (the next start goes straight to CPU)
+    poseGpuFallback: 'GPU init failed — switched to CPU inference (remembered, so the next start goes straight to CPU)',
     maskUnsupportedTitle: 'This browser doesn’t support the camera',
     maskUnsupportedText: 'Please use the latest Chrome / Edge / Safari and open this page over http(s).',
     // Shown when the page is not a secure context (http + LAN IP): the usual reason a phone can’t open the camera

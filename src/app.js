@@ -9,7 +9,11 @@ import {
 } from './exercises.js';
 import { LandmarkSmoother, toMetric, clamp, LM } from './geometry.js';
 import { computeFrame } from './metrics.js';
-import { PoseEngine, Camera } from './pose-engine.js';
+import {
+  PoseEngine, Camera,
+  PoseLoadError, RETRY_DELAYS, LOAD_ATTEMPTS, FIRST_DETECT_TIMEOUT_MS, LOAD_TIMEOUT_MS,
+  DOWNLOAD_STALL_TIMEOUT_MS, INIT_TIMEOUT_MS, composeProgress, formatMB,
+} from './pose-engine.js';
 import { PoseRenderer } from './render.js';
 import { AudioKit, TRACKS, getTrack, DEFAULT_TRACK } from './audio.js';
 import { Calibrator, requiredView } from './calibration.js';
@@ -88,6 +92,13 @@ const DEFAULT_SETTINGS = {
   // 所以时长另开一份 settings.seconds，老字段原样留着不读。
   seconds: {},
   camDeviceId: null,
+  /**
+   * 上次成功加载姿态模型用的 delegate：'gpu' / 'cpu' / ''（空 = 自动，先试 GPU）。
+   *
+   * 用户反馈「点开始就姿态模型加载失败」：GPU delegate 建不起来时，原来每次都要先失败一次
+   * 再换 CPU。现在兜底成功就把 'cpu' 记在这里，下次启动直接用它，不再先失败一次。
+   */
+  poseDelegate: '',
   /**
    * AI 语音教练（P3.0 基座）的开关：**默认关**。
    * 设置弹窗里的开关与视频界面的 Ctrl+I 写的是同一个字段，所以两边永远同步。
@@ -202,6 +213,8 @@ const state = {
   /** 最近一次 getUserMedia 的 name / message（诊断面板用；camError 是拼好的字符串，给探针看） */
   camErrName: '',
   camErrMessage: '',
+  /** 最近一次**姿态模型加载失败**的结构化原因（stage / name / message；成功清空） */
+  modelError: null,
   /** 最近一帧「手/脚」离右上角退出圆环多远（🐞 面板用：排查到底有没有识别到手/脚） */
   touchInfo: null,
   consoleErrors: [],
@@ -6170,10 +6183,350 @@ function loop() {
 
 /** 给可能卡住的异步操作加超时，避免界面永远停在“正在打开摄像头…” */
 function withTimeout(promise, ms, message) {
+  // message 可以是文案，也可以是一个 Error（模型加载超时要用带 stage 的 PoseLoadError，才说得清原因）
+  const reason = message instanceof Error ? message : new Error(message);
   return Promise.race([
     promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+    new Promise((_, reject) => setTimeout(() => reject(reason), ms)),
   ]);
+}
+
+/* ------------------------------------------------------------------ *
+ * 姿态模型加载：分阶段 + 自动重试 + GPU → CPU 兜底
+ *
+ * 用户反馈：「在首页点击开始按钮，出现『姿态模型加载失败』」。服务器侧资源全是 200，
+ * 所以问题在浏览器里：GPU delegate 建不起来、服务器比页面晚起来（fetch 失败）、
+ * 或者错误被一句笼统的「加载失败」盖住了 —— 用户没法把真实原因念出来。
+ *
+ * 这里做三件事（细节在 src/pose-engine.js）：
+ *   ① 失败提示带**阶段 + 错误名 + 一句话原因**（如「模型文件下载失败（HTTP 404）」）；
+ *   ② 下载类失败自动重试（退避 400 / 900 / 1800ms，首次 + 3 次），遮罩上显示「正在重试（n/3）」；
+ *   ③ GPU 建不起来 / 首帧推理失败或超时 → 自动换 CPU 重试，并把 'cpu' 记进设置
+ *      （settings.poseDelegate，下次启动直接用 CPU，不再先失败一次）。
+ * 每次失败都写一条 `pose:load-fail` 进诊断日志（logs/coach-diag.jsonl；只有文本、截断、不含图像）。
+ * ------------------------------------------------------------------ */
+
+/** 失败阶段 → 界面词条（一处定义：pose-engine 的 stage 与词条一一对应） */
+const POSE_STAGE_KEYS = {
+  wasm: 'ui.poseStageWasm',
+  model: 'ui.poseStageModel',
+  create: 'ui.poseStageCreate',
+  detect: 'ui.poseStageDetect',
+  timeout: 'ui.poseStageTimeout',
+  env: 'ui.poseStageEnv',
+  unknown: 'ui.poseStageUnknown',
+};
+
+/**
+ * 加载时的几个数（**只有这一处**）：重试次数 / 退避间隔 / 首帧超时 / 下载卡住超时 /
+ * 初始化超时 / 整体超时。
+ * 测试直接改 `window.__mfg.poseLoadTuning` 把它调小，不必真等 8 秒 / 60 秒 / 240 秒。
+ */
+const poseLoadTuning = {
+  attempts: LOAD_ATTEMPTS,
+  retryDelays: [...RETRY_DELAYS],
+  firstDetectTimeoutMs: FIRST_DETECT_TIMEOUT_MS,
+  stallTimeoutMs: DOWNLOAD_STALL_TIMEOUT_MS,
+  initTimeoutMs: INIT_TIMEOUT_MS,
+  totalTimeoutMs: LOAD_TIMEOUT_MS,
+};
+
+/** 失败对象 → 结构化信息（界面与诊断日志共用；只有文本，不含任何图像） */
+function loadErrorInfo(err) {
+  if (!err || typeof err !== 'object') {
+    return {
+      stage: 'unknown', name: 'Error', message: String(err || ''), delegate: '', status: 0, seconds: 0, loaded: 0, total: 0,
+    };
+  }
+  const name = String(err.errName || err.name || 'Error');
+  const rawStage = String(err.stage || (name === 'TimeoutError' ? 'timeout' : 'unknown'));
+  return {
+    stage: POSE_STAGE_KEYS[rawStage] ? rawStage : 'unknown',
+    name,
+    message: String(err.reason || err.message || '').slice(0, 120),
+    delegate: String(err.delegate || ''),
+    status: Number(err.status) || 0,
+    seconds: Number(err.seconds) || 0,
+    loaded: Number(err.loaded) || 0,
+    total: Number(err.total) || 0,
+  };
+}
+
+/**
+ * 一句话原因（用户能照着念的就是这一句）：
+ *   HTTP 404 / 超时 8s / 下载卡住（已收 2.9MB / 5.6MB）/ TypeError: Failed to fetch / RuntimeError: …
+ */
+function poseFailReason(err) {
+  const info = loadErrorInfo(err);
+  if (info.name === 'HttpError' && info.status) {
+    return t('ui.poseReasonHttp', { status: String(info.status) });
+  }
+  if (info.name === 'FileProtocol') return t('ui.poseReasonFileUrl');
+  if (info.name === 'TimeoutError') {
+    const sec = String(info.seconds || Math.round((poseLoadTuning.firstDetectTimeoutMs || 0) / 1000));
+    // 下载卡住时把「已收多少 / 总共多少」也说出来，用户一眼知道是网慢还是根本没开始
+    if (info.total > 0 && info.stage !== 'init') {
+      return t('ui.poseReasonStall', {
+        sec, got: formatMB(info.loaded), total: formatMB(info.total),
+      });
+    }
+    return t('ui.poseReasonTimeout', { sec });
+  }
+  if (info.message) {
+    return info.message.startsWith(info.name) ? info.message : `${info.name}: ${info.message}`;
+  }
+  return info.name || t('ui.poseReasonUnknown');
+}
+
+/** 「阶段（原因）」—— 失败提示的正文，如「模型文件下载失败（HTTP 404）」 */
+function poseFailText(err) {
+  const info = loadErrorInfo(err);
+  return t('ui.poseFailText', {
+    stage: t(POSE_STAGE_KEYS[info.stage] || 'ui.poseStageUnknown'),
+    reason: poseFailReason(err),
+  });
+}
+
+/** 完整句子（状态行用）：「姿态模型加载失败：模型文件下载失败（HTTP 404）」 */
+function poseFailSentence(err) {
+  return `${t('ui.maskModelFail')}：${poseFailText(err)}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * 姿态模型加载进度条（用户要求：「增加一个进度条，通过进度条来反馈进度」）
+ *
+ * 用户第二次反馈的形态是「一直显示正在加载姿态模型…但就是加载不成功」—— 某个 `await`
+ * 永远不返回，界面上什么反馈都没有。所以：
+ *   · 进度是**真实字节**（不是假转圈）：运行库 40% + 模型 40% + 初始化 20%，
+ *     前两段由我们自己流式下载（见 pose-engine 的 downloadWithProgress）；
+ *   · 初始化没法细分 → 不确定态（脉冲）+ 已用秒数；
+ *   · 每一段都有超时（下载 60s 没有新字节 = 卡住；初始化 20s；首帧 8s），超时立刻进入重试 /
+ *     CPU 兜底，所以不会再「永远转圈」；
+ *   · 每 2 秒把进度写进诊断日志（`pose:progress`，只有数字，不含任何二进制内容）。
+ * 样式（含 prefers-reduced-motion）在 style.css；文案在 ui.model* / ui.pose* 词条里。
+ * ------------------------------------------------------------------ */
+
+const modelProgressState = {
+  wasm: { loaded: 0, total: 0, bps: 0, done: false },
+  model: { loaded: 0, total: 0, bps: 0, done: false },
+  init: 0,
+  initStartedAt: 0,
+  shownPercent: 0,
+  timer: null,
+};
+
+/** 进度写进诊断日志的节流：每 2 秒一条（只写字节数 / 速率） */
+const poseProgressLog = { lastAt: 0, everyMs: 2000 };
+
+/** 重新开一次加载：进度清零（重试时也从头算，用户看得出来是「又试了一次」） */
+function resetModelProgress() {
+  modelProgressState.wasm = { loaded: 0, total: 0, bps: 0, done: false };
+  modelProgressState.model = { loaded: 0, total: 0, bps: 0, done: false };
+  modelProgressState.init = 0;
+  modelProgressState.initStartedAt = 0;
+  modelProgressState.shownPercent = 0;
+}
+
+function stopModelProgressTimer() {
+  if (!modelProgressState.timer) return;
+  try { clearInterval(modelProgressState.timer); } catch { /* ignore */ }
+  modelProgressState.timer = null;
+}
+
+/**
+ * 把一次进度写进诊断日志（每 2 秒最多一条；`done` 的那一条一定写）。
+ * @returns {boolean} 这次有没有真的写
+ */
+function notePoseProgress(p = {}) {
+  const now = Date.now();
+  if (!p.done && now - poseProgressLog.lastAt < poseProgressLog.everyMs) return false;
+  poseProgressLog.lastAt = now;
+  coachDiag.record('pose:progress', {
+    stage: String(p.stage || ''),
+    loaded: Math.max(0, Math.round(Number(p.loaded) || 0)),
+    total: Math.max(0, Math.round(Number(p.total) || 0)),
+    bps: Math.max(0, Math.round(Number(p.bps) || 0)),
+  });
+  return true;
+}
+
+/** 画进度条（返回 composeProgress 的结果，测试直接断言） */
+function renderModelProgress() {
+  const s = modelProgressState;
+  const sum = composeProgress({ wasm: s.wasm, model: s.model, init: s.init });
+  const box = $('modelProgress');
+  if (!box) return sum;
+  const known = sum.percent !== null;
+  // 百分比只增不减（重试时 resetModelProgress() 才清零）
+  if (known) s.shownPercent = Math.max(s.shownPercent || 0, sum.percent);
+  const pct = $('mpPercent');
+  if (pct) pct.textContent = known ? `${s.shownPercent}%` : t('ui.modelProgressIndeterminate');
+
+  // 标题也在这里刷新（切换语言时跟着变）。
+  const title = $('mpTitle');
+  if (title) title.textContent = t('ui.modelProgressTitle');
+
+  const rows = [
+    ['Wasm', 'mpRowWasm', 'mpFillWasm', 'mpMetaWasm', sum.wasm, s.wasm],
+    ['Model', 'mpRowModel', 'mpFillModel', 'mpMetaModel', sum.model, s.model],
+    ['Init', 'mpRowInit', 'mpFillInit', 'mpMetaInit',
+      { fraction: sum.init, loaded: sum.init ? 1 : 0, total: 1, done: sum.init >= 1 }, null],
+  ];
+  for (const [id, rowId, fillId, metaId, part, raw] of rows) {
+    const started = id === 'Init' ? sum.init > 0 : (part.loaded > 0 || part.done);
+    let state = 'waiting';
+    if (part.done) state = 'done';
+    else if (started) state = (id !== 'Init' && raw && raw.total > 0) ? 'running' : 'indeterminate';
+
+    const row = $(rowId);
+    const fill = $(fillId);
+    const meta = $(metaId);
+    if (row) row.dataset.state = state;
+    if (fill) {
+      fill.style.width = state === 'done' ? '100%'
+        : state === 'running' ? `${Math.round((Number(part.fraction) || 0) * 100)}%`
+          : state === 'indeterminate' ? '100%' : '0%';
+    }
+    if (!meta) continue;
+    if (state === 'waiting') meta.textContent = t('ui.modelProgressWaiting');
+    else if (state === 'done') meta.textContent = t('ui.modelProgressDone');
+    else if (id === 'Init') {
+      const sec = s.initStartedAt ? Math.max(0, Math.round((Date.now() - s.initStartedAt) / 1000)) : 0;
+      meta.textContent = t('ui.modelInitElapsed', { sec: String(sec) });
+    } else {
+      const bps = raw && raw.bps ? ` · ${formatMB(raw.bps)}/s` : '';
+      meta.textContent = `${formatMB(raw && raw.loaded)}${raw && raw.total ? ` / ${formatMB(raw.total)}` : ''}${bps}`;
+    }
+  }
+  return sum;
+}
+
+/** 把引擎报上来的进度收进状态并重画（附带每 2 秒一条诊断日志） */
+function handlePoseProgress(p = {}) {
+  if (!p || !p.stage) return null;
+  if (p.stage === 'wasm' || p.stage === 'model') {
+    modelProgressState[p.stage] = {
+      loaded: Number(p.loaded) || 0,
+      total: Number(p.total) || 0,
+      bps: Number(p.bps) || 0,
+      done: !!p.done,
+    };
+  } else if (p.stage === 'init') {
+    modelProgressState.init = p.done ? 1 : 0;
+    if (!p.done && !modelProgressState.initStartedAt) modelProgressState.initStartedAt = Date.now();
+  } else {
+    return null;   // 未知阶段不画、不记
+  }
+  const sum = renderModelProgress();
+  notePoseProgress(p);
+  return sum;
+}
+
+/**
+ * 真正去加载姿态模型（首次进入训练与切换模型共用）。
+ *
+ * @param {{showMask?:boolean}} [opts] showMask=false 时只更新状态行（切模型不遮住画面）
+ * @returns {Promise<boolean>} 成功 true；失败 false（提示 / 诊断日志都写好了，state.modelError 有结构化原因）
+ */
+async function loadPoseModel({ showMask = true } = {}) {
+  const mask = $('stageMask');
+  const box = $('modelProgress');
+  let logged = false;
+  state.modelError = null;
+  const recordFail = (error, meta = {}) => {
+    logged = true;
+    state.modelError = loadErrorInfo(error);
+    coachDiag.record('pose:load-fail', {
+      stage: state.modelError.stage,
+      name: state.modelError.name,
+      message: state.modelError.message,
+      delegate: state.modelError.delegate,
+      status: state.modelError.status,
+      attempt: Number(meta.attempt) || 0,
+      retry: meta.willRetry ? 1 : 0,
+    });
+  };
+
+  // 进度条：每次加载都从 0 开始，每 0.5 秒重画一次（初始化那段的「已用秒数」靠它走）
+  resetModelProgress();
+  stopModelProgressTimer();
+  if (showMask && box) box.hidden = false;
+  renderModelProgress();
+  if (box) modelProgressState.timer = setInterval(() => renderModelProgress(), 500);
+
+  try {
+    // 打开方式不对（file:// / 其它协议）：fetch 会被浏览器拦住，模型永远下不来 ——
+    // 这种情况下用户只会看到「一直在加载」，所以先明确报错，别去等超时。
+    const proto = (typeof location !== 'undefined' && location && location.protocol) || '';
+    if (proto && proto !== 'http:' && proto !== 'https:') {
+      throw new PoseLoadError('env', 'FileProtocol', proto, { retryable: false });
+    }
+    await withTimeout(engine.init({
+      modelKey: state.settings.modelKey,
+      // 设置里记过 'cpu' 就先用 CPU（GPU 兜底成功后会被记下来，见 onDelegate）
+      delegate: state.settings.poseDelegate || null,
+      video: camera.video,
+      onProgress: handlePoseProgress,
+      onRetry: ({ retry, retries, delay, error }) => {
+        state.modelError = loadErrorInfo(error);
+        const line = `${poseFailText(error)} · ${t('ui.poseRetry', {
+          n: String(retry), max: String(retries),
+        })}`;
+        if (showMask) $('maskText').textContent = line;
+        setCueLine(line, 'warn');
+        // 这一轮从零开始重新下载：进度条也清零，用户看得出来「又试了一次」
+        resetModelProgress();
+        renderModelProgress();
+        console.warn('[pose] load failed, retrying in', delay, 'ms:', state.modelError);
+      },
+      onDelegate: (delegate, error) => {
+        const value = String(delegate || '').toLowerCase();
+        if (!value) return;
+        state.settings.poseDelegate = value;
+        saveSettings();
+        if (value === 'cpu') {
+          setCueLine(t('ui.poseGpuFallback'), 'warn');
+          coachDiag.record('pose:delegate', {
+            from: 'GPU',
+            to: 'CPU',
+            name: String(error?.errName || error?.name || '').slice(0, 40),
+          });
+        }
+      },
+      onFail: recordFail,
+      attempts: poseLoadTuning.attempts,
+      retryDelays: poseLoadTuning.retryDelays,
+      firstDetectTimeoutMs: poseLoadTuning.firstDetectTimeoutMs,
+      stallTimeoutMs: poseLoadTuning.stallTimeoutMs,
+      initTimeoutMs: poseLoadTuning.initTimeoutMs,
+    }), poseLoadTuning.totalTimeoutMs, new PoseLoadError(
+      'timeout',
+      'TimeoutError',
+      'pose model load timed out',
+      { seconds: Math.round((poseLoadTuning.totalTimeoutMs || 0) / 1000) },
+    ));
+
+    state.engineReady = true;
+    state.modelError = null;
+    if (mask) mask.classList.add('hidden');
+    updatePipelineStatus();
+    return true;
+  } catch (err) {
+    if (!logged) recordFail(err, { attempt: 0, willRetry: false });
+    if (showMask) {
+      $('maskIcon').textContent = '⚠️';
+      $('maskTitle').textContent = t('ui.maskModelFail');
+      $('maskText').textContent = poseFailText(err);
+      $('btnStartCam').textContent = t('ui.poseRetryBtn');
+      if (mask) mask.classList.remove('hidden');
+    }
+    setCueLine(poseFailSentence(err), 'warn');
+    updatePipelineStatus();
+    return false;
+  } finally {
+    stopModelProgressTimer();
+    if (box) box.hidden = true;
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -6354,18 +6707,11 @@ async function startCamera(deviceId = null, { mic = false } = {}) {
     $('maskTitle').textContent = t('ui.maskModelLoading');
     mask.classList.remove('hidden');
     $('maskText').textContent = t('ui.maskModelText');
-    try {
-      await withTimeout(engine.init({ modelKey: state.settings.modelKey }), 45000, t('ui.maskModelFail'));
-      state.engineReady = true;
-      mask.classList.add('hidden');
-      updatePipelineStatus();
-      setCueLine(t('status.modelReady'), 'good');
-    } catch (err) {
-      $('maskIcon').textContent = '⚠️';
-      $('maskTitle').textContent = t('ui.maskModelFail');
-      $('maskText').textContent = err?.message || t('ui.unknownError');
-      return;
-    }
+    $('btnStartCam').textContent = t('ui.startCam');
+    // 分阶段加载 + 下载类失败自动重试 + GPU→CPU 兜底（失败时遮罩上写着「阶段（原因）」）
+    const ok = await loadPoseModel();
+    if (!ok) return;
+    setCueLine(t('status.modelReady'), 'good');
   }
   updateButtons();
 }
@@ -6388,14 +6734,14 @@ async function refreshCameraList() {
 
 async function reloadModel() {
   state.engineReady = false;
-  try {
-    await engine.init({ modelKey: state.settings.modelKey });
-    state.engineReady = true;
-    const model = t(state.settings.modelKey === 'full' ? 'ui.modelFull' : 'ui.modelLite');
-    setCueLine(t('status.modelSwitched', { model }), 'good');
-  } catch (err) {
-    setCueLine(t('status.modelSwitchFail', { msg: err?.message || err }), 'warn');
+  // 切模型不遮住画面：失败原因走状态行（同一套分阶段 / 重试 / CPU 兜底逻辑）
+  const ok = await loadPoseModel({ showMask: false });
+  if (!ok) {
+    setCueLine(t('status.modelSwitchFail', { msg: poseFailText(state.modelError) }), 'warn');
+    return;
   }
+  const model = t(state.settings.modelKey === 'full' ? 'ui.modelFull' : 'ui.modelLite');
+  setCueLine(t('status.modelSwitched', { model }), 'good');
 }
 
 /* ------------------------------------------------------------------ *
@@ -7179,4 +7525,17 @@ window.__mfg = {
   voiceHelpOpen, openVoiceHelp, closeVoiceHelp, renderVoiceHelp,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
+  // 姿态模型加载（用户反馈「点开始就姿态模型加载失败」的修复点）：
+  //   分阶段失败（wasm / 模型下载 / 推理器创建 / 首帧推理）→ 下载类自动重试 → GPU→CPU 兜底并记住
+  //   loadPoseModel()   → true / false（失败时 state.modelError 有 {stage,name,message}）
+  //   poseFailText(err) → 「阶段（原因）」中文/英文词条拼出来的那句话
+  //   poseLoadTuning    → 重试次数 / 退避间隔 / 首帧超时 / 整体超时（测试把它调小，不必真等）
+  loadPoseModel, reloadModel, poseFailText, poseFailReason, poseFailSentence, loadErrorInfo,
+  poseLoadTuning, POSE_STAGE_KEYS, PoseLoadError,
+  // 姿态模型加载进度条：真实字节进度（运行库 40% / 模型 40% / 初始化 20%）
+  //   renderModelProgress() 画一次并把 composeProgress 的结果返回（测试直接断言百分比）
+  //   modelProgressState    三段各自的 loaded/total/bps/done（测试可直接喂）
+  //   composeProgress       纯函数（pose-engine.js）：总百分比 / 不确定态
+  modelProgressState, renderModelProgress, resetModelProgress, handlePoseProgress, notePoseProgress,
+  poseProgressLog, composeProgress, formatMB,
 };
