@@ -1097,6 +1097,53 @@ console.log('\n[3] 静态资源与模型文件');
       && ['off', 'listening', 'thinking', 'speaking', 'paused', 'error']
         .every((k) => typeof LOCALES.zh.voice?.status?.[k] === 'string'
           && typeof LOCALES.en.voice?.status?.[k] === 'string'));
+
+    /* ---- P3.1：本机火山代理 + 自动回退 Web Speech ---- */
+    ok('字幕面板有一行「当前语音识别走哪一路」（#coachRoute，在 #stage 的教练面板里）',
+      /id="coachRoute"/.test(html) && /class="coach-route"/.test(html)
+      && (ancestorIds(html, 'coachRoute') || []).includes('coachPanel')
+      && (ancestorIds(html, 'coachRoute') || []).includes('stage'));
+    ok('路由那行有样式（.coach-route + [hidden] 隐藏，窄屏字号收一档）',
+      /\.coach-route\s*\{[^}]*font-size:\s*10\.5px/.test(coachCss)
+      && /\.coach-route\[hidden\]\s*\{\s*display:\s*none/.test(coachCss)
+      && /@media \(max-width: 560px\)[\s\S]{0,1200}\.coach-route\s*\{\s*font-size:\s*10px/.test(coachCss));
+    ok('两路识别的文案中英齐全（coach.route.volc / coach.route.webSpeech）',
+      typeof LOCALES.zh.coach?.route?.volc === 'string'
+      && typeof LOCALES.en.coach?.route?.volc === 'string'
+      && typeof LOCALES.zh.coach?.route?.webSpeech === 'string'
+      && typeof LOCALES.en.coach?.route?.webSpeech === 'string'
+      && /火山/.test(LOCALES.zh.coach.route.volc)
+      && /Volcengine/.test(LOCALES.en.coach.route.volc));
+    ok('app.js 不再直接 createAsr()，改用自动选路 createAutoAsr（麦克风只创建一次）',
+      /createAutoAsr\(\{ mic: coachMic \}\)/.test(app)
+      && /createVoiceSession\(\{\s*\n\s*mic: coachMic,/.test(app)
+      && !/asr: createAsr\(\)/.test(app));
+    ok('providers.js 提供 createVolcAsr / createAutoAsr / pickAsrRoute / DEFAULT_ASR_WS_URL',
+      /export function createVolcAsr\(/.test(providersSrc)
+      && /export function createAutoAsr\(/.test(providersSrc)
+      && /export function pickAsrRoute\(/.test(providersSrc)
+      && /DEFAULT_ASR_WS_URL = 'ws:\/\/127\.0\.0\.1:4180\/asr'/.test(providersSrc));
+    ok('代理地址可被 window.__MFG_ASR_WS__ 覆盖（测试 / 换端口）',
+      /__MFG_ASR_WS__/.test(providersSrc)
+      && /resolveAsrUrl/.test(providersSrc)
+      && /asr-fallback/.test(sessionSrc));
+    ok('PCM 降采样是一个独立的纯函数模块（AudioWorklet 处理器也在 src/voice 下）',
+      /export function downsampleToPcm16\(/.test(read('src/voice/pcm.js'))
+      && /registerProcessor\('mfg-pcm-capture'/.test(read('src/voice/pcm-worklet.js')));
+    ok('本机代理 / 探针 / 协议模块都在 server/ 下（零依赖，npm run coach-proxy / asr:probe）',
+      fs.existsSync(path.join(ROOT, 'server/coach-proxy.mjs'))
+      && fs.existsSync(path.join(ROOT, 'server/ws-mini.mjs'))
+      && fs.existsSync(path.join(ROOT, 'server/volc-protocol.mjs'))
+      && fs.existsSync(path.join(ROOT, 'server/volc-asr.mjs'))
+      && fs.existsSync(path.join(ROOT, 'server/asr-probe.mjs'))
+      && /"coach-proxy":\s*"node server\/coach-proxy\.mjs"/.test(read('package.json'))
+      && /"asr:probe":\s*"node server\/asr-probe\.mjs"/.test(read('package.json')));
+    ok('协议默认端点 / 资源 / 鉴权头都在 server 侧，前端只认代理地址',
+      /wss:\/\/openspeech\.bytedance\.com\/api\/v3\/sauc\/bigmodel/.test(read('server/volc-protocol.mjs'))
+      && /X-Api-App-Key/.test(read('server/volc-protocol.mjs'))
+      && /X-Api-Access-Key/.test(read('server/volc-protocol.mjs'))
+      && /X-Api-Resource-Id/.test(read('server/volc-protocol.mjs'))
+      && !/openspeech\.bytedance\.com/.test(providersSrc));
   }
 
   /* ---- 用户要求：「我希望把界面改造为全手势操作。请在首页增加一个大的『开始』按钮，点击后就打开

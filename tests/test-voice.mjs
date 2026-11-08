@@ -12,12 +12,32 @@
  * 运行：node tests/test-voice.mjs
  */
 
-import { createVoiceSession, VOICE_STATES, VOICE_NOTICE_KEYS } from '../src/voice/session.js';
+import fs from 'node:fs';
+import zlib from 'node:zlib';
+
+import { createVoiceSession, VOICE_STATES, VOICE_NOTICE_KEYS, VOICE_ERROR_KEYS } from '../src/voice/session.js';
 import {
-  createLlm, createAsr, createVuMeter,
+  createLlm, createAsr, createVuMeter, createVolcAsr, createAutoAsr,
+  pickAsrRoute, resolveAsrUrl, pickCaptureMode, volcErrorCode,
+  DEFAULT_ASR_WS_URL, ASR_ROUTES,
   rmsToLevel, smoothLevel, levelToColor,
   VU_COLORS, VU_LEVEL_VOICE, VU_LEVEL_LOUD,
 } from '../src/voice/providers.js';
+import {
+  downsampleToPcm16, pcm16Rms, pcm16Peak, pcmBytesToMs, floatToPcm16,
+} from '../src/voice/pcm.js';
+import { parseEnv, volcConfigFrom, maskSecret, redactSecrets } from '../server/env.mjs';
+import {
+  computeAccept, encodeFrame, decodeFrames, createFrameParser as createWsFrameParser,
+  createMessageAssembler, OPCODES,
+} from '../server/ws-mini.mjs';
+import {
+  buildFrame, buildStartFrame, buildStartPayload, buildAudioFrame, parseFrame,
+  createFrameParser as createVolcFrameParser, parseResponseFrame, buildAuthHeaders,
+  volcErrorCode as mapVolcCode, HOTWORDS, MESSAGE_TYPES, FLAGS, SERIALIZATION, COMPRESSION,
+  sanitizeDetail,
+} from '../server/volc-protocol.mjs';
+import { createVolcSession, encodeClientMessage } from '../server/volc-asr.mjs';
 import { LOCALES, setLang, t } from '../src/i18n.js';
 
 let passed = 0;
@@ -65,9 +85,11 @@ function fakeAsr({ startResult = true } = {}) {
     onInterim(fn) { handlers.interim = fn; },
     onError(fn) { handlers.error = fn; },
     onEnd(fn) { handlers.end = fn; },
+    onRoute(fn) { handlers.route = fn; },
     emit(text, info = { isFinal: true }) { handlers.result?.(text, info); },
     emitInterim(text) { handlers.interim?.(text); },
     fail(err) { handlers.error?.(err); },
+    setRoute(route) { handlers.route?.({ route }); },
   };
 }
 
@@ -706,6 +728,713 @@ function fakeVuWindow({ samples = 190, ctxState = 'running' } = {}) {
   try { await unsupported.open(); } catch (err) { code = err.code; }
   ok('没有 AudioContext / getUserMedia → open() 明确 reject（调用方静默降级）',
     code === 'vu-unsupported' && unsupported.active === false, code);
+}
+
+/* ================================================================== *
+ * 以下是 P3.1：本机代理 + 火山流式 ASR（全部离线 / 全用假值）
+ * ================================================================== */
+
+/** 造一帧火山服务端「全服务端响应」（默认带正序号 + gzip + JSON） */
+function volcResponseFrame(json, {
+  flags = FLAGS.POSITIVE_SEQUENCE, seq = 1, gzip = true,
+} = {}) {
+  const raw = Buffer.from(JSON.stringify(json), 'utf8');
+  return buildFrame({
+    messageType: MESSAGE_TYPES.FULL_SERVER_RESPONSE,
+    flags,
+    serialization: SERIALIZATION.JSON,
+    compression: gzip ? COMPRESSION.GZIP : COMPRESSION.NONE,
+    payload: gzip ? zlib.gzipSync(raw) : raw,
+    sequence: seq,
+  });
+}
+
+/** 造一帧火山错误帧：header + error_code + error_message_size + message */
+function volcErrorFrame(code, message) {
+  const text = Buffer.from(String(message), 'utf8');
+  const head = Buffer.alloc(4);
+  head[0] = 0x11;
+  head[1] = 0xf0;   // message type 0b1111（错误帧）
+  head[2] = 0x00;
+  head[3] = 0x00;
+  const codeBuf = Buffer.alloc(4);
+  codeBuf.writeUInt32BE(code, 0);
+  const sizeBuf = Buffer.alloc(4);
+  sizeBuf.writeUInt32BE(text.length, 0);
+  return Buffer.concat([head, codeBuf, sizeBuf, text]);
+}
+
+/** 假的火山上游 socket（createVolcSession 的 openSocket 注入点） */
+function fakeUpstream() {
+  const sent = [];
+  const frameHandlers = [];
+  const closeHandlers = [];
+  const errorHandlers = [];
+  const parser = createVolcFrameParser();
+  return {
+    sent,
+    closed: false,
+    headers: { 'x-tt-logid': 'test-log-id' },
+    send(buf) { sent.push(Buffer.from(buf)); return true; },
+    close() { this.closed = true; },
+    onFrame(fn) { frameHandlers.push(fn); },
+    onClose(fn) { closeHandlers.push(fn); },
+    onError(fn) { errorHandlers.push(fn); },
+    feed(raw) {
+      for (const frame of parser.push(raw)) for (const fn of frameHandlers) fn(frame);
+    },
+    die(code) {
+      const err = Object.assign(new Error(`boom ${code}`), { code });
+      for (const fn of errorHandlers) fn(err);
+      for (const fn of closeHandlers) fn();
+    },
+  };
+}
+
+/** 假浏览器窗口：WebSocket + AudioContext（ScriptProcessor）+ SpeechRecognition 全部可观察 */
+function fakeVolcWindow({ rate = 48000 } = {}) {
+  const log = { websockets: [], contexts: [], recognitions: [] };
+  class FakeRecognizer {
+    constructor() {
+      this.lang = '';
+      this.continuous = false;
+      this.interimResults = false;
+      this.started = 0;
+      this.stopped = 0;
+      this.onstart = null;
+      this.onresult = null;
+      this.onerror = null;
+      this.onend = null;
+      log.recognitions.push(this);
+    }
+    start() { this.started += 1; this.onstart?.(); }
+    stop() { this.stopped += 1; }
+    abort() { this.stopped += 1; }
+  }
+  class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.sent = [];
+      this.closed = false;
+      this.onopen = null;
+      this.onmessage = null;
+      this.onerror = null;
+      this.onclose = null;
+      log.websockets.push(this);
+    }
+    send(data) { this.sent.push(data); }
+    close() {
+      if (this.closed) return;
+      this.closed = true;
+      this.readyState = 3;
+      this.onclose?.({});
+    }
+    open() { this.readyState = 1; this.onopen?.({}); }
+    message(obj) { this.onmessage?.({ data: JSON.stringify(obj) }); }
+    fail() { this.onerror?.({}); }
+  }
+  class FakeAudioContext {
+    constructor() {
+      this.sampleRate = rate;
+      this.state = 'running';
+      this.destination = {};
+      this.closed = false;
+      this.source = null;
+      this.node = null;
+      log.contexts.push(this);
+    }
+    createMediaStreamSource() {
+      this.source = {
+        connected: 0,
+        disconnected: false,
+        connect() { this.connected += 1; },
+        disconnect() { this.disconnected = true; },
+      };
+      return this.source;
+    }
+    createScriptProcessor() {
+      this.node = {
+        connected: 0,
+        disconnected: false,
+        onaudioprocess: null,
+        connect() { this.connected += 1; },
+        disconnect() { this.disconnected = true; },
+      };
+      return this.node;
+    }
+    createGain() {
+      return { gain: { value: 1 }, connect() {}, disconnect() {} };
+    }
+    close() { this.closed = true; this.state = 'closed'; return Promise.resolve(); }
+  }
+  return {
+    win: { WebSocket: FakeWebSocket, AudioContext: FakeAudioContext, SpeechRecognition: FakeRecognizer },
+    log,
+  };
+}
+
+/** 正弦采样（降采样测试用） */
+function sineSamples(n, { freq = 441, amp = 0.5, rate = 44100 } = {}) {
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) out[i] = amp * Math.sin((2 * Math.PI * freq * i) / rate);
+  return out;
+}
+
+/* ================================================================== *
+ * 11. coach.env 解析（只读文件；测试里全是假值）
+ * ================================================================== */
+console.log('\n[11] coach.env 极简 KEY=VALUE 解析（假值，不碰真文件、不联网）');
+{
+  const text = [
+    '# comment line',
+    'VOLC_APP_ID=test',
+    'export VOLC_API_KEY="fake-token-123"   # trailing comment',
+    "VOLC_ASR_RESOURCE='volc.test.resource'",
+    'EMPTY=',
+    'EQ=a=b=c',
+    'not a valid line',
+    '',
+  ].join('\r\n');
+  const env = parseEnv(text);
+  ok('KEY=VALUE / export / 单双引号都能解析（CRLF 也行）',
+    env.VOLC_APP_ID === 'test' && env.VOLC_API_KEY === 'fake-token-123'
+    && env.VOLC_ASR_RESOURCE === 'volc.test.resource',
+    JSON.stringify(env));
+  ok('空值保留空串、值里的 = 不会被切开、注释 / 非法行被忽略',
+    env.EMPTY === '' && env.EQ === 'a=b=c'
+    && Object.keys(env).length === 5 && !('not a valid line' in env),
+    JSON.stringify(Object.keys(env)));
+  const missing = volcConfigFrom({});
+  ok('缺字段时 configured=false，并列出缺哪两个字段',
+    missing.configured === false && missing.missing.length === 2
+    && missing.missing.includes('VOLC_APP_ID') && missing.missing.includes('VOLC_API_KEY'),
+    JSON.stringify(missing.missing));
+  const cfg = volcConfigFrom(env);
+  ok('字段齐全 → configured=true，资源来自文件、端点 / 鉴权风格可覆盖',
+    cfg.configured === true && cfg.resource === 'volc.test.resource'
+    && /^wss:\/\//.test(cfg.endpoint) && cfg.authStyle === 'auto');
+  const override = volcConfigFrom({
+    ...env,
+    VOLC_ASR_ENDPOINT: 'wss://example.test/asr',
+    VOLC_ASR_AUTH_STYLE: 'api-key',
+  });
+  ok('VOLC_ASR_ENDPOINT / VOLC_ASR_AUTH_STYLE 能覆盖默认值',
+    override.endpoint === 'wss://example.test/asr' && override.authStyle === 'api-key');
+  ok('maskSecret 只给长度、redactSecrets 抹掉值（日志 / 探针不会漏 Key）',
+    maskSecret('fake-token-123') === 'set (14 chars)'
+    && maskSecret('') === '(empty)'
+    && !redactSecrets('token=fake-token-123', ['fake-token-123']).includes('fake-token-123')
+    && redactSecrets('abc', ['']) === 'abc');
+}
+
+/* ================================================================== *
+ * 12. 最小 WebSocket：握手 / 分帧 / 掩码 / 半帧 / 分片（纯函数）
+ * ================================================================== */
+console.log('\n[12] 最小 WebSocket：握手 / 分帧 / 掩码 / 半帧 / 分片');
+{
+  ok('Sec-WebSocket-Accept 与 RFC 6455 示例一致',
+    computeAccept('dGhlIHNhbXBsZSBub25jZQ==') === 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=');
+
+  const textFrame = encodeFrame({ opcode: OPCODES.TEXT, payload: 'hello' });
+  const textOut = decodeFrames(textFrame);
+  ok('文本帧往返：首字节 0x81、长度 5、服务端帧不带掩码',
+    textFrame[0] === 0x81 && textFrame[1] === 5
+    && textOut.frames.length === 1
+    && textOut.frames[0].payload.toString() === 'hello'
+    && textOut.frames[0].masked === false);
+
+  const masked = encodeFrame({
+    opcode: OPCODES.BINARY,
+    payload: Buffer.from([1, 2, 3, 4]),
+    mask: true,
+    rng: () => Buffer.from([9, 8, 7, 6]),
+  });
+  const maskedOut = decodeFrames(masked);
+  ok('客户端掩码帧：首字节 0x82、mask 位=1，解码后字节完全还原',
+    masked[0] === 0x82 && (masked[1] & 0x80) !== 0
+    && maskedOut.frames[0].payload.equals(Buffer.from([1, 2, 3, 4]))
+    && maskedOut.frames[0].masked === true);
+  ok('掩码真的生效：明文 payload 不会原样出现在帧里',
+    !masked.includes(Buffer.from([1, 2, 3, 4])));
+
+  const two = Buffer.concat([textFrame, masked]);
+  ok('一个缓冲区里多帧一次解出来',
+    decodeFrames(two).frames.length === 2 && decodeFrames(two).rest.length === 0);
+  const cut = two.subarray(0, two.length - 2);
+  const cutOut = decodeFrames(cut);
+  ok('半帧留在 rest 里等下一块（不会把半包当消息）',
+    cutOut.frames.length === 1 && cutOut.rest.length === 8,
+    JSON.stringify({ frames: cutOut.frames.length, rest: cutOut.rest.length }));
+
+  const parser = createWsFrameParser();
+  const firstHalf = parser.push(two.subarray(0, 7));
+  const secondHalf = parser.push(two.subarray(7));
+  ok('流式解帧器跨 chunk 拼出两帧', firstHalf.length + secondHalf.length === 2 && parser.pending === 0);
+
+  const mid = encodeFrame({ opcode: OPCODES.BINARY, payload: Buffer.alloc(300, 1) });
+  ok('126~65535 字节走 16 位长度（300 字节的帧能解回来）',
+    mid[1] === 126 && decodeFrames(mid).frames[0].payload.length === 300);
+  const big = encodeFrame({ opcode: OPCODES.BINARY, payload: Buffer.alloc(70000, 7) });
+  ok('>=65536 字节走 64 位长度（70000 字节的帧能解回来）',
+    big[1] === 127 && decodeFrames(big).frames[0].payload.length === 70000);
+
+  const messages = [];
+  const assembler = createMessageAssembler((msg) => messages.push(msg));
+  assembler.push({ fin: false, opcode: OPCODES.TEXT, payload: Buffer.from('he') });
+  assembler.push({ fin: true, opcode: OPCODES.CONTINUATION, payload: Buffer.from('llo') });
+  ok('分片重组：TEXT(fin=0) + CONTINUATION(fin=1) → 一条 hello',
+    messages.length === 1 && messages[0].opcode === OPCODES.TEXT
+    && messages[0].payload.toString() === 'hello');
+
+  const control = [];
+  const ctlAssembler = createMessageAssembler((msg) => control.push(msg));
+  ctlAssembler.push({ fin: true, opcode: OPCODES.PING, payload: Buffer.from('p') });
+  ctlAssembler.push({ fin: true, opcode: OPCODES.PONG, payload: Buffer.alloc(0) });
+  ok('控制帧（ping / pong）直接交给调用方、不占分片缓冲',
+    control.length === 2 && control[0].opcode === OPCODES.PING && control[1].opcode === OPCODES.PONG);
+}
+
+/* ================================================================== *
+ * 13. 火山 v3 协议：组帧 / 解帧 / 热词 / partial & final / error / 鉴权头
+ * ================================================================== */
+console.log('\n[13] 火山 v3 协议：组帧 / 解帧 / 热词 / partial & final / error / 鉴权头');
+{
+  const body = buildStartPayload({ lang: 'zh-CN' });
+  ok('开始请求：PCM / 16kHz / 16bit / 单声道 / 中文',
+    body.audio.format === 'pcm' && body.audio.rate === 16000 && body.audio.bits === 16
+    && body.audio.channel === 1 && body.audio.language === 'zh-CN');
+
+  const context = body.request.corpus.context;
+  const hot = JSON.parse(context).hotwords.map((w) => w.word);
+  const wanted = ['深蹲', '俯卧撑', '跪姿俯卧撑', '平板支撑', '箭步蹲', '体前屈',
+    '髋角', '膝角', '暂停', '继续', '退出', '开始', '目标', '秒', '次'];
+  ok('热词覆盖动作 / 指标 / 口令 15 个词（全部来自 HOTWORDS）',
+    wanted.every((w) => hot.includes(w)), JSON.stringify(hot));
+  ok('热词以 JSON **字符串** 放进 corpus.context（官方要求），数量与 HOTWORDS 一致',
+    typeof context === 'string' && hot.length === HOTWORDS.length && HOTWORDS.length >= 15);
+
+  const start = buildStartFrame({ lang: 'zh-CN' });
+  const parsedStart = parseFrame(start);
+  ok('开始帧头：0x11 0x11 0x11（版本 1 / 头长 4 / 类型 1 / 正序号 / JSON / gzip）',
+    start[0] === 0x11 && start[1] === 0x11 && start[2] === 0x11,
+    [...start.subarray(0, 4)].join(','));
+  ok('开始帧带正序号 sequence=1（线上服务按这个解析，flags=0 会被当成坏帧关掉）',
+    parsedStart.flags === FLAGS.POSITIVE_SEQUENCE && parsedStart.sequence === 1,
+    JSON.stringify({ flags: parsedStart.flags, sequence: parsedStart.sequence }));
+  ok('开始帧 gzip 解开就是同一份 JSON',
+    JSON.parse(zlib.gunzipSync(parsedStart.payload).toString('utf8')).audio.rate === 16000);
+
+  // 真实踩过的坑：Node 客户端如果直接把「火山应用层帧」写进 socket，
+  // 服务端会把 4 字节协议头当成 WebSocket 帧头 → 1002 / unexpected reserved bits。
+  const clientWs = decodeFrames(encodeClientMessage(start));
+  ok('发给火山前再包一层掩码二进制 WS 帧（不是裸写应用层帧）',
+    clientWs.frames.length === 1
+    && clientWs.frames[0].opcode === OPCODES.BINARY
+    && clientWs.frames[0].masked === true
+    && parseFrame(clientWs.frames[0].payload).messageType === MESSAGE_TYPES.FULL_CLIENT_REQUEST,
+    JSON.stringify({ frames: clientWs.frames.length, masked: clientWs.frames[0]?.masked }));
+
+  const audio = buildAudioFrame(Buffer.from([0, 1, 2, 3]));
+  const parsedAudio = parseFrame(audio);
+  ok('音频帧：类型 0b0010、序列化 0（原始字节）、gzip 后能还原',
+    parsedAudio.messageType === MESSAGE_TYPES.AUDIO_ONLY
+    && parsedAudio.serialization === SERIALIZATION.NONE
+    && zlib.gunzipSync(parsedAudio.payload).equals(Buffer.from([0, 1, 2, 3])));
+  const last = buildAudioFrame(Buffer.alloc(0), { last: true });
+  ok('最后一包 flags=0b0010（无序号）、payload 为空',
+    (parseFrame(last).flags & 0x0f) === 0x02);
+
+  const partial = parseResponseFrame(parseFrame(volcResponseFrame({ result: { text: '深蹲' } })));
+  ok('partial：未定稿文本 + 序号一起解出来',
+    partial.type === 'partial' && partial.text === '深蹲' && partial.sequence === 1,
+    JSON.stringify(partial));
+  const final = parseResponseFrame(parseFrame(volcResponseFrame({
+    result: { text: '深蹲 暂停', utterances: [{ text: '深蹲 暂停', definite: true }] },
+  }, { flags: FLAGS.LAST_NEGATIVE_SEQUENCE, seq: -1 })));
+  ok('final：definite utterance 或最后一包都算定稿',
+    final.type === 'final' && final.text === '深蹲 暂停' && final.definite === true);
+  const emptyFinal = parseResponseFrame(parseFrame(volcResponseFrame(
+    { result: { text: '' } }, { flags: FLAGS.LAST, seq: null },
+  )));
+  ok('最后一包没有文本也返回 final（调用方拿上一句收尾）',
+    emptyFinal.type === 'final' && emptyFinal.text === '');
+  const noGzip = parseResponseFrame(parseFrame(volcResponseFrame(
+    { result: { text: 'hello' } }, { gzip: false },
+  )));
+  ok('服务端没开 gzip 也能解（按头里的 compression 判断）',
+    noGzip.type === 'partial' && noGzip.text === 'hello');
+
+  const bad = parseResponseFrame(parseFrame(volcErrorFrame(45000001, 'invalid request')));
+  ok('错误帧（类型 0b1111）解析出稳定 code + 火山错误码 + 消息',
+    bad.type === 'error' && bad.code === 'bad-request' && bad.volcCode === 45000001
+    && bad.message.includes('invalid'));
+  const leak = parseResponseFrame(parseFrame(volcErrorFrame(
+    45000001, 'X-Api-Key: fake-token-123 Bearer fake-token-123',
+  )));
+  ok('错误消息脱敏：不回显 X-Api-Key / Bearer token',
+    !leak.message.includes('fake-token-123') && leak.message.includes('***'), leak.message);
+  ok('火山错误码映射：参数 / 超时 / 空音频 / 5xx',
+    mapVolcCode(45000001) === 'bad-request' && mapVolcCode(45000081) === 'timeout'
+    && mapVolcCode(45000002) === 'empty-audio' && mapVolcCode(55000031) === 'server-busy'
+    && mapVolcCode(55999999) === 'upstream');
+  ok('sanitizeDetail 把 api_key= / access_key= 也抹掉',
+    !sanitizeDetail('api_key=fake-token-123').includes('fake-token-123')
+    && !sanitizeDetail('access_key=fake-token-123').includes('fake-token-123'));
+
+  const autoHeaders = buildAuthHeaders({
+    appId: 'test-app', apiKey: 'test-key', resource: 'volc.test',
+    requestId: 'req-1', connectId: 'conn-1',
+  });
+  ok('auto 鉴权风格：APP ID + Access Key + X-Api-Key 都发（新旧控制台都能连）',
+    autoHeaders['X-Api-App-Key'] === 'test-app' && autoHeaders['X-Api-Access-Key'] === 'test-key'
+    && autoHeaders['X-Api-Key'] === 'test-key' && autoHeaders['X-Api-Resource-Id'] === 'volc.test'
+    && autoHeaders['X-Api-Request-Id'] === 'req-1' && autoHeaders['X-Api-Connect-Id'] === 'conn-1');
+  const apiKeyStyle = buildAuthHeaders({ appId: 'test-app', apiKey: 'test-key', style: 'api-key' });
+  const appKeyStyle = buildAuthHeaders({ appId: 'test-app', apiKey: 'test-key', style: 'app-key' });
+  ok('api-key 风格只发 X-Api-Key；app-key 风格不发 X-Api-Key',
+    apiKeyStyle['X-Api-Key'] === 'test-key' && apiKeyStyle['X-Api-Access-Key'] === undefined
+    && appKeyStyle['X-Api-Key'] === undefined && appKeyStyle['X-Api-Access-Key'] === 'test-key');
+}
+
+/* ================================================================== *
+ * 14. 火山会话层：用假 socket 跑完整条链路（不联网）
+ * ================================================================== */
+console.log('\n[14] 火山会话层（假 socket）：开始 / 音频 / 定稿 / 错误 / 脱敏');
+{
+  const events = [];
+  const upstream = fakeUpstream();
+  let seenUrl = '';
+  let seenHeaders = null;
+  const session = createVolcSession({
+    config: {
+      appId: 'test-app', apiKey: 'test-key', resource: 'volc.test',
+      endpoint: 'wss://example.test/asr', authStyle: 'auto',
+    },
+    onEvent: (event) => events.push(event),
+    openSocket: async ({ url, headers }) => {
+      seenUrl = url;
+      seenHeaders = headers;
+      return upstream;
+    },
+  });
+
+  ok('start()：带鉴权头连到配置的端点，并立刻发开始帧 + ready',
+    await session.start({ lang: 'zh-CN' }) === true
+    && seenUrl === 'wss://example.test/asr'
+    && seenHeaders['X-Api-App-Key'] === 'test-app'
+    && seenHeaders['X-Api-Resource-Id'] === 'volc.test'
+    && events.some((e) => e.type === 'ready')
+    && upstream.sent.length === 1,
+    JSON.stringify({ events, sent: upstream.sent.length }));
+
+  const startFrame = parseFrame(upstream.sent[0]);
+  ok('发出去的第一帧是 full client request（类型 0b0001 / JSON / gzip / 16k）',
+    startFrame.messageType === MESSAGE_TYPES.FULL_CLIENT_REQUEST
+    && JSON.parse(zlib.gunzipSync(startFrame.payload).toString()).audio.rate === 16000);
+
+  upstream.feed(volcResponseFrame({ result: { text: '深蹲' } }));
+  ok('服务端 partial → relay 的 partial 事件（文本可直接上屏）',
+    events.at(-1).type === 'partial' && events.at(-1).text === '深蹲');
+
+  session.audio(Buffer.alloc(3200, 1));
+  const audioFrame = parseFrame(upstream.sent.at(-1));
+  ok('音频：转发成 audio-only 帧，gzip 解压后还是 3200 字节',
+    audioFrame.messageType === MESSAGE_TYPES.AUDIO_ONLY
+    && zlib.gunzipSync(audioFrame.payload).length === 3200);
+
+  session.stop();
+  const stopFrame = parseFrame(upstream.sent.at(-1));
+  ok('stop()：最后一包 flags=0b0010、空 payload',
+    (stopFrame.flags & 0x0f) === 0x02 && zlib.gunzipSync(stopFrame.payload).length === 0);
+
+  upstream.feed(volcResponseFrame({
+    result: { text: '深蹲 暂停', utterances: [{ definite: true, text: '深蹲 暂停' }] },
+  }, { flags: FLAGS.LAST_NEGATIVE_SEQUENCE, seq: -1 }));
+  ok('定稿帧 → relay 的 final 事件，并记住最后一句',
+    events.at(-1).type === 'final' && events.at(-1).text === '深蹲 暂停'
+    && session.lastText === '深蹲 暂停' && session.gotFinal === true);
+
+  session.close();
+  ok('close() 之后 socket 被关闭、bytes / segments 统计还在（日志只打数字）',
+    upstream.closed === true && session.bytes === 3200 && session.segments >= 2);
+}
+{
+  const events = [];
+  const session = createVolcSession({
+    config: { appId: 'test-app', apiKey: 'test-key', resource: 'volc.test' },
+    onEvent: (event) => events.push(event),
+    openSocket: async () => {
+      throw Object.assign(new Error('upstream rejected test-key'), { code: 'auth' });
+    },
+  });
+  ok('鉴权失败 → error 事件带 code=auth，message 里没有 Key',
+    await session.start() === false
+    && events.at(-1).type === 'error' && events.at(-1).code === 'auth'
+    && !events.at(-1).message.includes('test-key'),
+    JSON.stringify(events));
+}
+{
+  const events = [];
+  let opened = 0;
+  const session = createVolcSession({
+    config: volcConfigFrom({}),
+    onEvent: (event) => events.push(event),
+    openSocket: async () => { opened += 1; return fakeUpstream(); },
+  });
+  ok('coach.env 缺字段 → config 错误，且根本不去连火山',
+    await session.start() === false && events.at(-1).code === 'config' && opened === 0);
+}
+
+/* ================================================================== *
+ * 15. 16k 降采样（纯函数）：长度 / 振幅 / 静音 / 钳位
+ * ================================================================== */
+console.log('\n[15] 16k 降采样（纯函数）：长度 / 振幅 / 静音 / 钳位');
+{
+  const src44 = sineSamples(44100);
+  const pcm44 = downsampleToPcm16(src44, 44100);
+  ok('44.1k 1 秒 → 16000 个样本（round(n × 16000 / 44100)）',
+    pcm44.length === 16000, String(pcm44.length));
+  const rms44 = pcm16Rms(pcm44);
+  ok('振幅合理：0.5 幅度的 441Hz 正弦降采样后 RMS ≈ 0.35（落在 0.30~0.40）',
+    rms44 > 0.30 && rms44 < 0.40, rms44.toFixed(3));
+  const peak44 = pcm16Peak(pcm44);
+  ok('峰值接近原始幅度 0.5（区间平均没有把信号压没）',
+    Math.abs(peak44 - 0.5) < 0.03, peak44.toFixed(3));
+  const pcm48 = downsampleToPcm16(sineSamples(48000, { rate: 48000 }), 48000);
+  ok('48k 1 秒 → 16000 个样本、RMS 与 44.1k 那一路接近',
+    pcm48.length === 16000 && Math.abs(pcm16Rms(pcm48) - rms44) < 0.02);
+  ok('静音 → 全 0（不产生直流 / 噪声）',
+    pcm16Peak(downsampleToPcm16(new Float32Array(8000), 8000)) === 0);
+  ok('空输入 / 非法采样率 → 空数组（调用方直接跳过这一包）',
+    downsampleToPcm16(new Float32Array(0), 44100).length === 0
+    && downsampleToPcm16(src44, 0).length === 0
+    && downsampleToPcm16(null, 44100).length === 0);
+  ok('振幅钳位：超出 ±1 的采样不会溢出成负值',
+    floatToPcm16(new Float32Array([2, -2, 0.5]))[0] === 32767
+    && floatToPcm16(new Float32Array([2, -2, 0.5]))[1] === -32767
+    && floatToPcm16(new Float32Array([2, -2, 0.5]))[2] === 16384);
+  ok('16k / 16bit / 单声道：3200 字节 = 100ms',
+    pcmBytesToMs(3200) === 100 && pcmBytesToMs(32) === 1);
+}
+
+/* ================================================================== *
+ * 16. 自动选路（纯函数）：有代理走火山、没有回退 Web Speech、都没有落 none
+ * ================================================================== */
+console.log('\n[16] 自动选路：有代理走火山、没有回退 Web Speech、都没有落 none');
+{
+  const fullWin = { WebSocket: class {}, AudioContext: class {}, SpeechRecognition: class {} };
+  ok('有 WebSocket + AudioContext → volc',
+    pickAsrRoute({ win: fullWin, url: 'ws://127.0.0.1:4180/asr' }) === ASR_ROUTES.VOLC);
+  ok('只有 Web Speech → webspeech（代理不可用时的默认回退）',
+    pickAsrRoute({ win: { SpeechRecognition: class {} }, url: 'ws://127.0.0.1:4180/asr' }) === ASR_ROUTES.WEB_SPEECH);
+  ok('什么都没有 → none（会话会落 asr-unsupported，而不是静默）',
+    pickAsrRoute({ win: {}, url: '' }) === ASR_ROUTES.NONE);
+  ok('默认地址就是 ws://127.0.0.1:4180/asr',
+    DEFAULT_ASR_WS_URL === 'ws://127.0.0.1:4180/asr' && resolveAsrUrl({}) === DEFAULT_ASR_WS_URL);
+  ok('window.__MFG_ASR_WS__ 覆盖代理地址（测试 / 换端口）',
+    resolveAsrUrl({ __MFG_ASR_WS__: 'ws://127.0.0.1:5999/asr' }) === 'ws://127.0.0.1:5999/asr');
+  ok('__MFG_ASR_WS__ 写 off / none 时强制回退（不连代理）',
+    resolveAsrUrl({ __MFG_ASR_WS__: 'off' }) === ''
+    && resolveAsrUrl({ __MFG_ASR_WS__: 'NONE' }) === ''
+    && pickAsrRoute({ win: fullWin, url: '' }) === ASR_ROUTES.WEB_SPEECH);
+  const ctxWorklet = { audioWorklet: {}, createScriptProcessor() {} };
+  const ctxProcessor = { createScriptProcessor() {} };
+  ok('采集优先 AudioWorklet，其次 ScriptProcessor，都没有 → none',
+    pickCaptureMode(ctxWorklet, { AudioWorkletNode: class {} }) === 'worklet'
+    && pickCaptureMode(ctxWorklet, {}) === 'processor'
+    && pickCaptureMode(ctxProcessor, {}) === 'processor'
+    && pickCaptureMode(null, {}) === 'none');
+  ok('错误码映射：auth / network / timeout / upstream / config → 会话错误码',
+    volcErrorCode('auth') === 'asr-auth' && volcErrorCode('network') === 'asr-network'
+    && volcErrorCode('timeout') === 'asr-timeout' && volcErrorCode('upstream') === 'asr-upstream'
+    && volcErrorCode('server-busy') === 'asr-upstream' && volcErrorCode('config') === 'asr-config'
+    && volcErrorCode('something-else') === 'asr');
+
+  const asr = fakeAsr();
+  const session = makeSession({ asr });
+  await session.start();
+  asr.setRoute('volc');
+  ok('会话把 ASR 选路写进 snapshot（字幕面板据此提示当前用哪一路）',
+    session.snapshot().route === 'volc' && session.route === 'volc');
+  session.stop();
+  ok('stop() 清空 route', session.snapshot().route === '');
+}
+
+/* ================================================================== *
+ * 17. createVolcAsr：采集 → 发送 → partial / final → 关闭释放 → 回退
+ * ================================================================== */
+console.log('\n[17] createVolcAsr：采集 → 发送 → partial / final → 关闭释放 → 回退');
+{
+  const { win, log } = fakeVolcWindow();
+  const mic = { stream: { getTracks: () => [] }, close() {} };
+  const asr = createVolcAsr({ win, mic, url: 'ws://127.0.0.1:5999/asr', lang: 'zh-CN' });
+  const got = { route: [], state: [], interim: [], result: [], notice: [], error: [] };
+  asr.onRoute((info) => got.route.push(info.route));
+  asr.onState((phase) => got.state.push(phase));
+  asr.onInterim((text) => got.interim.push(text));
+  asr.onResult((text, info) => got.result.push({ text, info }));
+  asr.onNotice((info) => got.notice.push(info));
+  asr.onError((info) => got.error.push(info));
+
+  ok('start()：立刻走火山并连到指定代理地址',
+    asr.start() === true && asr.route === 'volc' && got.route[0] === 'volc'
+    && log.websockets.length === 1 && log.websockets[0].url === 'ws://127.0.0.1:5999/asr');
+  log.websockets[0].open();
+  const startMsg = JSON.parse(log.websockets[0].sent[0]);
+  ok('WS 打开后发 {"type":"start","lang":"zh-CN"}',
+    startMsg.type === 'start' && startMsg.lang === 'zh-CN');
+
+  log.websockets[0].message({ type: 'ready' });
+  await tick(3);
+  ok('ready → 开始采集（没有 AudioWorklet 时用 ScriptProcessor 兜底）',
+    log.contexts.length === 1 && !!log.contexts[0].node && log.contexts[0].node.connected >= 1);
+  ok('ready → 状态进 listening（会话不再停在连接中）',
+    got.state.includes('listening') && asr.active === true);
+
+  const ctx = log.contexts[0];
+  const node = ctx.node;
+  node.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(4800).fill(0.25) } });
+  const binary = log.websockets[0].sent.filter((x) => typeof x !== 'string');
+  ok('4800 个 48k 采样 → 1600 个 16k 样本 = 3200 字节二进制帧',
+    binary.length === 1 && binary[0].byteLength === 3200 && asr.sentBytes === 3200,
+    `${binary.length}/${binary[0] && binary[0].byteLength}`);
+
+  log.websockets[0].message({ type: 'partial', text: '深蹲' });
+  ok('代理 partial → onInterim（字幕跟着变）', got.interim.at(-1) === '深蹲');
+  log.websockets[0].message({ type: 'final', text: '深蹲 暂停' });
+  ok('代理 final → onResult(isFinal:true) 定稿',
+    got.result.at(-1)?.text === '深蹲 暂停' && got.result.at(-1)?.info?.isFinal === true);
+
+  asr.stop();
+  const lastSent = log.websockets[0].sent.at(-1);
+  ok('stop()：发 {"type":"stop"}、关 WS、关 AudioContext、断开处理节点（不留后台麦克风）',
+    JSON.parse(lastSent).type === 'stop' && log.websockets[0].closed === true
+    && ctx.closed === true && node.disconnected === true && asr.active === false);
+  ok('stop() 之后 route 清空', asr.route === '');
+}
+{
+  const { win, log } = fakeVolcWindow();
+  const mic = { stream: { getTracks: () => [] }, close() {} };
+  const asr = createVolcAsr({ win, mic, url: 'ws://127.0.0.1:5999/asr' });
+  const got = { route: [], notice: [], error: [] };
+  asr.onRoute((info) => got.route.push(info.route));
+  asr.onNotice((info) => got.notice.push(info));
+  asr.onError((info) => got.error.push(info));
+  asr.start();
+  log.websockets[0].fail();
+  await tick(2);
+  ok('代理连不上（WS error）→ 自动回退 Web Speech：路由变 webspeech + 启动浏览器识别',
+    got.route.at(-1) === 'webspeech' && got.notice.some((n) => n.code === 'asr-fallback')
+    && log.recognitions.length === 1 && log.recognitions[0].started === 1
+    && log.websockets[0].closed === true && got.error.length === 0,
+    JSON.stringify({ route: got.route, recs: log.recognitions.length, errors: got.error }));
+  asr.stop();
+  ok('回退后 stop() 会停掉浏览器识别',
+    log.recognitions[0].stopped >= 1 && asr.active === false);
+
+  const noWs = createVolcAsr({ win: { AudioContext: class {} }, mic });
+  ok('连 WebSocket 都没有 → start() 返回 false（外层选 webspeech）', noWs.start() === false);
+}
+{
+  const { win, log } = fakeVolcWindow();
+  delete win.SpeechRecognition;
+  const mic = { stream: { getTracks: () => [] }, close() {} };
+  const asr = createVolcAsr({ win, mic, url: 'ws://127.0.0.1:5999/asr' });
+  const errors = [];
+  asr.onError((info) => errors.push(info));
+  asr.start();
+  log.websockets[0].fail();
+  await tick(2);
+  ok('代理不可用且浏览器也没有 Web Speech → onError(asr-unsupported)，不静默',
+    errors.at(-1)?.code === 'asr-unsupported', JSON.stringify(errors));
+  asr.stop();
+}
+
+/* ================================================================== *
+ * 18. createAutoAsr：每次 start() 重新选路，接口与 P3.0 完全一致
+ * ================================================================== */
+console.log('\n[18] createAutoAsr：每次 start() 重新选路，接口与 P3.0 完全一致');
+{
+  const { win, log } = fakeVolcWindow();
+  const mic = { stream: { getTracks: () => [] }, close() {} };
+  const auto = createAutoAsr({ win, mic });
+  const routes = [];
+  auto.onRoute((info) => routes.push(info.route));
+  ok('auto：有 WebSocket + AudioContext → 选火山（默认地址 ws://127.0.0.1:4180/asr）',
+    auto.supported === true && auto.start() === true && auto.route === 'volc'
+    && log.websockets[0]?.url === DEFAULT_ASR_WS_URL && routes.includes('volc'));
+  auto.stop();
+
+  const webWin = {
+    SpeechRecognition: class {
+      constructor() { this.started = 0; }
+      start() { this.started += 1; this.onstart?.(); }
+      stop() {}
+    },
+  };
+  const auto2 = createAutoAsr({ win: webWin });
+  ok('auto：没有 WebSocket → 自动回退 Web Speech（start 成功、路由 webspeech）',
+    auto2.supported === true && auto2.start() === true && auto2.route === 'webspeech');
+  auto2.stop();
+
+  const none = createAutoAsr({ win: {} });
+  ok('auto：两路都没有 → start() 返回 false（会话落 asr-unsupported）',
+    none.supported === false && none.start() === false);
+
+  const forced = createAutoAsr({ win, url: 'off' });
+  ok('auto：url=off 强制 Web Speech（有识别构造器时仍然可用）',
+    forced.start() === true && forced.route === 'webspeech');
+  forced.stop();
+}
+
+/* ================================================================== *
+ * 19. 安全：代理只绑回环、前端没有任何凭证字段
+ * ================================================================== */
+console.log('\n[19] 安全：代理只绑回环、前端没有任何凭证字段');
+{
+  const read = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8');
+  const proxySrc = read('../server/coach-proxy.mjs');
+  ok('代理写死只绑 127.0.0.1（源码里没有 0.0.0.0，也不接受 HOST 覆盖）',
+    /BIND_HOST = '127\.0\.0\.1'/.test(proxySrc)
+    && !/0\.0\.0\.0/.test(proxySrc) && !/process\.env\.HOST/.test(proxySrc));
+  ok('代理默认端口 4180，可用 PORT 覆盖',
+    /DEFAULT_PORT = 4180/.test(proxySrc) && /process\.env\.PORT/.test(proxySrc));
+  const frontend = [
+    '../src/voice/providers.js', '../src/voice/session.js',
+    '../src/voice/coach.js', '../src/voice/pcm.js',
+  ].map(read).join('\n');
+  ok('前端源码里没有任何 VOLC_ 凭证字段（浏览器不知道 APP ID / Key / 资源）',
+    !/VOLC_(APP_ID|API_KEY|ASR_RESOURCE)/.test(frontend));
+  ok('浏览器只知道一个默认代理地址 ws://127.0.0.1:4180/asr',
+    /ws:\/\/127\.0\.0\.1:4180\/asr/.test(frontend));
+  ok('代理日志器不接收 headers（代码里没有把握手头写进日志的路径）',
+    !/logger\.\w+\([^)]*headers/.test(proxySrc));
+}
+
+/* ================================================================== *
+ * 20. P3.1 的新错误 / 提示 / 路由文案都有中英词条
+ * ================================================================== */
+console.log('\n[20] P3.1 的新错误 / 提示 / 路由文案都有中英词条');
+{
+  const codes = ['asr-auth', 'asr-network', 'asr-timeout', 'asr-upstream', 'asr-protocol', 'asr-config'];
+  const missingZh = codes.filter((code) => {
+    const key = VOICE_ERROR_KEYS[code];
+    return typeof flat.zh[key] !== 'string' || !flat.zh[key].trim();
+  });
+  const missingEn = codes.filter((code) => {
+    const key = VOICE_ERROR_KEYS[code];
+    return typeof flat.en[key] !== 'string' || !flat.en[key].trim();
+  });
+  ok('6 个火山错误码都有中英文案', missingZh.length === 0 && missingEn.length === 0,
+    JSON.stringify({ missingZh, missingEn }));
+  ok('回退提示 asr-fallback 有中英文案',
+    typeof flat.zh[VOICE_NOTICE_KEYS['asr-fallback']] === 'string'
+    && typeof flat.en[VOICE_NOTICE_KEYS['asr-fallback']] === 'string');
+  ok('两路识别的路由文案（volc / webSpeech）都有中英词条',
+    typeof flat.zh['coach.route.volc'] === 'string' && typeof flat.en['coach.route.volc'] === 'string'
+    && typeof flat.zh['coach.route.webSpeech'] === 'string'
+    && typeof flat.en['coach.route.webSpeech'] === 'string');
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

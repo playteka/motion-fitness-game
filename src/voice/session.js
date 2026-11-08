@@ -31,6 +31,13 @@ export const VOICE_ERROR_KEYS = Object.freeze({
   'asr-service': 'coach.error.service',
   'asr-language': 'coach.error.language',
   asr: 'coach.error.asr',
+  // P3.1 火山代理 / 火山返回的错误（代理只回稳定 code，不回凭证）
+  'asr-auth': 'coach.error.asrAuth',
+  'asr-network': 'coach.error.asrNetwork',
+  'asr-timeout': 'coach.error.asrTimeout',
+  'asr-upstream': 'coach.error.asrUpstream',
+  'asr-protocol': 'coach.error.asrProtocol',
+  'asr-config': 'coach.error.asrConfig',
   llm: 'coach.error.llm',
   generic: 'coach.error.generic',
 });
@@ -46,6 +53,8 @@ export const VOICE_NOTICE_KEYS = Object.freeze({
   'no-result': 'coach.notice.noResult',
   aborted: 'coach.notice.aborted',
   asr: 'coach.notice.asr',
+  // 火山代理连不上 / 鉴权失败：已经自动回退到浏览器识别，必须让用户看见
+  'asr-fallback': 'coach.notice.asrFallback',
 });
 
 /** 进入 listening 后多久没听到任何 interim / final 就提示「没听到声音」 */
@@ -91,6 +100,8 @@ export function createVoiceSession({
   let error = null;
   /** 非致命提示：{ code, at }（网络 / 没听到 / 中断），字幕面板会显示一行 */
   let notice = null;
+  /** 当前语音识别走哪一路：'volc'（本机代理）/ 'webspeech'（浏览器）/ ''（还没开始） */
+  let route = '';
   /** 最近一次 ASR 原始错误名（🐞 调试行显示；不会当文案用） */
   let lastError = '';
   /** 从进入 listening / 上次听到声音到现在的静音计时（8 秒无结果 → 提示「没听到声音」） */
@@ -112,6 +123,7 @@ export function createVoiceSession({
       coachText,
       error: error ? { ...error } : null,
       notice: notice ? { ...notice } : null,
+      route,
       lastError,
     };
   }
@@ -304,6 +316,7 @@ export function createVoiceSession({
     paused = false;
     error = null;
     notice = null;
+    route = '';
     userText = '';
     interimText = '';
     coachText = '';
@@ -346,6 +359,7 @@ export function createVoiceSession({
     coachText = '';
     error = null;
     notice = null;
+    route = '';
     state = 'off';
     return emit();
   }
@@ -401,6 +415,13 @@ export function createVoiceSession({
       if (info && info.raw) lastError = String(info.raw);
       setNotice((info && info.code) || 'asr', { raw: (info && info.raw) || '' });
     });
+    // 选路结果（火山代理 / 浏览器自带 / 回退）：界面据此提示「现在用的是哪一路」
+    asr.onRoute?.((info) => {
+      const next = info && info.route ? String(info.route) : '';
+      if (!next || next === route) return;
+      route = next;
+      emit();
+    });
   }
 
   return {
@@ -420,6 +441,7 @@ export function createVoiceSession({
     get paused() { return paused; },
     get error() { return error ? { ...error } : null; },
     get notice() { return notice ? { ...notice } : null; },
+    get route() { return route; },
     get lastError() { return lastError; },
     /** 测试可以调小（甚至设 0 关掉）；运行时重新调会重开静音计时 */
     get silenceMs() { return silenceMsValue; },

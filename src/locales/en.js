@@ -1411,6 +1411,13 @@ export default {
       service: 'The browser does not allow the speech recognition service: check the permissions in the address bar or your company policy, then press Ctrl+I to retry.',
       language: 'This browser does not support speech recognition for the current language (zh-CN / en-US).',
       asr: 'Speech recognition kept failing, so listening has stopped; press Ctrl+I to retry.',
+      // P3.1: errors from the Volcengine local proxy / the service itself (no credentials in these codes)
+      asrAuth: 'Volcengine speech authentication failed: check APP ID / API key / resource in coach.env on this machine, restart the proxy, then press Ctrl+I to retry.',
+      asrNetwork: 'Cannot reach the local speech proxy (ws://127.0.0.1:4180/asr): run node server/coach-proxy.mjs first, then press Ctrl+I.',
+      asrTimeout: 'Volcengine speech timed out: check the network and retry; npm run asr:probe can test connectivity directly.',
+      asrUpstream: 'Volcengine speech returned an error: retry later; if it keeps failing, run npm run asr:probe to see the code.',
+      asrProtocol: 'The speech protocol does not match: make sure the proxy and the page are the same version, then restart the proxy.',
+      asrConfig: 'The local proxy could not read coach.env: fill in VOLC_APP_ID / VOLC_API_KEY / VOLC_ASR_RESOURCE and restart it.',
       llm: 'The coach could not come up with an answer this time; press Ctrl+I to retry.',
       generic: 'The AI coach hit a problem; press Ctrl+I to retry.',
     },
@@ -1421,6 +1428,13 @@ export default {
       noResult: 'I have not heard anything: no result at all in 8 seconds. Say something into the microphone (this does not turn itself off).',
       aborted: 'Recognition was interrupted; reconnecting automatically…',
       asr: 'Speech recognition error ({code}); retrying automatically…',
+      // The Volcengine proxy is unavailable; recognition already fell back, so show why (proxy error code)
+      asrFallback: 'The local Volcengine proxy is unavailable ({code}); fell back to the browser speech recognition.',
+    },
+    // The small line in the subtitle panel that says which recognition route is in use (P3.1)
+    route: {
+      volc: 'Speech: Volcengine (local proxy)',
+      webSpeech: 'Speech: browser built-in (fallback)',
     },
     reply: {
       greeting: 'I am here. Which exercise would you like to train? Tell me.',

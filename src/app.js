@@ -25,7 +25,7 @@ import {
 // AI 语音教练（P3.0 基座）：会话状态机 + 适配器 + 界面层。
 // app.js 只做接线（热键 / 设置开关 / 生命周期 / 把 snapshot 交给 coach.render）。
 import { createVoiceSession, voiceErrorKey } from './voice/session.js';
-import { createMic, createAsr, createLlm, createTts, createVuMeter } from './voice/providers.js';
+import { createMic, createAutoAsr, createLlm, createTts, createVuMeter } from './voice/providers.js';
 import { createCoach, coachLayout } from './voice/coach.js';
 
 const $ = (id) => document.getElementById(id);
@@ -242,9 +242,15 @@ const state = {
  * ------------------------------------------------------------------ */
 
 const coach = createCoach({ vuFactory: () => createVuMeter() });
+/**
+ * P3.1：语音识别默认走「本机火山代理 → 回退浏览器 Web Speech」这条自动选路
+ * （`createAutoAsr`）。麦克风只在这里创建一次，采集层和会话层共用同一条轨道。
+ */
+const coachMic = createMic();
+const coachAsr = createAutoAsr({ mic: coachMic });
 const voice = createVoiceSession({
-  mic: createMic(),
-  asr: createAsr(),
+  mic: coachMic,
+  asr: coachAsr,
   llm: createLlm(),
   tts: createTts({ rate: 1 }),
   thinkDelay: 360,       // 让「正在想…」真的看得见，不然 thinking 一闪而过

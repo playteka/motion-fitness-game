@@ -1418,6 +1418,13 @@ export default {
       service: '浏览器不允许使用语音识别服务：检查地址栏左侧的权限 / 企业策略，再按 Ctrl+I 重试。',
       language: '浏览器不支持当前语言（zh-CN / en-US）的语音识别。',
       asr: '语音识别连续失败，已经停止聆听；按 Ctrl+I 重试。',
+      // P3.1 火山代理 / 火山返回的错误（代理只回稳定 code，不回凭证）
+      asrAuth: '火山语音识别鉴权失败：检查本机 coach.env 里的 APP ID / API Key / 资源 ID（改完重启代理），再按 Ctrl+I 重试。',
+      asrNetwork: '连不上本机语音代理（ws://127.0.0.1:4180/asr）：先运行 node server/coach-proxy.mjs，再按 Ctrl+I。',
+      asrTimeout: '火山语音识别超时：检查网络后重试；npm run asr:probe 可以直接测连通性。',
+      asrUpstream: '火山语音识别返回错误：稍后重试；一直失败就跑 npm run asr:probe 看错误码。',
+      asrProtocol: '火山语音识别协议对不上：确认代理和页面是同一版，重启代理后再试。',
+      asrConfig: '本机代理没读到 coach.env：把 VOLC_APP_ID / VOLC_API_KEY / VOLC_ASR_RESOURCE 填好再重启代理。',
       llm: '教练这一轮没想出来，按 Ctrl+I 重试。',
       generic: 'AI 教练出了点问题，按 Ctrl+I 重试。',
     },
@@ -1428,6 +1435,13 @@ export default {
       noResult: '没听到声音：8 秒内没有识别到任何字。对着麦克风说一句试试（不会自动关闭）。',
       aborted: '识别被中断了，正在自动重连…',
       asr: '语音识别出错（{code}），正在自动重试…',
+      // 火山代理不可用 → 已经自动回退浏览器识别；把原因（代理错误码）带出来
+      asrFallback: '本机火山代理不可用（{code}），已自动回退到浏览器自带语音识别。',
+    },
+    // 字幕面板上「现在用的是哪一路识别」那行小字（P3.1）
+    route: {
+      volc: '语音识别：火山引擎（本机代理）',
+      webSpeech: '语音识别：浏览器自带（回退）',
     },
     reply: {
       greeting: '我在。想练哪个动作，说给我听就行。',

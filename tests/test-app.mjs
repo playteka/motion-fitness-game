@@ -777,6 +777,146 @@ console.log('\n[1c2] 音量表：状态环按音量从灰 → 青 → 薄荷亮�
 }
 
 /* ------------------------------------------------------------------ *
+ * [1c3] P3.1：切到火山模式（本机代理）—— 选路 / 16k 分片 / 字幕 / 关闭释放
+ *
+ * 用户在国内，Chrome 的 webkitSpeechRecognition 连不上 Google（error.network）。
+ * 这里用**假 WebSocket + 假 AudioContext** 模拟「本机代理可用」：
+ *   - `window.__MFG_ASR_WS__` 覆盖的地址必须真的被连上；
+ *   - 字幕面板要写明当前用的是火山；
+ *   - 关闭教练时 WS / AudioContext / 处理节点 / 麦克风轨道全部释放。
+ * 全程不联网、不需要真麦克风。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[1c3] P3.1 火山模式：选路 / 16k 分片 / 字幕 / 关闭释放');
+{
+  const api = windowStub.__mfg;
+  const { t: tCoach } = await import('../src/i18n.js');
+  const flush = async () => {
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const savedWebSocket = windowStub.WebSocket;
+  const savedAudioContext = windowStub.AudioContext;
+  const savedOverride = windowStub.__MFG_ASR_WS__;
+
+  const volcStubs = { sockets: [], contexts: [] };
+  class FakeVolcWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.sent = [];
+      this.closed = false;
+      volcStubs.sockets.push(this);
+    }
+    send(data) { this.sent.push(data); }
+    close() {
+      this.closed = true;
+      this.readyState = 3;
+      this.onclose?.({});
+    }
+    open() { this.readyState = 1; this.onopen?.({}); }
+    message(obj) { this.onmessage?.({ data: JSON.stringify(obj) }); }
+  }
+  class FakeVolcAudioContext {
+    constructor() {
+      this.sampleRate = 48000;
+      this.state = 'running';
+      this.destination = {};
+      this.closed = false;
+      this.node = null;
+      volcStubs.contexts.push(this);
+    }
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    createAnalyser() {
+      return {
+        fftSize: 64,
+        smoothingTimeConstant: 0,
+        getByteTimeDomainData(buf) { for (let i = 0; i < buf.length; i += 1) buf[i] = 128; },
+      };
+    }
+    createScriptProcessor() {
+      this.node = {
+        connected: 0,
+        disconnected: false,
+        onaudioprocess: null,
+        connect() { this.connected += 1; },
+        disconnect() { this.disconnected = true; },
+      };
+      return this.node;
+    }
+    createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
+    resume() { return Promise.resolve(); }
+    close() { this.closed = true; this.state = 'closed'; return Promise.resolve(); }
+  }
+
+  windowStub.WebSocket = FakeVolcWebSocket;
+  windowStub.AudioContext = FakeVolcAudioContext;
+  windowStub.__MFG_ASR_WS__ = 'ws://127.0.0.1:5999/asr';   // 测试专用端口，证明覆盖生效
+  const micBefore = coachStubs.micTracks.length;
+
+  await api.setCoachEnabled(true);
+  await flush();
+  const sock = volcStubs.sockets.at(-1);
+  ok('切到火山模式：真的去连 window.__MFG_ASR_WS__ 指定的本机代理',
+    api.state.voice.route === 'volc' && sock?.url === 'ws://127.0.0.1:5999/asr',
+    JSON.stringify({ route: api.state.voice.route, url: sock?.url || null }));
+  ok('字幕面板写明「当前用火山引擎（本机代理）」（中英词条 coach.route.volc）',
+    elements.get('coachRoute').hidden === false
+    && elements.get('coachRoute').textContent === tCoach('coach.route.volc'),
+    elements.get('coachRoute').textContent);
+
+  sock.open();
+  ok('WS 打开后给代理发 {"type":"start","lang":"zh-CN"}（语言跟随界面）', (() => {
+    const msg = JSON.parse(sock.sent[0]);
+    return msg.type === 'start' && msg.lang === 'zh-CN';
+  })(), String(sock.sent[0]));
+
+  sock.message({ type: 'ready' });
+  await flush();
+  const capCtx = volcStubs.contexts.find((c) => c.node);
+  ok('代理 ready 后开始采集：用一个 AudioContext + ScriptProcessor 兜底节点',
+    !!capCtx && capCtx.node.connected >= 1, JSON.stringify(volcStubs.contexts.map((c) => !!c.node)));
+  capCtx.node.onaudioprocess({
+    inputBuffer: { getChannelData: () => new Float32Array(4800).fill(0.25) },   // 48k 的 100ms
+  });
+  const binary = sock.sent.filter((x) => typeof x !== 'string');
+  ok('麦克风 48k → 16k PCM16 分片：4800 个采样变成 3200 字节再发出去',
+    binary.length === 1 && binary[0].byteLength === 3200,
+    JSON.stringify(binary.map((b) => b.byteLength)));
+
+  sock.message({ type: 'partial', text: '深蹲' });
+  ok('代理 partial 立刻上屏「你：深蹲」（不用等 final）',
+    elements.get('coachYouText').textContent === '深蹲', elements.get('coachYouText').textContent);
+  sock.message({ type: 'final', text: '深蹲 暂停' });
+  await flush();
+  ok('代理 final 定稿（userText 变成完整一句）',
+    api.state.voice.userText === '深蹲 暂停', api.state.voice.userText);
+
+  await api.setCoachEnabled(false);
+  await flush();
+  const tracks = coachStubs.micTracks.slice(micBefore);
+  ok('关闭教练：断 WS、关 AudioContext、断开处理节点（不留后台麦克风 / 连接）',
+    sock.closed === true && capCtx.closed === true && capCtx.node.disconnected === true,
+    JSON.stringify({ ws: sock.closed, ctx: capCtx.closed, node: capCtx.node.disconnected }));
+  ok('关闭教练：本次打开期间拿到的麦克风轨道全部 stop（主路 + 音量表第二路）',
+    tracks.length >= 1 && tracks.every((track) => track.stopped === true),
+    JSON.stringify(tracks.map((x) => x.stopped)));
+  ok('关闭后路由清空、字幕面板与路由那行一起收起',
+    api.state.voice.route === '' && elements.get('coachPanel').hidden === true
+    && elements.get('coachRoute').hidden === true,
+    JSON.stringify({ route: api.state.voice.route, panel: elements.get('coachPanel').hidden,
+      hint: elements.get('coachRoute').hidden }));
+
+  // 恢复现场：后面的用例仍然走 P3.0 的 Web Speech 桩
+  windowStub.WebSocket = savedWebSocket;
+  windowStub.AudioContext = savedAudioContext;
+  if (savedOverride === undefined) delete windowStub.__MFG_ASR_WS__;
+  else windowStub.__MFG_ASR_WS__ = savedOverride;
+  rafQueue.length = 0;
+  api.showHome();
+}
+
+/* ------------------------------------------------------------------ *
  * [1d] AI 教练开启 → 系统语音提示自动关闭（提示音不变）
  *
  * 用户要求：「一旦 AI 语音教练开启，则原来的系统语音提示可以关闭，避免重复。

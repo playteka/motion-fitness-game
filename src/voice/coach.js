@@ -36,6 +36,16 @@ export const COACH_STATUS_KEYS = Object.freeze({
   error: 'voice.status.error',
 });
 
+/**
+ * 识别走哪一路 → 字幕面板上的那行小字（`coach.route.*`）。
+ * P3.1：默认「本机火山代理」，代理不可用时自动回退浏览器 Web Speech ——
+ * 用户必须能一眼看出当前是哪一路，不然「没字幕」时根本不知道谁在识别。
+ */
+export const COACH_ROUTE_KEYS = Object.freeze({
+  volc: 'coach.route.volc',
+  webspeech: 'coach.route.webSpeech',
+});
+
 /** 状态 → 是否显示字幕面板（off 时只留灰掉的状态环） */
 export const COACH_PANEL_STATES = Object.freeze(['listening', 'thinking', 'speaking', 'error']);
 
@@ -197,7 +207,7 @@ export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
     if (mounted || !d) return api;
     for (const id of ['coachDock', 'coachRing', 'coachRingSvg', 'coachRingFill', 'coachRingIcon',
       'coachPanel', 'coachAvatar', 'coachStatus', 'coachSubtitles', 'coachYouText', 'coachCoachText',
-      'coachNotice', 'coachHint']) {
+      'coachNotice', 'coachRoute', 'coachHint']) {
       el[id] = $(id);
     }
     if (el.coachAvatar) el.coachAvatar.innerHTML = libIconSVG('ui:coach', 'ui-icon coach-avatar-icon');
@@ -345,7 +355,14 @@ export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
       el.coachPanel.hidden = !showPanel;
       el.coachPanel.setAttribute('aria-label', t('coach.title'));
     }
-    if (!showPanel) return api;
+    if (!showPanel) {
+      // 面板收起时把「识别走哪一路」也一起收掉（下次打开重新按当前路由填）
+      if (el.coachRoute) {
+        el.coachRoute.hidden = true;
+        el.coachRoute.textContent = '';
+      }
+      return api;
+    }
 
     const interim = String(snap.interimText || '').trim();
     const user = interim || String(snap.userText || '').trim();
@@ -366,6 +383,13 @@ export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
     if (el.coachStatus) el.coachStatus.textContent = statusText;
     if (el.coachYouText) el.coachYouText.textContent = user;
     if (el.coachCoachText) el.coachCoachText.textContent = coach;
+    // 识别走的是哪一路（火山代理 / 浏览器自带）——P3.1 的排障入口
+    if (el.coachRoute) {
+      const routeKey = COACH_ROUTE_KEYS[snap.route];
+      const routeText = routeKey ? t(routeKey) : '';
+      el.coachRoute.hidden = !routeText;
+      el.coachRoute.textContent = routeText;
+    }
     if (el.coachNotice) {
       el.coachNotice.hidden = !noticeText;
       el.coachNotice.textContent = noticeText;

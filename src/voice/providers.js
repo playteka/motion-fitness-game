@@ -20,6 +20,7 @@
  */
 
 import { t, tList, getLang, getMeta } from '../i18n.js';
+import { downsampleToPcm16 } from './pcm.js';
 
 /* ================================================================== *
  * 工具
@@ -87,6 +88,8 @@ export function createMic({ win = null } = {}) {
       tracks = [];
       stream = null;
     },
+    /** 给火山采集层用的原始 MediaStream（只读；stop 仍由 close() 负责） */
+    get stream() { return stream; },
     get active() { return tracks.length > 0; },
     get trackCount() { return tracks.length; },
   };
@@ -100,6 +103,97 @@ export function createMic({ win = null } = {}) {
 export function speechRecognitionCtor(win = null) {
   const w = rootWin(win);
   return w.SpeechRecognition || w.webkitSpeechRecognition || null;
+}
+
+/* ================================================================== *
+ * ASR 选路（P3.1）：优先本机火山代理，代理不可用就回退浏览器 Web Speech
+ * ================================================================== */
+
+/** 本机代理的默认地址（浏览器只知道这个地址，凭证全在代理进程的 coach.env 里） */
+export const DEFAULT_ASR_WS_URL = 'ws://127.0.0.1:4180/asr';
+
+/** 三条路：火山代理 / 浏览器自带 / 都没有 */
+export const ASR_ROUTES = Object.freeze({
+  VOLC: 'volc',
+  WEB_SPEECH: 'webspeech',
+  NONE: 'none',
+});
+
+/**
+ * 代理地址：默认 `ws://127.0.0.1:4180/asr`，可被 `window.__MFG_ASR_WS__` 覆盖（测试 / 换端口）。
+ * 显式写 `off` / `none` / `0` / `false` 可以强制回退到 Web Speech。
+ */
+export function resolveAsrUrl(win = null) {
+  const w = rootWin(win);
+  const raw = w.__MFG_ASR_WS__;
+  if (typeof raw !== 'string') return DEFAULT_ASR_WS_URL;
+  const value = raw.trim();
+  if (!value) return DEFAULT_ASR_WS_URL;
+  if (/^(off|none|false|0)$/i.test(value)) return '';
+  return value;
+}
+
+/**
+ * 选哪一路（纯函数，测试直接传假 window）。
+ *
+ * 火山那一路需要三样东西同时成立：
+ *   - 一个非空的代理地址；
+ *   - `WebSocket`（收发 PCM / 识别结果）；
+ *   - `AudioContext`（麦克风降采样成 16k PCM）。
+ * 缺任何一样就回退 `webkitSpeechRecognition`；再没有就是 `none`（界面落 error）。
+ */
+export function pickAsrRoute({ win = null, url = null } = {}) {
+  const w = rootWin(win);
+  const target = url === null || url === undefined ? resolveAsrUrl(w) : String(url || '');
+  const hasVolc = !!target
+    && typeof w.WebSocket === 'function'
+    && !!(w.AudioContext || w.webkitAudioContext);
+  if (hasVolc) return ASR_ROUTES.VOLC;
+  return speechRecognitionCtor(w) ? ASR_ROUTES.WEB_SPEECH : ASR_ROUTES.NONE;
+}
+
+/**
+ * auto 适配器用的地址归一化：显式传 `off` / `none` / `0` / `false` 表示**强制回退**，
+ * 传空 / 不传则用 `resolveAsrUrl()` 的默认值或 `window.__MFG_ASR_WS__` 覆盖。
+ */
+function asrTarget(win, url) {
+  if (url === null || url === undefined) return resolveAsrUrl(win);
+  const value = String(url).trim();
+  if (!value) return resolveAsrUrl(win);
+  if (/^(off|none|false|0)$/i.test(value)) return '';
+  return value;
+}
+
+/**
+ * 麦克风采集用哪种节点（纯函数）：
+ *   - `worklet`：有 `AudioWorkletNode` + `ctx.audioWorklet`（首选，不占主线程）；
+ *   - `processor`：只有 `createScriptProcessor`（兜底，老浏览器 / 部分环境）；
+ *   - `none`：两样都没有。
+ */
+export function pickCaptureMode(ctx, win = null) {
+  if (!ctx) return 'none';
+  const w = rootWin(win);
+  if (ctx.audioWorklet && typeof w.AudioWorkletNode === 'function') return 'worklet';
+  if (typeof ctx.createScriptProcessor === 'function') return 'processor';
+  return 'none';
+}
+
+/** 代理 / 火山返回的错误码 → 会话错误码（session.js 的 VOICE_ERROR_KEYS 认得这些） */
+export const VOLC_ERROR_MAP = Object.freeze({
+  auth: 'asr-auth',
+  network: 'asr-network',
+  timeout: 'asr-timeout',
+  upstream: 'asr-upstream',
+  'server-busy': 'asr-upstream',
+  'bad-request': 'asr-protocol',
+  'empty-audio': 'asr-protocol',
+  'audio-format': 'asr-protocol',
+  protocol: 'asr-protocol',
+  config: 'asr-config',
+});
+
+export function volcErrorCode(code) {
+  return VOLC_ERROR_MAP[String(code || '')] || 'asr';
 }
 
 /**
@@ -154,7 +248,7 @@ export function createAsr({
   let failures = 0;
   let restartTimer = null;
   let lastError = '';
-  const handlers = { result: null, interim: null, error: null, end: null, state: null, notice: null };
+  const handlers = { result: null, interim: null, error: null, end: null, state: null, notice: null, route: null };
 
   /** 记下最后一个原始错误名（🐞 调试行会显示它），浏览器里另留一条 console */
   function noteError(raw) {
@@ -261,6 +355,7 @@ export function createAsr({
       rec.start();
       starting = false;
       running = true;
+      handlers.route?.({ route: ASR_ROUTES.WEB_SPEECH });
       return true;
     } catch (err) {
       // InvalidStateError 之类：不抛给会话，返回 false 让 UI 落 error（会话会给出可重试提示）
@@ -279,6 +374,8 @@ export function createAsr({
     get attempts() { return failures; },
     get lang() { return speechLang(lang); },
     get lastError() { return lastError; },
+    /** 这一路是什么（火山代理 / 浏览器自带）；会话把它写进 snapshot 给界面提示 */
+    get route() { return ASR_ROUTES.WEB_SPEECH; },
     onResult(fn) { handlers.result = fn; return api; },
     onInterim(fn) { handlers.interim = fn; return api; },
     onError(fn) { handlers.error = fn; return api; },
@@ -286,10 +383,13 @@ export function createAsr({
     onState(fn) { handlers.state = fn; return api; },
     /** 非致命错误（network / no-speech / aborted）：只提示，不落 error 状态 */
     onNotice(fn) { handlers.notice = fn; return api; },
+    /** 选路结果（火山适配器会先报 volc、回退时再报 webspeech） */
+    onRoute(fn) { handlers.route = fn; return api; },
     /** 开始聆听；返回 false = 这个浏览器不支持（调用方落 error 状态，不抛错） */
     start() {
       if (!speechRecognitionCtor(w)) {
         running = false;
+        handlers.route?.({ route: ASR_ROUTES.NONE });
         return false;
       }
       if (running || starting) return true;   // 重复 start() 不抛 InvalidStateError
@@ -312,6 +412,423 @@ export function createAsr({
         try { rec.stop?.(); } catch { /* ignore */ }
         try { rec.abort?.(); } catch { /* ignore */ }
       }
+    },
+  };
+  return api;
+}
+
+/* ================================================================== *
+ * 火山流式 ASR 适配器（P3.1）：麦克风 → 16k PCM16 → 本机代理 → 火山
+ *
+ * 接口与 createAsr() **完全一致**（start / stop / onResult / onInterim / onError /
+ * onState），另外多一个 onRoute 给界面提示「现在用的是哪一路」。
+ *
+ * 连接 / 握手 / 鉴权失败（代理没起、端口不通、coach.env 缺字段、火山拒绝）时：
+ *   - 如果浏览器还有 Web Speech，就**静默回退**到它，并通过 onRoute 把路由改成
+ *     `webspeech`、onNotice 报一条 `asr-fallback`（字幕面板会写出来）；
+ *   - 两路都没有才 onError（会话落 error）。
+ *
+ * 关闭时按顺序收拾：停 AudioWorklet / ScriptProcessor → 断 WebSocket → 关 AudioContext。
+ * 麦克风轨道由会话层的 mic 适配器释放（这里只用、不 stop，避免两处抢着关）。
+ * ================================================================== */
+
+/** worklet 模块地址（浏览器里由 preview-server 以 text/javascript 提供） */
+const PCM_WORKLET_URL = new URL('./pcm-worklet.js', import.meta.url).href;
+
+/**
+ * 创建火山 ASR 适配器。
+ *
+ * @param {object} [opts]
+ * @param {object} [opts.win]              浏览器 window（测试注入）
+ * @param {object} [opts.mic]              createMic() 的实例（用它的 .stream 采集）
+ * @param {string} [opts.url]              代理地址（默认 resolveAsrUrl()）
+ * @param {string|Function} [opts.lang]    语言
+ * @param {Function} [opts.fallbackFactory] 回退工厂（默认 createAsr）
+ * @param {number} [opts.connectTimeoutMs] 连代理的超时
+ * @param {number} [opts.readyTimeoutMs]   代理连上火山后等 ready 的超时
+ */
+export function createVolcAsr({
+  win = null,
+  mic = null,
+  url = null,
+  lang = null,
+  fallbackFactory = null,
+  connectTimeoutMs = 5000,
+  readyTimeoutMs = 8000,
+} = {}) {
+  const w = rootWin(win);
+  const handlers = {
+    result: null, interim: null, error: null, end: null, state: null, notice: null, route: null,
+  };
+  let ws = null;
+  let ready = false;
+  let running = false;
+  let manualStop = true;
+  let currentRoute = '';
+  let fallback = null;
+  let connectTimer = null;
+  let readyTimer = null;
+  let audio = { ctx: null, source: null, node: null, gain: null };
+  let chunks = 0;
+  let sentBytes = 0;
+
+  function clearTimers() {
+    if (connectTimer !== null) { try { clearTimeout(connectTimer); } catch { /* ignore */ } connectTimer = null; }
+    if (readyTimer !== null) { try { clearTimeout(readyTimer); } catch { /* ignore */ } readyTimer = null; }
+  }
+
+  function sendJson(obj) {
+    if (!ws || ws.readyState !== 1) return false;
+    try { ws.send(JSON.stringify(obj)); return true; } catch { return false; }
+  }
+
+  function sendBytes(buffer) {
+    if (!ws || ws.readyState !== 1) return false;
+    try { ws.send(buffer); sentBytes += buffer.byteLength || buffer.length || 0; return true; } catch { return false; }
+  }
+
+  function closeSocket() {
+    const sock = ws;
+    ws = null;
+    ready = false;
+    if (!sock) return;
+    try { sock.onopen = null; } catch { /* ignore */ }
+    try { sock.onmessage = null; } catch { /* ignore */ }
+    try { sock.onerror = null; } catch { /* ignore */ }
+    try { sock.onclose = null; } catch { /* ignore */ }
+    try { sock.close?.(); } catch { /* ignore */ }
+  }
+
+  function teardownAudio() {
+    const current = audio;
+    audio = { ctx: null, source: null, node: null, gain: null };
+    try { current.node?.port?.close?.(); } catch { /* ignore */ }
+    try { current.node?.disconnect?.(); } catch { /* ignore */ }
+    try { current.source?.disconnect?.(); } catch { /* ignore */ }
+    try { current.gain?.disconnect?.(); } catch { /* ignore */ }
+    if (current.node) {
+      try { current.node.onaudioprocess = null; } catch { /* ignore */ }
+      try { current.node.onmessage = null; } catch { /* ignore */ }
+    }
+    if (current.ctx) {
+      try {
+        const p = current.ctx.close?.();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch { /* ignore */ }
+    }
+  }
+
+  /** 代理 / 火山不可用：收拾干净后回退 Web Speech（没有才报错） */
+  function fallbackToWebSpeech(reason) {
+    if (manualStop || fallback) return false;
+    teardownAudio();
+    closeSocket();
+    clearTimers();
+    let adapter = null;
+    try {
+      adapter = fallbackFactory
+        ? fallbackFactory({ win: w, lang })
+        : createAsr({ win: w, lang });
+    } catch { adapter = null; }
+    if (!adapter) {
+      running = false;
+      currentRoute = '';
+      handlers.error?.({ code: 'asr-unsupported', fatal: true });
+      return false;
+    }
+    fallback = adapter;
+    adapter.onResult?.((text, info) => handlers.result?.(text, info));
+    adapter.onInterim?.((text, info) => handlers.interim?.(text, info));
+    adapter.onError?.((err) => handlers.error?.(err));
+    adapter.onEnd?.(() => handlers.end?.());
+    adapter.onState?.((phase, info) => handlers.state?.(phase, info));
+    adapter.onNotice?.((info) => handlers.notice?.(info));
+    currentRoute = ASR_ROUTES.WEB_SPEECH;
+    handlers.route?.({ route: ASR_ROUTES.WEB_SPEECH, reason: String(reason || '') });
+    handlers.notice?.({ code: 'asr-fallback', raw: String(reason || '') });
+    let started = false;
+    try { started = adapter.start() !== false; } catch { started = false; }
+    if (!started) {
+      fallback = null;
+      running = false;
+      handlers.error?.({ code: 'asr-unsupported', fatal: true });
+      return false;
+    }
+    handlers.state?.('listening', { route: ASR_ROUTES.WEB_SPEECH });
+    return true;
+  }
+
+  /** 一收到 ready 就开始采集：音频晚一点发没关系，但没有 ready 前别白占麦克风 */
+  async function startCapture() {
+    const Ctx = w.AudioContext || w.webkitAudioContext;
+    const stream = mic && mic.stream ? mic.stream : null;
+    if (!Ctx || !stream) {
+      throw Object.assign(new Error('audio capture unavailable'), { code: 'mic-empty' });
+    }
+    const ctx = new Ctx();
+    audio.ctx = ctx;
+    if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+      try { await ctx.resume(); } catch { /* ignore */ }
+    }
+    const source = ctx.createMediaStreamSource(stream);
+    audio.source = source;
+    const inputRate = Number(ctx.sampleRate) || 48000;
+    const emitChunk = (samples) => {
+      if (manualStop || !ready || !samples) return;
+      const pcm = downsampleToPcm16(samples, inputRate);
+      if (!pcm.length) return;
+      chunks += 1;
+      sendBytes(pcm.buffer);
+    };
+
+    if (pickCaptureMode(ctx, w) === 'worklet') {
+      try {
+        await ctx.audioWorklet.addModule(PCM_WORKLET_URL);
+        if (manualStop || !running) {
+          try { ctx.close?.(); } catch { /* ignore */ }
+          return false;
+        }
+        const node = new w.AudioWorkletNode(ctx, 'mfg-pcm-capture');
+        node.port.onmessage = (event) => emitChunk(event && event.data);
+        source.connect(node);
+        audio.node = node;
+        return true;
+      } catch { /* 退回 ScriptProcessor */ }
+    }
+
+    if (manualStop || !running) {
+      try { ctx.close?.(); } catch { /* ignore */ }
+      return false;
+    }
+    if (typeof ctx.createScriptProcessor !== 'function') {
+      throw Object.assign(new Error('no audio processing node'), { code: 'asr-unsupported' });
+    }
+    const node = ctx.createScriptProcessor(4096, 1, 1);
+    node.onaudioprocess = (event) => {
+      const input = event && event.inputBuffer;
+      const samples = input && typeof input.getChannelData === 'function'
+        ? input.getChannelData(0)
+        : null;
+      emitChunk(samples);
+    };
+    const gain = typeof ctx.createGain === 'function' ? ctx.createGain() : null;
+    if (gain) {
+      try { gain.gain.value = 0; } catch { /* ignore */ }
+    }
+    source.connect(node);
+    if (gain) {
+      node.connect(gain);
+      gain.connect(ctx.destination);
+    } else {
+      node.connect(ctx.destination);
+    }
+    audio.node = node;
+    audio.gain = gain;
+    return true;
+  }
+
+  function onMessage(event) {
+    let msg;
+    try { msg = JSON.parse(String(event && event.data)); } catch { return; }
+    if (!msg || typeof msg.type !== 'string') return;
+    if (msg.type === 'ready') {
+      ready = true;
+      if (readyTimer !== null) { clearTimeout(readyTimer); readyTimer = null; }
+      handlers.state?.('listening', { route: ASR_ROUTES.VOLC });
+      startCapture().catch(() => { fallbackToWebSpeech('capture-failed'); });
+      return;
+    }
+    if (msg.type === 'partial') {
+      const text = String(msg.text || '');
+      if (text) handlers.interim?.(text);
+      return;
+    }
+    if (msg.type === 'final') {
+      const text = String(msg.text || '');
+      if (text) handlers.result?.(text, { isFinal: true });
+      else handlers.interim?.('', { clear: true });
+      return;
+    }
+    if (msg.type === 'error') {
+      const code = String(msg.code || 'error');
+      handlers.notice?.({ code: 'asr-fallback', raw: code });
+      fallbackToWebSpeech(`server-${code}`);
+    }
+  }
+
+  function startVolc() {
+    const WS = w.WebSocket;
+    const target = asrTarget(w, url);
+    if (!WS || !target || !(w.AudioContext || w.webkitAudioContext)) {
+      fallbackToWebSpeech('unsupported');
+      return;
+    }
+    let sock;
+    try { sock = new WS(target); } catch { fallbackToWebSpeech('ws-construct'); return; }
+    ws = sock;
+    try { sock.binaryType = 'arraybuffer'; } catch { /* ignore */ }
+    sock.onopen = () => {
+      if (manualStop || ws !== sock) return;
+      if (connectTimer !== null) { clearTimeout(connectTimer); connectTimer = null; }
+      sendJson({ type: 'start', lang: speechLang(lang) });
+      readyTimer = setTimeout(() => {
+        readyTimer = null;
+        if (!ready && !manualStop) fallbackToWebSpeech('ready-timeout');
+      }, readyTimeoutMs);
+    };
+    sock.onmessage = (event) => { if (ws === sock) onMessage(event); };
+    sock.onerror = () => { if (!ready) fallbackToWebSpeech('ws-error'); };
+    sock.onclose = () => {
+      if (manualStop || ws !== sock) return;
+      fallbackToWebSpeech('ws-closed');
+    };
+    connectTimer = setTimeout(() => {
+      connectTimer = null;
+      if (!ready && !manualStop) fallbackToWebSpeech('connect-timeout');
+    }, connectTimeoutMs);
+  }
+
+  const api = {
+    kind: 'volc',
+    name: 'volc-asr',
+    get supported() {
+      return !!asrTarget(w, url)
+        && typeof w.WebSocket === 'function'
+        && !!(w.AudioContext || w.webkitAudioContext);
+    },
+    get active() { return running; },
+    get route() { return currentRoute; },
+    get ready() { return ready; },
+    get chunks() { return chunks; },
+    get sentBytes() { return sentBytes; },
+    onResult(fn) { handlers.result = fn; return api; },
+    onInterim(fn) { handlers.interim = fn; return api; },
+    onError(fn) { handlers.error = fn; return api; },
+    onEnd(fn) { handlers.end = fn; return api; },
+    onState(fn) { handlers.state = fn; return api; },
+    onNotice(fn) { handlers.notice = fn; return api; },
+    onRoute(fn) { handlers.route = fn; return api; },
+    start() {
+      if (running) return true;
+      if (!api.supported || !(url || resolveAsrUrl(w))) {
+        currentRoute = '';
+        return false;
+      }
+      manualStop = false;
+      running = true;
+      ready = false;
+      fallback = null;
+      chunks = 0;
+      sentBytes = 0;
+      currentRoute = ASR_ROUTES.VOLC;
+      handlers.route?.({ route: ASR_ROUTES.VOLC });
+      handlers.state?.('connecting');
+      startVolc();
+      return true;
+    },
+    stop() {
+      manualStop = true;
+      running = false;
+      ready = false;
+      clearTimers();
+      sendJson({ type: 'stop' });
+      const fb = fallback;
+      fallback = null;
+      try { fb?.stop?.(); } catch { /* ignore */ }
+      closeSocket();
+      teardownAudio();
+      currentRoute = '';
+    },
+  };
+  return api;
+}
+
+/**
+ * 自动选路适配器：每次 start() 都重新判断（代理可能刚启动 / 刚关掉；
+ * 测试里也可以中途替换 window 上的能力）。
+ *
+ *   - 有 WebSocket + AudioContext + 代理地址 → createVolcAsr（内部还会自己回退）；
+ *   - 否则 → createAsr（浏览器 Web Speech）；
+ *   - 都没有 → start() 返回 false，会话落 error。
+ *
+ * 对会话仍然只有 P3.0 那套接口；选路结果通过 onRoute 上报。
+ */
+export function createAutoAsr({
+  win = null,
+  mic = null,
+  url = null,
+  lang = null,
+  volcFactory = null,
+  webSpeechFactory = null,
+  fallbackFactory = null,
+} = {}) {
+  const w = rootWin(win);
+  const handlers = {
+    result: null, interim: null, error: null, end: null, state: null, notice: null, route: null,
+  };
+  let inner = null;
+  let lastRoute = '';
+
+  function bind(adapter) {
+    adapter.onResult?.((text, info) => handlers.result?.(text, info));
+    adapter.onInterim?.((text, info) => handlers.interim?.(text, info));
+    adapter.onError?.((err) => handlers.error?.(err));
+    adapter.onEnd?.(() => handlers.end?.());
+    adapter.onState?.((phase, info) => handlers.state?.(phase, info));
+    adapter.onNotice?.((info) => handlers.notice?.(info));
+    adapter.onRoute?.((info) => {
+      if (info && info.route) {
+        lastRoute = info.route;
+        handlers.route?.(info);
+      }
+    });
+  }
+
+  const api = {
+    kind: 'auto',
+    get name() { return inner ? (inner.name || inner.kind || '') : 'auto'; },
+    get supported() { return pickAsrRoute({ win: w, url: asrTarget(w, url) }) !== ASR_ROUTES.NONE; },
+    get active() { return !!(inner && inner.active); },
+    get route() { return lastRoute; },
+    onResult(fn) { handlers.result = fn; return api; },
+    onInterim(fn) { handlers.interim = fn; return api; },
+    onError(fn) { handlers.error = fn; return api; },
+    onEnd(fn) { handlers.end = fn; return api; },
+    onState(fn) { handlers.state = fn; return api; },
+    onNotice(fn) { handlers.notice = fn; return api; },
+    onRoute(fn) { handlers.route = fn; return api; },
+    start() {
+      if (inner) {
+        try { inner.stop(); } catch { /* ignore */ }
+        inner = null;
+      }
+      const target = asrTarget(w, url);
+      const route = pickAsrRoute({ win: w, url: target });
+      lastRoute = route === ASR_ROUTES.NONE ? '' : route;
+      handlers.route?.({ route });
+      if (route === ASR_ROUTES.VOLC) {
+        const factory = volcFactory || createVolcAsr;
+        inner = factory({
+          win: w,
+          mic,
+          url: target,
+          lang,
+          fallbackFactory: fallbackFactory || (({ win: fw, lang: fl } = {}) => createAsr({ win: fw, lang: fl })),
+        });
+      } else {
+        const factory = webSpeechFactory || createAsr;
+        inner = factory({ win: w, lang });
+      }
+      bind(inner);
+      let started = false;
+      try { started = inner.start() !== false; } catch { started = false; }
+      return started;
+    },
+    stop() {
+      const adapter = inner;
+      inner = null;
+      lastRoute = '';
+      try { adapter?.stop?.(); } catch { /* ignore */ }
     },
   };
   return api;
