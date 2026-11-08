@@ -524,6 +524,12 @@
             <button class="toggle" id="btnCoach" type="button" aria-pressed="false"
                     data-i18n="settings.coachToggle"></button>
           </div>
+          <!-- P3.2：语音命令一览（表格从 src/voice/commands.js 的命令表生成，一处定义） -->
+          <div class="btn-row">
+            <button class="ghost-btn" id="btnVoiceHelp" type="button"
+                    data-i18n="coach.help.open"></button>
+          </div>
+          <p class="modal-hint" data-i18n="coach.help.lead"></p>
           <p class="modal-hint" data-i18n="settings.coachHotkey"></p>
           <!-- 用户要求：在这里说明「首次开始训练时就会一并请求麦克风」，免得按 Ctrl+I 时才弹框 -->
           <p class="modal-hint" data-i18n="settings.coachMic"></p>
@@ -655,6 +661,35 @@
         <ul class="history-list" id="historyList"></ul>
         <div class="btn-row">
           <button class="ghost-btn" id="btnClearHistory" type="button" data-i18n="ui.clear"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 语音命令一览（P3.2：从命令表生成，可滚动，Esc 关闭） ================= -->
+  <div class="modal" id="voiceHelpModal" hidden>
+    <div class="modal-backdrop" id="voiceHelpBackdrop"></div>
+    <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="voiceHelpTitle">
+      <div class="modal-head">
+        <h2 id="voiceHelpTitle" data-i18n="coach.help.title"></h2>
+        <button class="icon-btn" id="btnCloseVoiceHelp" type="button"
+                data-i18n-title="coach.help.close" data-i18n-aria="coach.help.close">
+          <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint" id="voiceHelpLead" data-i18n="coach.help.intro"></p>
+        <div class="voice-help-scroll">
+          <table class="voice-help-table">
+            <thead>
+              <tr>
+                <th scope="col" data-i18n="coach.help.colZh"></th>
+                <th scope="col" data-i18n="coach.help.colEn"></th>
+                <th scope="col" data-i18n="coach.help.colWhat"></th>
+              </tr>
+            </thead>
+            <tbody id="voiceHelpList"></tbody>
+          </table>
         </div>
       </div>
     </div>

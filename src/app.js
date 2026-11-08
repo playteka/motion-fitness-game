@@ -27,6 +27,8 @@ import {
 import { createVoiceSession, voiceErrorKey } from './voice/session.js';
 import { createMic, createAutoAsr, createLlm, createTts, createVuMeter } from './voice/providers.js';
 import { createCoach, coachLayout } from './voice/coach.js';
+// P3.2 命令快车道：命令表是唯一来源（说法 / 帮助面板 / 测试都从它来）
+import { COMMANDS, commandHelpRows } from './voice/commands.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -248,11 +250,32 @@ const coach = createCoach({ vuFactory: () => createVuMeter() });
  */
 const coachMic = createMic();
 const coachAsr = createAutoAsr({ mic: coachMic });
+/** 「别说话」命令的开关：只关教练朗读，字幕照常（session.setMuted） */
+let coachMuted = false;
+/**
+ * 命令快车道的执行上下文（P3.2）。
+ *
+ * **只有仓库里已经存在的函数**（外加本次新增的 3 个纯 UI 入口：
+ * `getStateSnapshot` 只读快照 / `setCoachMuted` 静音开关 / `openVoiceHelp` 面板），
+ * 命令本身（`src/voice/commands.js` 的 `run`）绝不直接改 state。
+ */
+const voiceCommandCtx = {
+  // 导航
+  showHome, showWorkout, openMenu, closeMenu,
+  flipMenuPage, selectFromMenu, menuItems, pickMenuItem, menuPageInfo,
+  openSettings, closeSettings, openRecordsModal, closeRecordsModal,
+  openExerciseSettings, closeExerciseSettings, openVoiceHelp, closeVoiceHelp,
+  // 训练
+  startGestureMode, selectExercise, pauseSession, resumeSession, retrySet, setTarget,
+  // 语音 / 查询
+  setCoachMuted, setCoachEnabled, changeLang, getStateSnapshot,
+};
 const voice = createVoiceSession({
   mic: coachMic,
   asr: coachAsr,
   llm: createLlm(),
   tts: createTts({ rate: 1 }),
+  commandCtx: voiceCommandCtx,
   thinkDelay: 360,       // 让「正在想…」真的看得见，不然 thinking 一闪而过
 });
 /** 第一次打开才说自我介绍（同一次页面生命周期里不重复） */
@@ -370,6 +393,17 @@ async function setCoachEnabled(on, { silent = false } = {}) {
 /** Ctrl+I：有开就关，没开就开 */
 function toggleCoach() {
   return setCoachEnabled(!state.settings.coachEnabled);
+}
+
+/**
+ * 语音命令「别说话 / 说话」：只切换教练朗读，**字幕照常**（P3.2）。
+ * 和 `audio.setVoiceEnabled` 不是一回事：这里只关 AI 教练这一路的 TTS。
+ */
+function setCoachMuted(on) {
+  coachMuted = !!on;
+  voice.setMuted(coachMuted);
+  setCueLine(t(coachMuted ? 'status.coachMuteOn' : 'status.coachMuteOff'), 'info');
+  return coachMuted;
 }
 function loadList(key) {
   try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -694,7 +728,7 @@ function settingsOpen() { return !$('settingsModal').hidden; }
 
 /** 有没有任何一个弹窗开着（快捷键要先让给弹窗里的交互） */
 function anyModalOpen() {
-  return settingsOpen() || exerciseSettingsOpen() || recordsModalOpen();
+  return settingsOpen() || exerciseSettingsOpen() || recordsModalOpen() || voiceHelpOpen();
 }
 
 /**
@@ -758,6 +792,55 @@ function closeRecordsModal() {
   const hist = $('historyModal');
   if (best) best.hidden = true;
   if (hist) hist.hidden = true;
+}
+
+/* ------------------------------------------------------------------ *
+ * 「教练，我能说什么」语音命令一览（P3.2）
+ *
+ * 表格**从命令表生成**（`src/voice/commands.js` 的 COMMANDS）：
+ * 中文说法 / English / 作用，一处定义，改说法只改 locales + 命令表。
+ * 打开方式：设置弹窗里那一行「语音命令一览」，或者直接对教练说「我能说什么」。
+ * 关闭方式：右上角 × / 点遮罩 / Esc（和别的弹窗一致）。
+ * ------------------------------------------------------------------ */
+
+function voiceHelpOpen() {
+  const modal = $('voiceHelpModal');
+  return !!modal && modal.hidden === false;
+}
+
+/** 把 COMMANDS 渲染成表格行；返回渲染了多少条（测试直接断言这个数） */
+function renderVoiceHelp() {
+  const box = $('voiceHelpList');
+  if (!box) return 0;
+  const rows = commandHelpRows();
+  box.innerHTML = rows.map((row) => {
+    const what = t(row.helpKey);
+    return `<tr data-intent="${esc(row.intent)}">`
+      + `<td>${esc(row.zh)}</td>`
+      + `<td>${esc(row.en)}</td>`
+      + `<td>${esc(what)}</td>`
+      + '</tr>';
+  }).join('');
+  return rows.length;
+}
+
+function openVoiceHelp() {
+  const modal = $('voiceHelpModal');
+  if (!modal) return 0;
+  const title = $('voiceHelpTitle');
+  if (title) title.textContent = t('coach.help.title');
+  const lead = $('voiceHelpLead');
+  if (lead) lead.textContent = t('coach.help.intro');
+  const count = renderVoiceHelp();
+  modal.hidden = false;
+  const first = modal.querySelector?.('button');
+  if (first && typeof first.focus === 'function') first.focus({ preventScroll: true });
+  return count;
+}
+
+function closeVoiceHelp() {
+  const modal = $('voiceHelpModal');
+  if (modal) modal.hidden = true;
 }
 
 /* ------------------------------------------------------------------ *
@@ -3331,6 +3414,23 @@ function menuBackItem(size = stageSize()) {
 function menuBackEl() { return $('menuBack'); }
 
 /**
+ * 语音命令「第三个」：选中**当前这一页**的第 index 个（0 起）。
+ * 只做「找到那一格 → 交给 selectFromMenu」这一层转接，不改菜单状态；
+ * 越界就返回空串（宁可说「没听清」也不瞎点）。
+ */
+function pickMenuItem(index) {
+  if (!state.menuMode) return '';
+  const info = menuPageInfo(stageSize());
+  const list = menuItems().slice(info.from, info.to);
+  const i = Math.round(Number(index));
+  if (!Number.isFinite(i) || i < 0 || i >= list.length) return '';
+  const item = list[i];
+  if (!item) return '';
+  selectFromMenu(item.id);
+  return item.name || '';
+}
+
+/**
  * 菜单里某一格的真实元素（按 data-ex 找）。
  * 「↩ 返回」例外：它**常驻在 `.menu-screen` 之外**（不在 `#menuGrid` 里），有自己的固定 id。
  */
@@ -4801,6 +4901,41 @@ function updateHud() {
   $('depthFill').style.width = `${depth}%`;
 
   renderSteps();
+}
+
+/**
+ * 命令快车道用的**只读**状态快照（P3.2）。
+ *
+ * 命令的 `run()` 不许直接读 `state` / 改 `state`，只能拿这一份快照做判断：
+ * 「暂停」要知道现在是不是 running、「我做了几个」要读次数与分数、
+ * 「第三个」要知道菜单开没开。这里只读，不触发任何刷新。
+ */
+function getStateSnapshot() {
+  const ex = localizedExercise(state.exerciseId);
+  const det = state.detector;
+  return {
+    exerciseId: state.exerciseId,
+    exerciseName: ex ? ex.name : '',
+    target: state.target,
+    targetUnit: ex ? ex.targetUnit : '',
+    session: state.session,
+    homeMode: !!state.homeMode,
+    menuMode: !!state.menuMode,
+    menuLevel: state.menuLevel,
+    menuCategory: state.menuCategory,
+    menuPage: state.menuPage,
+    reps: det ? det.validReps : 0,
+    partial: det ? det.partialReps : 0,
+    score: det ? det.score : 0,
+    holdMs: det ? det.holdMs : 0,
+    elapsedMs: state.elapsedMs,
+    settingsOpen: settingsOpen(),
+    exerciseSettingsOpen: exerciseSettingsOpen(),
+    recordsOpen: recordsModalOpen(),
+    voiceHelpOpen: voiceHelpOpen(),
+    lang: getLang(),
+    muted: coachMuted,
+  };
 }
 
 /**
@@ -6289,6 +6424,7 @@ function refreshForLang() {
   syncCornerLabel();
   coach.render(voice.snapshot());                                 // AI 教练的状态 / 字幕也换语言
   if (pickerWasOpen) openSetPicker();   // 「设置」选择层：标题 / 单位 / 提示 / 无障碍名换成新语言
+  if (voiceHelpOpen()) renderVoiceHelp();   // 语音命令一览（表格行是按 intent 动态生成的，也要重渲染）
   setCueLine('');
 }
 
@@ -6325,6 +6461,8 @@ function bindUI() {
   coach.mount();
   coach.setDebug(!!state.settings.debug);
   coach.render(voice.snapshot());
+  // 语音命令一览默认收起（HTML 里有 hidden，DOM 桩里也要显式关一次：桩不会自己读属性）
+  closeVoiceHelp();
 
   $('btnStartCam').addEventListener('click', () => {
     try { audio.unlock(); } catch { /* ignore */ }   // 最早的合法用户手势，先把声音解锁
@@ -6468,6 +6606,10 @@ function bindUI() {
         setCoachEnabled(v);   // 打开 = 请求麦克风；关闭 = 停 TTS + 释放轨道
       });
     }
+    // 「语音命令一览」：设置里那一行入口 + 弹窗自己的关闭方式（× / 点遮罩 / Esc）
+    $('btnVoiceHelp')?.addEventListener('click', () => openVoiceHelp());
+    $('btnCloseVoiceHelp')?.addEventListener('click', () => closeVoiceHelp());
+    $('voiceHelpBackdrop')?.addEventListener('click', () => closeVoiceHelp());
     // 页面被关掉 / 进 bfcache 时也把麦克风与 TTS 收掉，绝不留后台录音
     window.addEventListener('pagehide', () => voice.stop());
   }
@@ -6711,6 +6853,7 @@ function bindUI() {
     if (e.key === 'Escape') {
       // 弹窗优先关闭；手势菜单里按 Esc = 回网页首页（和右上角圆环同一个动作）；
       // iPhone 的 CSS 伪全屏里 Esc = 先退出全屏（再按一次才是结束这一组）；最后是结束本组
+      if (voiceHelpOpen()) { closeVoiceHelp(); return; }
       if (recordsModalOpen()) { closeRecordsModal(); return; }
       if (exerciseSettingsOpen()) { closeExerciseSettings(); return; }
       if (settingsOpen()) { closeSettings(); return; }
@@ -6994,6 +7137,14 @@ window.__mfg = {
   //   setCoachEnabled / toggleCoach : 设置开关与 Ctrl+I 共用的唯一入口
   //   coachLayout   : 字幕面板 / 状态环 / HUD / 判定条 / 右上角圆环的纯几何（测试断言不越界）
   voice, coach, setCoachEnabled, toggleCoach, syncCoachToggle, coachLayout, voiceErrorKey,
+  // P3.2 命令快车道：命令表 / 注入的 ctx / 帮助面板 / 只读快照 / 静音
+  //   COMMANDS      : 唯一来源（intent + 中英说法 + run）
+  //   voiceCommandCtx: 注入给 session 的「现有函数」表（测试可以直接替换某一项做拦截）
+  //   openVoiceHelp / closeVoiceHelp / renderVoiceHelp: 「我能说什么」面板
+  //   getStateSnapshot: 命令只读 state 的唯一入口
+  COMMANDS, commandHelpRows, voiceCommandCtx,
+  setCoachMuted, getStateSnapshot, pickMenuItem,
+  voiceHelpOpen, openVoiceHelp, closeVoiceHelp, renderVoiceHelp,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
 };

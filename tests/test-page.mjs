@@ -2139,12 +2139,13 @@ console.log('\n[9] 主页 / 动作页 / 弹窗面板共用同一套渐变（视�
     && !/body\.in-workout[^{]*\{[^}]*filter:/.test(code));
 
   // --- 弹窗（用户要求「还有弹窗的 theme，也要调成一样的色调」） ---
-  // 真实选择器：四个弹窗 #settingsModal / #exerciseModal / #bestModal / #historyModal 里的面板
-  // 都是 `.modal-card`（遮罩是 `.modal-backdrop`）；所以第三个作用域就是 `.modal-card`。
+  // 真实选择器：五个弹窗 #settingsModal / #exerciseModal / #bestModal / #historyModal /
+  // #voiceHelpModal（P3.2 语音命令一览）里的面板都是 `.modal-card`（遮罩是 `.modal-backdrop`）；
+  // 所以第三个作用域就是 `.modal-card`。
   const panels = [...html.matchAll(/<div class="modal-card[^"]*" role="dialog"/g)];
-  ok('四个弹窗的面板都是 .modal-card（第三个作用域指向真实存在的面板选择器，不是编的）',
-    panels.length === 4
-    && ['settingsModal', 'exerciseModal', 'bestModal', 'historyModal']
+  ok('五个弹窗的面板都是 .modal-card（第三个作用域指向真实存在的面板选择器，不是编的）',
+    panels.length === 5
+    && ['settingsModal', 'exerciseModal', 'bestModal', 'historyModal', 'voiceHelpModal']
       .every((id) => new RegExp(`id="${id}"[\\s\\S]{0,240}?class="modal-card`).test(html)));
 
   // 注意：顶部共用块的选择器列表也以 `.modal-card {` 结尾，所以这里按「面板自己的那条规则」

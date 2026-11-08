@@ -234,6 +234,9 @@ export default {
     // AI 语音教练（P3.0 基座）：开关时给一条状态条提示
     coachOn: 'AI 语音教练已开启：对着麦克风说话，字幕会出现在画面下方（再按 Ctrl+I 关闭）',
     coachOff: 'AI 语音教练已关闭（先到这里）。',
+    // P3.2：语音命令「别说话 / 说话」的状态条提示（只影响教练朗读，字幕照常）
+    coachMuteOn: '教练声音已关：只出字幕，不出声（说「说话」恢复）',
+    coachMuteOff: '教练声音已恢复（说「别说话」可以再静音）',
     needCamera: '请先开启摄像头',
     countdownGo: '开始！跟着提示做动作，半程动作不会计入次数。',
     paused: '已暂停，点“继续”接着练。',
@@ -1420,11 +1423,11 @@ export default {
       asr: '语音识别连续失败，已经停止聆听；按 Ctrl+I 重试。',
       // P3.1 火山代理 / 火山返回的错误（代理只回稳定 code，不回凭证）
       asrAuth: '火山语音识别鉴权失败：检查本机 coach.env 里的 APP ID / API Key / 资源 ID（改完重启代理），再按 Ctrl+I 重试。',
-      asrNetwork: '连不上本机语音代理（ws://127.0.0.1:4180/asr）：先运行 node server/coach-proxy.mjs，再按 Ctrl+I。',
+      asrNetwork: '连不上语音代理（页面里的 /asr）：确认预览服务器在跑（node preview-server.js）后再按 Ctrl+I。',
       asrTimeout: '火山语音识别超时：检查网络后重试；npm run asr:probe 可以直接测连通性。',
       asrUpstream: '火山语音识别返回错误：稍后重试；一直失败就跑 npm run asr:probe 看错误码。',
-      asrProtocol: '火山语音识别协议对不上：确认代理和页面是同一版，重启代理后再试。',
-      asrConfig: '本机代理没读到 coach.env：把 VOLC_APP_ID / VOLC_API_KEY / VOLC_ASR_RESOURCE 填好再重启代理。',
+      asrProtocol: '火山语音识别协议对不上：确认预览服务器和页面是同一版，重启预览服务器后再试。',
+      asrConfig: '本机没读到完整凭证（coach.env）：把 VOLC_APP_ID / VOLC_API_KEY 填好再重启预览服务器；现在会自动回退浏览器识别。',
       llm: '教练这一轮没想出来，按 Ctrl+I 重试。',
       generic: 'AI 教练出了点问题，按 Ctrl+I 重试。',
     },
@@ -1447,7 +1450,8 @@ export default {
       greeting: '我在。想练哪个动作，说给我听就行。',
       question: '问得好。先把动作做慢一点、站稳一点，我陪着你练。',
       thanks: '不客气，继续保持这个节奏。',
-      fallback: '我在听，继续说。',
+      // 没匹配上任何命令时的兜底：直接告诉用户「能怎么说」（P3.2）
+      fallback: '没听清。可以说「开始深蹲」「暂停」，也可以问「我能说什么」。',
     },
     // 其它输入的随机罐头句（mock LLM 从这里取，P3.3 接入真 LLM 后仍可当兜底）
     encourage: [
@@ -1458,6 +1462,163 @@ export default {
       '稳住，你做得比我看到的还要好。',
       '还有力气就再来几次。',
     ],
+
+    /* ---------------- P3.2 命令快车道 ---------------- */
+    /**
+     * 确认 / 取消的说法：**只在「等待确认」状态下**匹配（第一步说「退出」之后）。
+     * 命令表见 src/voice/commands.js；命令的说法表见下面 commands，帮助说明见 commandHelp。
+     */
+    confirmWords: ['确认', '确定', '是的', '对的', '好的', '好', '是', '嗯', '对'],
+    cancelWords: ['取消', '算了', '不要', '不用', '不', '别', '否'],
+    confirm: {
+      ask: '确认退出吗？说「确认」或「取消」。',
+      cancelled: '好，不退出。',
+      timeout: '没听到确认，已经取消了。',
+      repeat: '我在等你确认：说「确认」或「取消」。',
+    },
+
+    /** 每个 intent 的中文说法（commands.js 的 COMMANDS[].zh 直接取这里；英文在 en.js） */
+    commands: {
+      home: ['回首页', '回到首页', '回主页', '回到主页', '首页', '主页', '回家'],
+      menu: ['打开菜单', '回菜单', '回到菜单', '返回菜单', '菜单'],
+      next: ['下一页', '向下翻页', '往后翻页'],
+      prev: ['上一页', '向上翻页', '往前翻页', '向前翻页'],
+      back: ['返回上一层', '返回', '回去', '后退'],
+      // 分类名本身（上肢 / 下肢 / 核心 / 全身 / 拉伸）从 cat.* 取，这里只放带「训练」的变体
+      category: ['上肢训练', '下肢训练', '核心训练', '全身训练', '拉伸训练', '练上肢', '练下肢', '练核心', '练全身', '练拉伸'],
+      pick: ['第'],
+      openSettings: ['打开设置', '设置面板', '全局配置', '设置'],
+      openRecords: ['训练记录', '运动记录', '历史记录', '记录'],
+      openBest: ['最佳成绩', '最好成绩', '成绩榜', '最佳'],
+      openExerciseSettings: ['运动设定', '动作设定', '运动设置', '动作设置'],
+      startWorkout: ['开始训练', '开始练', '开始运动', '开始练习', '开练', '练起来', '开始'],
+      pause: ['暂停一下', '暂停', '先停一下', '停一下', '先停', '停'],
+      resume: ['继续练', '继续', '恢复', '接着练'],
+      exit: ['退出训练', '退出练习', '退出', '结束本组', '结束'],
+      retrySet: ['再来一组', '再做一组', '再练一组', '再来一次', '重来', '重试'],
+      nextExercise: ['换一个动作', '下一个动作', '换动作', '下一个'],
+      setTarget: ['设置目标为', '目标设为', '目标改成', '设置目标', '设成', '设为', '改成', '目标'],
+      adjustTarget: ['增加', '减少', '多加', '少做', '加', '减', '降'],
+      mute: ['别说话', '别出声', '安静一下', '安静', '静音', '闭嘴'],
+      unmute: ['可以说话', '开启语音', '恢复语音', '别静音', '说话', '出声'],
+      stopListening: ['关闭教练', '关掉教练', '停止聆听', '关掉语音', '别听了', '退出教练'],
+      help: ['我能说什么', '能说什么', '语音命令', '命令一览', '你会什么', '帮助'],
+      switchLang: ['说英文', '讲英文', '用英文', '切换英文', '英文模式', '说中文', '讲中文', '用中文', '切换中文', '中文模式', '英文', '中文'],
+      reportProgress: ['我做了几个', '做了几个', '我做了多少次', '做了多少次', '现在多少分', '多少分', '成绩怎么样', '多少个'],
+    },
+
+    /** 帮助面板「作用」那一列（commands.js 的表项只存 key，渲染时按当前语言取） */
+    commandHelp: {
+      home: '回到网页首页',
+      menu: '打开手势菜单（第一级：分类）',
+      next: '菜单翻到下一页',
+      prev: '菜单翻到上一页',
+      back: '返回上一层 / 关掉最上面的弹窗',
+      category: '进入一个分类（上肢 / 下肢 / 核心 / 全身 / 拉伸）',
+      pick: '选中菜单里的第 N 个（说「第三个」）',
+      openSettings: '打开设置弹窗',
+      openRecords: '打开训练记录',
+      openBest: '打开最佳成绩',
+      openExerciseSettings: '打开运动设定',
+      startWorkout: '开始训练（说「开始」或「练深蹲」；也可以带目标：「深蹲 20 次」）',
+      pause: '暂停这一组',
+      resume: '继续这一组',
+      exit: '退出这一组（**会先问一次确认**）',
+      retrySet: '再来一组（计数清零并重新倒计时）',
+      nextExercise: '换到动作库里的下一个动作',
+      setTarget: '把目标设成 N 次 / 秒（「设成 20 次」「目标一分钟」）',
+      adjustTarget: '把目标加 / 减 N（「加 5 个」「减 10」）',
+      mute: '让教练只出字幕、不出声',
+      unmute: '恢复教练语音',
+      stopListening: '关闭 AI 教练（等于按 Ctrl+I 关）',
+      help: '打开这张语音命令一览',
+      switchLang: '切换语言（「说英文」「说中文」）',
+      reportProgress: '读出当前这一组的次数与分数',
+    },
+
+    /** 快车道执行后的**一句短确认**（run 返回 key，session 用 t() 翻成字幕） */
+    cmdAck: {
+      home: '好的，回首页。',
+      menu: '好的，打开菜单。',
+      next: '下一页。',
+      prev: '上一页。',
+      back: '好的，返回。',
+      category: '好的，打开{name}。',
+      pick: '好，选第 {index} 个。',
+      openSettings: '好的，打开设置。',
+      openRecords: '好的，打开训练记录。',
+      openBest: '好的，打开最佳成绩。',
+      openExerciseSettings: '好的，打开运动设定。',
+      startWorkout: '好的，开始挑动作。',
+      startWorkoutNamed: '好的，开始练{name}。',
+      startWorkoutTarget: '好的，{name} {value} {unit}。',
+      pause: '好的，暂停。',
+      alreadyPaused: '已经是暂停状态，说「继续」接着练。',
+      pauseNotRunning: '现在没有在训练，先说「开始」。',
+      resume: '好的，继续。',
+      alreadyRunning: '正在训练中，说「暂停」可以停下来。',
+      resumeNotPaused: '现在没有暂停的组。',
+      exit: '好的，退出这一组。',
+      retrySet: '好的，再来一组。',
+      retryNotTraining: '现在不在训练里，先说「开始」。',
+      nextExercise: '好的，换成{name}。',
+      nextExerciseFail: '换不了动作，动作库是空的。',
+      setTarget: '好的，目标改成 {value} {unit}。',
+      adjustUp: '好的，目标加 {delta}，现在 {value} {unit}。',
+      adjustDown: '好的，目标减 {delta}，现在 {value} {unit}。',
+      badNumber: '没听清要改成多少，再说一次数字。',
+      mute: '好的，我不出声，只出字幕。',
+      unmute: '好的，我继续说话。',
+      stopListening: '好的，我先休息。按 Ctrl+I 再叫我。',
+      help: '能说的话都在屏幕上了。',
+      switchLang: '好的，说中文。',
+      progress: '你做了 {reps} 个，现在 {score} 分。',
+      progressHold: '已经保持 {seconds} 秒，现在 {score} 分。',
+      progressIdle: '现在还没在训练：目标是 {target} {unit}，已有 {reps} 个、{score} 分。',
+      notInMenu: '现在不在菜单里，先说「菜单」。',
+      unknownCategory: '没听清要哪个分类，说「上肢 / 下肢 / 核心 / 全身 / 拉伸」。',
+      failed: '这个操作没做成，再试一次。',
+      done: '好的。',
+    },
+
+    /** 「教练，我能说什么」帮助面板本身（表格从 COMMANDS 生成，文案只有这几条） */
+    help: {
+      open: '语音命令一览',
+      lead: '点开看全部能听懂的说法（中英对照）。',
+      title: '语音命令一览',
+      intro: '不用唤醒词也能直接说；说了没反应就是没匹配上，可以对照这张表。',
+      colZh: '中文说法',
+      colEn: 'English',
+      colWhat: '作用',
+      close: '关闭',
+    },
+
+    /**
+     * 动作名的**短说法**（官方名之外）：用户说「练深蹲」而不是「练自重深蹲」。
+     * parse.js 会把这里的中英别名 + 官方名 + id 一起拿去匹配，最长优先
+     * （所以「深蹲跳」不会被「深蹲」抢走）。
+     */
+    exerciseAliases: {
+      squat: ['深蹲', '自重深蹲', '蹲'],
+      lunge: ['箭步蹲', '弓步蹲', '前弓步'],
+      pushup: ['俯卧撑', '撑地'],
+      kneePushup: ['跪姿俯卧撑', '跪俯卧撑'],
+      bridge: ['臀桥', '桥式'],
+      plank: ['平板支撑', '平板'],
+      squatSumo: ['相扑深蹲', '相扑蹲'],
+      lungeBack: ['向后箭步蹲', '后撤箭步蹲'],
+      squatJump: ['深蹲跳', '蹲跳'],
+      buttKick: ['勾腿跳', '踢臀跳'],
+      crunch: ['卷腹'],
+      reverseCrunch: ['反向卷腹'],
+      lyingLegRaise: ['仰卧抬腿', '抬腿'],
+      mountainClimber: ['登山者', '登山跑'],
+      jumpingJack: ['开合跳', '开合'],
+      deadBug: ['死虫式', '死虫'],
+      burpee: ['波比跳', '波比'],
+      standingForwardFold: ['站立体前屈', '站姿体前屈'],
+      seatedForwardFold: ['坐姿体前屈', '坐立体前屈'],
+    },
   },
 
   voice: {

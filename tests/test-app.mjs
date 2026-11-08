@@ -300,7 +300,7 @@ const windowStub = {
     setItem: (k, v) => store.set(k, String(v)),
     removeItem: (k) => store.delete(k),
   },
-  location: { protocol: 'http:', search: '', href: 'http://127.0.0.1:4174/' },
+  location: { protocol: 'http:', host: '127.0.0.1:4174', search: '', href: 'http://127.0.0.1:4174/' },
   navigator: navigatorStub,
   requestAnimationFrame: (cb) => { rafQueue.push(cb); return rafQueue.length; },
   cancelAnimationFrame: () => {},
@@ -798,6 +798,38 @@ console.log('\n[1c3] P3.1 火山模式：选路 / 16k 分片 / 字幕 / 关闭�
   const savedWebSocket = windowStub.WebSocket;
   const savedAudioContext = windowStub.AudioContext;
   const savedOverride = windowStub.__MFG_ASR_WS__;
+
+  /* ---- 默认地址跟页面走（同源同端口）----
+   * 预览服务器把 /asr 代理并进了**同一个进程**，所以页面根本不该写死 4180：
+   * https → wss、http → ws，host / 端口都取页面自己的；`window.__MFG_ASR_WS__` 仍然优先。 */
+  {
+    const { resolveAsrUrl, sameOriginAsrUrl, ASR_WS_PATH } = await import('../src/voice/providers.js');
+    const derive = (loc) => resolveAsrUrl({ location: loc });
+    const pageLoc = { protocol: 'http:', host: '127.0.0.1:4174' };
+    ok('http 页面 → ws://<同 host 同端口>/asr（默认不再是写死的 4180）',
+      derive(pageLoc) === 'ws://127.0.0.1:4174/asr' && ASR_WS_PATH === '/asr', derive(pageLoc));
+    ok('https 页面 → wss://…（跟页面协议一致，端口仍是页面自己的）',
+      derive({ protocol: 'https:', host: '192.168.1.9:4174' }) === 'wss://192.168.1.9:4174/asr',
+      derive({ protocol: 'https:', host: '192.168.1.9:4174' }));
+    ok('页面换了端口，代理地址跟着换（不会悄悄退回 4180）',
+      derive({ protocol: 'http:', host: '127.0.0.1:8080' }) === 'ws://127.0.0.1:8080/asr'
+      && !derive({ protocol: 'http:', host: '127.0.0.1:8080' }).includes(':4180'));
+    ok('window.__MFG_ASR_WS__ 仍然优先（换端口 / 手机连独立代理 / 测试）',
+      resolveAsrUrl({ ...pageLoc, location: pageLoc, __MFG_ASR_WS__: 'ws://127.0.0.1:5999/asr' })
+        === 'ws://127.0.0.1:5999/asr');
+    ok('__MFG_ASR_WS__ 写 off 强制回退（返回空 = 不连代理，走 Web Speech）',
+      resolveAsrUrl({ location: pageLoc, __MFG_ASR_WS__: 'off' }) === '');
+    ok('没有 location.host 时退回独立代理的兜底地址（Node / 老环境）',
+      sameOriginAsrUrl({}) === '' && resolveAsrUrl({}) === 'ws://127.0.0.1:4180/asr');
+
+    const savedLoc = { ...windowStub.location };
+    ok('真实页面对象（http://127.0.0.1:4174）默认就连 ws://127.0.0.1:4174/asr —— 开箱即用',
+      resolveAsrUrl() === 'ws://127.0.0.1:4174/asr', resolveAsrUrl());
+    windowStub.location.protocol = 'https:';
+    ok('同一个页面换成 https 立刻变 wss://127.0.0.1:4174/asr（手机 https 下不改代码就能用）',
+      resolveAsrUrl() === 'wss://127.0.0.1:4174/asr', resolveAsrUrl());
+    Object.assign(windowStub.location, savedLoc);
+  }
 
   const volcStubs = { sockets: [], contexts: [] };
   class FakeVolcWebSocket {
@@ -7494,6 +7526,232 @@ console.log('\n[18] 右上角「设置」环 → 中间选择每组次数 / 秒�
   // 收尾：把两颗环收起来，免得影响后面（这一组测试是最后一段，但保持状态干净）
   api.hideCornerExit();
   api.closeSetPicker();
+}
+
+/* ------------------------------------------------------------------ *
+ * [19] P3.2 命令快车道：真实 app.js + DOM 桩，喂一句话看界面真的变了
+ *
+ * 覆盖用户要求的那几条：
+ *   暂停 / 设目标 / 退出确认（确认·取消·超时）/ 开始深蹲 / 帮助 / 胡话。
+ * 走的是 `voice.onUserText()` 的真实路径：parseCommand → run(ctx) → 字幕 + 状态。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[19] P3.2 命令快车道：喂一句话 → 界面真的变了');
+{
+  const api = windowStub.__mfg;
+  const { t: tC } = await import('../src/i18n.js');
+  const flush = async () => {
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const hudTargetText = () => elements.get('hudTarget').textContent;
+
+  /** 喂一句最终识别结果；返回这一句新产生的 TTS 句（没有就 null） */
+  const feed = async (text) => {
+    const before = coachStubs.utterances.length;
+    api.voice.onUserText(text);
+    await flush();
+    return coachStubs.utterances.length > before ? coachStubs.utterances.at(-1) : null;
+  };
+  /** 让教练说完 → 回到 listening（下一句才听得进去） */
+  const finishSpeech = async (utter) => {
+    if (utter && typeof utter.onend === 'function') utter.onend();
+    await flush();
+  };
+
+  api.showHome();
+  await api.setCoachEnabled(true);
+  await flush();
+  ok('命令快车道的起点：教练已开启、正在聆听',
+    api.state.voice.state === 'listening' && api.state.voice.enabled === true,
+    JSON.stringify({ state: api.state.voice.state, enabled: api.state.voice.enabled }));
+
+  /* ---- ① 「暂停」→ state.paused + 字幕确认 ---- */
+  api.openExercise('squat');
+  api.state.session = 'running';
+  let utter = await feed('暂停');
+  ok('喂「暂停」→ state.paused === true（界面状态真的变了），字幕出现「好的，暂停」',
+    api.state.session === 'paused'
+    && elements.get('coachCoachText').textContent === tC('coach.cmdAck.pause'),
+    JSON.stringify({ session: api.state.session, coach: elements.get('coachCoachText').textContent }));
+  await finishSpeech(utter);
+
+  utter = await feed('继续');
+  ok('喂「继续」→ 回到 running，字幕确认', api.state.session === 'running'
+    && elements.get('coachCoachText').textContent === tC('coach.cmdAck.resume'),
+    JSON.stringify({ session: api.state.session, coach: elements.get('coachCoachText').textContent }));
+  await finishSpeech(utter);
+
+  /* ---- ② 「设成 30 次」→ 当前动作的目标 + HUD 目标文案 ---- */
+  api.setTarget(15, 'squat');
+  utter = await feed('设成 30 次');
+  ok('喂「设成 30 次」→ settings.targets.squat === 30、state.target === 30、HUD 目标「30 次」',
+    api.state.settings.targets.squat === 30 && api.state.target === 30
+    && hudTargetText() === `30 ${tC('ui.repsUnit')}`,
+    JSON.stringify({ stored: api.state.settings.targets.squat, target: api.state.target, hud: hudTargetText() }));
+  ok('教练回「目标改成 30 次」（来自命令表的短确认词条）',
+    elements.get('coachCoachText').textContent === tC('coach.cmdAck.setTarget', {
+      value: 30, unit: tC('ui.repsUnit'),
+    }), elements.get('coachCoachText').textContent);
+  await finishSpeech(utter);
+
+  utter = await feed('加 5 个');
+  ok('喂「加 5 个」→ 目标 30 → 35（HUD 跟着变）',
+    api.state.settings.targets.squat === 35 && api.state.target === 35
+    && hudTargetText() === `35 ${tC('ui.repsUnit')}`,
+    JSON.stringify({ target: api.state.target, hud: hudTargetText() }));
+  await finishSpeech(utter);
+
+  /* ---- ③ 查询：「我做了几个」读当前 state ---- */
+  api.state.detector.validReps = 7;
+  api.state.detector.score = 42;
+  utter = await feed('我做了几个');
+  ok('喂「我做了几个」→ 教练读出当前次数与分数（7 个 / 42 分）',
+    elements.get('coachCoachText').textContent.includes('7')
+    && elements.get('coachCoachText').textContent.includes('42'),
+    elements.get('coachCoachText').textContent);
+  await finishSpeech(utter);
+
+  /* ---- ④ 「退出」→ 先问确认；「确认」才真的退出 ---- */
+  api.state.session = 'running';
+  utter = await feed('退出');
+  ok('喂「退出」→ **不立即退出**：还没进菜单，pendingConfirm=intent exit，字幕问确认',
+    api.state.menuMode === false
+    && api.voice.pendingConfirm && api.voice.pendingConfirm.intent === 'exit'
+    && elements.get('coachCoachText').textContent === tC('coach.confirm.ask'),
+    JSON.stringify({ menuMode: api.state.menuMode, pending: api.voice.pendingConfirm,
+      coach: elements.get('coachCoachText').textContent }));
+  await finishSpeech(utter);
+
+  utter = await feed('确认');
+  ok('再喂「确认」→ 真的退出（回手势菜单），pending 清空',
+    api.state.menuMode === true && api.voice.pendingConfirm === null,
+    JSON.stringify({ menuMode: api.state.menuMode, pending: api.voice.pendingConfirm }));
+  await finishSpeech(utter);
+
+  /* ---- ⑤ 「退出」→「取消」：不退出 ---- */
+  api.showHome();
+  api.openExercise('squat');
+  api.state.session = 'running';
+  utter = await feed('退出');
+  await finishSpeech(utter);
+  utter = await feed('取消');
+  ok('喂「取消」→ 不退出：还在训练页、menuMode=false、pending 清空',
+    api.state.menuMode === false && api.state.homeMode === false
+    && api.state.exerciseId === 'squat' && api.voice.pendingConfirm === null,
+    JSON.stringify({ menuMode: api.state.menuMode, homeMode: api.state.homeMode,
+      exercise: api.state.exerciseId, pending: api.voice.pendingConfirm }));
+  await finishSpeech(utter);
+
+  /* ---- ⑥ 8 秒没回应 → 自动取消（测试里把 confirmMs 调到 30ms） ---- */
+  api.voice.confirmMs = 30;
+  utter = await feed('退出');
+  ok('超时测试：先进入等待确认', api.voice.pendingConfirm?.intent === 'exit');
+  await wait(70);
+  ok('30ms 没回应（等价于 8 秒）→ 自动取消：不退出、pending 清空、字幕提示超时',
+    api.state.menuMode === false && api.voice.pendingConfirm === null
+    && elements.get('coachCoachText').textContent === tC('coach.confirm.timeout'),
+    JSON.stringify({ menuMode: api.state.menuMode, pending: api.voice.pendingConfirm,
+      coach: elements.get('coachCoachText').textContent }));
+  api.voice.confirmMs = 8000;   // 恢复默认 8 秒
+  await finishSpeech(coachStubs.utterances.at(-1));   // 超时提示说完 → 回到 listening
+
+  /* ---- ⑦ 「开始深蹲」→ 走 startGestureMode（全屏 + 权限）+ 进入深蹲 ---- */
+  api.showHome();
+  const origStart = api.voiceCommandCtx.startGestureMode;
+  let startCalls = 0;
+  api.voiceCommandCtx.startGestureMode = (...args) => {
+    startCalls += 1;
+    return origStart ? origStart(...args) : undefined;
+  };
+  utter = await feed('开始深蹲');
+  ok('喂「开始深蹲」→ 真的调用了 startGestureMode（全屏 + 权限没绕开）',
+    startCalls === 1, String(startCalls));
+  ok('并且进入深蹲训练页（exerciseId=squat、不在菜单、workoutView 显示）',
+    api.state.exerciseId === 'squat' && api.state.menuMode === false
+    && elements.get('workoutView').hidden === false && api.state.homeMode === false,
+    JSON.stringify({ ex: api.state.exerciseId, menuMode: api.state.menuMode,
+      workoutHidden: elements.get('workoutView').hidden, homeMode: api.state.homeMode }));
+  ok('字幕确认里带动作名「自重深蹲」',
+    elements.get('coachCoachText').textContent === tC('coach.cmdAck.startWorkoutNamed', {
+      name: tC('ex.squat.name'),
+    }), elements.get('coachCoachText').textContent);
+  api.voiceCommandCtx.startGestureMode = origStart;
+  await finishSpeech(utter);
+
+  /* ---- ⑧ 「我能说什么」→ 帮助面板（表格从命令表生成） ---- */
+  utter = await feed('我能说什么');
+  const helpHtml = elements.get('voiceHelpList').innerHTML;
+  const helpRows = (helpHtml.match(/<tr data-intent=/g) || []).length;
+  ok('喂「我能说什么」→ 帮助面板出现，且行数 = 命令表条数',
+    elements.get('voiceHelpModal').hidden === false
+    && helpRows === api.COMMANDS.length && helpRows >= 20,
+    JSON.stringify({ open: !elements.get('voiceHelpModal').hidden, rows: helpRows,
+      commands: api.COMMANDS.length }));
+  ok('帮助表每行三列（中文说法 / English / 作用），并且含「开始训练」「暂停」',
+    helpHtml.includes('开始训练') && helpHtml.includes('暂停')
+    && (helpHtml.match(/<td>/g) || []).length === helpRows * 3,
+    JSON.stringify({ rows: helpRows, cells: (helpHtml.match(/<td>/g) || []).length }));
+  documentStub.dispatch('keydown', {
+    key: 'Escape', target: documentStub.body, preventDefault() {},
+  });
+  ok('按 Esc 关掉帮助面板（和其它弹窗一致）',
+    elements.get('voiceHelpModal').hidden === true);
+  await finishSpeech(utter);
+
+  // 设置里那一行入口：点一下打开的是同一张表
+  api.openSettings();
+  elements.get('btnVoiceHelp').dispatch('click');
+  ok('设置里「语音命令一览」入口能打开同一个面板',
+    elements.get('settingsModal').hidden === false
+    && elements.get('voiceHelpModal').hidden === false
+    && elements.get('voiceHelpList').innerHTML.includes('data-intent="home"'));
+  api.closeVoiceHelp();
+  api.closeSettings();
+
+  /* ---- ⑨ 「别说话 / 说话」：只关朗读，字幕照常 ---- */
+  const spokenBefore = coachStubs.utterances.length;
+  utter = await feed('别说话');
+  ok('喂「别说话」→ muted=true，只出字幕不朗读（TTS 没有新句子）',
+    api.state.voice.muted === true && coachStubs.utterances.length === spokenBefore
+    && elements.get('coachCoachText').textContent === tC('coach.cmdAck.mute'),
+    JSON.stringify({ muted: api.state.voice.muted, spoken: coachStubs.utterances.length,
+      coach: elements.get('coachCoachText').textContent }));
+  utter = await feed('说话');
+  ok('喂「说话」→ muted=false，朗读恢复',
+    api.state.voice.muted === false && coachStubs.utterances.length > spokenBefore,
+    JSON.stringify({ muted: api.state.voice.muted, spoken: coachStubs.utterances.length }));
+  await finishSpeech(utter);
+
+  /* ---- ⑩ 胡话：状态不变 + 提示（走 mockLlm 兜底） ---- */
+  api.showHome();
+  const before = {
+    menuMode: api.state.menuMode, homeMode: api.state.homeMode,
+    exercise: api.state.exerciseId, session: api.state.session, target: api.state.target,
+  };
+  api.voice.onUserText('烤面包');
+  await wait(450);   // app 的 thinkDelay = 360ms
+  await flush();
+  ok('喂胡话 → 状态一个都没变（不改菜单 / 动作 / 目标），教练给出「没听清…能说什么」的提示',
+    api.state.menuMode === before.menuMode && api.state.homeMode === before.homeMode
+    && api.state.exerciseId === before.exercise && api.state.session === before.session
+    && api.state.target === before.target
+    && elements.get('coachCoachText').textContent === tC('coach.reply.fallback'),
+    JSON.stringify({ before, after: { menuMode: api.state.menuMode, homeMode: api.state.homeMode,
+      exercise: api.state.exerciseId, session: api.state.session, target: api.state.target },
+    coach: elements.get('coachCoachText').textContent }));
+  await finishSpeech(coachStubs.utterances.at(-1));
+
+  /* ---- ⑪ 「关闭教练」→ 等于 Ctrl+I 关：状态 off、面板收起 ---- */
+  utter = await feed('关闭教练');
+  ok('喂「关闭教练」→ settings.coachEnabled=false、会话 off、字幕面板收起',
+    api.state.settings.coachEnabled === false && api.state.voice.state === 'off'
+    && elements.get('coachPanel').hidden === true,
+    JSON.stringify({ setting: api.state.settings.coachEnabled,
+      state: api.state.voice.state, panel: elements.get('coachPanel').hidden }));
+  await finishSpeech(utter);
+  api.showHome();
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {

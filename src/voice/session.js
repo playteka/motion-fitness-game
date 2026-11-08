@@ -19,6 +19,10 @@
  * `llm` 的 `reply()` 同步或 Promise 都支持。
  */
 
+import { t, getLang } from '../i18n.js';
+import { parseCommand, isConfirmText, isCancelText } from './parse.js';
+import { COMMANDS, COMMAND_CONFIRM_MS } from './commands.js';
+
 export const VOICE_STATES = Object.freeze(['off', 'listening', 'thinking', 'speaking', 'error']);
 
 /** 状态机的错误码 → 界面文案键（coach.js 用；测试也读同一份） */
@@ -86,11 +90,19 @@ export function createVoiceSession({
   asr = null,
   llm = null,
   tts = null,
+  /** 命令表（默认就是 commands.js 的那张表；测试可以塞一张更小的） */
+  commands = COMMANDS,
+  /** 快车道的执行上下文：app.js 组装的 `voiceCommandCtx`（只有已有函数，没有业务逻辑） */
+  commandCtx = null,
   thinkDelay = 0,
   silenceMs = VOICE_SILENCE_MS,
+  /** 「退出」这类命令等待确认的最长时间（默认 8 秒；测试可以调小） */
+  confirmMs = COMMAND_CONFIRM_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 } = {}) {
+  const commandTable = Array.isArray(commands) && commands.length ? commands : COMMANDS;
+  let commandContext = commandCtx;
   let state = 'off';
   let enabled = false;
   let paused = false;
@@ -98,6 +110,14 @@ export function createVoiceSession({
   let interimText = '';
   let coachText = '';
   let error = null;
+  /** 只出字幕、不朗读（「别说话」命令 / P3.4 的静音都走这里） */
+  let muted = false;
+  /** 等待确认的命令：{ intent, args, at }；8 秒没回应自动取消 */
+  let pendingConfirm = null;
+  let pendingTimer = null;
+  let confirmMsValue = Number.isFinite(Number(confirmMs))
+    ? Math.max(0, Number(confirmMs))
+    : COMMAND_CONFIRM_MS;
   /** 非致命提示：{ code, at }（网络 / 没听到 / 中断），字幕面板会显示一行 */
   let notice = null;
   /** 当前语音识别走哪一路：'volc'（本机代理）/ 'webspeech'（浏览器）/ ''（还没开始） */
@@ -125,6 +145,10 @@ export function createVoiceSession({
       notice: notice ? { ...notice } : null,
       route,
       lastError,
+      muted,
+      pendingConfirm: pendingConfirm
+        ? { intent: pendingConfirm.intent, at: pendingConfirm.at }
+        : null,
     };
   }
 
@@ -138,6 +162,124 @@ export function createVoiceSession({
 
   function setState(next) {
     state = next;
+    return emit();
+  }
+
+  /* ---------------- 命令快车道（P3.2） ---------------- */
+
+  /** 清掉「等待确认」：8 秒计时器一起停掉（取消 / 新命令 / 关闭都会走这里） */
+  function clearPending() {
+    if (pendingTimer !== null) {
+      try { clearTimer(pendingTimer); } catch { /* ignore */ }
+      pendingTimer = null;
+    }
+    if (!pendingConfirm) return false;
+    pendingConfirm = null;
+    emit();
+    return true;
+  }
+
+  /**
+   * 进入「等待确认」：先问一句，下一步的「确认 / 取消」才生效。
+   * 超过 `confirmMs`（默认 8 秒）没有回应 → 自动取消，并在字幕里说一句。
+   */
+  function armPending(cmd, args) {
+    clearPending();
+    pendingConfirm = {
+      intent: cmd && cmd.intent ? cmd.intent : '',
+      args: args && typeof args === 'object' ? { ...args } : {},
+      at: Date.now(),
+    };
+    emit();
+    pendingTimer = setTimer(() => {
+      pendingTimer = null;
+      if (!pendingConfirm) return;
+      pendingConfirm = null;
+      emit();
+      if (!enabled || paused || state === 'off' || state === 'error') return;
+      onCoachText(t('coach.confirm.timeout'));
+    }, confirmMsValue);
+    return snapshot();
+  }
+
+  /** run() 的返回值 → 一句字幕（key 走 t()，也允许直接给 text） */
+  function sayAck(result) {
+    let payload = result;
+    if (typeof payload === 'string') payload = { key: payload };
+    if (!payload || typeof payload !== 'object') payload = { key: 'coach.cmdAck.done' };
+    if (!payload.key && !payload.text) payload = { key: 'coach.cmdAck.done' };
+    let text = '';
+    try {
+      text = payload.text
+        ? String(payload.text)
+        : String(t(payload.key, payload.params || undefined));
+    } catch {
+      text = '';
+    }
+    if (!text || text === payload.key) text = String(t('coach.cmdAck.done'));
+    return onCoachText(text);
+  }
+
+  /** 只调用注入进来的 ctx（app.js 组装的那份只读函数表）；命令自己绝不改 state */
+  function runCommand(cmd, args) {
+    try {
+      const result = cmd && typeof cmd.run === 'function'
+        ? cmd.run(commandContext || {}, args || {})
+        : null;
+      return result || { key: 'coach.cmdAck.done' };
+    } catch {
+      return { key: 'coach.cmdAck.failed' };
+    }
+  }
+
+  /**
+   * 先走命令快车道：
+   *   命中 → run(ctx, args) + 一句短确认（`confirm: true` 的先问确认）；
+   *   没命中但正在等确认 → 处理「确认 / 取消」；
+   *   都没有 → 返回 false，交给原来的 mockLlm（P3.3 只换这一层）。
+   */
+  function handleFastLane(body) {
+    const parsed = parseCommand(body, getLang());
+    if (parsed && parsed.intent !== 'unknown') {
+      const cmd = commandTable.find((c) => c.intent === parsed.intent);
+      if (cmd) {
+        if (pendingConfirm) clearPending();   // 新命令优先，旧的确认作废
+        if (cmd.confirm) {
+          armPending(cmd, parsed.args);
+          sayAck({ key: 'coach.confirm.ask' });
+          return true;
+        }
+        const result = runCommand(cmd, parsed.args);
+        if (enabled && state !== 'off' && !paused) sayAck(result);
+        return true;
+      }
+    }
+    if (pendingConfirm) {
+      if (isConfirmText(body)) {
+        const waiting = pendingConfirm;
+        clearPending();
+        const cmd = commandTable.find((c) => c.intent === waiting.intent);
+        const result = cmd ? runCommand(cmd, waiting.args) : { key: 'coach.cmdAck.done' };
+        if (enabled && state !== 'off' && !paused) sayAck(result);
+        return true;
+      }
+      if (isCancelText(body)) {
+        clearPending();
+        sayAck({ key: 'coach.confirm.cancelled' });
+        return true;
+      }
+      sayAck({ key: 'coach.confirm.repeat' });
+      return true;
+    }
+    return false;
+  }
+
+  /** 「别说话 / 说话」：只影响朗读，字幕照常（P3.4 的打断也复用这个开关） */
+  function setMuted(on) {
+    muted = !!on;
+    if (muted) {
+      try { tts?.cancel?.(); } catch { /* ignore */ }
+    }
     return emit();
   }
 
@@ -196,6 +338,7 @@ export function createVoiceSession({
     // 连续 3 次「网络错误」停手时，把「Chrome 语音识别要联网」那行提示留在面板上；
     // 其它致命错误（权限 / 麦被占）就不要再留着旧提示了。
     if (!(code === 'asr' && lastError === 'network')) notice = null;
+    clearPending();
     clearTimers();
     clearSilence();
     releaseAudio();
@@ -222,8 +365,10 @@ export function createVoiceSession({
     // 打断上一句 TTS（P3.4 的打断也走这里）；**不要停 ASR** —— 说完还要继续听
     try { tts?.cancel?.(); } catch { /* ignore */ }
     const myEpoch = ++epoch;
+    // 静音时只上字幕：和 speak:false 同一条路径（不占用 speaking 状态）
+    const shouldSpeak = speak !== false && !muted;
 
-    if (speak === false) {
+    if (!shouldSpeak) {
       // 自我介绍 / 收尾这类「只显示不念」的台词：不占用 speaking 状态
       if (state === 'thinking') setState('listening'); else emit();
       if (state === 'listening') armSilence();
@@ -280,6 +425,14 @@ export function createVoiceSession({
     setState('thinking');
     const myEpoch = ++epoch;
 
+    /**
+     * P3.2 命令快车道：先解析、命中就直接执行（不经过 LLM、不花钱、断网可用）。
+     * 命中与否都由 `handleFastLane` 决定；没有命中才排给下面的 mockLlm（P3.3 的接缝就在那）。
+     */
+    if (handleFastLane(body)) return true;
+    // 没命中命令：先记下来，后面 LLM 也只给「通用鼓励」时换成「你可以这样说」的提示
+    const unknownCommand = parseCommand(body, getLang()).intent === 'unknown';
+
     const ask = () => {
       thinkTimer = null;
       if (myEpoch !== epoch || !enabled || paused) return;
@@ -292,7 +445,16 @@ export function createVoiceSession({
       }
       Promise.resolve(reply).then((res) => {
         if (myEpoch !== epoch || !enabled || paused) return;
-        const answer = res && typeof res === 'object' ? res.text : res;
+        let answer = res && typeof res === 'object' ? res.text : res;
+        /**
+         * 没匹配上命令、LLM 也只回了「通用鼓励」时，换成一句**能照着说**的提示：
+         * 「没听清。可以说『开始深蹲』『暂停』，也可以问『我能说什么』。」
+         * 问候 / 提问 / 道谢这些 LLM 真答上来的分支保持原样（P3.3 换成真 LLM 后，
+         * 只要它给出非 encourage 的 key，这里就不会覆盖）。
+         */
+        if (unknownCommand && res && typeof res === 'object' && res.key === 'coach.encourage') {
+          answer = t('coach.reply.fallback');
+        }
         if (!answer || !String(answer).trim()) {
           fail('llm');
           return;
@@ -310,6 +472,7 @@ export function createVoiceSession({
   async function start() {
     if (enabled && state !== 'off' && state !== 'error') return snapshot();
     epoch += 1;
+    clearPending();
     clearTimers();
     clearSilence();
     enabled = true;
@@ -348,6 +511,7 @@ export function createVoiceSession({
   /** 关闭：任意状态 → off；停 TTS、停识别、释放麦克风 */
   function stop() {
     epoch += 1;
+    clearPending();
     clearTimers();
     clearSilence();
     enabled = false;
@@ -368,6 +532,7 @@ export function createVoiceSession({
   function pause() {
     if (!enabled || state === 'off' || state === 'error' || paused) return snapshot();
     epoch += 1;
+    clearPending();
     clearTimers();
     clearSilence();
     releaseAudio();
@@ -433,6 +598,11 @@ export function createVoiceSession({
     onUserText,
     onCoachText,
     fail,
+    setMuted,
+    setCommandCtx(ctx) {
+      commandContext = ctx || null;
+      return snapshot();
+    },
     snapshot,
     subscribe,
     destroy,
@@ -443,6 +613,16 @@ export function createVoiceSession({
     get notice() { return notice ? { ...notice } : null; },
     get route() { return route; },
     get lastError() { return lastError; },
+    get muted() { return muted; },
+    get pendingConfirm() { return pendingConfirm ? { ...pendingConfirm } : null; },
+    /** 测试可以调小（甚至设 0）；运行时重新调会按新值重开「等待确认」的计时 */
+    get confirmMs() { return confirmMsValue; },
+    set confirmMs(ms) {
+      const v = Number(ms);
+      if (!Number.isFinite(v) || v < 0) return;
+      confirmMsValue = v;
+      if (pendingConfirm) armPending({ intent: pendingConfirm.intent }, pendingConfirm.args);
+    },
     /** 测试可以调小（甚至设 0 关掉）；运行时重新调会重开静音计时 */
     get silenceMs() { return silenceMsValue; },
     set silenceMs(ms) {

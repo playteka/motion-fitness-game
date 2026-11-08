@@ -167,6 +167,10 @@ console.log('\n[7] 中英两份 README 结构一致');
     //   3) 服务器启动输出行 —— preview-server.js 真的会打印这一行中文，
     //      英文文档也如实引用，属于「引用真实输出」而不是漏翻
     const txt = fs.readFileSync(full, 'utf8')
+      // 中英 README 都必须有「语音命令一览」那张表（P3.2）：英文文档里那一列**故意**保留中文说法。
+      // 只放过被显式标记的这一段（把汉字换成 ZH，行数 / 标题数不变，不影响结构对齐检查）。
+      .replace(/<!--\s*i18n:keep-cjk-start\s*-->([\s\S]*?)<!--\s*i18n:keep-cjk-end\s*-->/g,
+        (all, body) => body.replace(/[\u3400-\u9fff\uf900-\ufaff]/g, 'ZH'))
       .replace(/\[中文\]\(README\.md\)/g, '[ZH](README.md)')
       .replace(/体感健身游戏预览地址：[^\n]*/g, '[SERVER_OUTPUT]')
       .replace(/中文/g, 'ZH');
