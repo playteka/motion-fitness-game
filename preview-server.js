@@ -11,6 +11,7 @@ import os from 'node:os';   // 打印局域网地址用（HOST=0.0.0.0 时给手
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';   // 进度看板的数据源：现算 git 状态（见 /progress.json）
 
 const PORT = Number(process.env.PORT || 4174);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -145,6 +146,54 @@ const handler = (req, res) => {
       res.writeHead(204);
       res.end();
     });
+    return;
+  }
+
+  /**
+   * 开发进度看板的数据源（`progress-dashboard.html` 每 2 秒拉它一次）。
+   *
+   * 以前靠一个「每 2 秒写 progress.json」的后台脚本，但它会随着会话结束被回收 ✗，
+   * 于是看板永远显示「读不到 progress.json」。现在改成**服务器按请求现算** ——
+   * 只要这个服务器在跑（看板本来也只有此时能打开），数据就一定在 ✓，不再需要额外进程。
+   *
+   * 读 git 的方式注意：不能走管道（沙箱里会 EPERM），所以重定向到临时文件再读 ✓。
+   */
+  if (req.method === 'GET' && req.url.split('?')[0] === '/progress.json') {
+    const run = (args) => {
+      const out = path.join(ROOT, '_gitout.tmp');
+      try {
+        const quoted = args.map((a) => `"${a}"`).join(' ');
+        execSync(`git ${quoted} > "${out}" 2>nul`, { cwd: ROOT, stdio: 'ignore', timeout: 3000 });
+        const text = fs.readFileSync(out, 'utf8');
+        fs.unlinkSync(out);
+        return text;
+      } catch {
+        try { fs.unlinkSync(out); } catch { /* 忽略 */ }
+        return '';
+      }
+    };
+    let payload;
+    try {
+      const porcelain = run(['status', '--porcelain']).split('\n').filter(Boolean);
+      const files = porcelain.map((l) => l.slice(3)).filter((f) => f !== 'progress.json');
+      payload = {
+        updated: Date.now(),
+        branch: run(['rev-parse', '--abbrev-ref', 'HEAD']).trim() || '(unknown)',
+        ahead: (() => {
+          const n = run(['rev-list', '--count', 'origin/main..HEAD']).trim();
+          return Number(n) || 0;
+        })(),
+        lastCommit: run(['log', '--oneline', '-1']).trim() || '(unavailable)',
+        files,
+      };
+    } catch {
+      payload = { updated: Date.now(), branch: '?', ahead: 0, lastCommit: '(unavailable)', files: [] };
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(JSON.stringify(payload));
     return;
   }
 
