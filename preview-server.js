@@ -172,10 +172,63 @@ const handler = (req, res) => {
         return '';
       }
     };
+    /**
+     * 最近改动的文件（按 mtime）—— 这是「到底有没有人在干活」最可靠的信号：
+     * 子代理没提交前工作区是干净的（看起来像没动静 ✗），但只要它在写文件，
+     * 这里的 mtime 就会一直在变 ✓。
+     */
+    const scanRecent = () => {
+      const out = [];
+      const top = ['index.html', 'style.css', 'preview-server.js', 'package.json',
+        'README.md', 'README.en.md', 'manifest.webmanifest', 'AGENTS.md'];
+      for (const f of top) {
+        const p = path.join(ROOT, f);
+        try { const st = fs.statSync(p); out.push({ path: f, mtime: st.mtimeMs }); } catch { /* 不存在 */ }
+      }
+      for (const dir of ['src', 'tests', 'tools']) {
+        const abs = path.join(ROOT, dir);
+        let names = [];
+        try { names = fs.readdirSync(abs); } catch { continue; }
+        for (const name of names) {
+          const p = path.join(abs, name);
+          try {
+            const st = fs.statSync(p);
+            if (!st.isFile()) continue;
+            out.push({ path: `${dir}/${name}`, mtime: st.mtimeMs });
+          } catch { /* 忽略 */ }
+        }
+      }
+      return out.sort((a, b) => b.mtime - a.mtime).slice(0, 6)
+        .map((f) => ({ path: f.path, agoMs: Math.max(0, Date.now() - f.mtime) }));
+    };
+
+    /** 工作区的增删行数（只看数字，够判断「改得多不多」） */
+    const treeStat = () => {
+      const numstat = run(['diff', '--numstat']).split('\n').filter(Boolean);
+      let add = 0;
+      let del = 0;
+      for (const line of numstat) {
+        const [a, d] = line.split('\t');
+        add += Number(a) || 0;
+        del += Number(d) || 0;
+      }
+      return { files: numstat.length, add, del };
+    };
+
+    /** 最近若干次提交（带时间戳）—— 即使工作区干净，也能从提交节奏看出进度 ✓ */
+    const recentCommits = () => run(['log', '--pretty=format:%h|%ct|%s', '-8'])
+      .split('\n').filter(Boolean).map((line) => {
+        const [sha, ts, ...rest] = line.split('|');
+        return { sha, ts: (Number(ts) || 0) * 1000, subject: rest.join('|') };
+      });
+
     let payload;
     try {
       const porcelain = run(['status', '--porcelain']).split('\n').filter(Boolean);
-      const files = porcelain.map((l) => l.slice(3)).filter((f) => f !== 'progress.json');
+      const ignore = new Set(['progress.json', 'launch.cmd', 'start-preview.cmd', '_gitout.tmp']);
+      const files = porcelain.map((l) => l.slice(3)).filter((f) => !ignore.has(f));
+      const localScripts = porcelain.map((l) => l.slice(3)).filter((f) => ignore.has(f) && f.endsWith('.cmd'));
+      const recent = scanRecent();
       payload = {
         updated: Date.now(),
         branch: run(['rev-parse', '--abbrev-ref', 'HEAD']).trim() || '(unknown)',
@@ -185,9 +238,19 @@ const handler = (req, res) => {
         })(),
         lastCommit: run(['log', '--oneline', '-1']).trim() || '(unavailable)',
         files,
+        localScripts,
+        tree: treeStat(),
+        recentFiles: recent,
+        recentCommits: recentCommits(),
+        // 「有没有在干活」：有未提交改动，或最近 150 秒内有文件被写过 ✓
+        busy: files.length > 0 || (recent[0] ? recent[0].agoMs < 150000 : false),
       };
     } catch {
-      payload = { updated: Date.now(), branch: '?', ahead: 0, lastCommit: '(unavailable)', files: [] };
+      payload = {
+        updated: Date.now(), branch: '?', ahead: 0, lastCommit: '(unavailable)',
+        files: [], localScripts: [], tree: { files: 0, add: 0, del: 0 },
+        recentFiles: [], recentCommits: [], busy: false,
+      };
     }
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
