@@ -121,6 +121,12 @@ export default {
     maskHint: 'Tip: use a webcam or hold your phone in landscape, stand 6–10 ft (2–3 m) from the camera; face the camera for squats and turn sideways for every other exercise.',
     maskOpening: 'Opening the camera…',
     maskOpeningText: 'Choose “Allow” in the browser prompt. If nothing happens, tap the button below to retry.',
+    // Permission wording for the home-screen “start training” button: granted / ask / blocked
+    maskPermTitle: 'Permission needed: camera + microphone',
+    maskPermText: 'The browser asks once for the camera and the microphone. Choose “Allow” and training starts full screen; everything stays on this device.',
+    maskGrantedTitle: 'Already allowed — going full screen…',
+    maskGrantedText: 'If the picture never shows up, tap the button below to retry.',
+    maskPermDeniedText: 'Camera / microphone access is blocked: click the padlock at the left of the address bar, set both “Camera” and “Microphone” to “Allow”, then tap the button below to retry.',
     maskCamFailTitle: 'Couldn’t open the camera',
     maskCamFailSuffix: '. Check your browser permission settings, and make sure no other app is using the camera.',
     maskModelLoading: 'Loading the pose model…',

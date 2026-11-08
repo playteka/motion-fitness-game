@@ -120,6 +120,12 @@ export default {
     maskHint: '建议：手机横放或用电脑摄像头，人与摄像头相距 2~3 米；深蹲正对镜头，其余动作侧对镜头。',
     maskOpening: '正在打开摄像头…',
     maskOpeningText: '请在浏览器弹窗里选择“允许”。如果一直没反应，点下面按钮重试。',
+    // 首页「开始体感训练」时的授权提示：已授权 / 需要授权 / 被拒绝 三种说法（见 app.js 的 startGestureCamera）
+    maskPermTitle: '需要授权：摄像头 + 麦克风',
+    maskPermText: '浏览器会弹出一次授权框（摄像头 + 麦克风），点「允许」后直接进入全屏训练；画面只在本机处理。',
+    maskGrantedTitle: '已授权，正在进入全屏训练…',
+    maskGrantedText: '如果画面一直没出来，点下面的按钮重试。',
+    maskPermDeniedText: '摄像头 / 麦克风权限被拒绝了：请在地址栏左侧点锁图标，把「摄像头」和「麦克风」都改成「允许」，然后点下面的按钮重试。',
     maskCamFailTitle: '摄像头打开失败',
     maskCamFailSuffix: '。请检查浏览器权限设置，或确认没有其它程序占用摄像头。',
     maskModelLoading: '正在加载姿态模型…',

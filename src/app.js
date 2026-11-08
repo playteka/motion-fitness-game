@@ -3952,19 +3952,127 @@ function selectFromMenu(id) {
   openExercise(id);          // 视频界面已经是全屏的，这里不会再动全屏
 }
 
-/** 首页那个大「开始」按钮：开摄像头 → 全屏视频界面 → 手势菜单 */
+/**
+ * 首页那个大「开始」按钮：**先同步进全屏** →（必要时）弹一次授权框 → 开摄像头 → 手势菜单
+ *
+ * 用户要求：「点击『开始体感训练』，如果已经完成了【摄像头 + 麦克风】组合授权，
+ * 则不用弹窗授权，直接进入全屏状态，否则应该弹窗要求客户授权，再进入全屏状态。」
+ *
+ * 权限那一段是异步的（见 startGestureCamera），这里**绝不 await**：点击回调必须保持同步，
+ * 否则原生 `requestFullscreen()` 会因为「不是在用户手势里」被浏览器拒绝。
+ */
 function startGestureMode() {
   if (!Camera.supported()) { setCueLine(t('menu.needCamera'), 'warn'); return; }
-  // ⚠️ 全屏必须在**这个点击手势里同步**申请，所以顺序是：先切视图（#stage 得可见）→ 申请全屏 → 开摄像头。
+  // ⚠️ 全屏必须在**这个点击手势的同步执行栈里**申请：先切视图（#stage 得可见）→ 申请全屏
+  // → 再谈权限 / 开摄像头。一旦先 await 了 getUserMedia（可能弹授权框），手势就消耗掉了。
   state.camStoppedForHome = false;   // 摄像头由下面统一开，别让 showWorkout 里再开一次
   showWorkout();
   openMenu({ silent: true });
   requestStageFullscreen();
-  // 用户要求：「在首页点击『开始体感训练』的时候就提示授权麦克风」
-  // → 这一次 getUserMedia 同时带 video + audio，只弹一次组合授权框；拿到后音轨立刻 stop。
-  // 其它任何 startCamera 调用都不带 mic（不重复弹框）。
-  if (!camera.active) startCamera(state.settings.camDeviceId || null, { mic: true });
+  // 已授权 → 不显示任何「请允许」的提示，直接开（浏览器这时不会再弹框）；
+  // 未授权 → 遮罩上先换成「需要授权」的说法，再开（那一步才会弹一次组合授权框）。
+  startGestureCamera();
   audio.say(t('menu.title'), { rate: 1.05 });
+}
+
+/* ------------------------------------------------------------------ *
+ * 摄像头 + 麦克风授权：先查状态，再决定要不要弹框
+ *
+ * 用户要求：「如果已经完成了【摄像头 + 麦克风】组合授权，就不用弹窗授权，直接进入全屏状态，
+ * 否则应该弹窗要求客户授权，再进入全屏状态。」
+ *
+ * 查的是 `navigator.permissions.query({ name: 'camera' | 'microphone' })`：
+ *   · Firefox 不认这两个名字（直接抛 TypeError）、部分浏览器根本没有 `navigator.permissions`
+ *     → 一律当作「未知」，按「需要授权」处理（让浏览器自己弹框），**异常绝不往外抛**；
+ *   · 两个都 `granted` 才算「已授权」；任一 `denied` 就算「被拒」（这时再请求也不会弹框）；
+ *   · 其余（`prompt` / 未知 / 只授权了其中一个）都走「需要授权」。
+ * ------------------------------------------------------------------ */
+
+/**
+ * 查一个媒体权限此刻的状态（永不抛异常；查不到就是 unknown）。
+ * @param {'camera'|'microphone'} name
+ * @returns {Promise<'granted'|'prompt'|'denied'|'unknown'>}
+ */
+async function queryMediaPermission(name) {
+  try {
+    const perms = typeof navigator !== 'undefined' ? navigator.permissions : null;
+    if (!perms || typeof perms.query !== 'function') return 'unknown';
+    const status = await perms.query({ name });
+    const st = status && status.state;
+    return st === 'granted' || st === 'prompt' || st === 'denied' ? st : 'unknown';
+  } catch {
+    // Firefox 会为 camera / microphone 抛错（不支持这两个名字）：当作未知，别让异常冒出去
+    return 'unknown';
+  }
+}
+
+/**
+ * 「摄像头 + 麦克风」组合权限的判定（给 startGestureCamera 用）。
+ * @returns {Promise<'granted'|'prompt'|'denied'>}
+ */
+async function queryGesturePermission() {
+  const [cameraState, micState] = await Promise.all([
+    queryMediaPermission('camera'),
+    queryMediaPermission('microphone'),
+  ]);
+  if (cameraState === 'denied' || micState === 'denied') return 'denied';
+  if (cameraState === 'granted' && micState === 'granted') return 'granted';
+  return 'prompt';
+}
+
+/** 遮罩上那两句话按授权状态换说法（已授权时一句「请允许」都不提） */
+function applyGestureMaskText(perm) {
+  const granted = perm === 'granted';
+  $('maskIcon').textContent = '⏳';
+  $('maskTitle').textContent = t(granted ? 'ui.maskGrantedTitle' : 'ui.maskPermTitle');
+  $('maskText').textContent = t(granted ? 'ui.maskGrantedText' : 'ui.maskPermText');
+}
+
+/**
+ * 权限已经是 `denied`：**不要再请求**（浏览器不会再弹框，请求只会立刻失败），
+ * 直接把现有的摄像头错误 / 诊断面板那一套摆出来 —— 遮罩 + 诊断面板 + 处置建议，
+ * 并明确告诉用户「请在地址栏左侧允许摄像头与麦克风」。
+ */
+function showGesturePermissionDenied() {
+  const hint = t('ui.maskPermDeniedText');
+  const err = { name: 'NotAllowedError', message: hint };
+  state.camError = `${err.name}: ${err.message}`;
+  state.camErrName = err.name;
+  state.camErrMessage = err.message;
+  const mask = $('stageMask');
+  if (mask) mask.classList.remove('hidden');
+  $('maskIcon').textContent = '⚠️';
+  $('maskTitle').textContent = t('ui.maskCamFailTitle');
+  $('maskText').textContent = `${hint}${t('ui.maskCamFailSuffix')}`;
+  $('btnStartCam').textContent = t('ui.retry');
+  renderCameraDiag(err);          // 诊断面板里同时给出「权限被拒」的处置建议
+  updatePipelineStatus();
+  setCueLine(hint, 'warn');
+}
+
+/**
+ * 点击「开始体感训练」之后的异步部分（点击回调里已经**同步**进过全屏了）：
+ *   ① 先查组合权限；
+ *   ② 已授权 → 直接开摄像头（不显示任何授权提示，getUserMedia 也不会再弹框）；
+ *   ③ 需要授权 → 遮罩上换成「需要授权」的说法，再开（这一步才弹组合授权框）；
+ *   ④ 被拒绝 → 不再请求，直接走错误 / 诊断面板；
+ *   ⑤ 最后确认还在全屏里：原生全屏那条路没成（权限框打断了手势 / 浏览器没有元素级全屏）
+ *      → CSS 伪全屏兜底（伪全屏不需要手势，所以「授权完 → 也是全屏」）。
+ * 不 `await` 它：调用方（点击回调）必须保持同步。
+ */
+async function startGestureCamera() {
+  try {
+    const perm = await queryGesturePermission();
+    if (perm === 'denied') { showGesturePermissionDenied(); return; }
+    // 用户要求：「在首页点击『开始体感训练』的时候就提示授权麦克风」
+    // → 这一次 getUserMedia 同时带 video + audio，只弹一次组合授权框；拿到后音轨立刻 stop。
+    // 其它任何 startCamera 调用都不带 mic（不重复弹框）。
+    if (!camera.active) startCamera(state.settings.camDeviceId || null, { mic: true });
+    applyGestureMaskText(perm);
+    await ensureGestureFullscreen();
+  } catch (err) {
+    console.warn('[camera] permission flow failed:', err?.name || err);
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -3985,6 +4093,15 @@ function startGestureMode() {
 
 /** 伪全屏的类名：`#stage` 与 `body` 同时挂着（样式见 style.css） */
 const PSEUDO_FS_CLASS = 'pseudo-fullscreen';
+
+/**
+ * 最近一次「原生全屏申请」的结果：`Promise<boolean>`（true = promise 真的 resolve 了）。
+ *
+ * 为什么需要它：原生 `requestFullscreen()` 是**异步落定**的（浏览器什么时候真的进全屏
+ * 只有 promise 知道），而「开始体感训练」在申请完全屏之后还要去查权限 / 等授权框 ——
+ * 那一步跑完得回头看这一次申请到底成没成，没成就补 CSS 伪全屏（见 ensureGestureFullscreen）。
+ */
+let nativeFullscreenAttempt = Promise.resolve(false);
 
 /**
  * 按能力挑一条全屏路径（纯函数）。
@@ -4040,19 +4157,45 @@ function requestStageFullscreen() {
   const caps = fullscreenCaps();
   if (caps.fullscreenElement) {                       // 已经是原生全屏了，别重复申请
     $('btnFullscreen')?.setAttribute('aria-pressed', 'true');
+    nativeFullscreenAttempt = Promise.resolve(true);
     return true;
   }
   const mode = pickFullscreenMode(caps);
-  if (mode === 'pseudo') return setPseudoFullscreen(true);
+  if (mode === 'pseudo') {
+    nativeFullscreenAttempt = Promise.resolve(false);   // 这条路上根本没有原生全屏
+    return setPseudoFullscreen(true);
+  }
   try {
     const p = mode === 'webkit' ? stage.webkitRequestFullscreen() : stage.requestFullscreen();
-    // 原生申请被拒（例如权限策略）时不要停在「半全屏」，直接落到伪全屏兜底
-    if (p && typeof p.catch === 'function') p.catch(() => setPseudoFullscreen(true));
+    // 原生申请被拒（例如权限策略 / 手势已被授权框消耗）时不要停在「半全屏」，直接落到伪全屏兜底
+    nativeFullscreenAttempt = p && typeof p.then === 'function'
+      ? Promise.resolve(p).then(() => true, () => { setPseudoFullscreen(true); return false; })
+      // 老实现返回 void：拿不到结果，只能看此刻的状态
+      : Promise.resolve(stageFullscreenOn());
     $('btnFullscreen')?.setAttribute('aria-pressed', 'true');
     return true;
   } catch {
+    nativeFullscreenAttempt = Promise.resolve(false);
     return setPseudoFullscreen(true);
   }
+}
+
+/**
+ * 「开始体感训练」的授权流程跑完之后，确保用户**在全屏里**（用户要求「再进入全屏状态」）。
+ *
+ *   ① 先等点击那一下的原生全屏申请落定（promise 不落定就没法判断它成没成）；
+ *   ② 已经在原生全屏或伪全屏里 → 什么都不做；
+ *   ③ 不在 → CSS 伪全屏兜底。伪全屏**不需要用户手势**，所以在 await 之后补上完全合法 ——
+ *      这条正是「原生全屏因为授权框丢了手势」时唯一的救命路；
+ *      另外 Safari 在弹授权框时会把原生全屏退掉，这里也顺手补回来。
+ *
+ * 退出方式不变：Esc / 右下角全屏按钮 / 伪全屏那颗按钮都能退。
+ * @returns {Promise<boolean>} true = 现在处于某种全屏
+ */
+async function ensureGestureFullscreen() {
+  try { await nativeFullscreenAttempt; } catch { /* 原生那条路失败已经在上面兜成伪全屏了 */ }
+  if (stageFullscreenOn()) return true;
+  return setPseudoFullscreen(true);
 }
 
 /** 现在处于任何一种全屏（原生 or 伪）吗 */
@@ -6777,7 +6920,9 @@ window.__mfg = {
   menuPageCells, menuNavCells,
   // 全屏降级链：标准 requestFullscreen → webkitRequestFullscreen → iPhone 的 CSS 伪全屏
   pickFullscreenMode, fullscreenCaps, pseudoFullscreenOn, setPseudoFullscreen, exitFullscreen,
-  stageFullscreenOn, toggleStageFullscreen, PSEUDO_FS_CLASS,
+  stageFullscreenOn, toggleStageFullscreen, ensureGestureFullscreen, PSEUDO_FS_CLASS,
+  // 摄像头 + 麦克风授权：先查权限（permissions.query）再决定要不要弹框
+  queryMediaPermission, queryGesturePermission, startGestureCamera, showGesturePermissionDenied,
   tickCornerExit, syncCornerLabel,
   MENU_COLS, MENU_ROWS, MENU_HIT_RATIO, MENU_START_RATIO, MENU_NAV_HIT_RATIO, MENU_RING_MAX,
   MENU_NAV_HOLD_MS, MENU_ANNOUNCE_P, MENU_CELL_MIN_PX,

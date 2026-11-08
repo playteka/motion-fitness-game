@@ -6144,6 +6144,296 @@ console.log('\n[17b] 首页「开始体感训练」一并请求麦克风（失�
 }
 
 /* ------------------------------------------------------------------ *
+ * [17c] 点「开始体感训练」：已授权直接全屏 / 未授权先弹框再全屏 / 被拒不再请求
+ *
+ * 用户原话：「点击『开始体感训练』，如果已经完成了【摄像头 + 麦克风】组合授权，
+ * 则不用弹窗授权，直接进入全屏状态，否则应该弹窗要求客户授权，再进入全屏状态。」
+ *
+ * 钉住四件事（全部用假 permissions / 假 getUserMedia，不需要真摄像头）：
+ *   ① 已授权（camera + microphone 都 granted）：`requestFullscreen` 在 `getUserMedia`
+ *      **之前**被调用，遮罩上是「已授权」的说法 —— 没有任何「请允许」的授权提示；
+ *   ② 未授权（prompt）：先请求全屏、再 `getUserMedia`，遮罩上出现「需要授权」的提示；
+ *      权限流程走完时原生全屏那条路失败 → **伪全屏被打开**（伪全屏不需要手势）；
+ *   ③ 被拒绝（denied）：一次 `getUserMedia` 都不发，直接落到摄像头诊断面板 + 地址栏提示；
+ *   ④ permissions API 不存在 / query 抛错 → 当作「未知」，不崩、流程照常（照旧请求授权）。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[17c] 点「开始体感训练」：已授权直接全屏 / 未授权先弹框 / 被拒不再请求');
+{
+  const api = windowStub.__mfg;
+  const { t: tMic } = await import('../src/i18n.js');
+  const { PSEUDO_FS_CLASS } = api;
+  const stageEl = elements.get('stage');
+  const mask = elements.get('stageMask');
+  const media = navigatorStub.mediaDevices;
+  const savedGum = media.getUserMedia;
+  const savedPermissions = navigatorStub.permissions;
+  const savedRequestFullscreen = stageEl.requestFullscreen;
+  const saved = {
+    stream: api.camera.stream,
+    ready: api.camera.video.readyState,
+    src: api.camera.video.srcObject,
+    engineReady: api.state.engineReady,
+    camStopped: api.state.camStoppedForHome,
+    camErr: api.state.camErrName,
+    fsEl: documentStub.fullscreenElement,
+  };
+  api.state.engineReady = true;   // 不让这一段去加载真模型
+
+  const order = [];
+  /** 跑完「点击 → 权限查询 → 开摄像头 → 全屏兜底」这一串异步动作 */
+  const tick = async () => {
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 40));
+  };
+
+  /** 模拟真浏览器：requestFullscreen 成功时 document.fullscreenElement 立刻指向这个元素 */
+  const fullscreenWorks = () => {
+    stageEl.requestFullscreen = () => {
+      order.push('fullscreen');
+      documentStub.fullscreenElement = stageEl;
+      return Promise.resolve();
+    };
+  };
+  /** 模拟「浏览器拒绝了原生全屏」（典型原因：手势已经被授权框消耗掉了） */
+  const fullscreenFails = () => {
+    stageEl.requestFullscreen = () => {
+      order.push('fullscreen');
+      const err = new Error('Fullscreen request denied');
+      err.name = 'TypeError';
+      return Promise.reject(err);
+    };
+  };
+  /** 造一套 permissions 桩；state === 'throw' = 这个权限名浏览器不认（Firefox） */
+  const permissions = (cameraState, micState) => {
+    navigatorStub.permissions = {
+      query: async ({ name }) => {
+        const state = name === 'camera' ? cameraState : micState;
+        if (state === 'throw') throw new TypeError(`'${name}' is not a valid PermissionName`);
+        return { name, state };
+      },
+    };
+  };
+  /** 组合请求的假流：video + audio 两条轨（和 821c30a 的降级链配合） */
+  const gumStream = () => {
+    const tracks = [
+      { kind: 'video', stops: 0, stop() { this.stops += 1; }, getSettings: () => ({ deviceId: 'cam-stub', facingMode: 'user' }) },
+      { kind: 'audio', stops: 0, stop() { this.stops += 1; } },
+    ];
+    return {
+      tracks,
+      getTracks: () => tracks,
+      getVideoTracks: () => tracks.filter((t) => t.kind === 'video'),
+      getAudioTracks: () => tracks.filter((t) => t.kind === 'audio'),
+    };
+  };
+  /** 从首页点「开始体感训练」（等价于真实点击，每次都从干净的初始状态出发） */
+  const begin = async () => {
+    api.showHome();
+    api.camera.stream = null;
+    api.camera.video.readyState = 4;      // Camera.active 还要求 readyState ≥ 2
+    api.camera.video.srcObject = null;
+    api.state.camErrName = '';
+    api.state.camErrMessage = '';
+    documentStub.fullscreenElement = null;
+    api.setPseudoFullscreen(false);
+    order.length = 0;
+    api.startGestureMode();
+    await tick();
+  };
+
+  // ① 已授权：requestFullscreen → getUserMedia，全程不提「请允许」
+  {
+    fullscreenWorks();
+    permissions('granted', 'granted');
+    const calls = [];
+    let textWhileWaiting = '';
+    media.getUserMedia = async (constraints) => {
+      calls.push(constraints);
+      order.push('gum');
+      // 正开着摄像头（= 真实环境里授权框那一步）：看看这一刻遮罩上写的是什么
+      await new Promise((r) => setTimeout(r, 20));
+      textWhileWaiting = elements.get('maskText').textContent;
+      return gumStream();
+    };
+    await begin();
+    ok('已授权（camera + microphone 都 granted）：requestFullscreen **先于** getUserMedia 被调用',
+      order.join(',') === 'fullscreen,gum', order.join(','));
+    ok('已授权：只发一次组合请求（video + audio: true），不额外弹框',
+      calls.length === 1 && calls[0].audio === true && !!calls[0].video,
+      JSON.stringify(calls.map((c) => ({ audio: c.audio, video: !!c.video }))));
+    ok('已授权：遮罩上是「已授权，正在进入全屏训练…」，**没有**渲染「需要授权」的提示',
+      textWhileWaiting === tMic('ui.maskGrantedText')
+      && elements.get('maskTitle').textContent === tMic('ui.maskGrantedTitle')
+      && textWhileWaiting !== tMic('ui.maskPermText'),
+      JSON.stringify({ while: textWhileWaiting, final: elements.get('maskText').textContent }));
+    ok('已授权：摄像头照常起来（流接上、遮罩收起），且原生全屏已经进了 → 不叠伪全屏',
+      !!api.camera.stream && api.camera.video.srcObject !== null
+      && mask.classList.contains('hidden') === true
+      && stageEl.classList.contains(PSEUDO_FS_CLASS) === false
+      && api.stageFullscreenOn() === true,
+      JSON.stringify({
+        cam: !!api.camera.stream,
+        maskHidden: mask.classList.contains('hidden'),
+        pseudo: stageEl.classList.contains(PSEUDO_FS_CLASS),
+        fs: api.stageFullscreenOn(),
+      }));
+  }
+
+  // ② 未授权（prompt）：先全屏、再 getUserMedia，并显示「需要授权」的提示
+  {
+    fullscreenWorks();
+    permissions('prompt', 'prompt');
+    const calls = [];
+    let textWhileWaiting = '';
+    media.getUserMedia = async (constraints) => {
+      calls.push(constraints);
+      order.push('gum');
+      await new Promise((r) => setTimeout(r, 20));
+      textWhileWaiting = elements.get('maskText').textContent;
+      return gumStream();
+    };
+    await begin();
+    ok('未授权（prompt）：先 requestFullscreen、再 getUserMedia（顺序不变，手势没丢）',
+      order.join(',') === 'fullscreen,gum', order.join(','));
+    ok('未授权：等授权时遮罩上就是「需要授权」的说法（提示用户允许摄像头 + 麦克风）',
+      textWhileWaiting === tMic('ui.maskPermText')
+      && elements.get('maskTitle').textContent === tMic('ui.maskPermTitle'),
+      JSON.stringify({ while: textWhileWaiting, title: elements.get('maskTitle').textContent }));
+    ok('未授权：授权完摄像头照常起来（训练不受影响）',
+      calls.length === 1 && calls[0].audio === true && !!api.camera.stream,
+      JSON.stringify({ n: calls.length, cam: !!api.camera.stream }));
+  }
+
+  // ③ 未授权 + 原生全屏失败（授权框打断了手势）→ 权限流程结束后伪全屏兜底
+  {
+    fullscreenFails();
+    permissions('prompt', 'prompt');
+    const calls = [];
+    media.getUserMedia = async (constraints) => {
+      calls.push(constraints);
+      order.push('gum');
+      const err = new Error('Permission denied');
+      err.name = 'NotAllowedError';
+      throw err;
+    };
+    await begin();
+    ok('先全屏再要权限的顺序仍然成立（原生那条路失败也不改变「先申请全屏」）',
+      order[0] === 'fullscreen', order.join(','));
+    ok('权限流程结束后不在任何全屏里 → CSS 伪全屏被打开（#stage 与 body 都挂 pseudo-fullscreen）',
+      stageEl.classList.contains(PSEUDO_FS_CLASS)
+      && documentStub.body.classList.contains(PSEUDO_FS_CLASS)
+      && api.stageFullscreenOn() === true,
+      JSON.stringify({
+        stage: stageEl.classList.contains(PSEUDO_FS_CLASS),
+        body: documentStub.body.classList.contains(PSEUDO_FS_CLASS),
+      }));
+    ok('伪全屏出来的同时，摄像头失败照旧走错误 / 诊断面板（两条路互不影响）',
+      mask.classList.contains('hidden') === false
+      && elements.get('camDiag').hidden === false
+      && api.state.camErrName === 'NotAllowedError',
+      JSON.stringify({ maskHidden: mask.classList.contains('hidden'), diag: elements.get('camDiag').hidden }));
+    // 用户随时能退：Esc / 右下角全屏按钮走同一个 exitFullscreen（伪全屏也认）
+    const stillFullscreen = api.toggleStageFullscreen();
+    ok('伪全屏用现有的退出方式就能退（全屏按钮 / Esc 同一个 exitFullscreen）',
+      stillFullscreen === false && stageEl.classList.contains(PSEUDO_FS_CLASS) === false,
+      `toggle=${stillFullscreen} pseudo=${stageEl.classList.contains(PSEUDO_FS_CLASS)}`);
+  }
+
+  // ④ 被拒绝（denied）：一次 getUserMedia 都不发，直接出诊断面板 + 地址栏提示
+  {
+    fullscreenWorks();
+    permissions('denied', 'denied');
+    const calls = [];
+    media.getUserMedia = async (constraints) => { calls.push(constraints); return gumStream(); };
+    await begin();
+    ok('已被拒绝（denied）：一次 getUserMedia 都不发（请求也不会弹框，省得白等）',
+      calls.length === 0, JSON.stringify(calls.length));
+    ok('被拒绝：走现有的摄像头错误 / 诊断面板分支，遮罩提示「请在地址栏左侧允许摄像头与麦克风」',
+      mask.classList.contains('hidden') === false
+      && elements.get('camDiag').hidden === false
+      && elements.get('maskText').textContent.includes(tMic('ui.maskPermDeniedText'))
+      && elements.get('maskTitle').textContent === tMic('ui.maskCamFailTitle')
+      && api.state.camErrName === 'NotAllowedError',
+      JSON.stringify({
+        mask: elements.get('maskText').textContent.slice(0, 24),
+        diag: elements.get('camDiag').hidden,
+        err: api.state.camErrName,
+      }));
+    ok('被拒绝：诊断面板给出的建议是「权限被拒」那一条（diag.adviceNotAllowed）',
+      elements.get('camDiagAdvice').textContent.includes(tMic('diag.adviceNotAllowed')),
+      elements.get('camDiagAdvice').textContent);
+  }
+
+  // ⑤ permissions API 不存在（Firefox / 老浏览器）→ 当作「未知」，流程照常
+  {
+    fullscreenWorks();
+    navigatorStub.permissions = undefined;
+    const calls = [];
+    media.getUserMedia = async (constraints) => { calls.push(constraints); order.push('gum'); return gumStream(); };
+    await begin();
+    ok('permissions API 不存在 → 按「未知」处理：先全屏、再照常请求组合授权（video + audio: true）',
+      order.join(',') === 'fullscreen,gum' && calls.length === 1 && calls[0].audio === true
+      && !!api.camera.stream,
+      JSON.stringify({ order: order.join(','), n: calls.length, cam: !!api.camera.stream }));
+    ok('permissions API 不存在时不崩：遮罩照常收起（当作「需要授权」那条路）',
+      mask.classList.contains('hidden') === true && api.state.camErrName === '',
+      JSON.stringify({ maskHidden: mask.classList.contains('hidden'), err: api.state.camErrName }));
+  }
+
+  // ⑥ query 抛错（Firefox 不认 camera / microphone）→ 一样当作「未知」
+  {
+    fullscreenWorks();
+    permissions('throw', 'granted');
+    const calls = [];
+    media.getUserMedia = async (constraints) => { calls.push(constraints); order.push('gum'); return gumStream(); };
+    await begin();
+    ok('permissions.query 抛错（不认这个权限名）→ 按「未知」处理，不把异常抛出去、流程照常',
+      order.join(',') === 'fullscreen,gum' && calls.length === 1 && !!api.camera.stream,
+      JSON.stringify({ order: order.join(','), n: calls.length, cam: !!api.camera.stream }));
+    ok('组合判定：一个 granted 一个抛错（未知）→ 仍然算「需要授权」',
+      await api.queryGesturePermission() === 'prompt',
+      await api.queryGesturePermission());
+  }
+
+  // ⑦ 纯函数：三态判定（两个 granted 才算已授权；任一 denied 就算被拒）
+  {
+    permissions('granted', 'granted');
+    ok('queryGesturePermission：两个都 granted → granted（不弹框）',
+      await api.queryGesturePermission() === 'granted');
+    permissions('granted', 'prompt');
+    ok('queryGesturePermission：一个 prompt → prompt（要弹框）',
+      await api.queryGesturePermission() === 'prompt');
+    permissions('granted', 'denied');
+    ok('queryGesturePermission：任一 denied → denied（不再请求）',
+      await api.queryGesturePermission() === 'denied');
+    permissions('unknown', 'unknown');
+    ok('queryGesturePermission：浏览器返回非三态的值 → 也只当作未知（prompt）',
+      await api.queryGesturePermission() === 'prompt');
+    navigatorStub.permissions = undefined;
+    ok('queryMediaPermission：没有 permissions API → unknown（不抛异常）',
+      await api.queryMediaPermission('camera') === 'unknown');
+    navigatorStub.permissions = { query: () => { throw new TypeError('boom'); } };
+    ok('queryMediaPermission：query 同步抛错 → unknown（不抛异常）',
+      await api.queryMediaPermission('microphone') === 'unknown');
+  }
+
+  // 恢复现场
+  api.showHome();
+  media.getUserMedia = savedGum;
+  navigatorStub.permissions = savedPermissions;
+  stageEl.requestFullscreen = savedRequestFullscreen;
+  documentStub.fullscreenElement = saved.fsEl;
+  api.camera.stream = saved.stream;
+  api.camera.video.readyState = saved.ready;
+  api.camera.video.srcObject = saved.src;
+  api.state.camStoppedForHome = saved.camStopped;
+  api.state.camErrName = saved.camErr;
+  api.state.engineReady = saved.engineReady;
+  api.state.session = 'idle';
+}
+
+/* ------------------------------------------------------------------ *
  * ⑧ 摄像头诊断面板（手机打不开摄像头时，把客观事实摆出来 + 一句处置建议）
  *
  * 用户实测：iPhone 上只有 QQ 浏览器能开摄像头，Safari / Chrome 不能。
