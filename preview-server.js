@@ -13,6 +13,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';   // 进度看板的数据源：现算 git 状态（见 /progress.json）
 
+// 语音代理（P3.1）：原来是一个**独立进程**（node server/coach-proxy.mjs），用户经常忘了起，
+// 于是前端连不上 ws://127.0.0.1:4180/asr → 回退 Web Speech → 国内连不上 Google →「火山引擎不可用」。
+// 现在 /asr 的 WebSocket 升级**并入这个服务器**：一个进程同时提供页面和语音代理，开箱即用。
+import {
+  ASR_PATH,
+  createAsrUpgradeHandler,
+  createLogger as createAsrLogger,
+  loadAsrConfig,
+} from './server/coach-proxy.mjs';
+
 const PORT = Number(process.env.PORT || 4174);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
@@ -75,6 +85,13 @@ function explainMissingCert() {
   console.error('');
   process.exit(1);
 }
+
+/**
+ * 语音代理的配置：**只在这里读一次** `coach.env`（缺文件 / 缺字段都不抛错）。
+ * 凭证不打印、不进日志；缺字段时页面回退浏览器识别，但预览服务器照常工作。
+ */
+const asr = loadAsrConfig();
+const asrLogger = createAsrLogger();
 
 const handler = (req, res) => {
   // 调试数据记录（页面「运动设定」里的「记录调试数据」开关）：
@@ -146,6 +163,21 @@ const handler = (req, res) => {
       res.writeHead(204);
       res.end();
     });
+    return;
+  }
+
+  // 语音代理的体检入口：浏览器打开 /asr 会看到这里（真正的识别走 WebSocket 升级，
+  // 见下面 server.on('upgrade')）。排障时先看 configured / missing，不用猜「代理起没起」。
+  if (req.method === 'GET' && (req.url || '').split('?')[0] === ASR_PATH) {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({
+      ok: true,
+      service: 'motion-fitness asr proxy (in preview-server)',
+      transport: 'websocket',
+      path: ASR_PATH,
+      configured: asr.config.configured,
+      missing: asr.config.missing,
+    }));
     return;
   }
 
@@ -342,9 +374,29 @@ server.on('error', (err) => {
   throw err;
 });
 
+/**
+ * 语音代理的 WebSocket 升级路由（和独立代理共用 coach-proxy.mjs 里同一份处理逻辑）。
+ *
+ *   - `/asr`          → 交给 handleAsrUpgrade（缺凭证时回 error 帧 + 4401，不崩）；
+ *   - 其它 upgrade    → 直接 socket.destroy()，不留悬空连接。
+ */
+server.on('upgrade', createAsrUpgradeHandler({
+  config: asr.config,
+  logger: asrLogger,
+  envPath: asr.envPath,
+}));
+
 server.listen(PORT, HOST, () => {
   console.log(`体感健身游戏预览地址： ${PROTO}://127.0.0.1:${PORT}`);
   console.log(`Motion Fitness is running at: ${PROTO}://127.0.0.1:${PORT}`);
+  console.log(`语音识别代理（同一进程）： ${PROTO === 'https' ? 'wss' : 'ws'}://127.0.0.1:${PORT}${ASR_PATH}`
+    + (asr.config.configured ? '（火山凭证已配置）' : '（缺火山凭证 → 页面会自动回退浏览器识别）'));
+  console.log(`Speech proxy in this same server: ${PROTO === 'https' ? 'wss' : 'ws'}://127.0.0.1:${PORT}${ASR_PATH}`
+    + (asr.config.configured ? ' (Volcengine credentials configured)' : ' (no credentials → the page falls back to Web Speech)'));
+  if (!asr.config.configured) {
+    console.warn(`  ⚠️ 没读到完整凭证：${asr.config.missing.join(', ')}（在 ${path.basename(asr.envPath)} 里填；不填也能练，只是语音识别会回退）`);
+    console.warn('  ⚠️ Missing: ' + asr.config.missing.join(', ') + ` in ${path.basename(asr.envPath)} — the game still works, speech falls back.`);
+  }
   if (HOST === '0.0.0.0') {
     // 打印局域网地址，手机直接照这个开（同一 Wi-Fi 下；防火墙要放行 Node 入站）
     for (const { name, address } of lanAddresses()) {

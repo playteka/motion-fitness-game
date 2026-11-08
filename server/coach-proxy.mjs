@@ -1,19 +1,27 @@
 /**
  * 本机语音代理（P3.1）。
  *
- * 浏览器 ──ws://127.0.0.1:4180/asr──▶ 本进程 ──wss://openspeech.bytedance.com──▶ 火山
+ * 浏览器 ──ws(s)://<页面 host>/asr──▶ 本机进程 ──wss://openspeech.bytedance.com──▶ 火山
+ *
+ * **两种跑法，同一份逻辑**：
+ *   1. 默认（推荐）**并入预览服务器**：`node preview-server.js` 一个进程就够，
+ *      `/asr` 的 WebSocket 升级由 `createAsrUpgradeHandler()` 接管 —— 页面跟页面同源同端口，
+ *      用户不用再开第二个窗口；
+ *   2. 独立进程（排障）：`node server/coach-proxy.mjs`（`npm run coach-proxy`），
+ *      默认 `ws://127.0.0.1:4180/asr`，专门用来单独验证代理这一层。
  *
  * 为什么要有它：
  *   - 浏览器里的 `webkitSpeechRecognition` 在国内连不上 Google 的识别服务（`error.network`）；
  *   - 火山要求握手头里带 APP ID / API Key —— 浏览器 `WebSocket` **不能自定义头**，
  *     而且凭证绝不能进前端；
- *   - 所以由本机 Node 进程拿着 `coach.env` 里的凭证去连，浏览器只知道 `ws://127.0.0.1:4180/asr`。
+ *   - 所以由本机 Node 进程拿着 `coach.env` 里的凭证去连，浏览器只知道同源的 `/asr`。
  *
  * 安全约束（实现时逐条守住）：
- *   - **只绑 127.0.0.1**（端口默认 4180，可用 `PORT` 覆盖），不接受局域网连接；
+ *   - 独立进程**只绑 127.0.0.1**（端口默认 4180，可用 `PORT` 覆盖），不接受局域网连接；
  *   - 凭证只从 `coach.env` / 进程环境读，**不打印值**（只打印「配了、几个字符」）；
  *   - 错误信息统一过 `sanitizeDetail()`，防止底层把 Key 回显到浏览器 / 日志里；
- *   - 日志只在内存 / 终端；要写文件请用 `COACH_LOG=1`（写到系统临时目录），**不放仓库**。
+ *   - 日志只在内存 / 终端；要写文件请用 `COACH_LOG=1`（写到系统临时目录），**不放仓库**；
+ *   - 缺凭证时**不崩**：握手照常完成 → error 帧（code=config）→ 关闭码 4401（见 CLOSE_CODE_CONFIG）。
  *
  * 对浏览器的控制消息：
  *   收到：{"type":"start","lang":"zh-CN"} / {"type":"stop"}
@@ -28,7 +36,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadEnvFile, maskSecret, volcConfigFrom } from './env.mjs';
-import { computeAccept, createFrameParser, createMessageAssembler, encodeFrame, handshakeResponse, isUpgradeRequest, OPCODES, rejectResponse } from './ws-mini.mjs';
+import { closeFrame, computeAccept, createFrameParser, createMessageAssembler, encodeFrame, handshakeResponse, isUpgradeRequest, OPCODES, rejectResponse } from './ws-mini.mjs';
 import { createVolcSession } from './volc-asr.mjs';
 import { VOLC_DEFAULTS } from './volc-protocol.mjs';
 
@@ -39,6 +47,12 @@ const ROOT = path.resolve(path.dirname(HERE), '..');
 export const BIND_HOST = '127.0.0.1';
 export const DEFAULT_PORT = 4180;
 export const ASR_PATH = '/asr';
+
+/**
+ * 缺凭证时给浏览器的关闭码（4000~4999 是应用自定义区间）。
+ * 1011 之类的通用码看不出原因；用一个专属码，排障时一眼能认出「是 coach.env 没填」。
+ */
+export const CLOSE_CODE_CONFIG = 4401;
 
 /** 单条 WebSocket 消息上限（一包 16k PCM 只有几 KB，1MB 已经很宽松） */
 const MAX_CLIENT_MESSAGE = 1024 * 1024;
@@ -71,7 +85,7 @@ export function createLogger({ sink = console, file = '' } = {}) {
 }
 
 /** 每个浏览器的连接：解 WS 帧 → 控制消息 / 音频 → 火山会话 */
-function attachClient(socket, { config, logger, envPath }) {
+function attachClient(socket, { config, logger, envPath, head = null }) {
   const id = shortId();
   const wsParser = createFrameParser();
   const audio = { bytes: 0, chunks: 0 };
@@ -84,6 +98,12 @@ function attachClient(socket, { config, logger, envPath }) {
   let closed = false;
 
   logger.info('client connected', { id });
+
+  // Node 的 upgrade 事件会把「握手包里已经读到的字节」单独给出来（第三个参数）。
+  // 浏览器刚连上就发 start 时这些字节就是第一批帧，不 unshift 回去会丢。
+  if (head && head.length) {
+    try { socket.unshift(head); } catch { /* 老版本 Node 没有 / 已经关了 */ }
+  }
 
   const send = (obj) => {
     if (closed || socket.destroyed) return;
@@ -303,6 +323,115 @@ function attachClient(socket, { config, logger, envPath }) {
 }
 
 /**
+ * 读 `coach.env` 并算出火山配置（预览服务器 / 独立代理 / 探针共用这一份，不各抄一套）。
+ *
+ * **只读文件，不打印值**：返回的 `config` 里有 key，调用方只能拿它去连火山 /
+ * 交给 `maskSecret()` 打印「配了几位」。
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.envPath] 显式文件路径；默认 `COACH_ENV` 或 `<项目根>/coach.env`
+ * @param {object} [opts.env]     进程环境（测试注入用）
+ * @returns {{ config: object, envPath: string, loaded: {ok:boolean, env:object, error:string} }}
+ */
+export function loadAsrConfig({ envPath = '', env = process.env } = {}) {
+  const file = envPath || String(env.COACH_ENV || '') || path.join(ROOT, 'coach.env');
+  const loaded = loadEnvFile(file);
+  const merged = { ...env, ...(loaded.ok ? loaded.env : {}) };
+  return { config: volcConfigFrom(merged), envPath: file, loaded };
+}
+
+/** 缺凭证时回给浏览器的错误文案：**只出现字段名**，绝不出现值 */
+function configErrorMessage(config) {
+  const missing = (config && config.missing) || ['VOLC_APP_ID', 'VOLC_API_KEY'];
+  return `coach.env is missing ${missing.join(', ')}`;
+}
+
+/**
+ * 处理一次 `/asr` 的 WebSocket 升级。
+ *
+ * 预览服务器（`preview-server.js`）与独立代理（`node server/coach-proxy.mjs`）
+ * **共用这一份**，不复制粘贴 —— 两边行为必须完全一致，否则「并入以后」和
+ * 「单独跑代理」排障结论会不一样。
+ *
+ * 凭证缺失（`coach.env` 不存在 / 缺字段）时**不崩、也不默默拒绝**：
+ *   ① 先把 WS 握手做完（直接拒握手的话浏览器只报 "WebSocket connection failed"，
+ *      用户根本看不出是缺 key）；
+ *   ② 发一条 `{"type":"error","code":"config",…}`（前端据此回退 Web Speech 并给出原因）；
+ *   ③ 发关闭帧 `4401`，然后断开；
+ *   ④ 打一条**脱敏**日志（只有字段名 / 文件名，没有值）。
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:net').Socket} socket
+ * @param {Buffer} [head] Node 在 upgrade 事件里给的「已读到但还没解」的字节
+ * @param {object} [opts] `{ config, logger, envPath }`
+ * @returns {boolean} 是否把连接交给了火山会话
+ */
+export function handleAsrUpgrade(req, socket, head, { config, logger = createLogger(), envPath = '' } = {}) {
+  const log = logger || createLogger();
+
+  if (!isUpgradeRequest(req)) {
+    try { socket.write(rejectResponse(400, 'not a websocket upgrade')); } catch { /* ignore */ }
+    try { socket.destroy(); } catch { /* ignore */ }
+    return false;
+  }
+
+  if (!config || !config.configured) {
+    try {
+      socket.write(handshakeResponse(computeAccept(req.headers['sec-websocket-key'])));
+      socket.write(encodeFrame({
+        opcode: OPCODES.TEXT,
+        payload: JSON.stringify({ type: 'error', code: 'config', message: configErrorMessage(config) }),
+      }));
+      socket.write(closeFrame(CLOSE_CODE_CONFIG, 'config-missing'));
+    } catch { /* 对端已经走了 */ }
+    try { socket.end(); } catch { /* ignore */ }
+    log.warn('asr upgrade rejected: config missing', {
+      missing: (config && config.missing) || ['VOLC_APP_ID', 'VOLC_API_KEY'],
+      file: path.basename(String(envPath || 'coach.env')),
+    });
+    return false;
+  }
+
+  try {
+    socket.write(handshakeResponse(computeAccept(req.headers['sec-websocket-key'])));
+  } catch {
+    try { socket.destroy(); } catch { /* ignore */ }
+    return false;
+  }
+  attachClient(socket, { config, logger: log, envPath, head });
+  return true;
+}
+
+/**
+ * 造一个 `server.on('upgrade', …)` 处理器：路径是 `/asr` 就交给 `handleAsrUpgrade()`，
+ * 其它路径按 `unknown` 处理：
+ *   - `'destroy'`（默认）：直接销毁 —— 预览服务器用它，不留悬空连接；
+ *   - `'reject'`：先回 404 再销毁 —— 独立代理用它，排障时能看到「路径写错了」。
+ *
+ * @param {object} [opts] `{ config, logger, envPath, unknown }`
+ * @returns {(req: object, socket: object, head?: Buffer) => void}
+ */
+export function createAsrUpgradeHandler({
+  config,
+  logger = createLogger(),
+  envPath = '',
+  unknown = 'destroy',
+} = {}) {
+  return (req, socket, head) => {
+    let pathname = '';
+    try { pathname = new URL(req.url || '/', `http://${BIND_HOST}`).pathname; } catch { /* ignore */ }
+    if (pathname !== ASR_PATH) {
+      if (unknown === 'reject') {
+        try { socket.write(rejectResponse(404, 'not found')); } catch { /* ignore */ }
+      }
+      try { socket.destroy(); } catch { /* ignore */ }
+      return;
+    }
+    handleAsrUpgrade(req, socket, head, { config, logger, envPath });
+  };
+}
+
+/**
  * 创建代理 HTTP 服务（不 listen，便于测试 / 复用）。
  * @param {object} opts
  * @param {object} opts.config  volcConfigFrom() 的结果
@@ -335,25 +464,7 @@ export function createCoachProxy({ config, logger = createLogger(), envPath = ''
     res.end('coach-proxy: only /asr (WebSocket) and /health are available');
   });
 
-  server.on('upgrade', (req, socket) => {
-    let pathname = '';
-    try { pathname = new URL(req.url || '/', `http://${BIND_HOST}`).pathname; } catch { /* ignore */ }
-    if (pathname !== ASR_PATH) {
-      try { socket.write(rejectResponse(404, 'not found')); socket.destroy(); } catch { /* ignore */ }
-      return;
-    }
-    if (!isUpgradeRequest(req)) {
-      try { socket.write(rejectResponse(400, 'not a websocket upgrade')); socket.destroy(); } catch { /* ignore */ }
-      return;
-    }
-    try {
-      socket.write(handshakeResponse(computeAccept(req.headers['sec-websocket-key'])));
-    } catch {
-      try { socket.destroy(); } catch { /* ignore */ }
-      return;
-    }
-    attachClient(socket, { config, logger, envPath });
-  });
+  server.on('upgrade', createAsrUpgradeHandler({ config, logger, envPath, unknown: 'reject' }));
 
   return server;
 }
@@ -369,10 +480,8 @@ function isMain() {
 
 export function main() {
   const port = Number(process.env.PORT || DEFAULT_PORT);
-  const envPath = process.env.COACH_ENV || path.join(ROOT, 'coach.env');
-  const loaded = loadEnvFile(envPath);
-  const merged = { ...process.env, ...(loaded.ok ? loaded.env : {}) };
-  const config = volcConfigFrom(merged);
+  // 读凭证的逻辑与 preview-server 共用同一份（loadAsrConfig），这里只是自己 listen
+  const { config, envPath, loaded } = loadAsrConfig();
 
   const logFile = process.env.COACH_LOG
     ? path.join(os.tmpdir(), 'mfg-coach-proxy.log')

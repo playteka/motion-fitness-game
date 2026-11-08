@@ -109,7 +109,13 @@ export function speechRecognitionCtor(win = null) {
  * ASR 选路（P3.1）：优先本机火山代理，代理不可用就回退浏览器 Web Speech
  * ================================================================== */
 
-/** 本机代理的默认地址（浏览器只知道这个地址，凭证全在代理进程的 coach.env 里） */
+/** 语音代理的 WebSocket 路径（页面、预览服务器、独立代理、测试共用这一个常量） */
+export const ASR_WS_PATH = '/asr';
+
+/**
+ * 没有 `location` 时的兜底：**独立代理进程**（`node server/coach-proxy.mjs`）的地址。
+ * 页面正常运行**不用它** —— 见 `resolveAsrUrl()`：默认跟页面同源同端口。
+ */
 export const DEFAULT_ASR_WS_URL = 'ws://127.0.0.1:4180/asr';
 
 /** 三条路：火山代理 / 浏览器自带 / 都没有 */
@@ -120,15 +126,39 @@ export const ASR_ROUTES = Object.freeze({
 });
 
 /**
- * 代理地址：默认 `ws://127.0.0.1:4180/asr`，可被 `window.__MFG_ASR_WS__` 覆盖（测试 / 换端口）。
+ * 跟页面同源的代理地址（**默认值**）：`https:` 页面 → `wss:`，其余 → `ws:`；
+ * host 与端口就是页面自己的（`location.host` 已经带端口）。
+ *
+ * 预览服务器把 `/asr` 代理并进了同一个进程，所以打开 `http://127.0.0.1:4174`
+ * 就等于 `ws://127.0.0.1:4174/asr` —— 不需要用户再起第二个进程，也不会再出现
+ * 「页面 4174、代理 4180 忘了起 → 火山引擎不可用」。
+ *
+ * 没有 `location`（Node 里测试 / 老环境）或 host 为空时返回 ''，由调用方兜底。
+ */
+export function sameOriginAsrUrl(win = null) {
+  const w = rootWin(win);
+  const loc = w.location;
+  if (!loc) return '';
+  const host = String(loc.host || '');
+  if (!host) return '';
+  return `${String(loc.protocol || '').toLowerCase() === 'https:' ? 'wss' : 'ws'}://${host}${ASR_WS_PATH}`;
+}
+
+/**
+ * 代理地址的优先级：
+ *   1. `window.__MFG_ASR_WS__`（显式覆盖：换端口 / 手机连独立代理 / 测试）；
+ *   2. 跟页面同源（`sameOriginAsrUrl()`）；
+ *   3. `DEFAULT_ASR_WS_URL`（没有 `location` 时的兜底，即独立代理进程那套排障入口）。
+ *
  * 显式写 `off` / `none` / `0` / `false` 可以强制回退到 Web Speech。
  */
 export function resolveAsrUrl(win = null) {
   const w = rootWin(win);
+  const fallback = sameOriginAsrUrl(w) || DEFAULT_ASR_WS_URL;
   const raw = w.__MFG_ASR_WS__;
-  if (typeof raw !== 'string') return DEFAULT_ASR_WS_URL;
+  if (typeof raw !== 'string') return fallback;
   const value = raw.trim();
-  if (!value) return DEFAULT_ASR_WS_URL;
+  if (!value) return fallback;
   if (/^(off|none|false|0)$/i.test(value)) return '';
   return value;
 }
