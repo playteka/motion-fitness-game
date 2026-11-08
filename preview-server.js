@@ -9,6 +9,7 @@ import http from 'node:http';
 import https from 'node:https';
 import os from 'node:os';   // 打印局域网地址用（HOST=0.0.0.0 时给手机照抄）
 import fs from 'node:fs';
+import zlib from 'node:zlib';   // 静态资源 gzip（9.3MB 的 wasm 压到 ~3MB，慢机器上快很多）
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';   // 进度看板的数据源：现算 git 状态（见 /progress.json）
@@ -93,7 +94,72 @@ function explainMissingCert() {
 const asr = loadAsrConfig();
 const asrLogger = createAsrLogger();
 
-const handler = (req, res) => {
+/**
+ * 能 gzip 的后缀（文本类 + wasm）。模型 `.task` 本身就是压缩包，再压没意义，跳过。
+ */
+export const GZIP_EXTS = new Set(['.html', '.css', '.js', '.mjs', '.json', '.webmanifest',
+  '.wasm', '.svg', '.md', '.txt']);
+
+/** gzip 结果的内存缓存：绝对路径 → { key: `mtime:size`, gz }。同一个文件只压一次，文件改了就重压。 */
+const gzipCache = new Map();
+
+/** 静态资源的响应头（`/vendor/**` 也一视同仁：本地开发**完全不缓存**，见下面的注释） */
+function staticHeaders(ext) {
+  const headers = {
+    'Content-Type': MIME[ext] || 'application/octet-stream',
+    /**
+     * **no-store**（用户拍板）：这些文件都不大，每次重新下载不成问题；
+     * 反过来，只要缓存过一份坏文件（下载中断 / 反复重启服务器时很容易发生），
+     * 就会一直坏下去 —— 用户今天遇到的「初始化识别器超时」正是这种形态，所以宁可慢一点。
+     */
+    'Cache-Control': 'no-store',
+    // 跨源隔离：COOP + COEP 必须**同时**存在（浏览器才会给 SharedArrayBuffer / 高性能 wasm）
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Embedder-Policy': 'credentialless',
+  };
+  if (GZIP_EXTS.has(ext)) headers.Vary = 'Accept-Encoding';
+  return headers;
+}
+
+/** 读文件 → 按需 gzip（带内存缓存）→ 写响应 */
+function serveStatic(req, res, file) {
+  const ext = path.extname(file).toLowerCase();
+  const notFound = () => {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end('Not Found');
+  };
+  fs.stat(file, (statErr, stat) => {
+    if (statErr || !stat.isFile()) { notFound(); return; }
+    const headers = staticHeaders(ext);
+    const wantsGzip = GZIP_EXTS.has(ext) && /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''));
+    const send = (buffer, encoding) => {
+      if (encoding) headers['Content-Encoding'] = encoding;
+      headers['Content-Length'] = buffer.length;
+      res.writeHead(200, headers);
+      res.end(buffer);
+    };
+    if (!wantsGzip) {
+      fs.readFile(file, (readErr, data) => (readErr ? notFound() : send(data)));
+      return;
+    }
+    // 同一个文件（mtime + size 没变）只压一次：别每次请求都 gzip 9.3MB
+    const key = `${Math.round(stat.mtimeMs)}:${stat.size}`;
+    const hit = gzipCache.get(file);
+    if (hit && hit.key === key) { send(hit.gz, 'gzip'); return; }
+    fs.readFile(file, (readErr, data) => {
+      if (readErr) { notFound(); return; }
+      const gz = zlib.gzipSync(data);
+      gzipCache.set(file, { key, gz });
+      send(gz, 'gzip');
+    });
+  });
+}
+
+/**
+ * 请求处理函数（导出给测试用：`http.createServer(previewHandler)` 就能跑真实响应头 / gzip 断言）。
+ * 只有作为主模块启动时才会真的 listen，被测试 import 时不会占端口。
+ */
+export const previewHandler = (req, res) => {
   // 调试数据记录（页面「运动设定」里的「记录调试数据」开关）：
   // 页面把每一批采样（JSONL 文本）POST 到这里，服务端**追加**写进 logs/ 下的文件 ——
   // 这样真机测试完之后，日志就落在项目目录里，可以直接拿来分析「为什么没计上」。
@@ -308,21 +374,11 @@ const handler = (req, res) => {
     res.end('Forbidden');
     return;
   }
-  fs.readFile(file, (err, data) => {
-    if (err) {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('Not Found: ' + urlPath);
-      return;
-    }
-    const ext = path.extname(file).toLowerCase();
-    res.writeHead(200, {
-      'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.wasm' || ext === '.task' ? 'public, max-age=86400' : 'no-store',
-      'Cross-Origin-Opener-Policy': 'same-origin',
-    });
-    res.end(data);
-  });
+  serveStatic(req, res, file);
 };
+
+/** 服务器启动时用这个（等价的别名，保留原来的名字） */
+const handler = previewHandler;
 
 /**
  * 监听地址：默认**只监听本机回环**（安全），需要让同一 Wi-Fi 下的手机访问时，
@@ -346,77 +402,91 @@ function lanAddresses() {
   return out;
 }
 
-let server;
-if (HTTPS_ON) {
-  const tls = loadTls();
-  if (!tls) explainMissingCert();
+/** 只有 `node preview-server.js` 才真的监听端口；被测试 import 时只导出 previewHandler（不占端口） */
+const IS_MAIN = (() => {
   try {
-    server = https.createServer(tls, handler);
-  } catch (err) {
-    console.error('');
-    console.error('✗ HTTPS 证书读不了：' + (err && err.message));
-    console.error(`  证书来源：${tls.source}`);
-    console.error('  重新生成一次： powershell -ExecutionPolicy Bypass -File tools\\make-cert.ps1');
-    console.error('  （PFX 口令默认 motion-fitness；换过口令就用 CERT_PASS 指定）');
-    console.error('');
-    process.exit(1);
+    return path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
   }
-} else {
-  server = http.createServer(handler);
+})();
+
+/** 起服务器（HTTPS / HTTP + 语音代理的 upgrade 路由 + 启动日志） */
+function startServer() {
+  let server;
+  if (HTTPS_ON) {
+    const tls = loadTls();
+    if (!tls) explainMissingCert();
+    try {
+      server = https.createServer(tls, handler);
+    } catch (err) {
+      console.error('');
+      console.error('✗ HTTPS 证书读不了：' + (err && err.message));
+      console.error(`  证书来源：${tls.source}`);
+      console.error('  重新生成一次： powershell -ExecutionPolicy Bypass -File tools\\make-cert.ps1');
+      console.error('  （PFX 口令默认 motion-fitness；换过口令就用 CERT_PASS 指定）');
+      console.error('');
+      process.exit(1);
+    }
+  } else {
+    server = http.createServer(handler);
+  }
+
+  server.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+      console.error(`✗ 端口 ${PORT} 已被占用：可能已经有一个 preview-server 在跑。`);
+      console.error(`  换一个端口：$env:PORT='4175'; node preview-server.js`);
+      process.exit(1);
+    }
+    throw err;
+  });
+
+  /**
+   * 语音代理的 WebSocket 升级路由（和独立代理共用 coach-proxy.mjs 里同一份处理逻辑）。
+   *
+   *   - `/asr`          → 交给 handleAsrUpgrade（缺凭证时回 error 帧 + 4401，不崩）；
+   *   - 其它 upgrade    → 直接 socket.destroy()，不留悬空连接。
+   */
+  server.on('upgrade', createAsrUpgradeHandler({
+    config: asr.config,
+    logger: asrLogger,
+    envPath: asr.envPath,
+  }));
+
+  server.listen(PORT, HOST, () => {
+    console.log(`体感健身游戏预览地址： ${PROTO}://127.0.0.1:${PORT}`);
+    console.log(`Motion Fitness is running at: ${PROTO}://127.0.0.1:${PORT}`);
+    console.log(`语音识别代理（同一进程）： ${PROTO === 'https' ? 'wss' : 'ws'}://127.0.0.1:${PORT}${ASR_PATH}`
+      + (asr.config.configured ? '（火山凭证已配置）' : '（缺火山凭证 → 页面会自动回退浏览器识别）'));
+    console.log(`Speech proxy in this same server: ${PROTO === 'https' ? 'wss' : 'ws'}://127.0.0.1:${PORT}${ASR_PATH}`
+      + (asr.config.configured ? ' (Volcengine credentials configured)' : ' (no credentials → the page falls back to Web Speech)'));
+    if (!asr.config.configured) {
+      console.warn(`  ⚠️ 没读到完整凭证：${asr.config.missing.join(', ')}（在 ${path.basename(asr.envPath)} 里填；不填也能练，只是语音识别会回退）`);
+      console.warn('  ⚠️ Missing: ' + asr.config.missing.join(', ') + ` in ${path.basename(asr.envPath)} — the game still works, speech falls back.`);
+    }
+    if (HOST === '0.0.0.0') {
+      // 打印局域网地址，手机直接照这个开（同一 Wi-Fi 下；防火墙要放行 Node 入站）
+      for (const { name, address } of lanAddresses()) {
+        console.log(`局域网（手机同 Wi-Fi 打开）： ${PROTO}://${address}:${PORT}   [${name}]`);
+        console.log(`LAN (open on your phone):      ${PROTO}://${address}:${PORT}   [${name}]`);
+      }
+      if (HTTPS_ON) {
+        console.log('✓ 手机用上面这个 https 地址打开就能开摄像头（证书要先装进手机并信任）');
+        console.log('✓ Open the https address above on your phone to use the camera.');
+        console.log('  证书装法 / 不想装证书的隧道方案，见 README 的「手机浏览器使用」');
+        console.log('  See "Using it on a phone" in README for certificate setup or the tunnel option.');
+      } else {
+        console.log('⚠️ 手机上只能用来看界面 / 动作库 / 成绩：摄像头需要 https，http 会被浏览器拦下');
+        console.log('⚠️ On a phone this is browse-only: the camera needs https.');
+        console.log(`   加 HTTPS=1 再启动一次即可：$env:HTTPS='1'; $env:HOST='0.0.0.0'; node preview-server.js`);
+      }
+    } else if (HTTPS_ON) {
+      console.log('✓ HTTPS 已开启（只有本机可达；手机要访问请用 HOST=0.0.0.0）');
+      console.log('✓ HTTPS is on (loopback only; use HOST=0.0.0.0 to reach it from a phone)');
+    }
+    console.log('（用 Chrome / Edge 打开，首次点“开启摄像头”并允许权限）');
+    console.log('(Open it in Chrome / Edge, click "Start camera" and allow the permission)');
+  });
 }
 
-server.on('error', (err) => {
-  if (err && err.code === 'EADDRINUSE') {
-    console.error(`✗ 端口 ${PORT} 已被占用：可能已经有一个 preview-server 在跑。`);
-    console.error(`  换一个端口：$env:PORT='4175'; node preview-server.js`);
-    process.exit(1);
-  }
-  throw err;
-});
-
-/**
- * 语音代理的 WebSocket 升级路由（和独立代理共用 coach-proxy.mjs 里同一份处理逻辑）。
- *
- *   - `/asr`          → 交给 handleAsrUpgrade（缺凭证时回 error 帧 + 4401，不崩）；
- *   - 其它 upgrade    → 直接 socket.destroy()，不留悬空连接。
- */
-server.on('upgrade', createAsrUpgradeHandler({
-  config: asr.config,
-  logger: asrLogger,
-  envPath: asr.envPath,
-}));
-
-server.listen(PORT, HOST, () => {
-  console.log(`体感健身游戏预览地址： ${PROTO}://127.0.0.1:${PORT}`);
-  console.log(`Motion Fitness is running at: ${PROTO}://127.0.0.1:${PORT}`);
-  console.log(`语音识别代理（同一进程）： ${PROTO === 'https' ? 'wss' : 'ws'}://127.0.0.1:${PORT}${ASR_PATH}`
-    + (asr.config.configured ? '（火山凭证已配置）' : '（缺火山凭证 → 页面会自动回退浏览器识别）'));
-  console.log(`Speech proxy in this same server: ${PROTO === 'https' ? 'wss' : 'ws'}://127.0.0.1:${PORT}${ASR_PATH}`
-    + (asr.config.configured ? ' (Volcengine credentials configured)' : ' (no credentials → the page falls back to Web Speech)'));
-  if (!asr.config.configured) {
-    console.warn(`  ⚠️ 没读到完整凭证：${asr.config.missing.join(', ')}（在 ${path.basename(asr.envPath)} 里填；不填也能练，只是语音识别会回退）`);
-    console.warn('  ⚠️ Missing: ' + asr.config.missing.join(', ') + ` in ${path.basename(asr.envPath)} — the game still works, speech falls back.`);
-  }
-  if (HOST === '0.0.0.0') {
-    // 打印局域网地址，手机直接照这个开（同一 Wi-Fi 下；防火墙要放行 Node 入站）
-    for (const { name, address } of lanAddresses()) {
-      console.log(`局域网（手机同 Wi-Fi 打开）： ${PROTO}://${address}:${PORT}   [${name}]`);
-      console.log(`LAN (open on your phone):      ${PROTO}://${address}:${PORT}   [${name}]`);
-    }
-    if (HTTPS_ON) {
-      console.log('✓ 手机用上面这个 https 地址打开就能开摄像头（证书要先装进手机并信任）');
-      console.log('✓ Open the https address above on your phone to use the camera.');
-      console.log('  证书装法 / 不想装证书的隧道方案，见 README 的「手机浏览器使用」');
-      console.log('  See "Using it on a phone" in README for certificate setup or the tunnel option.');
-    } else {
-      console.log('⚠️ 手机上只能用来看界面 / 动作库 / 成绩：摄像头需要 https，http 会被浏览器拦下');
-      console.log('⚠️ On a phone this is browse-only: the camera needs https.');
-      console.log(`   加 HTTPS=1 再启动一次即可：$env:HTTPS='1'; $env:HOST='0.0.0.0'; node preview-server.js`);
-    }
-  } else if (HTTPS_ON) {
-    console.log('✓ HTTPS 已开启（只有本机可达；手机要访问请用 HOST=0.0.0.0）');
-    console.log('✓ HTTPS is on (loopback only; use HOST=0.0.0.0 to reach it from a phone)');
-  }
-  console.log('（用 Chrome / Edge 打开，首次点“开启摄像头”并允许权限）');
-  console.log('(Open it in Chrome / Edge, click "Start camera" and allow the permission)');
-});
+if (IS_MAIN) startServer();

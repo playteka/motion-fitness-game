@@ -22,12 +22,31 @@
 import { FilesetResolver, PoseLandmarker } from '../vendor/tasks-vision/vision_bundle.mjs';
 
 // 模型文件路径（界面上的模型名称走 i18n：ui.modelLite / ui.modelFull）
+// `rev` = 模型文件的**字节数**（指纹）：模型 URL 会拼上 `?v=rev`，换了模型文件指纹自动变，
+// 不用手工记版本号；老缓存也不会被一直用下去（用户反馈过「前几天都好好的，今天坏了」）。
 export const MODELS = {
-  lite: { url: './vendor/models/pose_landmarker_lite.task' },
-  full: { url: './vendor/models/pose_landmarker_full.task' },
+  lite: { url: './vendor/models/pose_landmarker_lite.task', rev: '5777746' },
+  full: { url: './vendor/models/pose_landmarker_full.task', rev: '9398198' },
 };
 
+/** 带缓存击穿参数的模型 URL：`./vendor/models/pose_landmarker_lite.task?v=5777746` */
+export function modelUrlFor(modelKey = 'lite') {
+  const model = MODELS[modelKey] || MODELS.lite;
+  return `${model.url}?v=${model.rev}`;
+}
+
 export const WASM_DIR = './vendor/tasks-vision/wasm';
+
+/**
+ * 最保守的运行库：同一目录里就有**非 SIMD** 的构建（Chromium 也认得，只是慢一点）。
+ * 初始化抛错（SIMD 编译 / 运行库 Abort / 线程相关）时最后用这一套再试一次。
+ * 说明：vendor 里这版 wasm 是**单线程**构建（loader 与 .wasm 里 SharedArrayBuffer / Atomics /
+ * numThreads 全是 0 处），所以没有 `numThreads` 这个开关可调 —— 能换的只有「非 SIMD + CPU」。
+ */
+export const NOSIMD_FILES = {
+  wasmLoaderPath: './vendor/tasks-vision/wasm/vision_wasm_nosimd_internal.js',
+  wasmBinaryPath: './vendor/tasks-vision/wasm/vision_wasm_nosimd_internal.wasm',
+};
 
 /** 下载类失败的重试间隔（ms）：首次失败等 400，第二次 900，第三次 1800，再失败就报错 */
 export const RETRY_DELAYS = [400, 900, 1800];
@@ -35,6 +54,19 @@ export const RETRY_DELAYS = [400, 900, 1800];
 export const LOAD_ATTEMPTS = RETRY_DELAYS.length + 1;
 /** 首帧推理最多等多久（ms）：超时当失败 → 自动切 CPU，界面不会一直转圈 */
 export const FIRST_DETECT_TIMEOUT_MS = 8000;
+/**
+ * 默认 delegate = **CPU**（用户实测：GPU 在创建 WebGL 上下文时会**卡死**而不是报错，
+ * 于是白等一个超时才轮到 CPU）。CPU 跑 pose lite 15~30fps 够用，稳比快重要。
+ */
+export const DEFAULT_DELEGATE = 'CPU';
+/** 用户主动要 GPU 时只给它 **6 秒**软超时：卡住 / 失败都立刻切 CPU（超时也算兜底！） */
+export const GPU_INIT_TIMEOUT_MS = 6000;
+/**
+ * 初始化（createFromOptions + 首帧自检）最多等多久（ms）。
+ * 从 20s 放宽到 45s：9.3MB 的 wasm 在慢机器上编译 10~20s 很常见，
+ * 20s 会把「其实能成功」的初始化误杀成「推理器创建失败（超时 20s）」（用户就是这么中招的）。
+ */
+export const INIT_TIMEOUT_MS = 45000;
 /** 整个加载最多等多久（app.js 拿它做最后一道保险：各阶段自己的超时会先触发，这里是兜底） */
 export const LOAD_TIMEOUT_MS = 240000;
 
@@ -47,11 +79,13 @@ const RETRYABLE_NAMES = ['TypeError', 'NetworkError', 'AbortError', 'HttpError',
 /**
  * 姿态模型加载失败（带阶段的结构化错误）。
  * 字段：stage（哪个阶段）/ errName（浏览器报的真实错误名）/ reason（一句话原因）/
- *       retryable（值不值得重试）/ delegate（GPU 还是 CPU）/ status（HTTP 状态码）/ seconds（超时秒数）。
+ *       retryable（值不值得重试）/ delegate（GPU 还是 CPU）/ status（HTTP 状态码）/ seconds（超时秒数）/
+ *       timeoutMs（那一档的上限）/ elapsedMs（真的等了多久）/ conservative（是不是最保守那一档）。
  */
 export class PoseLoadError extends Error {
   constructor(stage, errName, message, {
     cause = null, retryable = false, delegate = '', status = 0, seconds = 0, loaded = 0, total = 0,
+    timeoutMs = 0, elapsedMs = 0, conservative = false, attempt = 0,
   } = {}) {
     super(String(message || errName || stage || 'pose model load failed'));
     this.name = 'PoseLoadError';
@@ -65,6 +99,11 @@ export class PoseLoadError extends Error {
     /** 下载卡住时「已经收到多少 / 总共多少字节」（界面提示「已收 2.9MB / 5.6MB」） */
     this.loaded = Number(loaded) || 0;
     this.total = Number(total) || 0;
+    /** 初始化超时要说清「上限多少 / 已经等了多久」（用户看到的「推理器创建失败（超时 20s）」就是这里） */
+    this.timeoutMs = Number(timeoutMs) || 0;
+    this.elapsedMs = Number(elapsedMs) || 0;
+    this.conservative = !!conservative;
+    this.attempt = Number(attempt) || 0;
     if (cause) this.cause = cause;
   }
 }
@@ -74,6 +113,11 @@ export function isRetryableLoadError(err) {
   if (!err) return false;
   if (typeof err.retryable === 'boolean') return err.retryable;
   return RETRYABLE_NAMES.includes(String(err.name || err.errName || ''));
+}
+
+/** 是不是「超时」这一路失败（纯函数）：GPU 卡死 / 初始化太久都靠它区分兜底策略 */
+export function isTimeoutLoadError(err) {
+  return String((err && (err.errName || err.name)) || '') === 'TimeoutError';
 }
 
 /** 把任意一个阶段错误包成 PoseLoadError（纯函数；已经是 PoseLoadError 就原样返回） */
@@ -121,8 +165,6 @@ export function normalizeDelegate(value) {
 
 /** 下载时多久没有任何新字节 → 判定「网络卡住了」（ms） */
 export const DOWNLOAD_STALL_TIMEOUT_MS = 60000;
-/** forVisionTasks / createFromOptions 这类「没法细分」的阶段最多等多久（ms） */
-export const INIT_TIMEOUT_MS = 20000;
 /** 总进度条的权重：运行库 40% + 模型 40% + 初始化 20% */
 export const PROGRESS_WEIGHTS = { wasm: 0.4, model: 0.4, init: 0.2 };
 
@@ -144,7 +186,9 @@ export function formatMB(bytes) {
  *            done:boolean, wasm:object, model:object, init:number}}
  *   - 某一段拿不到 Content-Length（total 未知）→ 那一段是**不确定态**，`percent` 返回 null
  *     （界面显示不确定态 + 已下载字节，绝不谎报百分比）；
- *   - 顺序推进时 `approximate` 单调不减（下一步开始时 loaded/total 只会变大）。
+ *   - 顺序推进时 `approximate` 单调不减（下一步开始时 loaded/total 只会变大）；
+ *   - **wasm 传 null**（运行库交给识别器内部下载、我们拿不到字节）→ 那 40% 的权重
+ *     并到 model / init 里按比例重分，百分比仍然能走到 100%（界面那一行另说，见 app.js）。
  */
 export function composeProgress({ wasm = null, model = null, init = 0 } = {}) {
   const part = (p) => {
@@ -166,9 +210,11 @@ export function composeProgress({ wasm = null, model = null, init = 0 } = {}) {
   const w = part(wasm);
   const m = part(model);
   const initFrac = Math.max(0, Math.min(1, Number(init) || 0));
-  const fraction = (w.fraction * PROGRESS_WEIGHTS.wasm)
+  // wasm 缺席时把它的权重按比例分给 model / init（分母减小），否则永远到不了 100%
+  const scale = wasm ? 1 : (1 - PROGRESS_WEIGHTS.wasm);
+  const fraction = ((w.fraction * PROGRESS_WEIGHTS.wasm)
     + (m.fraction * PROGRESS_WEIGHTS.model)
-    + (initFrac * PROGRESS_WEIGHTS.init);
+    + (initFrac * PROGRESS_WEIGHTS.init)) / scale;
   const indeterminate = w.indeterminate || m.indeterminate;
   return {
     percent: indeterminate ? null : Math.round(fraction * 100),
@@ -179,18 +225,6 @@ export function composeProgress({ wasm = null, model = null, init = 0 } = {}) {
     model: m,
     init: initFrac,
   };
-}
-
-/**
- * wasm 文件集 → 要预热的两个文件（loader 的 .js 与二进制 .wasm）。
- * FilesetResolver.forVisionTasks 只算路径、不下载，所以这里能拿到**库真正会用的那两个文件**
- * （SIMD / nosimd 由它自己决定，我们不去猜）。
- */
-export function wasmFileUrls(fileset = {}) {
-  const urls = [];
-  if (fileset && fileset.wasmLoaderPath) urls.push(String(fileset.wasmLoaderPath));
-  if (fileset && fileset.wasmBinaryPath) urls.push(String(fileset.wasmBinaryPath));
-  return urls;
 }
 
 export class PoseEngine {
@@ -218,26 +252,27 @@ export class PoseEngine {
     this.lastError = null;
     this._lastTs = -1;
     this._vision = null;
-    /** 已经预热过的 wasm 文件列表（同样的文件不重复下载） */
-    this._wasmWarmed = '';
   }
 
   get ready() { return !!this.landmarker; }
 
   /**
-   * 加载模型（分阶段 + 下载类失败自动重试 + GPU → CPU 兜底）。
+   * 加载模型（分阶段 + 下载类失败自动重试 + GPU/超时 → CPU 兜底）。
    *
    * @param {object} o
    *   modelKey             'lite' | 'full'
-   *   delegate             'GPU' | 'CPU' | null（null = 先试 GPU；设置里记过 CPU 就传 'CPU'）
+   *   delegate             'GPU' | 'CPU' | null（null/空 = 默认 CPU；只有显式传 'GPU' 才先试 GPU）
    *   video                首帧推理自检用的 <video>（拿不到就跳过 ④）
    *   onStatus(text)       英文进度（控制台 / 兼容旧调用）
-   *   onProgress(p)        真实进度：{stage:'wasm'|'model'|'init', loaded, total, bps, done, indeterminate}
+   *   onProgress(p)        进度：{stage:'model'|'init', loaded, total, bps, done, indeterminate,
+   *                        delegate, attempt, attempts, conservative, timeoutMs}
    *   onRetry({retry,retries,attempt,max,delay,error})  马上要退避重试了
    *   onDelegate(delegate, error)  GPU 兜底成功（error = 当初 GPU 为什么不行）
+   *   onAttemptFail(error, {attempt,delegate,conservative,willRetry})  初始化每一次失败都报（写诊断用）
    *   onFail(error, {attempt,max,willRetry})            某一次尝试彻底失败（写诊断日志用）
-   *   attempts / retryDelays / firstDetectTimeoutMs / stallTimeoutMs / initTimeoutMs / cpuFallback
-   *                       都可在测试里调小（默认 4 次尝试 / 400·900·1800ms / 8s / 60s / 20s）
+   *   attempts / retryDelays / firstDetectTimeoutMs / stallTimeoutMs / initTimeoutMs /
+   *   gpuTimeoutMs / cpuFallback
+   *                       都可在测试里调小（默认 4 次 / 400·900·1800ms / 8s / 60s / 45s / 6s）
    */
   async init({
     modelKey = 'lite',
@@ -248,11 +283,13 @@ export class PoseEngine {
     onRetry = null,
     onDelegate = null,
     onFail = null,
+    onAttemptFail = null,
     attempts = LOAD_ATTEMPTS,
     retryDelays = RETRY_DELAYS,
     firstDetectTimeoutMs = FIRST_DETECT_TIMEOUT_MS,
     stallTimeoutMs = DOWNLOAD_STALL_TIMEOUT_MS,
     initTimeoutMs = INIT_TIMEOUT_MS,
+    gpuTimeoutMs = GPU_INIT_TIMEOUT_MS,
     cpuFallback = true,
   } = {}) {
     const wanted = normalizeDelegate(delegate);
@@ -260,12 +297,13 @@ export class PoseEngine {
     this.close();
     this.lastError = null;
 
-    const modelUrl = (MODELS[modelKey] || MODELS.lite).url;
+    // 模型 URL 带 `?v=文件字节数`：模型换了指纹就变，不会一直被老缓存 / 中间缓存顶着
+    const modelUrl = modelUrlFor(modelKey);
     const max = Math.max(1, Number(attempts) || LOAD_ATTEMPTS);
     const delays = Array.isArray(retryDelays) && retryDelays.length ? retryDelays : RETRY_DELAYS;
     onStatus(`Loading pose model (${modelKey})…`);
 
-    /* ---- ①② 运行库 + 模型：流式下载（真实字节进度），下载类失败自动重试 ---- */
+    /* ---- ② 模型：流式下载（真实字节进度），下载类失败自动重试 ---- */
     let assets = null;
     for (let attempt = 1; attempt <= max; attempt += 1) {
       try {
@@ -273,7 +311,7 @@ export class PoseEngine {
         assets = await this.loadAssets(modelUrl, { onProgress, stallTimeoutMs, initTimeoutMs });
         break;
       } catch (err) {
-        const error = asLoadError(err.stage || 'wasm', err);
+        const error = asLoadError(err.stage || 'model', err);
         const willRetry = attempt < max && isRetryableLoadError(error);
         if (onFail) onFail(error, { attempt, max, willRetry });
         if (!willRetry) {
@@ -288,31 +326,91 @@ export class PoseEngine {
       }
     }
 
-    /* ---- ③④ 创建推理器 + 首帧自检：GPU 不行就换 CPU（只换一次） ---- */
-    const primary = wanted || 'GPU';
-    const order = primary === 'GPU' && cpuFallback ? ['GPU', 'CPU'] : [primary];
+    /* ---- ③④ 创建推理器 + 首帧自检 ----
+     * 兜底链（用户实测：GPU 会在创建 WebGL 上下文时**卡死**，只接 reject 的兜底永远等不到）：
+     *   ① 默认 CPU（稳）；
+     *   ② 显式要 GPU 时只给 6s 软超时 —— **超时也当失败**，立刻换 CPU；
+     *   ③ CPU 抛「非超时」的初始化错误（SIMD 编译 / 运行库 Abort）→ 用**非 SIMD 运行库 + CPU**
+     *      再试一次（最保守的一档；纯超时不再补试，免得白等两轮）。
+     */
+    const primary = wanted || DEFAULT_DELEGATE;
+    const plan = [{ delegate: primary, conservative: false }];
+    if (primary === 'GPU' && cpuFallback) plan.push({ delegate: 'CPU', conservative: false });
+    const initMs = Math.max(1, Number(initTimeoutMs) || INIT_TIMEOUT_MS);
+    const gpuMs = Math.max(1, Number(gpuTimeoutMs) || GPU_INIT_TIMEOUT_MS);
     let lastErr = null;
-    for (let i = 0; i < order.length; i += 1) {
-      const del = order[i];
+    for (let i = 0; i < plan.length; i += 1) {
+      const cfg = plan[i];
+      const attemptMs = cfg.delegate === 'GPU' ? Math.min(initMs, gpuMs) : initMs;
       // 初始化这一段没法细分（库内部的事）：界面显示不确定态 + 已用秒数
-      if (onProgress) onProgress({ stage: 'init', indeterminate: true, done: false, delegate: del });
+      if (onProgress) {
+        onProgress({
+          stage: 'init',
+          indeterminate: true,
+          done: false,
+          delegate: cfg.delegate,
+          attempt: i + 1,
+          attempts: plan.length,
+          conservative: cfg.conservative,
+          timeoutMs: attemptMs,
+        });
+      }
       try {
         // eslint-disable-next-line no-await-in-loop
-        const landmarker = await this.createAndCheck(assets, del, video, firstDetectTimeoutMs, initTimeoutMs);
+        const landmarker = await this.createAndCheck(assets, cfg.delegate, video, firstDetectTimeoutMs, attemptMs, {
+          fileset: cfg.conservative ? NOSIMD_FILES : null,
+          attempt: i + 1,
+          conservative: cfg.conservative,
+        });
         this.landmarker = landmarker;
-        this.delegate = del;
+        this.delegate = cfg.delegate;
         this.modelKey = modelKey;
         this._vision = assets.vision;
-        if (onProgress) onProgress({ stage: 'init', indeterminate: false, done: true, delegate: del });
-        onStatus(`Model ready (${del})`);
-        // 兜底成功：把「本机该用 CPU」告诉调用方（它会写进设置，下次直接用 CPU）
-        if (i > 0 && onDelegate) onDelegate(del, lastErr);
+        if (onProgress) {
+          onProgress({
+            stage: 'init',
+            indeterminate: false,
+            done: true,
+            delegate: cfg.delegate,
+            attempt: i + 1,
+            attempts: plan.length,
+            conservative: cfg.conservative,
+            timeoutMs: attemptMs,
+          });
+        }
+        onStatus(`Model ready (${cfg.delegate})`);
+        // GPU 兜底成功：把「本机该用 CPU」告诉调用方（它会写进设置，下次直接用 CPU）。
+        // 最保守那一档（非 SIMD + CPU）本来就是 CPU，不算 GPU 兜底，不弹「GPU 失败」的提示。
+        if (i > 0 && plan[0].delegate === 'GPU' && !cfg.conservative && onDelegate) {
+          onDelegate(cfg.delegate, lastErr);
+        }
         return this;
       } catch (error) {
         lastErr = error;
-        if (i < order.length - 1) {
-          console.warn('[pose] GPU delegate unavailable, falling back to CPU:', error?.reason || error?.message || error);
+        const retryAsCpu = i < plan.length - 1;
+        // 只有「非超时」的初始化错误才值得换更保守的运行库再试一次
+        const canConservative = !retryAsCpu && cpuFallback && !cfg.conservative
+          && ['create', 'detect', 'wasm'].includes(error.stage)
+          && !isTimeoutLoadError(error);
+        if (onAttemptFail) {
+          onAttemptFail(error, {
+            attempt: i + 1,
+            delegate: cfg.delegate,
+            conservative: cfg.conservative,
+            willRetry: retryAsCpu || canConservative,
+          });
+        }
+        if (retryAsCpu) {
+          const why = isTimeoutLoadError(error) ? 'initialization timed out' : 'delegate unavailable';
+          console.warn(`[pose] ${cfg.delegate} ${why}, falling back to CPU:`, error?.reason || error?.message || error);
           onStatus('GPU unavailable, retrying with CPU inference…');
+          continue;
+        }
+        if (canConservative) {
+          plan.push({ delegate: 'CPU', conservative: true });
+          console.warn('[pose] init failed, retrying with the most conservative build (non-SIMD + CPU):',
+            error?.reason || error?.message || error);
+          onStatus('Initialization failed, retrying with non-SIMD CPU…');
           continue;
         }
         if (onFail) onFail(error, { attempt: 1, max: 1, willRetry: false });
@@ -326,13 +424,12 @@ export class PoseEngine {
   }
 
   /**
-   * ① 运行库（wasm）+ ② 模型文件。
+   * ② 模型文件（运行库交给识别器自己下载，见下）。
    *
-   * 两个都是**自己流式下载**（真实字节进度 + 卡住超时），而不是交给库里闷着头下：
-   *   - 运行库：先 forVisionTasks 拿到真正的两个文件路径（它只算路径、不下载），
-   *     自己读一遍预热 HTTP 缓存（.wasm 是 max-age=86400），库内部那次就几乎瞬间完成；
-   *     读到的大量字节**用完就丢**，不参与推理。
-   *   - 模型：字节直接交给 createFromOptions 的 `modelAssetBuffer`，所以只下载一次。
+   * **不再预热 wasm**（用户拍板：`/vendor/**` 完全不缓存 → 预热等于把 9.3MB 下两遍，更慢）。
+   * `FilesetResolver.forVisionTasks` 只算路径、不下载；9.3MB 的 wasm 由 `createFromOptions`
+   * 内部拉取（那一段算在「③ 初始化识别器」里，界面用已用秒数反馈）。
+   * 模型仍然**自己流式下载**（真实字节进度 + 卡住超时），字节直接交给 `modelAssetBuffer`，只下一次。
    */
   async loadAssets(modelUrl, {
     onProgress = null,
@@ -353,43 +450,10 @@ export class PoseEngine {
         throw asLoadError('wasm', err, { retryable: isRetryableLoadError(err) });
       }
     }
-    const wasmUrls = wasmFileUrls(this._vision);
-    const warmKey = wasmUrls.join('|');
-    if (wasmUrls.length && this._wasmWarmed !== warmKey) {
-      await this.prewarmWasm(wasmUrls, { onProgress, timeoutMs: stallTimeoutMs });
-      this._wasmWarmed = warmKey;
-    }
     const bytes = await this.downloadWithProgress(modelUrl, {
       stage: 'model', timeoutMs: stallTimeoutMs, onProgress,
     });
     return { vision: this._vision, bytes };
-  }
-
-  /**
-   * 预热 wasm 运行库：并行读那两个文件，进度按两个文件的已收 / 总大小合成。
-   * 字节用完丢弃（目的是填 HTTP 缓存 + 让用户看见真实进度）。
-   */
-  async prewarmWasm(urls = [], { onProgress = null, timeoutMs = DOWNLOAD_STALL_TIMEOUT_MS } = {}) {
-    const parts = urls.map(() => ({ loaded: 0, total: 0, done: false, bps: 0 }));
-    const report = (done = false) => {
-      if (!onProgress) return;
-      const loaded = parts.reduce((sum, p) => sum + p.loaded, 0);
-      const total = parts.reduce((sum, p) => sum + p.total, 0);
-      const bps = parts.reduce((sum, p) => sum + (p.bps || 0), 0);
-      onProgress({
-        stage: 'wasm', loaded, total, bps, done: done || parts.every((p) => p.done),
-      });
-    };
-    await Promise.all(urls.map((url, i) => this.downloadWithProgress(url, {
-      stage: 'wasm',
-      timeoutMs,
-      onProgress: (p) => {
-        parts[i] = { loaded: p.loaded || 0, total: p.total || 0, done: !!p.done, bps: p.bps || 0 };
-        report(false);
-      },
-    })));
-    report(true);
-    return parts.reduce((sum, p) => sum + p.loaded, 0);
   }
 
   /**
@@ -512,13 +576,25 @@ export class PoseEngine {
     return this.downloadWithProgress(url, { stage: 'model', timeoutMs, onProgress });
   }
 
-  /** ③ 创建推理器（20s 上限）→ ④ 有视频就立刻跑一帧（带超时），确认这条 delegate 真的能用 */
-  async createAndCheck(assets, delegate, video, firstDetectTimeoutMs, initTimeoutMs = INIT_TIMEOUT_MS) {
+  /**
+   * ③ 创建推理器（默认 45s 上限；GPU 只给 6s）→ ④ 有视频就立刻跑一帧（带超时），确认这条 delegate 真能用。
+   *
+   * **超时也是失败**：`createFromOptions` 会**卡住**（用户实测 GPU 建 WebGL 上下文时既不 resolve
+   * 也不 reject），所以这里用 raceTimeout —— 到点就当 GPU 不行，调用方会立刻换 CPU。
+   * 每一步都带 `elapsedMs` / `timeoutMs` / `delegate` / `conservative`，界面与诊断日志能说清
+   * 「哪个 delegate、等了多久、卡在哪一步」。
+   */
+  async createAndCheck(assets, delegate, video, firstDetectTimeoutMs, initTimeoutMs = INIT_TIMEOUT_MS, {
+    fileset = null, attempt = 1, conservative = false,
+  } = {}) {
     let landmarker = null;
+    const vision = fileset || assets.vision;
     const ms = Math.max(1, Number(initTimeoutMs) || INIT_TIMEOUT_MS);
+    const startedAt = Number(this.now()) || 0;
+    const elapsed = () => Math.max(0, Math.round((Number(this.now()) || 0) - startedAt));
     try {
       landmarker = await raceTimeout(
-        Promise.resolve().then(() => this.createLandmarker(assets.vision, {
+        Promise.resolve().then(() => this.createLandmarker(vision, {
           baseOptions: { modelAssetBuffer: assets.bytes, delegate },
           runningMode: 'VIDEO',
           numPoses: 1,
@@ -530,6 +606,7 @@ export class PoseEngine {
         ms,
         () => new PoseLoadError('create', 'TimeoutError', `timeout after ${Math.round(ms / 1000)}s`, {
           delegate, retryable: false, seconds: Math.round(ms / 1000),
+          timeoutMs: ms, elapsedMs: ms, conservative, attempt,
         }),
       );
     } catch (err) {
@@ -537,19 +614,34 @@ export class PoseEngine {
       // wasm 编译类错误（ModuleFactory / abort(CompileError) / WebAssembly）算「wasm 阶段」，提示更准确。
       const reason = String((err && (err.reason || err.message)) || '');
       const stage = /wasm|modulefactory|webassembly|abort\s*\(/i.test(reason) ? 'wasm' : 'create';
-      throw asLoadError(stage, err, { delegate, retryable: false });
+      throw asLoadError(stage, err, {
+        delegate,
+        retryable: false,
+        timeoutMs: ms,
+        elapsedMs: Number.isFinite(Number(err && err.elapsedMs)) && err.elapsedMs ? err.elapsedMs : elapsed(),
+        conservative,
+        attempt,
+      });
     }
     if (!landmarker) {
       throw new PoseLoadError('create', 'NoLandmarker', 'createFromOptions returned nothing', {
-        delegate, retryable: false,
+        delegate, retryable: false, timeoutMs: ms, elapsedMs: elapsed(), conservative, attempt,
       });
     }
     if (video && Number(video.readyState || 0) >= 2) {
+      const detectMs = Math.max(1, Number(firstDetectTimeoutMs) || FIRST_DETECT_TIMEOUT_MS);
       try {
-        await this.firstFrame(landmarker, video, firstDetectTimeoutMs);
+        await this.firstFrame(landmarker, video, detectMs);
       } catch (err) {
         try { if (typeof landmarker.close === 'function') landmarker.close(); } catch { /* ignore */ }
-        throw asLoadError('detect', err, { delegate, retryable: false });
+        throw asLoadError('detect', err, {
+          delegate,
+          retryable: false,
+          timeoutMs: detectMs,
+          elapsedMs: elapsed(),
+          conservative,
+          attempt,
+        });
       }
     }
     return landmarker;

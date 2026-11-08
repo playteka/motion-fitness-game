@@ -99,7 +99,7 @@
               <h2 id="maskTitle" data-i18n="ui.maskTitle"></h2>
               <p id="maskText" data-i18n="ui.maskText"></p>
               <!-- 姿态模型加载进度条（用户要求：加载时用进度条反馈进度）：
-                   ① 下载运行库 40% ② 下载模型 40% ③ 初始化识别器 20%，都是真实字节进度。
+                   ① 运行库由识别器内部下载（拿不到字节，只说明「谁在下载」）② 下载模型（真实字节进度）③ 初始化识别器（已用秒数，超时 45s）。
                    只在加载模型时出现（app.js 的 renderModelProgress 填内容），成功 / 失败后整块隐藏；
                    prefers-reduced-motion 下不动画（样式在 style.css 的 .model-progress）。 -->
               <div class="model-progress" id="modelProgress" hidden>

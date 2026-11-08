@@ -139,32 +139,37 @@ export default {
     poseFailText: '{stage} ({reason})',
     poseStageWasm: 'wasm setup failed',
     poseStageModel: 'model download failed',
-    poseStageCreate: 'inference engine creation failed',
+    poseStageCreate: 'recognizer init failed',
     poseStageDetect: 'first-frame inference failed',
     poseStageTimeout: 'loading timed out',
     poseStageUnknown: 'unknown stage',
     poseReasonHttp: 'HTTP {status}',
     poseReasonTimeout: 'timed out after {sec}s',
     poseReasonUnknown: 'unknown reason',
+    // Recognizer init timed out (the exact failure the user hit): say the limit and the real elapsed time
+    poseInitTimeout: 'Recognizer init timed out (limit {timeout}s, {elapsed}s elapsed)',
     // A stalled download (no new bytes for 60s) also says how much arrived
     poseReasonStall: 'timed out after {sec}s ({got} / {total} received)',
     // Opened the wrong way (file:// or another protocol): the browser blocks fetch, so the model never arrives
     poseStageEnv: 'wrong way to open the page',
     poseReasonFileUrl: 'this page is not opened from http://127.0.0.1:4174 (file:// blocks the model and the camera)',
-    // Progress bar (real byte progress: runtime 40% / model 40% / init 20%)
+    // Progress bar (model / init progress; the runtime is downloaded inside the recognizer, no byte count)
     modelProgressTitle: 'Loading the pose model…',
-    modelStageWasm: '① Runtime (wasm)',
+    modelStageWasm: '① Runtime',
     modelStageModel: '② Model file',
     modelStageInit: '③ Starting the engine',
     modelProgressWaiting: 'Waiting',
     modelProgressDone: 'Done',
     modelProgressIndeterminate: 'In progress…',
+    modelProgressByEngine: 'downloaded by the recognizer',
     modelInitElapsed: '{sec}s elapsed',
     // Shown on the mask while a download-class failure is being retried (first try + 3 retries)
     poseRetry: 'Retrying ({n}/{max})',
     poseRetryBtn: 'Retry loading the model',
     // GPU could not start → switched to CPU and remembered (the next start goes straight to CPU)
     poseGpuFallback: 'GPU init failed — switched to CPU inference (remembered, so the next start goes straight to CPU)',
+    // GPU **hung** (timeout, not an error) → already switched to CPU automatically
+    poseGpuHang: 'GPU init hung — switched to CPU inference automatically (remembered, so the next start goes straight to CPU)',
     maskUnsupportedTitle: 'This browser doesn’t support the camera',
     maskUnsupportedText: 'Please use the latest Chrome / Edge / Safari and open this page over http(s).',
     // Shown when the page is not a secure context (http + LAN IP): the usual reason a phone can’t open the camera

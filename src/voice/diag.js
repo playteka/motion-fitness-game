@@ -268,6 +268,14 @@ export function createDiag({
         // 把**阶段 + 真实错误名**留在面板 / 快照上，事后读日志能直接看出卡在哪一步。
         setLastError(`pose: ${entry.stage || 'load'} ${entry.name || ''}`.trim());
         break;
+      case 'pose:init-fail':
+        // 初始化识别器每一次失败（GPU 卡住 → 超时 → 切 CPU → CPU 也失败，整条链子都会留痕）
+        setLastError(`pose:init ${entry.delegate || ''} ${entry.name || ''}`.trim());
+        break;
+      case 'pose:init-timeout':
+        // 初始化超时（用户今天的报错形态：不是 reject，是卡住到超时）
+        setLastError(`pose:init timeout ${entry.delegate || ''}`.trim());
+        break;
       case 'pose:delegate':
         // GPU 建不起来 → 已自动切 CPU（不是错误，只是排障线索，不写 lastError）
         break;

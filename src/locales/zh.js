@@ -138,32 +138,37 @@ export default {
     poseFailText: '{stage}（{reason}）',
     poseStageWasm: 'wasm 初始化失败',
     poseStageModel: '模型文件下载失败',
-    poseStageCreate: '推理器创建失败',
+    poseStageCreate: '初始化识别器失败',
     poseStageDetect: '首帧推理失败',
     poseStageTimeout: '整体加载超时',
     poseStageUnknown: '未知阶段',
     poseReasonHttp: 'HTTP {status}',
     poseReasonTimeout: '超时 {sec}s',
     poseReasonUnknown: '原因未知',
+    // 初始化超时（用户今天就卡在这里）：说清上限与真已用秒数，别再只给一句「推理器创建失败」
+    poseInitTimeout: '初始化识别器超时（上限 {timeout}s，已用 {elapsed}s）',
     // 下载卡住（60s 没有新字节）时把「已收 / 总共」也说出来
     poseReasonStall: '超时 {sec}s（已收 {got} / {total}）',
     // 打开方式不对（file:// / 其它协议）：fetch 会被浏览器拦住，模型永远下不来
     poseStageEnv: '打开方式不对',
     poseReasonFileUrl: '不是从 http://127.0.0.1:4174 打开的（file:// 会被浏览器拦住模型与摄像头）',
-    // 进度条（真实字节进度：运行库 40% / 模型 40% / 初始化 20%）
+    // 进度条（模型 / 初始化的真实进度；运行库由识别器内部下载，字节数拿不到）
     modelProgressTitle: '正在加载姿态模型…',
-    modelStageWasm: '① 下载运行库',
+    modelStageWasm: '① 运行库',
     modelStageModel: '② 下载模型',
     modelStageInit: '③ 初始化识别器',
     modelProgressWaiting: '等待中',
     modelProgressDone: '完成',
     modelProgressIndeterminate: '进行中…',
+    modelProgressByEngine: '识别器内部加载',
     modelInitElapsed: '已用 {sec}s',
     // 下载类失败自动重试时遮罩上那一句（首次 + 3 次，退避 400 / 900 / 1800ms）
     poseRetry: '正在重试（{n}/{max}）',
     poseRetryBtn: '重试加载模型',
-    // GPU 建不起来 → 自动换 CPU 并记住（下次启动直接用 CPU）
-    poseGpuFallback: 'GPU 初始化失败，已切 CPU 推理（已记住，下次直接用 CPU）',
+    // GPU 起不来 → 自动换 CPU 并记住（下次启动直接用 CPU）
+    poseGpuFallback: 'GPU 初始化失败，已自动改用 CPU 推理（已记住，下次直接用 CPU）',
+    // GPU **卡住**（超时，不是报错）→ 已经自动切 CPU
+    poseGpuHang: 'GPU 初始化卡住，已自动改用 CPU 推理（已记住，下次直接用 CPU）',
     maskUnsupportedTitle: '当前浏览器不支持摄像头',
     maskUnsupportedText: '请使用最新版 Chrome / Edge / Safari，并通过 http(s) 打开本页面。',
     // 非安全上下文（http + 局域网 IP）专用文案：手机上打不开摄像头**九成**是这个原因

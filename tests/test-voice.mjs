@@ -2289,6 +2289,94 @@ console.log('\n[24] 语音诊断：事件收集 / 批量落盘 / snapshot / 脱�
   }
 }
 
+/* ================================================================== *
+ * [25] 预览服务器的响应头：跨源隔离 / 不缓存 / gzip
+ *
+ * 用户反馈「下载运行库很慢」「初始化识别器失败」之后定的三条：
+ *   ① COOP + COEP 必须**同时**在（crossOriginIsolated 才能为 true，wasm 才拿得到该有的能力）；
+ *   ② 静态资源**一律不缓存**（`no-store`）—— 坏文件不会被一直用下去；
+ *   ③ 文本 / wasm 走 gzip，且**解压后与磁盘文件逐字节一致**（用 zlib.gunzipSync 自证，不靠嘴说）。
+ * 这里起的是**真的 http server**（复用 preview-server.js 导出的 previewHandler），不是字符串断言。
+ * ================================================================== */
+console.log('\n[25] 预览服务器：COOP+COEP / no-store / gzip 解压后与原文件一致');
+{
+  const http = await import('node:http');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const { previewHandler } = await import('../preview-server.js');
+  const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const srv = http.createServer(previewHandler);
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const port = srv.address().port;
+  const get = (p, headers = {}) => new Promise((resolve, reject) => {
+    const req = http.get({ host: '127.0.0.1', port, path: p, headers }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+  });
+
+  const wasmPath = '/vendor/tasks-vision/wasm/vision_wasm_internal.wasm';
+  const wasmRaw = fs.readFileSync(path.join(ROOT, wasmPath.slice(1)));
+  const gz = await get(wasmPath, { 'Accept-Encoding': 'gzip' });
+  const wasmGz = zlib.gunzipSync(gz.body);
+  ok('wasm 走 gzip：有 Content-Encoding: gzip 与 Vary: Accept-Encoding（9.3MB 压到约 3MB）',
+    gz.status === 200 && gz.headers['content-encoding'] === 'gzip'
+    && /accept-encoding/i.test(String(gz.headers.vary))
+    && gz.body.length < wasmRaw.length * 0.5,
+    JSON.stringify({ gz: gz.body.length, raw: wasmRaw.length }));
+  ok('gzip 解压后与磁盘上的原文件**逐字节一致**（zlib.gunzipSync 自证，没截断没损坏）',
+    wasmGz.equals(wasmRaw), JSON.stringify({ gunzip: wasmGz.length, raw: wasmRaw.length }));
+  ok('运行库 / 模型都不缓存：Cache-Control 是 no-store（不是 max-age / immutable）',
+    gz.headers['cache-control'] === 'no-store'
+    && !/max-age|immutable/i.test(String(gz.headers['cache-control'])),
+    String(gz.headers['cache-control']));
+  ok('静态资源同时带 COOP + COEP（crossOriginIsolated 才能为 true）',
+    gz.headers['cross-origin-opener-policy'] === 'same-origin'
+    && gz.headers['cross-origin-embedder-policy'] === 'credentialless',
+    JSON.stringify({
+      coop: gz.headers['cross-origin-opener-policy'], coep: gz.headers['cross-origin-embedder-policy'],
+    }));
+  ok('wasm 的 Content-Type 是 application/wasm（instantiateStreaming 认这个 MIME）',
+    /application\/wasm/.test(String(gz.headers['content-type'])),
+    String(gz.headers['content-type']));
+
+  const noGzip = await get(wasmPath);
+  ok('请求头不带 Accept-Encoding 时不压（原样发，Content-Length = 文件大小）',
+    noGzip.status === 200 && noGzip.headers['content-encoding'] === undefined
+    && Number(noGzip.headers['content-length']) === wasmRaw.length,
+    JSON.stringify({ ce: noGzip.headers['content-encoding'], len: noGzip.headers['content-length'] }));
+
+  const html = await get('/');
+  ok('index.html 也是 no-store + COOP + COEP（页面自己必须先跨源隔离，wasm 才拿得到 SharedArrayBuffer）',
+    html.status === 200 && html.headers['cache-control'] === 'no-store'
+    && html.headers['cross-origin-opener-policy'] === 'same-origin'
+    && html.headers['cross-origin-embedder-policy'] === 'credentialless');
+
+  const modelPath = '/vendor/models/pose_landmarker_lite.task';
+  const model = await get(modelPath, { 'Accept-Encoding': 'gzip' });
+  ok('模型 .task 不 gzip（本身是压缩包）但同样 no-store',
+    model.status === 200 && model.headers['content-encoding'] === undefined
+    && model.headers['cache-control'] === 'no-store');
+
+  const modelSize = fs.statSync(path.join(ROOT, modelPath.slice(1))).size;
+  const versioned = await get(`${modelPath}?v=${modelSize}`);
+  ok('模型 URL 带 ?v= 指纹照常返回（缓存击穿参数不影响静态服务，字节数一致）',
+    versioned.status === 200 && versioned.body.length === modelSize,
+    JSON.stringify({ status: versioned.status, len: versioned.body.length, size: modelSize }));
+
+  const engineSrc = fs.readFileSync(path.join(ROOT, 'src/pose-engine.js'), 'utf8');
+  ok('不再有预热 fetch（/vendor 不缓存时预热会把 9.3MB 下两遍）：pose-engine 里没有 prewarm / wasmFileUrls',
+    !/prewarmWasm|wasmFileUrls|_wasmWarmed/.test(engineSrc));
+  ok('模型 URL 的 ?v= 用文件字节数当指纹（换模型自动变，不用手记版本号）',
+    /export function modelUrlFor/.test(engineSrc)
+    && new RegExp(`lite: \\{ url: '\\./vendor/models/pose_landmarker_lite\\.task', rev: '${modelSize}' \\}`).test(engineSrc),
+    JSON.stringify({ modelSize }));
+
+  await new Promise((r) => srv.close(r));
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
 if (failures.length) {
   console.log('失败项：');

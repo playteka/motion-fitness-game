@@ -12,7 +12,8 @@ import { computeFrame } from './metrics.js';
 import {
   PoseEngine, Camera,
   PoseLoadError, RETRY_DELAYS, LOAD_ATTEMPTS, FIRST_DETECT_TIMEOUT_MS, LOAD_TIMEOUT_MS,
-  DOWNLOAD_STALL_TIMEOUT_MS, INIT_TIMEOUT_MS, composeProgress, formatMB,
+  DOWNLOAD_STALL_TIMEOUT_MS, INIT_TIMEOUT_MS, GPU_INIT_TIMEOUT_MS, DEFAULT_DELEGATE,
+  composeProgress, formatMB, isTimeoutLoadError,
 } from './pose-engine.js';
 import { PoseRenderer } from './render.js';
 import { AudioKit, TRACKS, getTrack, DEFAULT_TRACK } from './audio.js';
@@ -48,8 +49,13 @@ const STORE = {
   records: 'mfg.records.v1',
 };
 
-/** 当前设置版本（v2 = 「火柴人」默认关闭、老存档迁移一次） */
-const SETTINGS_VERSION = 2;
+/**
+ * 当前设置版本：
+ *   v2 = 「火柴人」默认关闭、老存档迁移一次；
+ *   v3 = 姿态模型 delegate 默认改成 **CPU**（老存档里的空串 = 旧「自动先试 GPU」，
+ *        正是会卡到超时的那条路，迁移时直接改成 'cpu'，不必等用户手动清缓存）。
+ */
+const SETTINGS_VERSION = 3;
 
 const DEFAULT_SETTINGS = {
   modelKey: 'lite',
@@ -93,12 +99,13 @@ const DEFAULT_SETTINGS = {
   seconds: {},
   camDeviceId: null,
   /**
-   * 上次成功加载姿态模型用的 delegate：'gpu' / 'cpu' / ''（空 = 自动，先试 GPU）。
+   * 姿态模型用的 delegate：'gpu' / 'cpu'。
    *
-   * 用户反馈「点开始就姿态模型加载失败」：GPU delegate 建不起来时，原来每次都要先失败一次
-   * 再换 CPU。现在兜底成功就把 'cpu' 记在这里，下次启动直接用它，不再先失败一次。
+   * **默认 'cpu'**（用户实测：GPU 在创建 WebGL 上下文时会**卡死**，页面白等 20s 才报
+   * 「推理器创建失败（超时 20s）」→ 改成默认 CPU，稳；GPU 只在显式选 'gpu' 时才试，
+   * 而且只给 6 秒软超时，超时也立刻切 CPU，并把 'cpu' 记下来（见 loadPoseModel 的 onDelegate）。
    */
-  poseDelegate: '',
+  poseDelegate: 'cpu',
   /**
    * AI 语音教练（P3.0 基座）的开关：**默认关**。
    * 设置弹窗里的开关与视频界面的 Ctrl+I 写的是同一个字段，所以两边永远同步。
@@ -354,9 +361,13 @@ function loadSettings() {
      * v1 时期「火柴人」的默认值是**开**，所以老存档里那个 `showSkeleton: true` 很可能只是当年的默认值、
      * 并不是用户自己选的 —— 直接把新默认（关）盖上去；之后用户自己再打开时存档已经是 v2，不会再被覆盖。
      * 「关节角度」不动：它新旧默认都是开，存档里的值就是用户真实的选择。
+     *
+     * v3：姿态模型 delegate 的默认值从「空串（先试 GPU）」改成 'cpu'。老存档里的空串只是旧默认，
+     * 并不是用户的选择 —— 直接迁移成 'cpu'（GPU 卡死正是用户今天遇到的问题）。
      */
     if (Number(raw.settingsVersion || 1) < SETTINGS_VERSION) {
       merged.showSkeleton = DEFAULT_SETTINGS.showSkeleton;
+      if (!merged.poseDelegate) merged.poseDelegate = DEFAULT_SETTINGS.poseDelegate;
     }
     merged.settingsVersion = SETTINGS_VERSION;
     return merged;
@@ -6228,6 +6239,7 @@ const poseLoadTuning = {
   firstDetectTimeoutMs: FIRST_DETECT_TIMEOUT_MS,
   stallTimeoutMs: DOWNLOAD_STALL_TIMEOUT_MS,
   initTimeoutMs: INIT_TIMEOUT_MS,
+  gpuTimeoutMs: GPU_INIT_TIMEOUT_MS,
   totalTimeoutMs: LOAD_TIMEOUT_MS,
 };
 
@@ -6236,6 +6248,7 @@ function loadErrorInfo(err) {
   if (!err || typeof err !== 'object') {
     return {
       stage: 'unknown', name: 'Error', message: String(err || ''), delegate: '', status: 0, seconds: 0, loaded: 0, total: 0,
+      timeoutMs: 0, elapsedMs: 0, conservative: false,
     };
   }
   const name = String(err.errName || err.name || 'Error');
@@ -6249,12 +6262,19 @@ function loadErrorInfo(err) {
     seconds: Number(err.seconds) || 0,
     loaded: Number(err.loaded) || 0,
     total: Number(err.total) || 0,
+    /** 初始化超时要能说清「上限多少 / 已经等了多久」（用户念的就是这两个数） */
+    timeoutMs: Number(err.timeoutMs) || 0,
+    elapsedMs: Number(err.elapsedMs) || 0,
+    conservative: !!err.conservative,
   };
 }
 
 /**
  * 一句话原因（用户能照着念的就是这一句）：
  *   HTTP 404 / 超时 8s / 下载卡住（已收 2.9MB / 5.6MB）/ TypeError: Failed to fetch / RuntimeError: …
+ *
+ * **初始化超时单独一句**（用户今天就卡在这里）：「推理器创建失败（超时 20s）」太笼统，
+ * 现在说清是「初始化识别器超时」，并带上上限与真已用秒数。
  */
 function poseFailReason(err) {
   const info = loadErrorInfo(err);
@@ -6263,6 +6283,13 @@ function poseFailReason(err) {
   }
   if (info.name === 'FileProtocol') return t('ui.poseReasonFileUrl');
   if (info.name === 'TimeoutError') {
+    // 初始化超时：上限 / 已用 + 一句「怎么自救」
+    if (info.stage === 'create') {
+      return t('ui.poseInitTimeout', {
+        timeout: String(Math.round((info.timeoutMs || poseLoadTuning.initTimeoutMs || 0) / 1000)),
+        elapsed: String(Math.round((info.elapsedMs || info.timeoutMs || 0) / 1000)),
+      });
+    }
     const sec = String(info.seconds || Math.round((poseLoadTuning.firstDetectTimeoutMs || 0) / 1000));
     // 下载卡住时把「已收多少 / 总共多少」也说出来，用户一眼知道是网慢还是根本没开始
     if (info.total > 0 && info.stage !== 'init') {
@@ -6281,6 +6308,13 @@ function poseFailReason(err) {
 /** 「阶段（原因）」—— 失败提示的正文，如「模型文件下载失败（HTTP 404）」 */
 function poseFailText(err) {
   const info = loadErrorInfo(err);
+  // 初始化超时已经是一整句（带上限 / 已用秒数），不再套「阶段（原因）」的壳，免得读起来绕
+  if (info.stage === 'create' && info.name === 'TimeoutError') {
+    return t('ui.poseInitTimeout', {
+      timeout: String(Math.round((info.timeoutMs || poseLoadTuning.initTimeoutMs || 0) / 1000)),
+      elapsed: String(Math.round((info.elapsedMs || info.timeoutMs || 0) / 1000)),
+    });
+  }
   return t('ui.poseFailText', {
     stage: t(POSE_STAGE_KEYS[info.stage] || 'ui.poseStageUnknown'),
     reason: poseFailReason(err),
@@ -6353,7 +6387,12 @@ function notePoseProgress(p = {}) {
 /** 画进度条（返回 composeProgress 的结果，测试直接断言） */
 function renderModelProgress() {
   const s = modelProgressState;
-  const sum = composeProgress({ wasm: s.wasm, model: s.model, init: s.init });
+  /**
+   * 运行库不再由我们下载（用户拍板 `/vendor/**` 不缓存 → 预热会把 9.3MB 下两遍），
+   * 所以总百分比只用 **模型 + 初始化** 两段（wasm 那 40% 的权重按比例并进去，
+   * 见 composeProgress 的 scale）；① 那一行单独显示「识别器内部加载」。
+   */
+  const sum = composeProgress({ model: s.model, init: s.init });
   const box = $('modelProgress');
   if (!box) return sum;
   const known = sum.percent !== null;
@@ -6366,17 +6405,21 @@ function renderModelProgress() {
   const title = $('mpTitle');
   if (title) title.textContent = t('ui.modelProgressTitle');
 
+  const byEngine = !!(s.wasm && s.wasm.byEngine);
   const rows = [
-    ['Wasm', 'mpRowWasm', 'mpFillWasm', 'mpMetaWasm', sum.wasm, s.wasm],
+    ['Wasm', 'mpRowWasm', 'mpFillWasm', 'mpMetaWasm',
+      { fraction: 0, loaded: 0, total: 0, done: !!(s.wasm && s.wasm.done) }, s.wasm],
     ['Model', 'mpRowModel', 'mpFillModel', 'mpMetaModel', sum.model, s.model],
     ['Init', 'mpRowInit', 'mpFillInit', 'mpMetaInit',
       { fraction: sum.init, loaded: sum.init ? 1 : 0, total: 1, done: sum.init >= 1 }, null],
   ];
   for (const [id, rowId, fillId, metaId, part, raw] of rows) {
-    const started = id === 'Init' ? sum.init > 0 : (part.loaded > 0 || part.done);
+    const engineRow = id === 'Wasm' && byEngine;
+    const started = id === 'Init' ? sum.init > 0
+      : engineRow ? !part.done : (part.loaded > 0 || part.done);
     let state = 'waiting';
     if (part.done) state = 'done';
-    else if (started) state = (id !== 'Init' && raw && raw.total > 0) ? 'running' : 'indeterminate';
+    else if (started) state = (id !== 'Init' && !engineRow && raw && raw.total > 0) ? 'running' : 'indeterminate';
 
     const row = $(rowId);
     const fill = $(fillId);
@@ -6393,6 +6436,9 @@ function renderModelProgress() {
     else if (id === 'Init') {
       const sec = s.initStartedAt ? Math.max(0, Math.round((Date.now() - s.initStartedAt) / 1000)) : 0;
       meta.textContent = t('ui.modelInitElapsed', { sec: String(sec) });
+    } else if (engineRow) {
+      // 运行库由识别器内部下载：拿不到字节数，就说清「谁在下载」，不谎报进度
+      meta.textContent = t('ui.modelProgressByEngine');
     } else {
       const bps = raw && raw.bps ? ` · ${formatMB(raw.bps)}/s` : '';
       meta.textContent = `${formatMB(raw && raw.loaded)}${raw && raw.total ? ` / ${formatMB(raw.total)}` : ''}${bps}`;
@@ -6401,11 +6447,44 @@ function renderModelProgress() {
   return sum;
 }
 
+/**
+ * 初始化开始时写一条诊断（用户反馈「初始化识别器失败」时，这条能说清：
+ * 用的哪个 delegate、第几次、是否最保守那一档、页面有没有跨源隔离、CPU 核数）。
+ */
+function recordPoseInitStart(p = {}) {
+  let crossOriginIsolated = null;
+  let hardwareConcurrency = 0;
+  try {
+    if (typeof window !== 'undefined' && window && 'crossOriginIsolated' in window) {
+      crossOriginIsolated = !!window.crossOriginIsolated;
+    }
+  } catch { crossOriginIsolated = null; }
+  try {
+    hardwareConcurrency = Number((typeof navigator !== 'undefined' && navigator && navigator.hardwareConcurrency) || 0) || 0;
+  } catch { hardwareConcurrency = 0; }
+  coachDiag.record('pose:init-start', {
+    delegate: String(p.delegate || ''),
+    attempt: Number(p.attempt) || 0,
+    conservative: p.conservative ? 1 : 0,
+    timeoutMs: Math.max(0, Math.round(Number(p.timeoutMs) || 0)),
+    crossOriginIsolated,
+    hardwareConcurrency,
+  });
+}
+
 /** 把引擎报上来的进度收进状态并重画（附带每 2 秒一条诊断日志） */
 function handlePoseProgress(p = {}) {
   if (!p || !p.stage) return null;
-  if (p.stage === 'wasm' || p.stage === 'model') {
-    modelProgressState[p.stage] = {
+  if (p.stage === 'model') {
+    modelProgressState.model = {
+      loaded: Number(p.loaded) || 0,
+      total: Number(p.total) || 0,
+      bps: Number(p.bps) || 0,
+      done: !!p.done,
+    };
+  } else if (p.stage === 'wasm') {
+    // 兼容：wasm 进度现在由识别器内部产生，我们不再自己下载；真有的话照旧记
+    modelProgressState.wasm = {
       loaded: Number(p.loaded) || 0,
       total: Number(p.total) || 0,
       bps: Number(p.bps) || 0,
@@ -6413,7 +6492,12 @@ function handlePoseProgress(p = {}) {
     };
   } else if (p.stage === 'init') {
     modelProgressState.init = p.done ? 1 : 0;
+    // 运行库改由识别器内部下载：那一行显示「识别器内部加载」，初始化完成时一起算完成
+    modelProgressState.wasm = p.done
+      ? { loaded: 1, total: 1, bps: 0, done: true, byEngine: true }
+      : { loaded: 0, total: 0, bps: 0, done: false, byEngine: true };
     if (!p.done && !modelProgressState.initStartedAt) modelProgressState.initStartedAt = Date.now();
+    if (!p.done) recordPoseInitStart(p);
   } else {
     return null;   // 未知阶段不画、不记
   }
@@ -6463,8 +6547,8 @@ async function loadPoseModel({ showMask = true } = {}) {
     }
     await withTimeout(engine.init({
       modelKey: state.settings.modelKey,
-      // 设置里记过 'cpu' 就先用 CPU（GPU 兜底成功后会被记下来，见 onDelegate）
-      delegate: state.settings.poseDelegate || null,
+      // **默认 CPU**：老存档里的空串（旧「自动先试 GPU」）也走 CPU —— GPU 卡死就是用户今天的病根
+      delegate: state.settings.poseDelegate || DEFAULT_DELEGATE,
       video: camera.video,
       onProgress: handlePoseProgress,
       onRetry: ({ retry, retries, delay, error }) => {
@@ -6485,11 +6569,34 @@ async function loadPoseModel({ showMask = true } = {}) {
         state.settings.poseDelegate = value;
         saveSettings();
         if (value === 'cpu') {
-          setCueLine(t('ui.poseGpuFallback'), 'warn');
+          // GPU 卡住 / 起不来 → 已经自动换了 CPU：这句是用户能看懂的「发生了什么」
+          setCueLine(isTimeoutLoadError(error) ? t('ui.poseGpuHang') : t('ui.poseGpuFallback'), 'warn');
           coachDiag.record('pose:delegate', {
             from: 'GPU',
             to: 'CPU',
             name: String(error?.errName || error?.name || '').slice(0, 40),
+            elapsedMs: Math.max(0, Math.round(Number(error?.elapsedMs) || 0)),
+          });
+        }
+      },
+      onAttemptFail: (error, meta = {}) => {
+        // 每一次初始化失败都留痕（GPU 卡住 → 超时 → 切 CPU → CPU 也失败，链子完整可回溯）
+        const info = loadErrorInfo(error);
+        coachDiag.record('pose:init-fail', {
+          delegate: String(meta.delegate || info.delegate || ''),
+          name: info.name,
+          message: info.message,
+          elapsedMs: Math.max(0, Math.round(info.elapsedMs || 0)),
+          timeoutMs: Math.max(0, Math.round(info.timeoutMs || 0)),
+          conservative: meta.conservative ? 1 : 0,
+          attempt: Number(meta.attempt) || 0,
+          retry: meta.willRetry ? 1 : 0,
+        });
+        if (isTimeoutLoadError(error) && error.stage === 'create') {
+          coachDiag.record('pose:init-timeout', {
+            delegate: String(meta.delegate || info.delegate || ''),
+            elapsedMs: Math.max(0, Math.round(info.elapsedMs || 0)),
+            timeoutMs: Math.max(0, Math.round(info.timeoutMs || 0)),
           });
         }
       },
@@ -6499,6 +6606,7 @@ async function loadPoseModel({ showMask = true } = {}) {
       firstDetectTimeoutMs: poseLoadTuning.firstDetectTimeoutMs,
       stallTimeoutMs: poseLoadTuning.stallTimeoutMs,
       initTimeoutMs: poseLoadTuning.initTimeoutMs,
+      gpuTimeoutMs: poseLoadTuning.gpuTimeoutMs,
     }), poseLoadTuning.totalTimeoutMs, new PoseLoadError(
       'timeout',
       'TimeoutError',

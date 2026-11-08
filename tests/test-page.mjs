@@ -1671,10 +1671,19 @@ console.log('\n[3] 静态资源与模型文件');
       && /id="btnAngles" type="button" aria-pressed="true"/.test(html));
     // 用户反馈「火柴人依然还是在呀」→ 老存档里存着旧的默认值 true，要迁移一次
     ok('老存档迁移：v1 存档里的 showSkeleton 被新默认（关）覆盖，之后用户自己打开不再被盖',
-      /const SETTINGS_VERSION = 2;/.test(app)
+      /const SETTINGS_VERSION = 3;/.test(app)
       && /settingsVersion: SETTINGS_VERSION,/.test(app)
-      && /if \(Number\(raw\.settingsVersion \|\| 1\) < SETTINGS_VERSION\) \{\n      merged\.showSkeleton = DEFAULT_SETTINGS\.showSkeleton;\n    \}/.test(app)
+      && /if \(Number\(raw\.settingsVersion \|\| 1\) < SETTINGS_VERSION\) \{\n      merged\.showSkeleton = DEFAULT_SETTINGS\.showSkeleton;\n      if \(!merged\.poseDelegate\) merged\.poseDelegate = DEFAULT_SETTINGS\.poseDelegate;\n    \}/.test(app)
       && /merged\.settingsVersion = SETTINGS_VERSION;/.test(app));
+    /* 用户实测「GPU 初始化卡住 → 推理器创建失败（超时 20s）」→ v3 把 delegate 默认改成 CPU，
+       老存档里的空串（旧「自动先试 GPU」）必须一起迁走，不然用户还会再卡一次 */
+    ok('姿态模型 delegate 默认 CPU（v3 迁移空串；GPU 只在显式选 gpu 时才试，且只给 6s 软超时）',
+      /poseDelegate: 'cpu',/.test(app)
+      && /DEFAULT_DELEGATE = 'CPU'/.test(read('src/pose-engine.js'))
+      && /GPU_INIT_TIMEOUT_MS = 6000/.test(read('src/pose-engine.js'))
+      && /INIT_TIMEOUT_MS = 45000/.test(read('src/pose-engine.js'))
+      && /delegate: state\.settings\.poseDelegate \|\| DEFAULT_DELEGATE/.test(app)
+      && /gpuTimeoutMs: poseLoadTuning\.gpuTimeoutMs/.test(app));
     /* 用户要求：「在出现圆环选择的情况下，用户手掌的位置出现一个小的猫爪图标」；
        后来又要求「每个运动窗口里手掌进入 / 靠近类似『退出』的圆环时，也像菜单界面一样出现猫爪」 */
     ok('手掌位置的猫爪指针：手绘 paw 图标（5 个元素 / 实心 / currentColor）+ 菜单与运动界面共用一层 + 每帧跟手',

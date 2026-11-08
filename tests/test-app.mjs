@@ -7277,7 +7277,8 @@ console.log('\n[17d] 姿态模型加载：分阶段报错 / 下载重试 / GPU�
   {
     resetEngine();
     api.state.engineReady = false;
-    api.state.settings.poseDelegate = '';
+    // 显式要 GPU 才走「先 GPU 再 CPU」那条链（默认已经改成 CPU 了，见 [17f]）
+    api.state.settings.poseDelegate = 'gpu';
     const delegates = [];
     let fetched = 0;
     let createOptions = null;
@@ -7408,7 +7409,7 @@ console.log('\n[17d] 姿态模型加载：分阶段报错 / 下载重试 / GPU�
     // GPU 首帧卡住、CPU 正常 → 自动切 CPU 并成功
     resetEngine();
     api.state.engineReady = false;
-    api.state.settings.poseDelegate = '';
+    api.state.settings.poseDelegate = 'gpu';
     const delegates = [];
     engine.createLandmarker = async (vision, options) => {
       delegates.push(options.baseOptions.delegate);
@@ -7450,7 +7451,7 @@ console.log('\n[17d] 姿态模型加载：分阶段报错 / 下载重试 / GPU�
     resetEngine();
     engine.resolveVision = async () => ({});
     api.state.engineReady = false;
-    api.state.settings.poseDelegate = '';
+    api.state.settings.poseDelegate = 'gpu';
     const delegates = [];
     let fetched = 0;
     engine.fetchModel = async () => { fetched += 1; return bytes(); };
@@ -7460,9 +7461,9 @@ console.log('\n[17d] 姿态模型加载：分阶段报错 / 下载重试 / GPU�
     };
     const lastErrorBefore = api.coachDiag.snapshot().lastError;
     const okLoad = await api.loadPoseModel();
-    ok('成功路径：GPU 一次就建好 → 不写 poseDelegate（保持自动）、遮罩收起、没有失败日志',
+    ok('成功路径：GPU 一次就建好 → 不写 poseDelegate（保持用户选的 gpu）、遮罩收起、没有失败日志',
       okLoad === true && delegates.join(',') === 'GPU' && engine.delegate === 'GPU'
-      && api.state.settings.poseDelegate === '' && fetched === 1
+      && api.state.settings.poseDelegate === 'gpu' && fetched === 1
       && mask.classList.contains('hidden') === true
       && api.state.engineReady === true && api.state.modelError === null
       && api.coachDiag.snapshot().lastType !== 'pose:load-fail'
@@ -7540,6 +7541,7 @@ console.log('\n[17e] 姿态模型加载进度条 + 每阶段超时（不再「�
   const { t: tProg } = await import('../src/i18n.js');
   const {
     composeProgress, formatMB, PROGRESS_WEIGHTS, DOWNLOAD_STALL_TIMEOUT_MS, INIT_TIMEOUT_MS,
+    GPU_INIT_TIMEOUT_MS, DEFAULT_DELEGATE, modelUrlFor, NOSIMD_FILES,
   } = await import('../src/pose-engine.js');
   const engine = api.engine;
   const mask = elements.get('stageMask');
@@ -7585,10 +7587,11 @@ console.log('\n[17e] 姿态模型加载进度条 + 每阶段超时（不再「�
   });
 
   // 纯函数先来：权重、单调、边界
-  ok('超时阈值是这一套：下载 60s 没新字节 / 初始化 20s（一处定义在 pose-engine.js）',
-    DOWNLOAD_STALL_TIMEOUT_MS === 60000 && INIT_TIMEOUT_MS === 20000
+  ok('超时阈值是这一套：下载 60s 没新字节 / 初始化 45s（GPU 只给 6s 软超时）/ 默认 CPU',
+    DOWNLOAD_STALL_TIMEOUT_MS === 60000 && INIT_TIMEOUT_MS === 45000
+    && GPU_INIT_TIMEOUT_MS === 6000 && DEFAULT_DELEGATE === 'CPU'
     && PROGRESS_WEIGHTS.wasm === 0.4 && PROGRESS_WEIGHTS.model === 0.4 && PROGRESS_WEIGHTS.init === 0.2,
-    JSON.stringify({ DOWNLOAD_STALL_TIMEOUT_MS, INIT_TIMEOUT_MS, PROGRESS_WEIGHTS }));
+    JSON.stringify({ DOWNLOAD_STALL_TIMEOUT_MS, INIT_TIMEOUT_MS, GPU_INIT_TIMEOUT_MS, DEFAULT_DELEGATE, PROGRESS_WEIGHTS }));
 
   ok('composeProgress：运行库 40% / 模型 40% / 初始化 20%（逐步走完正好 100%）',
     composeProgress({}).percent === 0
@@ -7693,7 +7696,7 @@ console.log('\n[17e] 姿态模型加载进度条 + 每阶段超时（不再「�
       reason);
   }
 
-  /* ---- 真实加载：先预热 wasm，再下模型，进度条出现在遮罩里并在结束后收起 ---- */
+  /* ---- 真实加载：只下模型（运行库交给识别器内部下载），进度条出现在遮罩里并在结束后收起 ---- */
   {
     resetEngine();
     api.state.engineReady = false;
@@ -7705,8 +7708,7 @@ console.log('\n[17e] 姿态模型加载进度条 + 每阶段超时（不再「�
     });
     engine.fetchModel = async (url) => {
       calls.push(String(url));
-      const isWasm = String(url).endsWith('.wasm');
-      return streamResponse([new Uint8Array(isWasm ? 8 : 2)], isWasm ? 8 : 2);
+      return streamResponse([new Uint8Array(2)], 2);
     };
     engine.createLandmarker = async () => makeLandmarker();
 
@@ -7715,10 +7717,10 @@ console.log('\n[17e] 姿态模型加载进度条 + 每阶段超时（不再「�
       box.hidden === false
       && !!elements.get('mpFillWasm') && !!elements.get('mpFillModel') && !!elements.get('mpFillInit'));
     const okLoad = await pending;
-    ok('加载顺序：先预热运行库两个文件（.js + .wasm），再下模型，各一次（不重复下载）',
-      okLoad === true && calls.length === 3
-      && calls[0].endsWith('vision_wasm_internal.js') && calls[1].endsWith('vision_wasm_internal.wasm')
-      && calls[2].endsWith('pose_landmarker_lite.task'),
+    ok('只下模型一次（运行库交给识别器内部下载：不再预热、不会把 9.3MB 下两遍），URL 带 ?v= 指纹',
+      okLoad === true && calls.length === 1
+      && calls[0].includes('pose_landmarker_lite.task') && /\?v=\d+$/.test(calls[0])
+      && modelUrlFor('lite') === calls[0],
       JSON.stringify(calls));
     ok('加载完成：整条进度条收起、三段都是「完成」、总百分比 100%',
       box.hidden === true && api.modelProgressState.shownPercent === 100
@@ -7738,26 +7740,26 @@ console.log('\n[17e] 姿态模型加载进度条 + 每阶段超时（不再「�
       api.coachDiag.snapshot().lastType);
   }
 
-  /* ---- 进度条 DOM：百分比 / 字节 / 不确定态 ---- */
+  /* ---- 进度条 DOM：模型字节百分比 / 运行库那一行说清「谁在下载」 ---- */
   {
     api.resetModelProgress();
-    api.modelProgressState.wasm = { loaded: 250, total: 500, bps: 0, done: false };
+    api.modelProgressState.wasm = { loaded: 0, total: 0, bps: 0, done: false, byEngine: true };
     api.modelProgressState.model = { loaded: 100, total: 500, bps: 0, done: false };
     const sum = api.renderModelProgress();
-    ok('进度条：按权重算出的百分比直接写在遮罩上（250/500 与 100/500 → 28%）',
-      sum.percent === 28 && pctEl.textContent === '28%'
-      && elements.get('mpMetaWasm').textContent === '250B / 500B'
-      && elements.get('mpRowWasm').dataset.state === 'running',
+    ok('进度条：总百分比只按模型 + 初始化算（模型 100/500 → 13%），运行库那行不谎报字节',
+      sum.percent === 13 && pctEl.textContent === '13%'
+      && elements.get('mpMetaWasm').textContent === tProg('ui.modelProgressByEngine')
+      && elements.get('mpRowWasm').dataset.state === 'indeterminate',
       JSON.stringify({ percent: sum.percent, pct: pctEl.textContent, meta: elements.get('mpMetaWasm').textContent }));
 
     api.resetModelProgress();
-    api.modelProgressState.wasm = { loaded: 999, total: 0, bps: 0, done: false };
+    api.modelProgressState.model = { loaded: 999, total: 0, bps: 0, done: false };
     api.renderModelProgress();
-    ok('进度条：拿不到总大小时显示「进行中…」+ 不确定态（脉冲由 CSS 负责）',
+    ok('进度条：模型拿不到总大小时显示「进行中…」+ 不确定态（脉冲由 CSS 负责）',
       pctEl.textContent === tProg('ui.modelProgressIndeterminate')
-      && elements.get('mpRowWasm').dataset.state === 'indeterminate'
-      && elements.get('mpMetaWasm').textContent.includes('999B'),
-      JSON.stringify({ pct: pctEl.textContent, state: elements.get('mpRowWasm').dataset.state }));
+      && elements.get('mpRowModel').dataset.state === 'indeterminate'
+      && elements.get('mpMetaModel').textContent.includes('999B'),
+      JSON.stringify({ pct: pctEl.textContent, state: elements.get('mpRowModel').dataset.state }));
 
     api.resetModelProgress();
     api.modelProgressState.init = 0;   // 初始化没开始 → 等待中
@@ -7860,6 +7862,215 @@ console.log('\n[17e] 姿态模型加载进度条 + 每阶段超时（不再「�
   api.state.engineReady = saved.engineReady;
   api.state.modelError = saved.modelError;
   Object.assign(api.poseLoadTuning, saved.tuning);
+  api.resetModelProgress();
+  api.showHome();
+  api.state.session = 'idle';
+}
+
+/* ------------------------------------------------------------------ *
+ * [17f] 初始化识别器：**卡住（不 reject）也要兜底** + CPU 优先 + 诊断留痕
+ *
+ * 用户实测的错误原文：「姿态模型加载失败 / 推理器创建失败（超时 20s）」。
+ * 关键点：`createFromOptions` 是**卡死**（既不 resolve 也不 reject），只接 reject 的兜底
+ * 永远等不到 —— 所以：
+ *   ① 默认 CPU（根本不去碰那条会卡死的 GPU 路）；
+ *   ② 显式要 GPU 时只给 6s 软超时，超时也切 CPU，并把 'cpu' 记进设置；
+ *   ③ 初始化超时放宽到 45s，提示写清「上限 / 已用」；
+ *   ④ 每次初始化都写 pose:init-start / pose:init-fail / pose:init-timeout（带 crossOriginIsolated）。
+ * 这一段用「永不 resolve 的 Promise」直接钉住用户这次的形态。
+ * ------------------------------------------------------------------ */
+console.log('\n[17f] 初始化卡死也要兜底：GPU 6s 软超时 → CPU / 45s 上限 / 诊断留痕');
+{
+  const api = windowStub.__mfg;
+  const { t: tInit } = await import('../src/i18n.js');
+  const { NOSIMD_FILES, DEFAULT_DELEGATE, INIT_TIMEOUT_MS, GPU_INIT_TIMEOUT_MS } = await import('../src/pose-engine.js');
+  const engine = api.engine;
+  const mask = elements.get('stageMask');
+  const maskText = elements.get('maskText');
+  const cue = elements.get('cueLine');
+
+  const saved = {
+    resolveVision: engine.resolveVision,
+    createLandmarker: engine.createLandmarker,
+    fetchModel: engine.fetchModel,
+    sleep: engine.sleep,
+    poseDelegate: api.state.settings.poseDelegate,
+    engineReady: api.state.engineReady,
+    modelError: api.state.modelError,
+    tuning: { ...api.poseLoadTuning },
+    crossOriginIsolated: windowStub.crossOriginIsolated,
+    record: api.coachDiag.record,
+  };
+  const makeLandmarker = () => ({
+    closed: false,
+    close() { this.closed = true; },
+    detectForVideo: () => ({ landmarks: [[{ x: 0.5, y: 0.5, z: 0, visibility: 1 }]] }),
+  });
+  const resetEngine = () => { engine.close(); engine._vision = null; };
+  const bytes = () => new Uint8Array([1, 2, 3, 4]);
+  /** 录下所有诊断事件（app 里是 coachDiag.record(...)，替换属性就能截到） */
+  const seen = [];
+  api.coachDiag.record = (type, data = {}) => {
+    seen.push({ type, ...data });
+    return saved.record(type, data);
+  };
+  const eventsOf = (type) => seen.filter((e) => e.type === type);
+
+  // 让计时快一点：GPU 软超时 120ms、初始化上限 400ms
+  api.poseLoadTuning.gpuTimeoutMs = 120;
+  api.poseLoadTuning.initTimeoutMs = 400;
+  api.poseLoadTuning.totalTimeoutMs = 15000;
+  api.poseLoadTuning.retryDelays = [0, 0, 0];
+  engine.sleep = async () => {};
+  engine.resolveVision = async () => ({});
+  engine.fetchModel = async () => bytes();
+
+  /* ---- ① 默认就是 CPU：不碰 GPU（用户今天就是被 GPU 卡死的） ---- */
+  {
+    resetEngine();
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = '';
+    const delegates = [];
+    engine.createLandmarker = async (vision, options) => {
+      delegates.push(options.baseOptions.delegate);
+      return makeLandmarker();
+    };
+    const okLoad = await api.loadPoseModel();
+    ok('默认 CPU（设置里空串也走 CPU）→ 第一次就只建 CPU，不再先碰会卡死的 GPU',
+      okLoad === true && delegates.join(',') === 'CPU' && engine.delegate === 'CPU'
+      && DEFAULT_DELEGATE === 'CPU',
+      JSON.stringify({ okLoad, delegates }));
+  }
+
+  /* ---- ② GPU 卡死（永不 resolve）→ 6s 软超时也兜底切 CPU，并记住 cpu ---- */
+  {
+    resetEngine();
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = 'gpu';   // 只有显式要 GPU 才走这条链
+    windowStub.crossOriginIsolated = true;
+    seen.length = 0;
+    const delegates = [];
+    engine.createLandmarker = async (vision, options) => {
+      delegates.push(options.baseOptions.delegate);
+      // GPU：**永远不 resolve**（用户实测的卡死形态；不是 reject，所以只接 reject 的兜底会白等）
+      if (options.baseOptions.delegate === 'GPU') return new Promise(() => {});
+      return makeLandmarker();
+    };
+    const startedAt = Date.now();
+    const okLoad = await api.loadPoseModel();
+    const ms = Date.now() - startedAt;
+    ok('GPU 初始化卡死（createFromOptions 永不返回）→ 软超时后**自动改试 CPU**并成功',
+      okLoad === true && delegates.join(',') === 'GPU,CPU' && engine.delegate === 'CPU'
+      && api.state.settings.poseDelegate === 'cpu'
+      && ms >= api.poseLoadTuning.gpuTimeoutMs && ms < 5000,
+      JSON.stringify({ okLoad, delegates, delegate: engine.delegate, setting: api.state.settings.poseDelegate, ms }));
+    ok('GPU 卡住时提示条说的是「GPU 初始化卡住，已自动改用 CPU」（不是笼统的失败）',
+      cue.textContent === tInit('ui.poseGpuHang') && cue.textContent.includes('CPU'),
+      cue.textContent);
+    const initStart = eventsOf('pose:init-start');
+    const initFail = eventsOf('pose:init-fail');
+    const initTimeout = eventsOf('pose:init-timeout');
+    ok('诊断留痕：pose:init-start 带 delegate / attempt / conservative / crossOriginIsolated / hardwareConcurrency',
+      initStart.length >= 2 && initStart[0].delegate === 'GPU'
+      && initStart[0].crossOriginIsolated === true
+      && typeof initStart[0].hardwareConcurrency === 'number'
+      && initStart[0].timeoutMs === api.poseLoadTuning.gpuTimeoutMs,
+      JSON.stringify(initStart.slice(0, 2)));
+    ok('诊断留痕：GPU 超时写 pose:init-fail（TimeoutError + elapsedMs）与 pose:init-timeout',
+      initFail.length === 1 && initFail[0].delegate === 'GPU'
+      && initFail[0].name === 'TimeoutError' && initFail[0].elapsedMs > 0
+      && initTimeout.length === 1 && initTimeout[0].delegate === 'GPU'
+      && initTimeout[0].timeoutMs === api.poseLoadTuning.gpuTimeoutMs,
+      JSON.stringify({ initFail, initTimeout }));
+    ok('GPU → CPU 的切换也写了 pose:delegate（带 elapsedMs，不写任何二进制）',
+      eventsOf('pose:delegate').some((e) => e.from === 'GPU' && e.to === 'CPU' && e.name === 'TimeoutError'),
+      JSON.stringify(eventsOf('pose:delegate')));
+  }
+
+  /* ---- ③ CPU 也卡死 → 最终提示「初始化识别器超时（上限 45s，已用 …s）」 ---- */
+  {
+    resetEngine();
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = '';   // 默认 CPU
+    api.poseLoadTuning.initTimeoutMs = 1200;
+    seen.length = 0;
+    let creates = 0;
+    engine.createLandmarker = async () => { creates += 1; return new Promise(() => {}); };   // 永远卡住
+    const okLoad = await api.loadPoseModel();
+    const text = maskText.textContent;
+    const expected = tInit('ui.poseInitTimeout', { timeout: '1', elapsed: '1' });
+    ok('CPU 初始化也卡死 → 只试一次就报错（不重复白等），提示是「初始化识别器超时（上限 / 已用）」',
+      okLoad === false && creates === 1
+      && text === expected
+      && text.startsWith('初始化识别器超时')
+      && api.state.modelError?.stage === 'create'
+      && api.state.modelError?.name === 'TimeoutError'
+      && api.state.modelError?.timeoutMs === api.poseLoadTuning.initTimeoutMs
+      && api.state.modelError?.elapsedMs > 0,
+      JSON.stringify({ okLoad, creates, text, modelError: api.state.modelError }));
+    ok('失败后遮罩标题 / 重试按钮都是「加载失败 / 重试加载模型」，遮罩保持显示',
+      elements.get('maskTitle').textContent === tInit('ui.maskModelFail')
+      && elements.get('maskText').textContent === text
+      && elements.get('btnStartCam').textContent === tInit('ui.poseRetryBtn')
+      && mask.classList.contains('hidden') === false);
+    ok('CPU 卡死也写 pose:init-fail + pose:init-timeout（delegate=CPU，带真实 elapsedMs）',
+      eventsOf('pose:init-fail').some((e) => e.delegate === 'CPU' && e.name === 'TimeoutError' && e.elapsedMs > 0)
+      && eventsOf('pose:init-timeout').some((e) => e.delegate === 'CPU' && e.elapsedMs > 0),
+      JSON.stringify({ fail: eventsOf('pose:init-fail'), timeout: eventsOf('pose:init-timeout') }));
+    ok('最终失败也照旧写 pose:load-fail（stage=create / name=TimeoutError）',
+      eventsOf('pose:load-fail').some((e) => e.stage === 'create' && e.name === 'TimeoutError'),
+      JSON.stringify(eventsOf('pose:load-fail')));
+    ok('初始化超时的诊断不碰任何二进制 / 密钥字段',
+      !/audio|pcm|apiKey|token|buffer/.test(JSON.stringify(seen)),
+      JSON.stringify(seen).slice(0, 120));
+    api.poseLoadTuning.initTimeoutMs = saved.tuning.initTimeoutMs;
+  }
+
+  /* ---- ④ CPU 抛非超时的初始化错误 → 用「非 SIMD 运行库 + CPU」最保守那档再试一次 ---- */
+  {
+    resetEngine();
+    api.state.engineReady = false;
+    api.state.settings.poseDelegate = '';
+    seen.length = 0;
+    const filesets = [];
+    let calls = 0;
+    engine.createLandmarker = async (vision, options) => {
+      filesets.push(vision);
+      calls += 1;
+      if (calls === 1) {
+        const err = new Error('RuntimeError: abort(CompileError). Build with -sASSERTIONS');
+        err.name = 'RuntimeError';
+        throw err;
+      }
+      return makeLandmarker();
+    };
+    const okLoad = await api.loadPoseModel();
+    ok('初始化抛「SIMD / wasm 编译」类错误（非超时）→ 用非 SIMD 运行库再试一次（最保守一档）并成功',
+      okLoad === true && calls === 2
+      && filesets[0] !== NOSIMD_FILES && filesets[1] === NOSIMD_FILES
+      && engine.ready === true && engine.delegate === 'CPU',
+      JSON.stringify({ okLoad, calls, secondIsNosimd: filesets[1] === NOSIMD_FILES }));
+    ok('最保守那次的诊断带 conservative=1 与 attempt=2（能看出「第二次换了运行库」）',
+      eventsOf('pose:init-fail').some((e) => e.delegate === 'CPU' && e.attempt === 1 && e.retry === 1)
+      && eventsOf('pose:init-start').some((e) => e.conservative === 1 && e.attempt === 2),
+      JSON.stringify({ fail: eventsOf('pose:init-fail'), start: eventsOf('pose:init-start') }));
+    ok('纯超时**不会**再补一次非 SIMD（免得白等两轮）—— 只有非超时错误才换运行库',
+      INIT_TIMEOUT_MS > GPU_INIT_TIMEOUT_MS
+      && INIT_TIMEOUT_MS === 45000 && GPU_INIT_TIMEOUT_MS === 6000);
+  }
+
+  // 恢复现场
+  api.coachDiag.record = saved.record;
+  resetEngine();
+  engine.resolveVision = saved.resolveVision;
+  engine.createLandmarker = saved.createLandmarker;
+  engine.fetchModel = saved.fetchModel;
+  engine.sleep = saved.sleep;
+  api.state.settings.poseDelegate = saved.poseDelegate;
+  api.state.engineReady = saved.engineReady;
+  api.state.modelError = saved.modelError;
+  Object.assign(api.poseLoadTuning, saved.tuning);
+  if ('crossOriginIsolated' in windowStub) windowStub.crossOriginIsolated = saved.crossOriginIsolated;
   api.resetModelProgress();
   api.showHome();
   api.state.session = 'idle';
