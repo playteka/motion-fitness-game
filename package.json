@@ -17,6 +17,7 @@
     "test:page": "node tests/test-page.mjs",
     "test:app": "node tests/test-app.mjs",
     "test:voice": "node tests/test-voice.mjs",
-    "icons:preview": "node tests/preview-icons.mjs"
+    "icons:preview": "node tests/preview-icons.mjs",
+    "tts:probe": "node server/tts-probe.mjs"
   }
 }
