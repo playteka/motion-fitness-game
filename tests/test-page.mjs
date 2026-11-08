@@ -1114,8 +1114,8 @@ console.log('\n[3] 静态资源与模型文件');
       && typeof LOCALES.en.coach?.route?.webSpeech === 'string'
       && /火山/.test(LOCALES.zh.coach.route.volc)
       && /Volcengine/.test(LOCALES.en.coach.route.volc));
-    ok('app.js 不再直接 createAsr()，改用自动选路 createAutoAsr（麦克风只创建一次）',
-      /createAutoAsr\(\{ mic: coachMic \}\)/.test(app)
+    ok('app.js 不再直接 createAsr()，改用自动选路 createAutoAsr（麦克风只创建一次，并带上诊断）',
+      /createAutoAsr\(\{ mic: coachMic, diag: coachDiag \}\)/.test(app)
       && /createVoiceSession\(\{\s*\n\s*mic: coachMic,/.test(app)
       && !/asr: createAsr\(\)/.test(app));
     ok('providers.js 提供 createVolcAsr / createAutoAsr / pickAsrRoute / DEFAULT_ASR_WS_URL',

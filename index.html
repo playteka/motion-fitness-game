@@ -176,6 +176,10 @@
               <span class="coach-avatar" id="coachAvatar" aria-hidden="true"></span>
               <span class="coach-title" data-i18n="coach.title"></span>
               <span class="coach-status" id="coachStatus"></span>
+              <!-- 语音诊断：教练面板里的小入口（底部工具栏那颗是它的常驻版本；两者都不依赖教练开关） -->
+              <button class="coach-diag-btn" id="coachDiagBtn" type="button" aria-expanded="false"
+                      data-i18n="coach.diag.openShort" data-i18n-title="coach.diag.open"
+                      data-i18n-aria="coach.diag.open"></button>
             </div>
             <div class="coach-subtitles" id="coachSubtitles" aria-live="polite" aria-atomic="true">
               <p class="coach-line coach-line--you">
@@ -190,6 +194,54 @@
                  代理连不上时会自动回退，这一行负责让用户一眼看见现在是谁在识别。 -->
             <p class="coach-route" id="coachRoute" hidden></p>
             <p class="coach-hint" id="coachHint" data-i18n="coach.hint"></p>
+          </div>
+
+          <!-- 语音诊断（P3.5）：**不依赖 AI 教练开关** —— 教练关着也能从底部工具栏打开。
+               半透明小面板只占顶部中间（HUD 在左、两颗圆环在右、判定条在底），
+               pointer-events 只在这一块上；内容由 coach.js 的 renderDiag() 实时填：
+                 路由 / WS：connecting|open|closed(code) / 已发帧 N·N 字节 /
+                 partial N 条·final N 条 / 最近错误 / 麦克风 N 轨·AudioContext 状态 / Worklet。
+               下面的「语音自检」四步（麦克风 → 代理 → 录 2 秒发送 → 服务端结果）也在这里显示。 -->
+          <div class="coach-diag" id="coachDiag" role="region" aria-live="polite"
+               data-i18n-aria="coach.diag.title" hidden>
+            <div class="coach-diag-head">
+              <span class="coach-diag-title" data-i18n="coach.diag.title"></span>
+              <button class="coach-diag-close" id="coachDiagClose" type="button"
+                      data-i18n-title="coach.diag.close" data-i18n-aria="coach.diag.close">&times;</button>
+            </div>
+            <dl class="coach-diag-list">
+              <div class="coach-diag-row">
+                <dt data-i18n="coach.diag.routeLabel"></dt><dd id="coachDiagRoute"></dd>
+              </div>
+              <div class="coach-diag-row">
+                <dt data-i18n="coach.diag.wsLabel"></dt><dd id="coachDiagWs"></dd>
+              </div>
+              <div class="coach-diag-row">
+                <dt data-i18n="coach.diag.framesLabel"></dt><dd id="coachDiagFrames"></dd>
+              </div>
+              <div class="coach-diag-row">
+                <dt data-i18n="coach.diag.resultsLabel"></dt><dd id="coachDiagResults"></dd>
+              </div>
+              <div class="coach-diag-row">
+                <dt data-i18n="coach.diag.errorLabel"></dt><dd id="coachDiagError"></dd>
+              </div>
+              <div class="coach-diag-row">
+                <dt data-i18n="coach.diag.micLabel"></dt><dd id="coachDiagMic"></dd>
+              </div>
+              <div class="coach-diag-row">
+                <dt data-i18n="coach.diag.workletLabel"></dt><dd id="coachDiagWorklet"></dd>
+              </div>
+            </dl>
+            <div class="coach-diag-selftest">
+              <button class="ghost-btn coach-diag-run" id="btnVoiceSelfTestPanel" type="button"
+                      data-i18n="coach.selfTest.run"></button>
+              <p class="coach-self-line" id="coachSelfTestMic"></p>
+              <p class="coach-self-line" id="coachSelfTestWs"></p>
+              <p class="coach-self-line" id="coachSelfTestSend"></p>
+              <p class="coach-self-line" id="coachSelfTestResult"></p>
+              <p class="coach-self-line coach-self-line--muted" id="coachSelfTestVolume"></p>
+              <p class="coach-self-line coach-self-line--result" id="coachSelfTestResultText"></p>
+            </div>
           </div>
 
           <!-- 判定进度条：每识别到一个关键帧姿态就点亮一格线条图标（不写文字，鼠标移上去看判据） -->
@@ -362,6 +414,9 @@
             <select id="camSel"></select>
           </label>
           <div class="spacer"></div>
+          <!-- P3.5 语音排障：这两颗按钮**不依赖 AI 教练开关**（教练没开也能诊断 / 自检） -->
+          <button class="ghost-btn" id="btnVoiceDiag" type="button" data-i18n="coach.diag.open"></button>
+          <button class="ghost-btn" id="btnVoiceSelfTest" type="button" data-i18n="coach.selfTest.run"></button>
           <button class="ghost-btn" id="btnRecalibrate" type="button" data-i18n="calib.recalibrate"></button>
           <button class="ghost-btn" id="btnResetReps" type="button" data-i18n="ui.resetReps"></button>
         </div>

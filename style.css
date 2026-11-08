@@ -1426,6 +1426,110 @@ kbd {
 .coach-route[hidden] { display: none; }
 .coach-hint { margin: 3px 0 0; font-size: 10.5px; line-height: 1.2; color: var(--muted); }
 
+/* ---------- 🐞 语音诊断 / 语音自检（P3.5） ----------
+   独立于教练面板（教练关着也能开），放在**顶部中间**那块空地上：
+   HUD 在左、退出 / 设置两颗圆环在右、判定进度条在底，所以它谁都不挡。
+   面板半透明、可关闭；**只有这块自己**吃鼠标（pointer-events:auto），其余仍是 none。
+   内容由 src/voice/coach.js 的 renderDiag() 填：路由 / WS / 帧数 / 计数 / 错误 / 麦克风 / Worklet，
+   以及「语音自检」四步（麦克风 → 代理 → 发送 → 结果）。 */
+.coach-diag-btn {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  background: rgba(8, 15, 26, 0.65);
+  color: #cfe4f7;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+  cursor: pointer;
+}
+.coach-diag-btn:hover { border-color: var(--accent); }
+.coach-diag {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  width: min(360px, calc(100% - 2 * var(--ring-px) - 36px));
+  max-height: calc(100% - var(--ring-px) - var(--criteria-bar-h) - 42px);
+  overflow: auto;
+  padding: 7px 10px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  background: rgba(8, 15, 26, 0.82);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;   /* 只有这一块吃鼠标：不挡 HUD / 圆环 / 判定条 */
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #dbe9ff;
+}
+.coach-diag[hidden] { display: none; }
+.coach-diag-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.coach-diag-title { font-size: 11.5px; font-weight: 800; color: #cfe4f7; }
+.coach-diag-close {
+  margin-left: auto;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.1;
+  cursor: pointer;
+}
+.coach-diag-close:hover { color: #dbe9ff; }
+.coach-diag-list { margin: 0; }
+.coach-diag-row { display: flex; gap: 6px; margin: 1px 0; }
+.coach-diag-row dt { flex: 0 0 74px; margin: 0; color: var(--muted); }
+.coach-diag-row dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #dbe9ff;
+}
+.coach-diag-selftest {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(56, 189, 248, 0.22);
+}
+.coach-diag-run {
+  pointer-events: auto;
+  padding: 2px 8px;
+  font-size: 10.5px;
+}
+.coach-self-line {
+  margin: 1px 0;
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: #cfe4f7;
+  overflow-wrap: anywhere;
+}
+.coach-self-line--muted { color: var(--muted); }
+.coach-self-line--result { color: var(--accent-2); }
+
+/* 窄屏：顶部中间只剩很窄的一条缝；面板收窄、字号再降一档（仍然只占那一块） */
+@media (max-width: 560px) {
+  .coach-diag {
+    top: 10px;
+    width: calc(100% - 2 * var(--ring-px) - 24px);
+    max-height: calc(100% - var(--ring-px) - var(--criteria-bar-h) - 30px);
+    padding: 5px 8px 6px;
+    font-size: 10px;
+  }
+  .coach-diag-row dt { flex-basis: 62px; }
+  .coach-self-line { font-size: 9.5px; }
+}
+
+/* 减少动效：面板本身没有动画，这里显式关掉可能的滚动平滑，保持和全站一致 */
+@media (prefers-reduced-motion: reduce) {
+  .coach-diag { scroll-behavior: auto; }
+}
+
 /* 窄屏：判定进度条已经被抬到圆环上方（见本文件下面 max-width:560px 的规则），
    字幕面板改贴舞台底部；同时把状态环收小、去掉提示行，给画面留空间。 */
 @media (max-width: 560px) {

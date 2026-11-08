@@ -55,7 +55,7 @@ function speechLang(lang) {
  *   close() → void                           （每一轨都 stop，绝不留后台麦克风）
  *   active  → boolean                        （现在是否还握着轨道）
  */
-export function createMic({ win = null } = {}) {
+export function createMic({ win = null, diag = null } = {}) {
   const w = rootWin(win);
   let stream = null;
   let tracks = [];
@@ -63,13 +63,23 @@ export function createMic({ win = null } = {}) {
   return {
     kind: 'browser',
     async open() {
+      diag?.record?.('mic:request', { by: 'mic' });
       const media = w.navigator && w.navigator.mediaDevices;
       if (!media || typeof media.getUserMedia !== 'function') {
         const err = new Error('getUserMedia is not available');
         err.code = 'mic-unsupported';
+        diag?.record?.('mic:fail', { name: err.name || 'NotSupportedError', message: err.message });
         throw err;
       }
-      stream = await media.getUserMedia({ audio: true });
+      try {
+        stream = await media.getUserMedia({ audio: true });
+      } catch (err) {
+        diag?.record?.('mic:fail', {
+          name: (err && err.name) || 'Error',
+          message: (err && err.message) || String(err || ''),
+        });
+        throw err;
+      }
       tracks = stream && typeof stream.getAudioTracks === 'function'
         ? stream.getAudioTracks()
         : (stream && typeof stream.getTracks === 'function' ? stream.getTracks() : []);
@@ -77,16 +87,24 @@ export function createMic({ win = null } = {}) {
         this.close();
         const err = new Error('no audio track');
         err.code = 'mic-empty';
+        diag?.record?.('mic:fail', { name: 'NotFoundError', message: err.message });
         throw err;
       }
+      // 设备标签（label）可能带机器 / 用户名等本机信息：只上报**轨数**和序号，不上报原始 label
+      diag?.record?.('mic:ok', {
+        tracks: tracks.length,
+        labels: tracks.map((t, i) => `audio-${i + 1}`),
+      });
       return tracks;
     },
-    close() {
+    close(reason = 'close') {
+      const count = tracks.length;
       for (const track of tracks) {
         try { track.stop(); } catch { /* ignore */ }
       }
       tracks = [];
       stream = null;
+      if (diag && count) diag.record?.('mic:release', { tracks: count, reason: String(reason) });
     },
     /** 给火山采集层用的原始 MediaStream（只读；stop 仍由 close() 负责） */
     get stream() { return stream; },
@@ -267,6 +285,9 @@ export function asrNoticeCode(raw) {
 export function createAsr({
   win = null,
   lang = null,
+  /** 共享麦克风适配器：Web Speech 会**自己**取麦，所以启动前必须先释放这一路（只留一条） */
+  mic = null,
+  diag = null,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 } = {}) {
@@ -284,6 +305,18 @@ export function createAsr({
   function noteError(raw) {
     lastError = String(raw || 'asr');
     try { w.console?.info?.(`[voice] asr error: ${lastError}`); } catch { /* ignore */ }
+  }
+
+  /**
+   * Web Speech 是浏览器**自己**去开麦克风的：共享的那一路必须先放掉，
+   * 否则第二路 getUserMedia 在很多环境里直接失败（用户反馈「麦克风亮着但没字幕」的头号嫌疑）。
+   * 会话层之后要恢复聆听时重新 open() 即可。
+   */
+  function releaseSharedMic() {
+    if (!mic || !mic.active) return;
+    try {
+      mic.close('webspeech');
+    } catch { /* ignore */ }
   }
 
   function clearRestart() {
@@ -381,10 +414,13 @@ export function createAsr({
       restartTimer = setTimer(restart, delay);
     };
     starting = true;
+    // 先把共享麦克风放掉，再让浏览器的识别器自己取麦（只保留一条输入）
+    releaseSharedMic();
     try {
       rec.start();
       starting = false;
       running = true;
+      diag?.record?.('route:webspeech', { adapter: 'webrtc' });
       handlers.route?.({ route: ASR_ROUTES.WEB_SPEECH });
       return true;
     } catch (err) {
@@ -466,6 +502,98 @@ export function createAsr({
 const PCM_WORKLET_URL = new URL('./pcm-worklet.js', import.meta.url).href;
 
 /**
+ * 从一条**已经打开的** MediaStream 采集 PCM 渲染块（AudioWorklet 优先，ScriptProcessor 兜底）。
+ *
+ * 两处共用这一份实现：
+ *   - 火山 ASR 适配器（页面主流程）；
+ *   - 「语音自检」按钮（独立流程：自己的流、自己的 WS，不碰会话）。
+ *
+ * 失败 / 降级都会记进诊断（`worklet:ok` / `worklet:fail` / `capture:mode`），
+ * 这样「Worklet 被 CSP / 缓存拦掉」这类问题在页面上就能看到，而不是静默无声。
+ *
+ * @param {object}   opts
+ * @param {object}   opts.win     浏览器 window（测试注入）
+ * @param {object}   opts.ctx     AudioContext
+ * @param {object}   opts.stream  MediaStream（调用方负责 open / 释放轨道）
+ * @param {Function} opts.onChunk (Float32Array) => void
+ * @param {object}   [opts.diag]  诊断收集器
+ * @returns {Promise<{mode:string, node:object, source:object, gain:object, stop:Function}>}
+ */
+export async function startPcmCapture({
+  win = null, ctx = null, stream = null, onChunk = null, diag = null,
+} = {}) {
+  const w = rootWin(win);
+  if (!ctx || !stream || typeof onChunk !== 'function') {
+    throw Object.assign(new Error('audio capture unavailable'), { code: 'mic-empty' });
+  }
+  const source = ctx.createMediaStreamSource(stream);
+  const state = { mode: 'none', node: null, source, gain: null };
+  function stop() {
+    try { state.node?.port?.close?.(); } catch { /* ignore */ }
+    try { state.node?.port && (state.node.port.onmessage = null); } catch { /* ignore */ }
+    try { state.node?.disconnect?.(); } catch { /* ignore */ }
+    try { source?.disconnect?.(); } catch { /* ignore */ }
+    try { state.gain?.disconnect?.(); } catch { /* ignore */ }
+    if (state.node) {
+      try { state.node.onaudioprocess = null; } catch { /* ignore */ }
+      try { state.node.onmessage = null; } catch { /* ignore */ }
+    }
+    state.node = null;
+    state.gain = null;
+  }
+  state.stop = stop;
+
+  if (pickCaptureMode(ctx, w) === 'worklet') {
+    try {
+      await ctx.audioWorklet.addModule(PCM_WORKLET_URL);
+      const node = new w.AudioWorkletNode(ctx, 'mfg-pcm-capture');
+      node.port.onmessage = (event) => onChunk(event && event.data);
+      source.connect(node);
+      state.node = node;
+      state.mode = 'worklet';
+      diag?.record?.('worklet:ok', { module: 'pcm-worklet' });
+      diag?.record?.('capture:mode', { mode: 'worklet' });
+      return state;
+    } catch (err) {
+      // CSP / 缓存 / 旧浏览器：记下来，然后**必须**退回 ScriptProcessor（不能静默没声音）
+      diag?.record?.('worklet:fail', {
+        name: (err && err.name) || 'Error',
+        message: (err && err.message) || String(err || ''),
+      });
+    }
+  }
+
+  if (typeof ctx.createScriptProcessor !== 'function') {
+    stop();
+    throw Object.assign(new Error('no audio processing node'), { code: 'asr-unsupported' });
+  }
+  const node = ctx.createScriptProcessor(4096, 1, 1);
+  node.onaudioprocess = (event) => {
+    const input = event && event.inputBuffer;
+    const samples = input && typeof input.getChannelData === 'function'
+      ? input.getChannelData(0)
+      : null;
+    if (samples) onChunk(samples);
+  };
+  const gain = typeof ctx.createGain === 'function' ? ctx.createGain() : null;
+  if (gain) {
+    try { gain.gain.value = 0; } catch { /* ignore */ }
+  }
+  source.connect(node);
+  if (gain) {
+    node.connect(gain);
+    gain.connect(ctx.destination);
+  } else {
+    node.connect(ctx.destination);
+  }
+  state.node = node;
+  state.gain = gain;
+  state.mode = 'processor';
+  diag?.record?.('capture:mode', { mode: 'processor' });
+  return state;
+}
+
+/**
  * 创建火山 ASR 适配器。
  *
  * @param {object} [opts]
@@ -474,6 +602,7 @@ const PCM_WORKLET_URL = new URL('./pcm-worklet.js', import.meta.url).href;
  * @param {string} [opts.url]              代理地址（默认 resolveAsrUrl()）
  * @param {string|Function} [opts.lang]    语言
  * @param {Function} [opts.fallbackFactory] 回退工厂（默认 createAsr）
+ * @param {object} [opts.diag]             诊断收集器（可选；只在浏览器里传）
  * @param {number} [opts.connectTimeoutMs] 连代理的超时
  * @param {number} [opts.readyTimeoutMs]   代理连上火山后等 ready 的超时
  */
@@ -483,6 +612,7 @@ export function createVolcAsr({
   url = null,
   lang = null,
   fallbackFactory = null,
+  diag = null,
   connectTimeoutMs = 5000,
   readyTimeoutMs = 8000,
 } = {}) {
@@ -498,9 +628,17 @@ export function createVolcAsr({
   let fallback = null;
   let connectTimer = null;
   let readyTimer = null;
-  let audio = { ctx: null, source: null, node: null, gain: null };
+  let audio = { ctx: null, capture: null };
   let chunks = 0;
   let sentBytes = 0;
+  let framesLogged = 0;
+
+  function logFrames(force = false) {
+    if (!chunks) return;
+    if (!force && chunks - framesLogged < 8) return;
+    framesLogged = chunks;
+    diag?.record?.('ws:frames', { n: chunks, bytes: sentBytes });
+  }
 
   function clearTimers() {
     if (connectTimer !== null) { try { clearTimeout(connectTimer); } catch { /* ignore */ } connectTimer = null; }
@@ -517,11 +655,12 @@ export function createVolcAsr({
     try { ws.send(buffer); sentBytes += buffer.byteLength || buffer.length || 0; return true; } catch { return false; }
   }
 
-  function closeSocket() {
+  function closeSocket(closingReason = 'client-stop') {
     const sock = ws;
     ws = null;
     ready = false;
     if (!sock) return;
+    diag?.record?.('ws:close', { code: 1000, reason: closingReason });
     try { sock.onopen = null; } catch { /* ignore */ }
     try { sock.onmessage = null; } catch { /* ignore */ }
     try { sock.onerror = null; } catch { /* ignore */ }
@@ -531,15 +670,9 @@ export function createVolcAsr({
 
   function teardownAudio() {
     const current = audio;
-    audio = { ctx: null, source: null, node: null, gain: null };
-    try { current.node?.port?.close?.(); } catch { /* ignore */ }
-    try { current.node?.disconnect?.(); } catch { /* ignore */ }
-    try { current.source?.disconnect?.(); } catch { /* ignore */ }
-    try { current.gain?.disconnect?.(); } catch { /* ignore */ }
-    if (current.node) {
-      try { current.node.onaudioprocess = null; } catch { /* ignore */ }
-      try { current.node.onmessage = null; } catch { /* ignore */ }
-    }
+    audio = { ctx: null, capture: null };
+    logFrames(true);
+    try { current.capture?.stop?.(); } catch { /* ignore */ }
     if (current.ctx) {
       try {
         const p = current.ctx.close?.();
@@ -552,13 +685,19 @@ export function createVolcAsr({
   function fallbackToWebSpeech(reason) {
     if (manualStop || fallback) return false;
     teardownAudio();
-    closeSocket();
+    closeSocket(`fallback:${String(reason || '')}`);
     clearTimers();
+    // Web Speech 会自己去拿麦克风：**先**把共享的这一路放掉（只保留一条输入）。
+    // 自定义 fallbackFactory 也照这条规则走，日志里会留下 mic:release。
+    if (mic && mic.active) {
+      try { mic.close('webspeech-fallback'); } catch { /* ignore */ }
+    }
+    diag?.record?.('route:webspeech', { reason: String(reason || '') });
     let adapter = null;
     try {
       adapter = fallbackFactory
-        ? fallbackFactory({ win: w, lang })
-        : createAsr({ win: w, lang });
+        ? fallbackFactory({ win: w, lang, mic, diag })
+        : createAsr({ win: w, lang, mic, diag });
     } catch { adapter = null; }
     if (!adapter) {
       running = false;
@@ -600,60 +739,31 @@ export function createVolcAsr({
     if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
       try { await ctx.resume(); } catch { /* ignore */ }
     }
-    const source = ctx.createMediaStreamSource(stream);
-    audio.source = source;
     const inputRate = Number(ctx.sampleRate) || 48000;
+    diag?.record?.('ctx:sampleRate', { value: inputRate, state: String(ctx.state || '') });
     const emitChunk = (samples) => {
       if (manualStop || !ready || !samples) return;
       const pcm = downsampleToPcm16(samples, inputRate);
       if (!pcm.length) return;
+      if (!sendBytes(pcm.buffer)) return;
       chunks += 1;
-      sendBytes(pcm.buffer);
+      if (chunks === 1) diag?.record?.('ws:firstFrame', { bytes: pcm.buffer.byteLength });
+      logFrames();
     };
 
-    if (pickCaptureMode(ctx, w) === 'worklet') {
-      try {
-        await ctx.audioWorklet.addModule(PCM_WORKLET_URL);
-        if (manualStop || !running) {
-          try { ctx.close?.(); } catch { /* ignore */ }
-          return false;
-        }
-        const node = new w.AudioWorkletNode(ctx, 'mfg-pcm-capture');
-        node.port.onmessage = (event) => emitChunk(event && event.data);
-        source.connect(node);
-        audio.node = node;
-        return true;
-      } catch { /* 退回 ScriptProcessor */ }
+    let capture;
+    try {
+      capture = await startPcmCapture({ win: w, ctx, stream, onChunk: emitChunk, diag });
+    } catch (err) {
+      try { ctx.close?.(); } catch { /* ignore */ }
+      throw err;
     }
-
     if (manualStop || !running) {
+      try { capture.stop?.(); } catch { /* ignore */ }
       try { ctx.close?.(); } catch { /* ignore */ }
       return false;
     }
-    if (typeof ctx.createScriptProcessor !== 'function') {
-      throw Object.assign(new Error('no audio processing node'), { code: 'asr-unsupported' });
-    }
-    const node = ctx.createScriptProcessor(4096, 1, 1);
-    node.onaudioprocess = (event) => {
-      const input = event && event.inputBuffer;
-      const samples = input && typeof input.getChannelData === 'function'
-        ? input.getChannelData(0)
-        : null;
-      emitChunk(samples);
-    };
-    const gain = typeof ctx.createGain === 'function' ? ctx.createGain() : null;
-    if (gain) {
-      try { gain.gain.value = 0; } catch { /* ignore */ }
-    }
-    source.connect(node);
-    if (gain) {
-      node.connect(gain);
-      gain.connect(ctx.destination);
-    } else {
-      node.connect(ctx.destination);
-    }
-    audio.node = node;
-    audio.gain = gain;
+    audio.capture = capture;
     return true;
   }
 
@@ -670,17 +780,22 @@ export function createVolcAsr({
     }
     if (msg.type === 'partial') {
       const text = String(msg.text || '');
-      if (text) handlers.interim?.(text);
+      if (text) {
+        diag?.record?.('asr:partial', { text });
+        handlers.interim?.(text);
+      }
       return;
     }
     if (msg.type === 'final') {
       const text = String(msg.text || '');
+      diag?.record?.('asr:final', { text });
       if (text) handlers.result?.(text, { isFinal: true });
       else handlers.interim?.('', { clear: true });
       return;
     }
     if (msg.type === 'error') {
       const code = String(msg.code || 'error');
+      diag?.record?.('asr:error', { code, message: String(msg.message || '') });
       handlers.notice?.({ code: 'asr-fallback', raw: code });
       fallbackToWebSpeech(`server-${code}`);
     }
@@ -696,9 +811,11 @@ export function createVolcAsr({
     let sock;
     try { sock = new WS(target); } catch { fallbackToWebSpeech('ws-construct'); return; }
     ws = sock;
+    diag?.record?.('ws:connecting', { url: String(target).replace(/\/\/[^/]+/, '//<host>') });
     try { sock.binaryType = 'arraybuffer'; } catch { /* ignore */ }
     sock.onopen = () => {
       if (manualStop || ws !== sock) return;
+      diag?.record?.('ws:open', {});
       if (connectTimer !== null) { clearTimeout(connectTimer); connectTimer = null; }
       sendJson({ type: 'start', lang: speechLang(lang) });
       readyTimer = setTimeout(() => {
@@ -707,8 +824,18 @@ export function createVolcAsr({
       }, readyTimeoutMs);
     };
     sock.onmessage = (event) => { if (ws === sock) onMessage(event); };
-    sock.onerror = () => { if (!ready) fallbackToWebSpeech('ws-error'); };
-    sock.onclose = () => {
+    sock.onerror = (err) => {
+      diag?.record?.('ws:error', {
+        name: (err && err.name) || 'error',
+        message: (err && err.message) || '',
+      });
+      if (!ready) fallbackToWebSpeech('ws-error');
+    };
+    sock.onclose = (event) => {
+      diag?.record?.('ws:close', {
+        code: Number(event && event.code) || 0,
+        reason: String((event && event.reason) || ''),
+      });
       if (manualStop || ws !== sock) return;
       fallbackToWebSpeech('ws-closed');
     };
@@ -750,7 +877,9 @@ export function createVolcAsr({
       fallback = null;
       chunks = 0;
       sentBytes = 0;
+      framesLogged = 0;
       currentRoute = ASR_ROUTES.VOLC;
+      diag?.record?.('route:volc', {});
       handlers.route?.({ route: ASR_ROUTES.VOLC });
       handlers.state?.('connecting');
       startVolc();
@@ -765,7 +894,7 @@ export function createVolcAsr({
       const fb = fallback;
       fallback = null;
       try { fb?.stop?.(); } catch { /* ignore */ }
-      closeSocket();
+      closeSocket('client-stop');
       teardownAudio();
       currentRoute = '';
     },
@@ -788,6 +917,7 @@ export function createAutoAsr({
   mic = null,
   url = null,
   lang = null,
+  diag = null,
   volcFactory = null,
   webSpeechFactory = null,
   fallbackFactory = null,
@@ -843,11 +973,13 @@ export function createAutoAsr({
           mic,
           url: target,
           lang,
-          fallbackFactory: fallbackFactory || (({ win: fw, lang: fl } = {}) => createAsr({ win: fw, lang: fl })),
+          diag,
+          fallbackFactory: fallbackFactory
+            || (({ win: fw, lang: fl, mic: fm, diag: fd } = {}) => createAsr({ win: fw, lang: fl, mic: fm, diag: fd })),
         });
       } else {
         const factory = webSpeechFactory || createAsr;
-        inner = factory({ win: w, lang });
+        inner = factory({ win: w, lang, mic, diag });
       }
       bind(inner);
       let started = false;
@@ -868,9 +1000,8 @@ export function createAutoAsr({
  * VU（音量表）：把麦克风音量映射成 0~1 的 level + 品牌色
  *
  * 纯函数（`rmsToLevel` / `smoothLevel` / `levelToColor`）在 Node 里直接可测；
- * `createVuMeter()` 才碰浏览器（getUserMedia + AudioContext + AnalyserNode）。
- * 第二路音频打不开时（有些环境不允许两路同时占用麦克风）由 coach.js 静默降级，
- * 绝不把异常抛给用户 / 会话。
+ * `createVuMeter()` 才碰浏览器（AudioContext + AnalyserNode，麦克风流由调用方传进来）。
+ * 拿不到共享流时由 coach.js 静默降级，**绝不另开一路 getUserMedia**。
  * ================================================================== */
 
 /** 静音门限（RMS）：低于它一律当作没声音，避免底噪把环染成青色 */
@@ -940,20 +1071,36 @@ export function levelToColor(level) {
 }
 
 /**
- * 音量表适配器：打开第二路音频 + AnalyserNode。
+ * 音量表适配器：**只做 AnalyserNode**，麦克风由调用方决定用哪一路。
  *
  *   open()      → Promise<boolean>   （失败 reject，由 coach.js 捕获后降级）
  *   readLevel() → number 0~1
- *   close()     → void   （停音轨 + 断开节点 + AudioContext.close()，不留后台麦克风）
+ *   close()     → void   （断开节点 + AudioContext.close()；**共享流不 stop**，轨道归 createMic 管）
+ *
+ * 用户反馈「麦克风亮着但没字幕」的头号嫌疑就是多路 getUserMedia 抢麦：
+ * 现在 app.js 把 `createMic()` 拿到的那一条 `MediaStream` 传进来（`stream`），
+ * 这里**绝不再调 getUserMedia**；`requireStream: true` 时没有共享流就直接失败（静默降级），
+ * 只有 Node 单测 / 旧调用不传 stream 时才保留「自己取麦」的兼容分支。
  */
-export function createVuMeter({ win = null } = {}) {
+export function createVuMeter({ win = null, stream: sharedStream = null, requireStream = false, diag = null } = {}) {
   const w = rootWin(win);
   let stream = null;
+  let ownStream = false;
   let ctx = null;
   let source = null;
   let analyser = null;
   let bytes = null;
   let active = false;
+
+  function stopTracks(s) {
+    let tracks = [];
+    try {
+      tracks = typeof s?.getTracks === 'function' ? s.getTracks() : [];
+    } catch { /* ignore */ }
+    for (const track of tracks) {
+      try { track.stop?.(); } catch { /* ignore */ }
+    }
+  }
 
   function close() {
     active = false;
@@ -961,16 +1108,9 @@ export function createVuMeter({ win = null } = {}) {
     source = null;
     analyser = null;
     bytes = null;
-    if (stream) {
-      let tracks = [];
-      try {
-        tracks = typeof stream.getTracks === 'function' ? stream.getTracks() : [];
-      } catch { /* ignore */ }
-      for (const track of tracks) {
-        try { track.stop?.(); } catch { /* ignore */ }
-      }
-    }
+    if (ownStream && stream) stopTracks(stream);
     stream = null;
+    ownStream = false;
     const c = ctx;
     ctx = null;
     if (c) {
@@ -988,16 +1128,27 @@ export function createVuMeter({ win = null } = {}) {
       if (active) return true;
       const Ctx = w.AudioContext || w.webkitAudioContext;
       const media = w.navigator && w.navigator.mediaDevices;
-      // 先看有没有 AudioContext：没有就别去抓麦克风（不白白占用第二路）
-      if (!Ctx || !media || typeof media.getUserMedia !== 'function') {
+      if (!Ctx) {
         const err = new Error('VU meter is not supported');
         err.code = 'vu-unsupported';
         throw err;
       }
-      let s = null;
+      // 页面里**只允许**用会话层那一条共享流：拿不到就静默降级，绝不另开一路麦克风
+      if (!sharedStream && requireStream) {
+        const err = new Error('no shared microphone stream');
+        err.code = 'vu-no-stream';
+        throw err;
+      }
+      if (!sharedStream && (!media || typeof media.getUserMedia !== 'function')) {
+        const err = new Error('VU meter is not supported');
+        err.code = 'vu-unsupported';
+        throw err;
+      }
+      let s = sharedStream || null;
+      let owns = !s;
       let context = null;
       try {
-        s = await media.getUserMedia({ audio: true });
+        if (!s) s = await media.getUserMedia({ audio: true });
         context = new Ctx();
         if (context.state === 'suspended') {
           try { await context.resume(); } catch { /* ignore */ }
@@ -1013,22 +1164,26 @@ export function createVuMeter({ win = null } = {}) {
         node.smoothingTimeConstant = 0.2;   // 主要平滑我们自己算（快升慢降）
         src.connect(node);
         stream = s;
+        ownStream = owns;
         ctx = context;
         source = src;
         analyser = node;
         bytes = new Uint8Array(node.fftSize);
         active = true;
+        diag?.record?.('vu:open', { shared: !owns });
         return true;
       } catch (err) {
-        // 失败时自己收拾干净：停音轨、关上下文（不留后台麦克风）
-        try { for (const track of (s && s.getTracks ? s.getTracks() : [])) track.stop?.(); } catch { /* ignore */ }
+        // 失败时只收拾自己拿的那一路；共享流是别人的，绝不能在这里 stop
+        if (owns && s) stopTracks(s);
         try { context?.close?.(); } catch { /* ignore */ }
         stream = null;
+        ownStream = false;
         ctx = null;
         source = null;
         analyser = null;
         bytes = null;
         active = false;
+        diag?.record?.('vu:fail', { name: (err && err.name) || 'Error', message: (err && err.message) || '' });
         throw err;
       }
     },
@@ -1096,10 +1251,11 @@ export function createLlm({ pick = Math.random } = {}) {
  * `speechSynthesis` 不可用时返回 `false`（**只出字幕**，不抛错）；会话会按字数留一段
  * 展示时间再回到聆听状态。
  */
-export function createTts({ win = null, lang = null, rate = 1 } = {}) {
+export function createTts({ win = null, lang = null, rate = 1, diag = null } = {}) {
   const w = rootWin(win);
   let speaking = false;
   let currentRate = Number(rate) > 0 ? Number(rate) : 1;
+  let failLogged = false;
 
   function synth() { return w.speechSynthesis || null; }
   function Utterance() {
@@ -1123,19 +1279,32 @@ export function createTts({ win = null, lang = null, rate = 1 } = {}) {
       const s = synth();
       const U = Utterance();
       const body = String(text == null ? '' : text);
-      if (!s || !U || !body.trim()) return false;
+      if (!s || !U || !body.trim()) {
+        if (!failLogged) {
+          failLogged = true;
+          diag?.record?.('tts:fail', { code: s && U ? 'empty' : 'unsupported' });
+        }
+        return false;
+      }
       try {
         s.cancel();
         const u = new U(body);
         u.lang = speechLang(lang);
         u.rate = currentRate;
         u.onend = () => { speaking = false; try { onEnd?.(); } catch { /* ignore */ } };
-        u.onerror = (err) => { speaking = false; try { onError?.(err); } catch { /* ignore */ } };
+        u.onerror = (err) => {
+          speaking = false;
+          diag?.record?.('tts:fail', { code: (err && err.error) || 'error' });
+          try { onError?.(err); } catch { /* ignore */ }
+        };
         s.speak(u);
         speaking = true;
+        failLogged = false;
+        diag?.record?.('tts:say', { chars: body.length });
         return true;
       } catch {
         speaking = false;
+        diag?.record?.('tts:fail', { code: 'speak' });
         return false;
       }
     },

@@ -30,6 +30,11 @@ import {
   VU_COLORS, VU_LEVEL_VOICE, VU_LEVEL_LOUD,
 } from '../src/voice/providers.js';
 import {
+  createDiag, makeEntry, scrubText, DIAG_ENDPOINT, DIAG_FILE, DIAG_MAX_TEXT,
+  DIAG_FLUSH_MS, DIAG_BATCH_SIZE,
+} from '../src/voice/diag.js';
+import { createSelfTest, SELF_TEST_STEPS } from '../src/voice/selftest.js';
+import {
   downsampleToPcm16, pcm16Rms, pcm16Peak, pcmBytesToMs, floatToPcm16,
 } from '../src/voice/pcm.js';
 import { parseEnv, volcConfigFrom, maskSecret, redactSecrets } from '../server/env.mjs';
@@ -679,11 +684,12 @@ function sineBytes(n, amp) {
 console.log('\n[10] createVuMeter：打开 / 读数 / 关闭（停音轨 + 关 AudioContext）');
 
 function fakeVuWindow({ samples = 190, ctxState = 'running' } = {}) {
-  const log = { tracks: [], closed: 0, contexts: 0 };
+  const log = { tracks: [], closed: 0, contexts: 0, calls: 0 };
   const win = {
     navigator: {
       mediaDevices: {
         getUserMedia: async () => {
+          log.calls += 1;
           const track = { stopped: false, stop() { this.stopped = true; } };
           log.tracks.push(track);
           return { getTracks: () => [track], getAudioTracks: () => [track] };
@@ -692,7 +698,10 @@ function fakeVuWindow({ samples = 190, ctxState = 'running' } = {}) {
     },
     AudioContext: class {
       constructor() { this.state = ctxState; log.contexts += 1; }
-      createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+      createMediaStreamSource(stream) {
+        log.sourceStream = stream;
+        return { connect() {}, disconnect() {} };
+      }
       createAnalyser() {
         return {
           fftSize: 512,
@@ -734,6 +743,33 @@ function fakeVuWindow({ samples = 190, ctxState = 'running' } = {}) {
   try { await unsupported.open(); } catch (err) { code = err.code; }
   ok('没有 AudioContext / getUserMedia → open() 明确 reject（调用方静默降级）',
     code === 'vu-unsupported' && unsupported.active === false, code);
+
+  /* ---- 共享麦克风（P3.5 的重点）：只许用会话层那一条流 ---- */
+  {
+    const { win, log } = fakeVuWindow({ samples: 190 });
+    const shared = {
+      getTracks: () => [{ stopped: false, stop() { this.stopped = true; } }],
+      getAudioTracks: () => [{ stopped: false, stop() { this.stopped = true; } }],
+    };
+    const track = shared.getAudioTracks()[0];
+    const meter = createVuMeter({ win, stream: shared, requireStream: true });
+    ok('共享流：open() 直接用传进来的 MediaStream，**不再调用 getUserMedia**',
+      (await meter.open()) === true && log.calls === 0 && log.sourceStream === shared,
+      JSON.stringify({ calls: log.calls, same: log.sourceStream === shared }));
+    ok('共享流：readLevel 照常读数（音量表仍然工作）', meter.readLevel() > 0.6, String(meter.readLevel()));
+    meter.close();
+    ok('共享流：close() 只关自己的 AudioContext，**不 stop 别人的音轨**（轨道归 createMic）',
+      log.closed === 1 && track.stopped === false,
+      JSON.stringify({ closed: log.closed, stopped: track.stopped }));
+
+    const noWin = fakeVuWindow();
+    const noStream = createVuMeter({ win: noWin.win, requireStream: true });
+    let noStreamCode = '';
+    try { await noStream.open(); } catch (err) { noStreamCode = err.code; }
+    ok('requireStream：没有共享流时直接失败（vu-no-stream），绝不偷偷再开一路麦克风',
+      noStreamCode === 'vu-no-stream' && noWin.log.calls === 0,
+      JSON.stringify({ code: noStreamCode, calls: noWin.log.calls }));
+  }
 }
 
 /* ================================================================== *
@@ -2036,6 +2072,170 @@ console.log('\n[23] P3.2 快车道执行 + exit 确认状态机（8 秒自动取
     session.stop();
     ok('关闭教练 / 页面隐藏时，等待中的确认会被清掉', session.pendingConfirm === null);
   }
+}
+
+/* ================================================================== *
+ * 24. 语音诊断（P3.5）：事件收集 / 批量落盘 / snapshot / 脱敏 / 失败不抛错
+ * ================================================================== */
+console.log('\n[24] 语音诊断：事件收集 / 批量落盘 / snapshot / 脱敏 / 失败不抛错');
+{
+  ok('默认端点就是预览服务器的落盘接口（logs/coach-diag.jsonl）',
+    DIAG_ENDPOINT === `/__debug/log?file=${DIAG_FILE}`
+    && DIAG_FILE === 'coach-diag.jsonl'
+    && DIAG_FLUSH_MS === 2000 && DIAG_BATCH_SIZE === 20 && DIAG_MAX_TEXT === 80,
+    DIAG_ENDPOINT);
+
+  ok('scrubText：Bearer / sk-… / 超长 token 都变 [redacted]，并截到 80 字',
+    scrubText('Bearer abcdefghijklmnop sk-live-1234567890abcdef')
+      .includes('[redacted]')
+    && !scrubText('Bearer abcdefghijklmnop').includes('abcdefghijklmnop')
+    && scrubText('a '.repeat(200)).length === 80
+    && scrubText('　 \n  多行\n文本  ').length <= 80,
+    scrubText('Bearer abcdefghijklmnop sk-live-1234567890abcdef'));
+
+  ok('makeEntry：敏感键（apiKey / audio / pcm / samples）一律不上报',
+    (() => {
+      const entry = makeEntry('asr:final', {
+        text: '你好',
+        apiKey: 'sk-live-1234567890abcdef',
+        audio: new Float32Array(4).fill(0.5),
+        pcm: 'raw',
+        samples: [0.1, 0.2],
+      }, { now: () => 123 });
+      const json = JSON.stringify(entry);
+      return entry.t === 123 && entry.text === '你好'
+        && entry.apiKey === '[redacted]' && entry.audio === '[redacted]'
+        && entry.pcm === '[redacted]' && entry.samples === '[redacted]'
+        && !json.includes('sk-live') && !json.includes('0.5');
+    })());
+
+  /* ---- 事件 → 快照计数器 ---- */
+  const uploads = [];
+  const fetchOk = async (url, opts) => {
+    uploads.push({ url, body: String(opts && opts.body) });
+    return { ok: true, status: 200 };
+  };
+  const diag = createDiag({
+    fetch: fetchOk,
+    timer: false,
+    now: () => 1700000000000,
+    maxText: 80,
+  });
+  const initial = diag.snapshot();
+  ok('snapshot() 结构固定（events / route / ws / frames / partials·finals / 错误 / mic / audio / worklet）',
+    ['events', 'pending', 'sent', 'failed', 'route', 'ws', 'frames', 'partials', 'finals',
+      'lastPartial', 'lastFinal', 'lastError', 'mic', 'audio', 'capture', 'worklet', 'tts']
+      .every((k) => k in initial)
+    && initial.ws.state === 'idle' && initial.mic.tracks === 0
+    && initial.frames.n === 0 && initial.partials === 0 && initial.finals === 0,
+    JSON.stringify(initial));
+
+  diag.record('route:volc', {});
+  diag.record('ws:connecting', {});
+  diag.record('ws:open', {});
+  diag.record('ws:firstFrame', { bytes: 3200 });
+  diag.record('ws:frames', { n: 12, bytes: 38400 });
+  diag.record('ctx:sampleRate', { value: 48000, state: 'running' });
+  diag.record('worklet:fail', { name: 'NotSupportedError', message: 'addModule failed' });
+  diag.record('capture:mode', { mode: 'processor' });
+  diag.record('asr:partial', { text: '你好' });
+  diag.record('asr:final', { text: '字'.repeat(200) });
+  diag.record('mic:ok', { tracks: 1, labels: ['audio-1'] });
+  diag.record('mic:release', { reason: 'webspeech' });
+  const snap = diag.snapshot();
+  ok('snapshot 反映路由 / WS / 帧数 / partial·final 计数',
+    snap.route === 'volc' && snap.ws.state === 'open'
+    && snap.frames.n === 12 && snap.frames.bytes === 38400
+    && snap.partials === 1 && snap.finals === 1 && snap.lastPartial === '你好'
+    && snap.lastFinal.length === 80,
+    JSON.stringify({ route: snap.route, ws: snap.ws, frames: snap.frames,
+      partials: snap.partials, finals: snap.finals }));
+  ok('snapshot 反映 AudioContext / Worklet 兜底 / 麦克风轨数（label 是脱敏后的序号）',
+    snap.audio.sampleRate === 48000 && snap.audio.state === 'running'
+    && snap.worklet.state === 'fail' && snap.capture === 'processor'
+    && snap.mic.state === 'released' && snap.mic.tracks === 1
+    && snap.mic.labels.join(',') === 'audio-1',
+    JSON.stringify({ audio: snap.audio, worklet: snap.worklet, mic: snap.mic }));
+  ok('asr:error 写进 lastError / asrError（错误码不会带凭证）',
+    (() => {
+      diag.record('asr:error', { code: 'auth', message: 'bad key sk-live-1234567890abcdef' });
+      const s = diag.snapshot();
+      return s.asrError.code === 'auth' && s.lastError.includes('auth')
+        && !s.lastError.includes('sk-live');
+    })());
+
+  /* ---- 批量落盘 ---- */
+  const flushed = await diag.flush();
+  ok('flush() 把积压事件按 JSONL 批量 POST 到 /__debug/log?file=coach-diag.jsonl',
+    flushed === true && uploads.length === 1
+    && uploads[0].url === DIAG_ENDPOINT
+    && uploads[0].body.trim().split('\n').every((line) => {
+      try { JSON.parse(line); return true; } catch { return false; }
+    }),
+    JSON.stringify({ ok: flushed, uploads: uploads.length }));
+  const allText = uploads.map((u) => u.body).join('\n');
+  ok('落盘内容不含密钥、不含音频数据（只有文本 / 计数 / 状态）',
+    !allText.includes('sk-live') && !allText.includes('Bearer ')
+    && !allText.includes('Float32') && !allText.includes('"audio"')
+    && allText.includes('"type":"mic:ok"') && allText.includes('audio-1'),
+    allText.slice(0, 160));
+  ok('flush 后 sent 计数增加、pending 清零',
+    diag.sent > 0 && diag.snapshot().pending === 0, String(diag.sent));
+
+  /* ---- 满 20 条自动上报（不等 2 秒）---- */
+  const autoUploads = [];
+  const auto = createDiag({
+    fetch: async (url, opts) => { autoUploads.push(String(opts.body)); return { ok: true }; },
+    timer: false,
+    now: () => 1,
+  });
+  for (let i = 0; i < DIAG_BATCH_SIZE; i += 1) auto.record('asr:partial', { text: `第 ${i} 条` });
+  await new Promise((r) => setTimeout(r, 0));
+  ok('满 20 条自动上报（不必等 2 秒定时器）',
+    autoUploads.length === 1
+    && autoUploads[0].trim().split('\n').length === DIAG_BATCH_SIZE
+    && auto.snapshot().pending === 0,
+    JSON.stringify({ uploads: autoUploads.length, pending: auto.snapshot().pending }));
+
+  /* ---- 2 秒定时器（注入假 timer，不真等）---- */
+  {
+    const timers = [];
+    const timerDiag = createDiag({
+      fetch: async () => ({ ok: true }),
+      timer: true,
+      flushMs: 2000,
+      now: () => 1,
+      setTimer: (fn, ms) => { timers.push({ fn, ms }); return { id: timers.length }; },
+      clearTimer: () => {},
+    });
+    timerDiag.record('mic:request', {});
+    ok('打开 timer 后，第一条事件就会排一个 2 秒的批量上报',
+      timers.length === 1 && timers[0].ms === 2000, JSON.stringify(timers.map((t) => t.ms)));
+    timerDiag.close();
+  }
+
+  /* ---- 上传失败：静默丢弃，不抛错 ---- */
+  const failing = createDiag({
+    fetch: async () => { throw new Error('network down'); },
+    timer: false,
+    now: () => 1,
+  });
+  failing.record('mic:fail', { name: 'NotAllowedError', message: 'denied' });
+  failing.record('asr:error', { code: 'network' });
+  let threw = false;
+  let failedResult = true;
+  try { failedResult = await failing.flush(); } catch { threw = true; }
+  ok('上传失败不抛错（静默丢弃这一批），failed 计数 +1',
+    threw === false && failedResult === false && failing.snapshot().failed === 2
+    && failing.snapshot().pending === 0,
+    JSON.stringify({ threw, failedResult, failed: failing.snapshot().failed }));
+
+  /* ---- 会话 / 教练主流程不受诊断影响 ---- */
+  ok('诊断模块不碰 DOM（纯逻辑，可在 Node 里跑）',
+    !/\bdocument\b/.test(fs.readFileSync(new URL('../src/voice/diag.js', import.meta.url), 'utf8'))
+    && !/\bdocument\b/.test(fs.readFileSync(new URL('../src/voice/selftest.js', import.meta.url), 'utf8')));
+  ok('自检的四步固定为 mic → ws → send → result（界面与失败文案都按这四步）',
+    SELF_TEST_STEPS.join(',') === 'mic,ws,send,result');
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

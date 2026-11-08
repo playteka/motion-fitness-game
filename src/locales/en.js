@@ -1439,6 +1439,63 @@ export default {
       volc: 'Speech: Volcengine (local proxy)',
       webSpeech: 'Speech: browser built-in (fallback)',
     },
+    /**
+     * 🐞 Voice diagnostics panel (P3.5): independent of the coach switch — it can be opened
+     * from the bottom toolbar even while the coach is off. It shows the hard facts:
+     * route / WS / frames sent / partial·final / last error / microphone / Worklet.
+     */
+    diag: {
+      open: '🐞 Diagnostics',
+      openShort: '🐞',
+      close: 'Close diagnostics',
+      title: 'Voice diagnostics',
+      none: 'none',
+      routeLabel: 'Route',
+      wsLabel: 'WS',
+      framesLabel: 'Frames',
+      resultsLabel: 'Results',
+      errorLabel: 'Last error',
+      micLabel: 'Microphone',
+      workletLabel: 'Worklet',
+      framesValue: '{n} frames / {bytes} bytes',
+      resultsValue: 'partial {partial} / final {final}',
+      micValue: '{tracks} track(s) / AudioContext: {state}',
+      workletOk: 'ok (AudioWorklet)',
+      workletFail: 'fail (ScriptProcessor fallback)',
+      workletProcessor: 'ScriptProcessor fallback',
+      workletNone: 'not used',
+    },
+    /**
+     * The four "voice self-check" steps: microphone → proxy → record 2 s and send → server partial / final.
+     * On failure the failing step is spoken aloud (fail.* are those lines).
+     */
+    selfTest: {
+      run: 'Voice self-check',
+      step: {
+        mic: 'Microphone',
+        ws: 'Proxy connection',
+        send: 'Sending audio',
+        result: 'Recognition result',
+      },
+      status: {
+        pending: 'Waiting',
+        running: 'Running…',
+        ok: 'Passed',
+        fail: 'Failed',
+      },
+      line: '{n}. {name}: {status}',
+      volumeValue: 'Volume: {level}',
+      resultText: 'Server returned ({kind}): {text}',
+      resultError: 'Server returned error code {code}',
+      failedAt: 'Failed at: {step} ({code})',
+      fail: {
+        mic: 'The microphone did not open',
+        ws: 'Cannot reach the proxy',
+        send: 'The audio could not be sent',
+        timeout: 'No recognition result arrived',
+        upstream: 'Volcengine returned {code}',
+      },
+    },
     reply: {
       greeting: 'I am here. Which exercise would you like to train? Tell me.',
       question: 'Good question. Slow the movement down and stand steady first — I will stay with you.',

@@ -1446,6 +1446,62 @@ export default {
       volc: '语音识别：火山引擎（本机代理）',
       webSpeech: '语音识别：浏览器自带（回退）',
     },
+    /**
+     * 🐞 语音诊断面板（P3.5）：独立于教练开关，教练关着也能从底部工具栏打开。
+     * 显示路由 / WS / 已发帧 / partial·final / 最近错误 / 麦克风 / Worklet 这些客观事实。
+     */
+    diag: {
+      open: '🐞 诊断',
+      openShort: '🐞',
+      close: '关闭诊断',
+      title: '语音诊断',
+      none: '无',
+      routeLabel: '路由',
+      wsLabel: 'WS',
+      framesLabel: '已发帧',
+      resultsLabel: '识别',
+      errorLabel: '最近错误',
+      micLabel: '麦克风',
+      workletLabel: 'Worklet',
+      framesValue: '{n} 帧 / {bytes} 字节',
+      resultsValue: 'partial {partial} 条 / final {final} 条',
+      micValue: '{tracks} 轨 / AudioContext: {state}',
+      workletOk: 'ok（AudioWorklet）',
+      workletFail: 'fail（已用 ScriptProcessor 兜底）',
+      workletProcessor: 'ScriptProcessor 兜底',
+      workletNone: '未使用',
+    },
+    /**
+     * 「语音自检」四步：麦克风 → 代理连接 → 录 2 秒并发送 → 服务端 partial / final。
+     * 失败时把失败的那一步直接说出来（fail.* 就是那几句话）。
+     */
+    selfTest: {
+      run: '语音自检',
+      step: {
+        mic: '麦克风',
+        ws: '代理连接',
+        send: '发送音频',
+        result: '识别结果',
+      },
+      status: {
+        pending: '等待',
+        running: '进行中…',
+        ok: '通过',
+        fail: '失败',
+      },
+      line: '{n}. {name}：{status}',
+      volumeValue: '音量：{level}',
+      resultText: '服务端返回（{kind}）：{text}',
+      resultError: '服务端返回：错误码 {code}',
+      failedAt: '失败在：{step}（{code}）',
+      fail: {
+        mic: '麦克风没打开',
+        ws: '代理连不上',
+        send: '音频发不出去',
+        timeout: '没等到识别结果',
+        upstream: '火山返回 {code}',
+      },
+    },
     reply: {
       greeting: '我在。想练哪个动作，说给我听就行。',
       question: '问得好。先把动作做慢一点、站稳一点，我陪着你练。',

@@ -9,9 +9,9 @@
  *      「说话没字幕」时，最怕的就是界面对着一片安静什么也不说；
  *   3) **教练头像 + 状态文字**：头像走 `icons.js` 的线条图标（`ui:coach`），状态文字在
  *      「聆听 / 思考 / 说话 / 出错」之间切换；
- *   4) **音量表（VU）**：教练开启期间用第二路麦克风 + AnalyserNode 读音量，
- *      状态环按 level 变色（灰 → 青 → 薄荷亮绿）+ 轻微放大 / 发光；第二路打不开时
- *      静默降级成「按状态呼吸」，绝不报错。关闭教练时停音轨 + `AudioContext.close()`。
+ *   4) **音量表（VU）**：教练开启期间用**会话层那一条共享麦克风** + AnalyserNode 读音量，
+ *      状态环按 level 变色（灰 → 青 → 薄荷亮绿）+ 轻微放大 / 发光；拿不到共享流时
+ *      静默降级成「按状态呼吸」，绝不另开一路 getUserMedia。关闭教练时关 AudioContext。
  *
  * 这里**不碰会话状态机**：app.js 把 `session.snapshot()` 交给 `render(state)`，
  * 所有文案走 locales（`coach.*` / `voice.*`），所以中英切换只要重新 render 一次。
@@ -179,7 +179,7 @@ export function coachStatusKey(state, paused = false) {
  *   render(snap)   根据 session.snapshot() 更新状态环 / 字幕 / 状态文字
  *   destroy()      收起并清掉引用
  */
-export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
+export function createCoach({ doc = null, win = null, vuFactory = null, diag = null, selfTest = null } = {}) {
   const d = doc || (typeof document !== 'undefined' ? document : null);
   const w = win || (typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : {}));
   const $ = (id) => (d ? d.getElementById(id) : null);
@@ -188,6 +188,8 @@ export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
   let everUsed = false;
   let debug = false;
   let lastSnap = {};
+  /** 「诊断」小面板开着没有（独立于教练开关：教练关着也能看 / 自检） */
+  let diagOpen = false;
   // ---- 音量表（VU）状态 ----
   let vu = null;
   let vuStarting = false;
@@ -207,12 +209,24 @@ export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
     if (mounted || !d) return api;
     for (const id of ['coachDock', 'coachRing', 'coachRingSvg', 'coachRingFill', 'coachRingIcon',
       'coachPanel', 'coachAvatar', 'coachStatus', 'coachSubtitles', 'coachYouText', 'coachCoachText',
-      'coachNotice', 'coachRoute', 'coachHint']) {
+      'coachNotice', 'coachRoute', 'coachHint', 'coachDiagBtn', 'coachDiag', 'coachDiagClose',
+      'coachDiagRoute', 'coachDiagWs', 'coachDiagFrames', 'coachDiagResults', 'coachDiagError',
+      'coachDiagMic', 'coachDiagWorklet', 'btnVoiceSelfTestPanel', 'coachSelfTestMic',
+      'coachSelfTestWs', 'coachSelfTestSend', 'coachSelfTestResult', 'coachSelfTestVolume',
+      'coachSelfTestResultText']) {
       el[id] = $(id);
     }
     if (el.coachAvatar) el.coachAvatar.innerHTML = libIconSVG('ui:coach', 'ui-icon coach-avatar-icon');
     if (el.coachRingIcon) el.coachRingIcon.innerHTML = libIconSVG('ui:mic', 'ui-icon coach-mic-icon');
+    // 「诊断」的开关：教练面板里那颗小按钮 + 底部工具栏那颗，都走同一个入口
+    el.coachDiagBtn?.addEventListener?.('click', () => toggleDiag());
+    el.coachDiagClose?.addEventListener?.('click', () => closeDiag());
+    el.btnVoiceSelfTestPanel?.addEventListener?.('click', () => runSelfTest());
+    // 诊断面板随 diag / 自检的事件实时刷新（2 秒一批的落盘与 UI 是两条线，互不影响）
+    diag?.subscribe?.(() => renderDiag());
+    selfTest?.subscribe?.(() => renderDiag());
     mounted = true;
+    renderDiag();
     return api;
   }
 
@@ -282,8 +296,8 @@ export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
   }
 
   /**
-   * 开第二路音频做音量表。失败**绝不抛错**：静默降级成「按状态呼吸」，
-   * 只在 console 记一条（用户反馈里「有的环境不允许两路同时占用麦克风」）。
+   * 开共享麦克风做音量表（不再自己getUserMedia）。失败**绝不抛错**：静默降级成「按状态呼吸」，
+   * 只在 console 记一条（例如回退 Web Speech 时麦克风已经交给识别器，这里本来就没有流）。
    */
   async function startVu() {
     if (vu || vuStarting || vuFailed || !d) return api;
@@ -326,9 +340,121 @@ export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
     return api;
   }
 
+  /* ---------------- 诊断 / 语音自检（P3.5） ---------------- */
+
+  function setText(id, value) {
+    if (el[id]) el[id].textContent = String(value == null ? '' : value);
+  }
+
+  /** 底部工具栏那颗「语音自检」按钮：打开面板并跑四步（不依赖教练是否开启） */
+  function runSelfTest() {
+    diagOpen = true;
+    renderDiag();
+    return selfTest?.run?.();
+  }
+
+  function toggleDiag(force) {
+    diagOpen = force === undefined ? !diagOpen : !!force;
+    renderDiag();
+    return api;
+  }
+
+  function closeDiag() {
+    diagOpen = false;
+    renderDiag();
+    return api;
+  }
+
+  function workletText(snap) {
+    const state = snap.worklet && snap.worklet.state;
+    if (state === 'ok') return t('coach.diag.workletOk');
+    if (state === 'fail') return t('coach.diag.workletFail');
+    if (snap.capture === 'processor') return t('coach.diag.workletProcessor');
+    return t('coach.diag.workletNone');
+  }
+
+  function renderSelfTest(snap = {}) {
+    const names = {
+      mic: t('coach.selfTest.step.mic'),
+      ws: t('coach.selfTest.step.ws'),
+      send: t('coach.selfTest.step.send'),
+      result: t('coach.selfTest.step.result'),
+    };
+    const ids = ['mic', 'ws', 'send', 'result'];
+    const fields = {
+      mic: 'coachSelfTestMic',
+      ws: 'coachSelfTestWs',
+      send: 'coachSelfTestSend',
+      result: 'coachSelfTestResult',
+    };
+    const steps = snap.steps || {};
+    ids.forEach((id, i) => {
+      const status = steps[id] || 'pending';
+      setText(fields[id], t('coach.selfTest.line', {
+        n: i + 1,
+        name: names[id],
+        status: t(`coach.selfTest.status.${status}`),
+      }));
+    });
+    setText('coachSelfTestVolume', t('coach.selfTest.volumeValue', {
+      level: snap.volume > 0 ? Number(snap.volume).toFixed(2) : '—',
+    }));
+
+    let resultText = '';
+    const res = snap.result || {};
+    if (res.text) {
+      resultText = t('coach.selfTest.resultText', { kind: res.kind || '', text: res.text });
+    } else if (res.code) {
+      resultText = t('coach.selfTest.resultError', { code: res.code });
+    } else if (snap.running) {
+      resultText = t('coach.selfTest.status.running');
+    } else if (snap.error) {
+      resultText = t('coach.selfTest.failedAt', {
+        step: names[snap.error.step] || snap.error.step || '',
+        code: snap.error.code || '',
+      });
+    }
+    setText('coachSelfTestResultText', resultText);
+  }
+
+  /** 画诊断面板（数据全部来自 diag.snapshot() / selfTest.snapshot()；这里不碰任何音频） */
+  function renderDiag() {
+    if (!el.coachDiag) return api;
+    el.coachDiag.hidden = !diagOpen;
+    if (el.coachDiagBtn) el.coachDiagBtn.setAttribute('aria-expanded', String(diagOpen));
+    if (!diagOpen) return api;
+    const snap = diag ? diag.snapshot() : null;
+    if (snap) {
+      const route = snap.route || t('coach.diag.none');
+      setText('coachDiagRoute', route);
+      let wsText = snap.ws && snap.ws.state ? snap.ws.state : t('coach.diag.none');
+      if (snap.ws && snap.ws.state === 'closed' && snap.ws.code !== null) {
+        wsText = `closed(${snap.ws.code})`;
+      }
+      setText('coachDiagWs', wsText);
+      setText('coachDiagFrames', t('coach.diag.framesValue', {
+        n: (snap.frames && snap.frames.n) || 0,
+        bytes: (snap.frames && snap.frames.bytes) || 0,
+      }));
+      setText('coachDiagResults', t('coach.diag.resultsValue', {
+        partial: snap.partials || 0,
+        final: snap.finals || 0,
+      }));
+      setText('coachDiagError', snap.lastError || t('coach.diag.none'));
+      setText('coachDiagMic', t('coach.diag.micValue', {
+        tracks: (snap.mic && snap.mic.tracks) || 0,
+        state: (snap.audio && snap.audio.state) || '—',
+      }));
+      setText('coachDiagWorklet', workletText(snap));
+    }
+    if (selfTest) renderSelfTest(selfTest.snapshot());
+    return api;
+  }
+
   function render(snap = {}) {
     if (!mounted) mount();
     lastSnap = snap;
+    renderDiag();   // 诊断面板独立于教练开关：教练关着 / 面板收起时也要保持最新
     const state = snap.state || 'off';
     const enabled = !!snap.enabled;
     if (enabled && state !== 'off') everUsed = true;
@@ -346,7 +472,7 @@ export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
     }
     if (el.coachRing) el.coachRing.dataset.state = state;
 
-    // 关闭 / 出错时把第二路麦克风释放掉（绝不留后台录音）
+    // 关闭 / 出错时把音量表释放掉（共享音轨由 createMic 统一 stop，绝不留后台录音）
     if (!enabled || state === 'off' || state === 'error') stopVu();
 
     // 字幕面板：只在开启时出现；关闭时连字幕一起收起（状态环单独灰着）
@@ -411,6 +537,8 @@ export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
 
   function destroy() {
     stopVu();
+    diagOpen = false;
+    if (el.coachDiag) el.coachDiag.hidden = true;
     if (el.coachPanel) el.coachPanel.hidden = true;
     if (el.coachDock) el.coachDock.hidden = true;
     everUsed = false;
@@ -424,9 +552,14 @@ export function createCoach({ doc = null, win = null, vuFactory = null } = {}) {
     setDebug,
     startVu,
     stopVu,
+    toggleDiag,
+    closeDiag,
+    renderDiag,
+    runSelfTest,
     get mounted() { return mounted; },
     get vuActive() { return vuActive; },
     get vuLevel() { return vuLevel; },
+    get diagOpen() { return diagOpen; },
   };
   return api;
 }

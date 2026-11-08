@@ -27,6 +27,9 @@ import {
 import { createVoiceSession, voiceErrorKey } from './voice/session.js';
 import { createMic, createAutoAsr, createLlm, createTts, createVuMeter } from './voice/providers.js';
 import { createCoach, coachLayout } from './voice/coach.js';
+// P3.5 语音排障：诊断收集（批量落盘 logs/coach-diag.jsonl）+ 独立的「语音自检」
+import { createDiag } from './voice/diag.js';
+import { createSelfTest } from './voice/selftest.js';
 // P3.2 命令快车道：命令表是唯一来源（说法 / 帮助面板 / 测试都从它来）
 import { COMMANDS, commandHelpRows } from './voice/commands.js';
 
@@ -243,13 +246,32 @@ const state = {
  * 这里只做接线：创建会话、订阅 snapshot、同步设置开关与状态条。
  * ------------------------------------------------------------------ */
 
-const coach = createCoach({ vuFactory: () => createVuMeter() });
+/**
+ * P3.5 语音诊断：所有关键事件（麦克风 / Worklet / WS / 帧数 / partial / final / 错误）
+ * 汇总到 `coachDiag`，每 2 秒或满 20 条批量写到预览服务器的 `logs/coach-diag.jsonl`。
+ * 诊断失败绝不抛错，也不含音频（见 diag.js 的截断 / 脱敏规则）。
+ */
+const coachDiag = createDiag({ timer: true });
+
 /**
  * P3.1：语音识别默认走「本机火山代理 → 回退浏览器 Web Speech」这条自动选路
- * （`createAutoAsr`）。麦克风只在这里创建一次，采集层和会话层共用同一条轨道。
+ * （`createAutoAsr`）。麦克风**只在这里创建一次**：火山采集、音量表（VU）共用同一条
+ * `MediaStream`；只有回退 Web Speech 时才会先释放它（识别器要自己取麦）。
  */
-const coachMic = createMic();
-const coachAsr = createAutoAsr({ mic: coachMic });
+const coachMic = createMic({ diag: coachDiag });
+const coachAsr = createAutoAsr({ mic: coachMic, diag: coachDiag });
+const coachTts = createTts({ rate: 1, diag: coachDiag });
+/** 独立的「语音自检」：自己的麦 / 自己的 WS，不经过会话状态机（教练关着也能用） */
+const coachSelfTest = createSelfTest({
+  diag: coachDiag,
+  speak: (text) => { try { coachTts.speak(text); } catch { /* ignore */ } },
+});
+const coach = createCoach({
+  // 音量表用的是会话层那一条流（requireStream：拿不到就静默降级，**绝不另开一路麦克风**）
+  vuFactory: () => createVuMeter({ stream: coachMic.stream, requireStream: true, diag: coachDiag }),
+  diag: coachDiag,
+  selfTest: coachSelfTest,
+});
 /** 「别说话」命令的开关：只关教练朗读，字幕照常（session.setMuted） */
 let coachMuted = false;
 /**
@@ -274,7 +296,7 @@ const voice = createVoiceSession({
   mic: coachMic,
   asr: coachAsr,
   llm: createLlm(),
-  tts: createTts({ rate: 1 }),
+  tts: coachTts,
   commandCtx: voiceCommandCtx,
   thinkDelay: 360,       // 让「正在想…」真的看得见，不然 thinking 一闪而过
 });
@@ -288,6 +310,8 @@ voice.subscribe((snap) => {
   syncCoachToggle(!!snap.enabled);
   // 关闭 / 出错：把音量表那一路音频就地释放（render 里也兜了一次，这里保证状态变化即释放）
   if (!snap.enabled || snap.state === 'off' || snap.state === 'error') coach.stopVu();
+  // 回退 Web Speech 时共享麦克风已经交给浏览器的识别器了：音量表没有流可用，收掉
+  if (snap.route === 'webspeech') coach.stopVu();
 });
 
 /** 一次动作完成后，进度条保持「空的」多久（让清零看得见） */
@@ -373,8 +397,8 @@ async function setCoachEnabled(on, { silent = false } = {}) {
       setCueLine(t(voiceErrorKey(snap.error?.code)), 'warn');  // 拒绝 / 不支持：明确提示，不静默
       return snap;
     }
-    // 第二路麦克风做音量表：拿到权限之后再开（不会多弹一次授权框）；
-    // 打不开就静默降级（coach.js 里 catch 掉，只留状态呼吸），不影响聆听
+    // 音量表复用会话层那一条共享麦克风（不再开第二路 / 不会多弹一次授权框）；
+    // 拿不到就静默降级（coach.js 里 catch 掉，只留状态呼吸），不影响聆听
     coach.startVu();
     if (!coachIntroSaid) {
       coachIntroSaid = true;
@@ -6461,6 +6485,9 @@ function bindUI() {
   coach.mount();
   coach.setDebug(!!state.settings.debug);
   coach.render(voice.snapshot());
+  // P3.5 语音排障：底部工具栏这两颗按钮**不依赖教练开关**（教练关着也能看诊断 / 跑自检）
+  $('btnVoiceDiag')?.addEventListener('click', () => coach.toggleDiag());
+  $('btnVoiceSelfTest')?.addEventListener('click', () => coach.runSelfTest());
   // 语音命令一览默认收起（HTML 里有 hidden，DOM 桩里也要显式关一次：桩不会自己读属性）
   closeVoiceHelp();
 
@@ -7137,6 +7164,11 @@ window.__mfg = {
   //   setCoachEnabled / toggleCoach : 设置开关与 Ctrl+I 共用的唯一入口
   //   coachLayout   : 字幕面板 / 状态环 / HUD / 判定条 / 右上角圆环的纯几何（测试断言不越界）
   voice, coach, setCoachEnabled, toggleCoach, syncCoachToggle, coachLayout, voiceErrorKey,
+  // P3.5 语音排障：诊断收集器（snapshot / record / flush）+ 独立自检控制器
+  //   coachDiag.snapshot() → 路由 / WS / 帧数 / partial·final / 最近错误 / 麦克风 / Worklet
+  //   coachSelfTest.run()  → 麦克风 → 代理 → 录 2 秒发送 → 服务端结果（四步，独立于会话）
+  coachDiag, coachSelfTest, toggleCoachDiag: () => coach.toggleDiag(),
+  runVoiceSelfTest: () => coach.runSelfTest(),
   // P3.2 命令快车道：命令表 / 注入的 ctx / 帮助面板 / 只读快照 / 静音
   //   COMMANDS      : 唯一来源（intent + 中英说法 + run）
   //   voiceCommandCtx: 注入给 session 的「现有函数」表（测试可以直接替换某一项做拦截）

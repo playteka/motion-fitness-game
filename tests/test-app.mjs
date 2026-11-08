@@ -473,6 +473,10 @@ console.log('\n[1c] AI 语音教练（P3.0 基座：Ctrl+I + 设置开关 + 麦�
   ok('mock ASR 按约定初始化：continuous / interimResults / 语言跟随界面',
     !!rec && rec.continuous === true && rec.interimResults === true && rec.lang === 'zh-CN',
     JSON.stringify(rec ? { lang: rec.lang, continuous: rec.continuous, interim: rec.interimResults } : null));
+  // P3.5：多路麦克风争用是「麦克风亮着但没字幕」的头号嫌疑 —— 回退 Web Speech 前必须先放掉共享流
+  ok('回退 Web Speech 前先释放共享麦克风（让识别器自己取麦，避免第二路 getUserMedia 抢麦）',
+    coachStubs.micTracks.at(-1)?.stopped === true,
+    JSON.stringify({ stopped: coachStubs.micTracks.at(-1)?.stopped }));
 
   // ②b 音量表打不开（测试环境没有 AudioContext）→ 静默降级成按状态呼吸，不报错、不影响聆听
   ok('音量表第二路音频打不开时静默降级：仍 listening、状态环标 data-vu="off"、不抛错',
@@ -690,10 +694,21 @@ console.log('\n[1c2] 音量表：状态环按音量从灰 → 青 → 薄荷亮�
     return cbs.length;
   };
 
-  const vu = { samples: 190, closed: 0, tracks: [] };
+  const vu = { samples: 190, closed: 0, tracks: [], sourceStream: null };
   const savedCtx = windowStub.AudioContext;
+  const savedWs = windowStub.WebSocket;
+  const savedOverride = windowStub.__MFG_ASR_WS__;
+  /** 假的火山 WebSocket：只为了让选路停在 volc（麦克风共享才会发生；这里不需要 ready） */
+  class FakeVuWebSocket {
+    constructor(url) { this.url = url; this.readyState = 0; this.sent = []; }
+    send() {}
+    close() { this.readyState = 3; }
+  }
+  windowStub.WebSocket = FakeVuWebSocket;
+  windowStub.__MFG_ASR_WS__ = 'ws://127.0.0.1:5998/asr';
   function FakeAudioContext() { this.state = 'running'; }
   FakeAudioContext.prototype.createMediaStreamSource = function (stream) {
+    vu.sourceStream = stream;
     vu.tracks.push(...stream.getAudioTracks());
     return { connect() {}, disconnect() {} };
   };
@@ -715,11 +730,14 @@ console.log('\n[1c2] 音量表：状态环按音量从灰 → 青 → 薄荷亮�
   windowStub.AudioContext = FakeAudioContext;
 
   // ① 大声：state ring 变薄荷亮绿 + 轻微放大
+  const micCallsBefore = coachStubs.micCalls.length;
+  const vuTracksBefore = coachStubs.micTracks.length;
   await api.setCoachEnabled(true);
   await flush();
   runFrame();
   const fill = elements.get('coachRingFill');
   const ring = elements.get('coachRing');
+  const vuTrack = coachStubs.micTracks.at(-1);
   ok('大声波形 → 状态环变成薄荷亮绿（#34e5c4），并轻微放大 / 发光',
     fill.style.stroke === '#34e5c4' && String(ring.style.transform).includes('scale(')
     && String(ring.style.boxShadow).includes('#34e5c4'),
@@ -727,13 +745,21 @@ console.log('\n[1c2] 音量表：状态环按音量从灰 → 青 → 薄荷亮�
       glow: ring.style.boxShadow }));
   ok('音量表工作时状态环标记 data-vu="active"（样式 / 测试都靠它判断有没有第二路音频）',
     elements.get('coachDock').dataset.vu === 'active');
+  // ★ 用户反馈的核心：麦克风只许开一路；VU 与 ASR 采集共用会话层那一条流
+  ok('**开启教练只调用一次 getUserMedia**（主麦克风 + 音量表共用同一条流，不再开第二路）',
+    coachStubs.micCalls.length === micCallsBefore + 1
+    && coachStubs.micTracks.length === vuTracksBefore + 1
+    && !!vu.sourceStream
+    && vu.sourceStream.getAudioTracks()[0] === vuTrack,
+    JSON.stringify({ micCalls: coachStubs.micCalls.length - micCallsBefore,
+      tracks: coachStubs.micTracks.length - vuTracksBefore,
+      shared: !!vu.sourceStream && vu.sourceStream.getAudioTracks()[0] === vuTrack }));
 
-  // 关闭教练：第二路音轨停掉、AudioContext.close()（不留后台麦克风）
-  const vuTrack = vu.tracks.at(-1);
+  // 关闭教练：共享音轨由 createMic 停掉、AudioContext.close()（不留后台麦克风）
   await api.setCoachEnabled(false);
   await flush();
   rafQueue.length = 0;
-  ok('关闭教练 → 音量表音轨 stop + AudioContext.close()（不留后台麦克风）',
+  ok('关闭教练 → 共享麦克风轨道 stop + 音量表 AudioContext.close()（不留后台麦克风）',
     !!vuTrack && vuTrack.stopped === true && vu.closed >= 1,
     JSON.stringify({ stopped: vuTrack?.stopped, closed: vu.closed }));
   ok('关闭后状态环回到灰掉（data-state="off"、内联音量色清空）',
@@ -772,6 +798,9 @@ console.log('\n[1c2] 音量表：状态环按音量从灰 → 青 → 薄荷亮�
   await flush();
   windowStub.matchMedia = savedMatchMedia;
   windowStub.AudioContext = savedCtx;
+  windowStub.WebSocket = savedWs;
+  if (savedOverride === undefined) delete windowStub.__MFG_ASR_WS__;
+  else windowStub.__MFG_ASR_WS__ = savedOverride;
   rafQueue.length = 0;
   api.showHome();
 }
@@ -885,6 +914,7 @@ console.log('\n[1c3] P3.1 火山模式：选路 / 16k 分片 / 字幕 / 关闭�
   windowStub.AudioContext = FakeVolcAudioContext;
   windowStub.__MFG_ASR_WS__ = 'ws://127.0.0.1:5999/asr';   // 测试专用端口，证明覆盖生效
   const micBefore = coachStubs.micTracks.length;
+  const micCallsBefore = coachStubs.micCalls.length;
 
   await api.setCoachEnabled(true);
   await flush();
@@ -930,7 +960,10 @@ console.log('\n[1c3] P3.1 火山模式：选路 / 16k 分片 / 字幕 / 关闭�
   ok('关闭教练：断 WS、关 AudioContext、断开处理节点（不留后台麦克风 / 连接）',
     sock.closed === true && capCtx.closed === true && capCtx.node.disconnected === true,
     JSON.stringify({ ws: sock.closed, ctx: capCtx.closed, node: capCtx.node.disconnected }));
-  ok('关闭教练：本次打开期间拿到的麦克风轨道全部 stop（主路 + 音量表第二路）',
+  ok('整个开启期间只取了一次麦克风（主路 / 音量表共享；不存在第二路 getUserMedia）',
+    coachStubs.micCalls.length === micCallsBefore + 1 && tracks.length === 1,
+    JSON.stringify({ micCalls: coachStubs.micCalls.length - micCallsBefore, tracks: tracks.length }));
+  ok('关闭教练：本次打开期间拿到的麦克风轨道全部 stop',
     tracks.length >= 1 && tracks.every((track) => track.stopped === true),
     JSON.stringify(tracks.map((x) => x.stopped)));
   ok('关闭后路由清空、字幕面板与路由那行一起收起',
@@ -944,6 +977,318 @@ console.log('\n[1c3] P3.1 火山模式：选路 / 16k 分片 / 字幕 / 关闭�
   windowStub.AudioContext = savedAudioContext;
   if (savedOverride === undefined) delete windowStub.__MFG_ASR_WS__;
   else windowStub.__MFG_ASR_WS__ = savedOverride;
+  rafQueue.length = 0;
+  api.showHome();
+}
+
+/* ------------------------------------------------------------------ *
+ * [1c4] P3.5：🐞 诊断面板（不依赖教练开关）+ 语音自检四步 + Worklet 失败兜底
+ *
+ * 用户反馈「说话没有字幕，但麦克风亮着」：健康检查是好的，所以要能自证浏览器侧。
+ * 这里全部用桩：不联网、不需要真麦克风，验证面板字段、四步文案、单路麦克风与兜底路径。
+ * ------------------------------------------------------------------ */
+
+console.log('\n[1c4] P3.5 诊断面板 + 语音自检（mic → ws → send → result）+ Worklet 兜底');
+{
+  const api = windowStub.__mfg;
+  const { t: tD } = await import('../src/i18n.js');
+  const flush = async () => {
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const waitUntil = async (fn, ms = 3000) => {
+    const started = Date.now();
+    while (Date.now() - started < ms) {
+      if (fn()) return true;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return false;
+  };
+
+  // ① 教练先关掉 —— 诊断面板 / 自检必须仍然可用
+  await api.setCoachEnabled(false);
+  await flush();
+  api.coach.toggleDiag(false);
+  elements.get('btnVoiceDiag').dispatch('click');
+  await flush();
+  ok('教练关着也能打开诊断面板（诊断独立于 AI 教练开关）',
+    elements.get('coachDiag').hidden === false && api.coach.diagOpen === true,
+    JSON.stringify({ hidden: elements.get('coachDiag').hidden, open: api.coach.diagOpen }));
+
+  api.coachDiag.record('route:volc', {});
+  api.coachDiag.record('ws:connecting', {});
+  api.coachDiag.record('ws:open', {});
+  api.coachDiag.record('ws:frames', { n: 5, bytes: 16000 });
+  api.coachDiag.record('asr:partial', { text: '你好' });
+  api.coachDiag.record('asr:final', { text: '你好世界' });
+  api.coachDiag.record('mic:ok', { tracks: 1, labels: ['audio-1'] });
+  api.coachDiag.record('ctx:sampleRate', { value: 48000, state: 'running' });
+  api.coachDiag.record('worklet:fail', { name: 'NotAllowedError' });
+  api.coachDiag.record('capture:mode', { mode: 'processor' });
+  api.coachDiag.record('asr:error', { code: 'network' });   // 最近错误最后写，面板显示它
+  await flush();
+  ok('诊断面板显示路由 / WS / 帧数 / partial·final 计数',
+    elements.get('coachDiagRoute').textContent === 'volc'
+    && elements.get('coachDiagWs').textContent === 'open'
+    && elements.get('coachDiagFrames').textContent.includes('5')
+    && elements.get('coachDiagFrames').textContent.includes('16000')
+    && elements.get('coachDiagResults').textContent.includes('partial')
+    && elements.get('coachDiagResults').textContent.includes('final'),
+    JSON.stringify({ route: elements.get('coachDiagRoute').textContent,
+      ws: elements.get('coachDiagWs').textContent,
+      frames: elements.get('coachDiagFrames').textContent,
+      results: elements.get('coachDiagResults').textContent }));
+  ok('诊断面板显示最近错误 / 麦克风轨数 + AudioContext 状态 / Worklet 兜底',
+    elements.get('coachDiagError').textContent.includes('network')
+    && elements.get('coachDiagMic').textContent.includes('1')
+    && elements.get('coachDiagMic').textContent.includes('running')
+    && elements.get('coachDiagWorklet').textContent === tD('coach.diag.workletFail'),
+    JSON.stringify({ error: elements.get('coachDiagError').textContent,
+      mic: elements.get('coachDiagMic').textContent,
+      worklet: elements.get('coachDiagWorklet').textContent }));
+  elements.get('coachDiagClose').dispatch('click');
+  await flush();
+  ok('诊断面板能关掉（不挡 HUD / 圆环 / 判定条）',
+    elements.get('coachDiag').hidden === true && api.coach.diagOpen === false);
+
+  /* ---- ② 语音自检四步走通：mic → ws → send → result ---- */
+  const savedWs = windowStub.WebSocket;
+  const savedCtx = windowStub.AudioContext;
+  const savedOverride = windowStub.__MFG_ASR_WS__;
+  const savedAwNode = windowStub.AudioWorkletNode;
+  const savedRecordMs = windowStub.__MFG_SELFTEST_RECORD_MS__;
+  const savedReadyMs = windowStub.__MFG_SELFTEST_READY_MS__;
+  const savedResultMs = windowStub.__MFG_SELFTEST_RESULT_MS__;
+  windowStub.__MFG_SELFTEST_RECORD_MS__ = 80;
+  windowStub.__MFG_SELFTEST_READY_MS__ = 800;
+  windowStub.__MFG_SELFTEST_RESULT_MS__ = 800;
+  windowStub.__MFG_ASR_WS__ = 'ws://127.0.0.1:5996/asr';
+
+  const st = { sockets: [], contexts: [], micCallsBefore: coachStubs.micCalls.length };
+  class SelfTestWS {
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.sent = [];
+      this.closed = false;
+      st.sockets.push(this);
+      setTimeout(() => {
+        if (this.closed) return;
+        this.readyState = 1;
+        this.onopen?.({});
+      }, 0);
+    }
+    send(data) {
+      this.sent.push(data);
+      if (typeof data !== 'string') return;
+      let msg = null;
+      try { msg = JSON.parse(data); } catch { return; }
+      if (msg.type === 'start') {
+        setTimeout(() => this.onmessage?.({ data: JSON.stringify({ type: 'ready' }) }), 0);
+      } else if (msg.type === 'stop') {
+        setTimeout(() => this.onmessage?.({ data: JSON.stringify({ type: 'final', text: '你好世界' }) }), 0);
+      }
+    }
+    close() {
+      if (this.closed) return;
+      this.closed = true;
+      this.readyState = 3;
+      this.onclose?.({ code: 1000, reason: '' });
+    }
+  }
+  class SelfTestCtx {
+    constructor() {
+      this.sampleRate = 48000;
+      this.state = 'running';
+      this.destination = {};
+      this.closed = false;
+      this.node = null;
+      st.contexts.push(this);
+    }
+    createMediaStreamSource(stream) { this.stream = stream; return { connect() {}, disconnect() {} }; }
+    createAnalyser() {
+      return {
+        fftSize: 512,
+        smoothingTimeConstant: 0,
+        getByteTimeDomainData(buf) { for (let i = 0; i < buf.length; i += 1) buf[i] = 190; },
+      };
+    }
+    createScriptProcessor() {
+      this.node = {
+        onaudioprocess: null,
+        disconnected: false,
+        connect() {},
+        disconnect() { this.disconnected = true; },
+      };
+      this.pump = setInterval(() => {
+        if (this.node?.disconnected) return;
+        this.node.onaudioprocess?.({
+          inputBuffer: { getChannelData: () => new Float32Array(1024).fill(0.2) },
+        });
+      }, 10);
+      return this.node;
+    }
+    createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
+    resume() { return Promise.resolve(); }
+    close() {
+      if (this.pump) clearInterval(this.pump);
+      this.closed = true;
+      this.state = 'closed';
+      return Promise.resolve();
+    }
+  }
+  windowStub.WebSocket = SelfTestWS;
+  windowStub.AudioContext = SelfTestCtx;
+
+  elements.get('btnVoiceSelfTest').dispatch('click');
+  const finished = await waitUntil(() => api.coachSelfTest.snapshot().finishedAt > 0);
+  await flush();
+  const selfSnap = api.coachSelfTest.snapshot();
+  ok('「语音自检」四步全部通过：麦克风 → 代理连接 → 发送音频 → 识别结果',
+    finished && selfSnap.running === false
+    && selfSnap.steps.mic === 'ok' && selfSnap.steps.ws === 'ok'
+    && selfSnap.steps.send === 'ok' && selfSnap.steps.result === 'ok',
+    JSON.stringify({ finished, steps: selfSnap.steps, error: selfSnap.error }));
+  ok('自检面板每步都有中英词条的「通过」文案（四行都在）',
+    [['coachSelfTestMic', 'mic'], ['coachSelfTestWs', 'ws'],
+      ['coachSelfTestSend', 'send'], ['coachSelfTestResult', 'result']]
+      .every(([id, step]) => elements.get(id).textContent.includes(tD(`coach.selfTest.step.${step}`))
+        && elements.get(id).textContent.includes(tD('coach.selfTest.status.ok'))),
+    JSON.stringify(['coachSelfTestMic', 'coachSelfTestWs', 'coachSelfTestSend', 'coachSelfTestResult']
+      .map((id) => elements.get(id).textContent)));
+  ok('自检显示音量读数（VU 共用自检自己的那一条流）',
+    elements.get('coachSelfTestVolume').textContent.startsWith(
+      tD('coach.selfTest.volumeValue', { level: '' }).replace('{level}', '').trim())
+    && !elements.get('coachSelfTestVolume').textContent.includes('—'),
+    elements.get('coachSelfTestVolume').textContent);
+  ok('自检最后一行显示服务端返回的 final 文本',
+    elements.get('coachSelfTestResultText').textContent
+      === tD('coach.selfTest.resultText', { kind: 'final', text: '你好世界' }),
+    elements.get('coachSelfTestResultText').textContent);
+  const stSock = st.sockets.at(-1);
+  const stBinary = stSock.sent.filter((x) => typeof x !== 'string');
+  ok('自检真的把 PCM 分片发出去了（有二进制帧 + 最后发 {"type":"stop"}）',
+    stBinary.length > 0 && stBinary.every((x) => x.byteLength > 0)
+    && JSON.parse(stSock.sent.at(-1)).type === 'stop',
+    JSON.stringify({ frames: stBinary.length, last: stSock.sent.at(-1) }));
+  ok('**自检独立于教练会话，而且只取一次麦克风**（自检自己 open 一次，不共用人家的路）',
+    coachStubs.micCalls.length === st.micCallsBefore + 1,
+    String(coachStubs.micCalls.length - st.micCallsBefore));
+  ok('自检结束释放干净：音轨 stop、AudioContext.close、WebSocket.close',
+    coachStubs.micTracks.at(-1)?.stopped === true
+    && st.contexts.every((c) => c.closed === true)
+    && stSock.closed === true,
+    JSON.stringify({ track: coachStubs.micTracks.at(-1)?.stopped,
+      ctxClosed: st.contexts.map((c) => c.closed), ws: stSock.closed }));
+
+  /* ---- ③ 自检失败：代理连不上 → 面板写原因 + 用中文把它说出来 ---- */
+  windowStub.WebSocket = class FailingSelfTestWS {
+    constructor() {
+      this.readyState = 0;
+      this.sent = [];
+      setTimeout(() => this.onerror?.({ name: 'Error', message: 'boom' }), 0);
+    }
+    send(data) { this.sent.push(data); }
+    close() { this.readyState = 3; }
+  };
+  elements.get('btnVoiceSelfTest').dispatch('click');
+  await waitUntil(() => api.coachSelfTest.snapshot().finishedAt > 0);
+  await flush();
+  const failSnap = api.coachSelfTest.snapshot();
+  ok('自检失败时把失败的那一步说清楚（ws 步骤 fail + 错误码）',
+    failSnap.steps.mic === 'ok' && failSnap.steps.ws === 'fail'
+    && failSnap.error?.step === 'ws' && !!failSnap.error?.code,
+    JSON.stringify({ steps: failSnap.steps, error: failSnap.error }));
+  ok('面板结果行写明「失败在：代理连接（…）」',
+    elements.get('coachSelfTestResultText').textContent
+      === tD('coach.selfTest.failedAt', {
+        step: tD('coach.selfTest.step.ws'), code: failSnap.error?.code || '',
+      }),
+    elements.get('coachSelfTestResultText').textContent);
+  ok('失败原因会用语音说出来（「代理连不上」，走的是教练的 TTS）',
+    coachStubs.utterances.at(-1)?.text === tD('coach.selfTest.fail.ws'),
+    coachStubs.utterances.at(-1)?.text);
+
+  /* ---- ④ AudioWorklet 被拦 → 必须退回 ScriptProcessor，并把路线记进诊断 ---- */
+  const wf = { sockets: [], contexts: [] };
+  class WorkletFailCtx {
+    constructor() {
+      this.sampleRate = 48000;
+      this.state = 'running';
+      this.destination = {};
+      this.closed = false;
+      this.node = null;
+      this.audioWorklet = {
+        addModule: async () => {
+          const err = new Error('blocked by CSP');
+          err.name = 'NotAllowedError';
+          throw err;
+        },
+      };
+      wf.contexts.push(this);
+    }
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    createAnalyser() {
+      return {
+        fftSize: 64,
+        smoothingTimeConstant: 0,
+        getByteTimeDomainData(buf) { for (let i = 0; i < buf.length; i += 1) buf[i] = 128; },
+      };
+    }
+    createScriptProcessor() {
+      this.node = { connected: 0, disconnected: false, onaudioprocess: null,
+        connect() { this.connected += 1; }, disconnect() { this.disconnected = true; } };
+      return this.node;
+    }
+    createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
+    resume() { return Promise.resolve(); }
+    close() { this.closed = true; this.state = 'closed'; return Promise.resolve(); }
+  }
+  class WfWebSocket {
+    constructor(url) { this.url = url; this.readyState = 0; this.sent = []; this.closed = false; wf.sockets.push(this); }
+    send(d) { this.sent.push(d); }
+    close() { this.closed = true; this.readyState = 3; this.onclose?.({}); }
+    open() { this.readyState = 1; this.onopen?.({}); }
+    message(obj) { this.onmessage?.({ data: JSON.stringify(obj) }); }
+  }
+  windowStub.WebSocket = WfWebSocket;
+  windowStub.AudioContext = WorkletFailCtx;
+  windowStub.AudioWorkletNode = class {};
+  windowStub.__MFG_ASR_WS__ = 'ws://127.0.0.1:5995/asr';
+  await api.setCoachEnabled(true);
+  await flush();
+  const wfSock = wf.sockets.at(-1);
+  wfSock.open();
+  wfSock.message({ type: 'ready' });
+  await flush();
+  const capCtx = wf.contexts.find((c) => c.node);
+  const wfDiag = api.coachDiag.snapshot();
+  ok('AudioWorklet.addModule 失败 → 自动退回 ScriptProcessor（采集没有静默中断）',
+    !!capCtx && capCtx.node.connected >= 1
+    && wfDiag.worklet.state === 'fail' && wfDiag.capture === 'processor',
+    JSON.stringify({ ctx: !!capCtx, worklet: wfDiag.worklet, capture: wfDiag.capture }));
+  ok('走哪条采集路径记进了诊断面板（Worklet fail / ScriptProcessor 兜底）',
+    elements.get('coachDiag').hidden === false
+    && elements.get('coachDiagWorklet').textContent === tD('coach.diag.workletFail'),
+    JSON.stringify({ hidden: elements.get('coachDiag').hidden,
+      worklet: elements.get('coachDiagWorklet').textContent }));
+  await api.setCoachEnabled(false);
+  await flush();
+
+  // 恢复现场
+  windowStub.WebSocket = savedWs;
+  windowStub.AudioContext = savedCtx;
+  if (savedOverride === undefined) delete windowStub.__MFG_ASR_WS__;
+  else windowStub.__MFG_ASR_WS__ = savedOverride;
+  if (savedAwNode === undefined) delete windowStub.AudioWorkletNode;
+  else windowStub.AudioWorkletNode = savedAwNode;
+  if (savedRecordMs === undefined) delete windowStub.__MFG_SELFTEST_RECORD_MS__;
+  else windowStub.__MFG_SELFTEST_RECORD_MS__ = savedRecordMs;
+  if (savedReadyMs === undefined) delete windowStub.__MFG_SELFTEST_READY_MS__;
+  else windowStub.__MFG_SELFTEST_READY_MS__ = savedReadyMs;
+  if (savedResultMs === undefined) delete windowStub.__MFG_SELFTEST_RESULT_MS__;
+  else windowStub.__MFG_SELFTEST_RESULT_MS__ = savedResultMs;
+  api.coach.toggleDiag(false);
   rafQueue.length = 0;
   api.showHome();
 }
