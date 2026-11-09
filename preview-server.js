@@ -415,6 +415,20 @@ export const previewHandler = (req, res) => {
         recentFiles: recent,
         recentCommits: recentCommits(),
         task: taskProgress(),
+        /**
+         * 服务健康（用户要求：把 /health 合并进看板顶部 ✓）。
+         * 只报「配没配 / 跑多久」，**不含任何凭证值** ✗。
+         */
+        health: {
+          ok: true,
+          port: PORT,
+          https: HTTPS_ON,
+          uptimeSec: Math.round(process.uptime()),
+          asrConfigured: !!(asr && asr.config && asr.config.configured),
+          asrMissing: (asr && asr.config && asr.config.missing) || [],
+          ttsConfigured: !!(ttsService && ttsService.configured),
+          node: process.version,
+        },
         // 「有没有在干活」：有未提交改动，或最近 150 秒内有文件被写过 ✓
         busy: files.length > 0 || (recent[0] ? recent[0].agoMs < 150000 : false),
       };
@@ -422,7 +436,7 @@ export const previewHandler = (req, res) => {
       payload = {
         updated: Date.now(), branch: '?', ahead: 0, lastCommit: '(unavailable)',
         files: [], fileDetails: [], localScripts: [], tree: { files: 0, add: 0, del: 0 },
-        recentFiles: [], recentCommits: [], task: null, busy: false,
+        recentFiles: [], recentCommits: [], task: null, health: { ok: false }, busy: false,
       };
     }
     res.writeHead(200, {
@@ -434,20 +448,15 @@ export const previewHandler = (req, res) => {
   }
 
   /**
-   * 短网址：`/progress` 和 `/p` 直接跳到进度看板（用户反馈原地址太长、不好输入 ✗）。
+   * 短网址：`/progress`、`/p`、`/dashboard` 直接跳进度看板（原地址太长不好输入 ✗）。
    * 用 302 而不是直接返回文件，是为了以后看板改名/搬家时这里不用跟着改 ✓。
+   * 注：`/health` 已按要求并入看板顶部（`/progress.json` 里的 health 字段），不再单独提供 ✓。
    */
   if (req.method === 'GET') {
     const short = (req.url || '').split('?')[0];
     if (short === '/progress' || short === '/p' || short === '/dashboard') {
       res.writeHead(302, { Location: '/progress-dashboard.html', 'Cache-Control': 'no-store' });
       res.end();
-      return;
-    }
-    // 顺手：`/health` 一眼看服务与两个代理是否就绪（排障用）
-    if (short === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify({ ok: true, port: PORT }));
       return;
     }
   }
