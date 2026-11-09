@@ -38,6 +38,17 @@ export default {
     skeleton: '🦴 火柴人',
     angles: '📐 角度',
     debug: '🐞 识别指标',
+    // P3.6 对话弹幕 / 火山 TTS（设置里的三个下拉框）
+    dialogue: '对话显示',
+    dialogueDanmaku: '弹幕',
+    dialogueSubtitle: '字幕',
+    dialogueOff: '关闭',
+    ttsSource: '音色来源',
+    ttsAuto: '自动（火山优先）',
+    ttsVolc: '火山 TTS',
+    ttsSystem: '系统 TTS',
+    ttsRate: '语速',
+    ttsRateNormal: '1×（正常）',
     fullscreen: '全屏显示视频框',
     // 画面右下角「正在记录调试数据」的角标：数字 + 单位，鼠标移上去看这句话
     recUnit: '帧已记录',
@@ -965,6 +976,10 @@ export default {
     coachMic: '首次开始训练时会一并请求麦克风权限（只弹一次和摄像头一起的授权框，拿到后立即释放，不会一直占用）；也可以随时按 Ctrl+I 开启 / 关闭 AI 教练。',
     coachMute: '开启 AI 教练时，系统的语音提示会自动关闭（避免和教练重复）；滴、叮、错误蜂鸣、计次滴答这些提示音不受影响。',
     coachPrivacy: '本轮音频只在浏览器本地处理，不上传；Chromium 系浏览器可用，Firefox / iOS 暂不支持语音识别。',
+    // P3.6：对话弹幕 + 火山 TTS（三项设置都立刻生效，随设置持久化）
+    dialogueGroup: '对话显示与语音',
+    dialogueLead: '教练的回答怎么显示：一句一条的弹幕（用户青色、教练薄荷绿），或者原来的两行字幕。',
+    ttsHint: '教练说话默认走火山 TTS（本机 /tts 代理，同一句只合成一次并缓存）；超过 3 秒或失败会自动改用系统 TTS，不会哑掉。',
   },
 
   judge: {

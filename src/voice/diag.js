@@ -268,6 +268,10 @@ export function createDiag({
       case 'tts:say':
         state.tts = { state: 'say', last: String(entry.chars || '') };
         break;
+      case 'tts:fallback':
+        // 火山 TTS 超时 / 502 / 网络错 → 已经自动改用系统 TTS（不是致命错误，只在面板留痕）
+        state.tts = { state: 'fallback', last: String(entry.code || '') };
+        break;
       case 'tts:fail':
         state.tts = { state: 'fail', last: String(entry.code || '') };
         break;

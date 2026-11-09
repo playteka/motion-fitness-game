@@ -191,6 +191,12 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
   let lastSnap = {};
   /** 「诊断」小面板开着没有（独立于教练开关：教练关着也能看 / 自检） */
   let diagOpen = false;
+  /**
+   * 对话显示模式（P3.6）：'danmaku'（默认）/ 'subtitle' / 'off'。
+   * 弹幕模式下**两行字幕面板收起来**（弹幕就是字幕），字幕模式照旧；关闭模式连面板一起收。
+   * 状态环 / 提示行 / 路由行仍然跟着教练开关走，不受这个模式影响。
+   */
+  let dialogueMode = 'danmaku';
   // ---- 音量表（VU）状态 ----
   let vu = null;
   let vuStarting = false;
@@ -485,20 +491,14 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
     // 关闭 / 出错时把音量表释放掉（共享音轨由 createMic 统一 stop，绝不留后台录音）
     if (!enabled || state === 'off' || state === 'error') stopVu();
 
-    // 字幕面板：只在开启时出现；关闭时连字幕一起收起（状态环单独灰着）
-    const showPanel = enabled && state !== 'off';
+    // 字幕面板：弹幕模式下收起（弹幕本身就是字幕）；字幕模式照旧；关闭模式连字幕一起收
+    const showPanel = enabled && state !== 'off' && dialogueMode === 'subtitle';
     if (el.coachPanel) {
       el.coachPanel.hidden = !showPanel;
       el.coachPanel.setAttribute('aria-label', t('coach.title'));
     }
-    if (!showPanel) {
-      // 面板收起时把「识别走哪一路」也一起收掉（下次打开重新按当前路由填）
-      if (el.coachRoute) {
-        el.coachRoute.hidden = true;
-        el.coachRoute.textContent = '';
-      }
-      return api;
-    }
+    // 注意：面板收起时**不提前 return**：两行字幕 / 提示行的文本继续按 snapshot 更新，
+    // 这样切到「字幕」模式时内容立刻就在（不用等下一次 snapshot），调试时也看得到最新值。
 
     const interim = String(snap.interimText || '').trim();
     const user = interim || String(snap.userText || '').trim();
@@ -545,6 +545,13 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
     return api;
   }
 
+  /** 对话显示模式：'danmaku' | 'subtitle' | 'off'（只影响两行字幕面板，不影响状态环） */
+  function setDialogueMode(mode) {
+    dialogueMode = mode === 'subtitle' || mode === 'off' ? mode : 'danmaku';
+    render(lastSnap || {});
+    return dialogueMode;
+  }
+
   function destroy() {
     stopVu();
     diagOpen = false;
@@ -560,6 +567,7 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
     render,
     destroy,
     setDebug,
+    setDialogueMode,
     startVu,
     stopVu,
     toggleDiag,
@@ -570,6 +578,7 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
     get vuActive() { return vuActive; },
     get vuLevel() { return vuLevel; },
     get diagOpen() { return diagOpen; },
+    get dialogueMode() { return dialogueMode; },
   };
   return api;
 }

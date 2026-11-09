@@ -32,6 +32,13 @@ import {
 import { createVoiceSession, voiceErrorKey } from './voice/session.js';
 import { createMic, createAutoAsr, createLlm, createTts, createVuMeter } from './voice/providers.js';
 import { createCoach, coachLayout } from './voice/coach.js';
+// P3.6：对话弹幕（纯逻辑 + DOM 渲染分层）+ 火山 TTS 播放层（失败自动回退系统 TTS）
+import {
+  createDanmaku, DANMAKU_MODES, DANMAKU_DEFAULT_MODE, DANMAKU_COLORS,
+} from './voice/danmaku.js';
+import {
+  createVolcTts, TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH,
+} from './voice/tts-volc.js';
 // P3.5 语音排障：诊断收集（批量落盘 logs/coach-diag.jsonl）+ 独立的「语音自检」
 import { createDiag } from './voice/diag.js';
 import { createSelfTest } from './voice/selftest.js';
@@ -111,6 +118,15 @@ const DEFAULT_SETTINGS = {
    * 设置弹窗里的开关与视频界面的 Ctrl+I 写的是同一个字段，所以两边永远同步。
    */
   coachEnabled: false,
+  /**
+   * 对话显示（P3.6）：'danmaku'（默认）/ 'subtitle' / 'off'。
+   * 弹幕 = 一句一条、分两种颜色；字幕 = 原来的两行面板；关闭 = 都不显示（状态环仍在）。
+   */
+  dialogue: DANMAKU_DEFAULT_MODE,
+  /** 音色来源（P3.6）：'auto'（火山优先，默认）/ 'volc'（只试火山）/ 'system'（系统 TTS） */
+  ttsSource: TTS_DEFAULT_SOURCE,
+  /** 语速：传给 /tts 的 rate（0.5~2，界面给 0.8~1.5 六档） */
+  ttsRate: 1,
 };
 
 const REP_TARGETS = [8, 12, 15, 20, 30];
@@ -280,7 +296,18 @@ const coachDiag = createDiag({ timer: true });
  */
 const coachMic = createMic({ diag: coachDiag });
 const coachAsr = createAutoAsr({ mic: coachMic, diag: coachDiag });
-const coachTts = createTts({ rate: 1, diag: coachDiag });
+/**
+ * P3.6：教练说话默认走**火山 TTS**（本机 /tts 代理），失败 / 超时 3s 自动回退系统 TTS。
+ * `coachSystemTts` 就是 P3.0 的 mock TTS（speechSynthesis），作为降级兜底保留；
+ * 「音色来源」选「系统」时完全不发 /tts 请求。
+ */
+const coachSystemTts = createTts({ rate: 1, diag: coachDiag });
+const coachTts = createVolcTts({
+  fallback: coachSystemTts,
+  diag: coachDiag,
+  source: state.settings.ttsSource,
+  rate: state.settings.ttsRate,
+});
 /** 独立的「语音自检」：自己的麦 / 自己的 WS，不经过会话状态机（教练关着也能用） */
 const coachSelfTest = createSelfTest({
   diag: coachDiag,
@@ -291,6 +318,16 @@ const coach = createCoach({
   vuFactory: () => createVuMeter({ stream: coachMic.stream, requireStream: true, diag: coachDiag }),
   diag: coachDiag,
   selfTest: coachSelfTest,
+});
+/**
+ * 对话弹幕（P3.6）：一句一条、用户青 / 教练薄荷绿、只占上半屏 4 条轨道；
+ * 底部「最近一句」静态行独立于弹幕层（两种模式都保留）。
+ * 纯逻辑在 danmaku.js 的 createDanmakuModel 里，这里只接 DOM 与设置。
+ */
+const danmaku = createDanmaku({
+  layer: $('danmakuLayer'),
+  lastEl: $('danmakuLast'),
+  settings: state.settings,
 });
 /** 「别说话」命令的开关：只关教练朗读，字幕照常（session.setMuted） */
 let coachMuted = false;
@@ -324,6 +361,9 @@ const voice = createVoiceSession({
 let coachIntroSaid = false;
 
 state.voice = voice.snapshot();
+/** 上一句已经弹过的话（避免同一份 snapshot 反复 emit 时重复弹） */
+let lastUserLine = '';
+let lastCoachLine = '';
 voice.subscribe((snap) => {
   state.voice = snap;
   coach.render(snap);
@@ -332,7 +372,23 @@ voice.subscribe((snap) => {
   if (!snap.enabled || snap.state === 'off' || snap.state === 'error') coach.stopVu();
   // 回退 Web Speech 时共享麦克风已经交给浏览器的识别器了：音量表没有流可用，收掉
   if (snap.route === 'webspeech') coach.stopVu();
+
+  // P3.6 弹幕：final → 一条；partial 只更新底部灰色实时行（不弹）
+  if (!snap.enabled || snap.state === 'off') {
+    lastUserLine = '';
+    lastCoachLine = '';
+    return;
+  }
+  const userLine = String(snap.userText || '');
+  const coachLine = String(snap.coachText || '');
+  if (userLine && userLine !== lastUserLine) danmaku.push({ text: userLine, kind: 'user' });
+  if (coachLine && coachLine !== lastCoachLine) danmaku.push({ text: coachLine, kind: 'coach' });
+  lastUserLine = userLine;
+  lastCoachLine = coachLine;
+  danmaku.setInterim(String(snap.interimText || ''));
 });
+// 对话显示模式先和设置对齐（弹幕模式收起两行字幕面板；字幕模式照旧）
+applyDialogueMode(state.settings.dialogue);
 
 /** 一次动作完成后，进度条保持「空的」多久（让清零看得见） */
 const CRITERIA_CLEAR_MS = 650;
@@ -452,6 +508,33 @@ function setCoachMuted(on) {
   voice.setMuted(coachMuted);
   setCueLine(t(coachMuted ? 'status.coachMuteOn' : 'status.coachMuteOff'), 'info');
   return coachMuted;
+}
+
+/**
+ * 对话显示（P3.6）：把设置里的三选一同时应用到弹幕层与两行字幕面板。
+ *   - danmaku：弹幕层出现、两行字幕面板收起（底部「最近一句」仍在）；
+ *   - subtitle：弹幕层隐藏、两行字幕面板照旧（「最近一句」仍在，面板自动上移一行）；
+ *   - off：两者都隐藏（状态环 / 提示行不受影响）。
+ * 返回归一化后的模式（非法值回落默认「弹幕」）。
+ */
+function applyDialogueMode(mode) {
+  const next = DANMAKU_MODES.includes(mode) ? mode : DANMAKU_DEFAULT_MODE;
+  state.settings.dialogue = next;
+  saveSettings();
+  danmaku.setMode(next);
+  coach.setDialogueMode(next);
+  const stage = $('stage');
+  if (stage && stage.classList) stage.classList.toggle('dialogue-subtitle', next === 'subtitle');
+  danmaku.setInterim('');
+  coach.render(voice.snapshot());
+  return next;
+}
+
+/** 音色来源 / 语速（P3.6）：改了立刻生效，下一句就用新设置 */
+function applyTtsSettings() {
+  coachTts.setSource(state.settings.ttsSource);
+  coachTts.setRate(state.settings.ttsRate);
+  return { source: coachTts.source, rate: coachTts.rate };
 }
 function loadList(key) {
   try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -6992,6 +7075,38 @@ function bindUI() {
     if (camera.active) await reloadModel();
   });
 
+  // ---- 对话显示 / 音色来源 / 语速（P3.6）----
+  // 三个下拉框都直接写 settings 并立刻生效（下一句说话就用新设置），没有「保存」按钮。
+  {
+    const dialogueSel = $('dialogueSel');
+    if (dialogueSel) {
+      dialogueSel.value = DANMAKU_MODES.includes(state.settings.dialogue)
+        ? state.settings.dialogue : DANMAKU_DEFAULT_MODE;
+      dialogueSel.addEventListener('change', (e) => applyDialogueMode(e.target.value));
+    }
+    const sourceSel = $('ttsSourceSel');
+    if (sourceSel) {
+      sourceSel.value = TTS_SOURCES.includes(state.settings.ttsSource)
+        ? state.settings.ttsSource : TTS_DEFAULT_SOURCE;
+      sourceSel.addEventListener('change', (e) => {
+        state.settings.ttsSource = TTS_SOURCES.includes(e.target.value)
+          ? e.target.value : TTS_DEFAULT_SOURCE;
+        saveSettings();
+        applyTtsSettings();
+      });
+    }
+    const rateSel = $('ttsRateSel');
+    if (rateSel) {
+      rateSel.value = String(state.settings.ttsRate || 1);
+      rateSel.addEventListener('change', (e) => {
+        state.settings.ttsRate = Number(e.target.value) || 1;
+        saveSettings();
+        applyTtsSettings();
+      });
+    }
+    applyTtsSettings();
+  }
+
   // [按钮 id（同一个开关可能有多个按钮，数组里列出来即可）, 设置键, 应用函数, 点击后要不要提示一句话]
   const toggles = [
     ['btnMirror', 'mirror', (v) => {
@@ -7618,6 +7733,14 @@ window.__mfg = {
   //   setCoachEnabled / toggleCoach : 设置开关与 Ctrl+I 共用的唯一入口
   //   coachLayout   : 字幕面板 / 状态环 / HUD / 判定条 / 右上角圆环的纯几何（测试断言不越界）
   voice, coach, setCoachEnabled, toggleCoach, syncCoachToggle, coachLayout, voiceErrorKey,
+  // P3.6 对话弹幕 + 火山 TTS：
+  //   danmaku          : createDanmaku() 的实例（push / setInterim / setMode / snapshot）
+  //   applyDialogueMode: 设置里「对话显示」三选一的唯一入口（弹幕 / 字幕 / 关闭）
+  //   coachTts         : 火山优先、失败回退系统 TTS 的播放层（speak / stop / setSource / setRate）
+  //   coachSystemTts   : 原来的系统 TTS（降级兜底；测试用它确认 fallback 真的被调用）
+  danmaku, applyDialogueMode, coachTts, coachSystemTts, applyTtsSettings,
+  DANMAKU_MODES, DANMAKU_DEFAULT_MODE, DANMAKU_COLORS,
+  TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH,
   // P3.5 语音排障：诊断收集器（snapshot / record / flush）+ 独立自检控制器
   //   coachDiag.snapshot() → 路由 / WS / 帧数 / partial·final / 最近错误 / 麦克风 / Worklet
   //   coachSelfTest.run()  → 麦克风 → 代理 → 录 2 秒发送 → 服务端结果（四步，独立于会话）

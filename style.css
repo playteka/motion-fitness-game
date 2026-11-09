@@ -13,6 +13,15 @@
   --bad: #f87171;
   /* 分数专用色：和次数（白色）、目标进度（青色）都不是一个颜色，一眼能分出「哪个是分」 */
   --score: #ffd166;
+  /**
+   * 对话弹幕的两种说话人颜色（用户口径：用户=青、教练=薄荷绿）。
+   * 一处定义：`.danmaku--user` / `.danmaku--coach` / 底部「最近一句」都引用它，
+   * src/voice/danmaku.js 的 DANMAKU_COLORS 是同一组值（测试会对照）。
+   */
+  --danmaku-user: #38bdf8;
+  --danmaku-coach: #34e5c4;
+  /** 一条弹幕飞过舞台的时长（与 danmaku.js 的 DANMAKU_FLIGHT_MS = 7000 对应） */
+  --danmaku-flight: 7s;
   --radius: 16px;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
   /**
@@ -379,6 +388,125 @@ kbd {
 }
 .stage.mirror video,
 .stage.mirror canvas { transform: scaleX(-1); }
+
+/* ---------- 对话弹幕（P3.6） ----------
+   用户要求：用户说一句出一条弹幕、教练答一句也出一条，**颜色不同**；只走上半屏 4 条轨道，
+   不压 HUD 圆环 / 判定进度条 / 右下按钮。
+   层级（z-index）刻意排成 3：
+     · 在 video / canvas（没有 z-index，等价 0）之上；
+     · 在 `.gesture-menu`（4）/ `.corner-ring`（6）/ `.coach-diag`（6）/ `.modal`（60）之下；
+     · HUD / 判定条 / 全屏按钮都是 5，所以弹幕永远不会盖住它们 —— 何况左右还缩进
+       `--bar-side-space`，左不压 HUD 的圆环、右不压退出 / 设置两颗环。
+   只占上半屏（height: 40%）：下半屏留给判定进度条与底部「最近一句」。
+   pointer-events: none 是硬约束：弹幕只是画面，绝不能挡住任何点击 / 手势。 */
+.danmaku-layer {
+  position: absolute;
+  left: var(--bar-side-space);
+  right: var(--bar-side-space);
+  top: 10px;
+  height: 40%;
+  overflow: hidden;
+  z-index: 3;
+  pointer-events: none;
+  contain: layout paint;
+}
+.danmaku-layer[hidden] { display: none; }
+.danmaku {
+  position: absolute;
+  left: 100%;
+  max-width: 100%;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(5, 10, 18, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: clamp(12px, 1.15vw, 15px);
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+  will-change: left;
+  animation: danmakuFly var(--danmaku-flight) linear forwards;
+}
+/* 4 条轨道：只占上半屏（danmaku.js 用 .danmaku--lane-N 标记，测试也读同一个类名） */
+.danmaku--lane-0 { top: 2%; }
+.danmaku--lane-1 { top: 26%; }
+.danmaku--lane-2 { top: 50%; }
+.danmaku--lane-3 { top: 74%; }
+/* 两种颜色：用户=青（--danmaku-user）、教练=薄荷绿（--danmaku-coach） */
+.danmaku--user { color: var(--danmaku-user); border-color: rgba(56, 189, 248, 0.42); }
+.danmaku--coach { color: var(--danmaku-coach); border-color: rgba(52, 229, 196, 0.42); }
+@keyframes danmakuFly {
+  from { left: 100%; }
+  to { left: -100%; }
+}
+/* 减少动效：不飞行，降级成**静态两行**（danmaku.js 只保留最新两条），仍然用两种颜色 */
+.danmaku-layer--static {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-content: flex-start;
+  padding: 2px 0;
+}
+.danmaku-layer--static .danmaku,
+.danmaku--static {
+  position: static;
+  left: auto;
+  top: auto;
+  max-width: 100%;
+  animation: none;
+}
+/* 底部「最近一句」静态行：弹幕 / 字幕两种模式都保留，关闭模式时隐藏。
+   位置和字幕面板同一档（判定条正上方），不与 HUD / 判定条重叠。 */
+.danmaku-last {
+  position: absolute;
+  left: 50%;
+  bottom: calc(10px + var(--criteria-bar-h) + 8px);
+  transform: translateX(-50%);
+  z-index: 5;
+  max-width: min(560px, calc(100% - 2 * var(--bar-side-space)));
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  background: rgba(8, 15, 26, 0.72);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  color: var(--danmaku-user);
+}
+.danmaku-last[hidden] { display: none; }
+.danmaku-last--coach { color: var(--danmaku-coach); border-color: rgba(52, 229, 196, 0.24); }
+.danmaku-last--interim { color: var(--muted); border-color: rgba(143, 161, 187, 0.24); }
+/* 「字幕」模式下两行字幕面板照旧出现，把面板整体抬到「最近一句」上面（两者都保留） */
+.stage.dialogue-subtitle .coach-panel {
+  bottom: calc(10px + var(--criteria-bar-h) + 8px + 26px);
+}
+@media (max-width: 560px) {
+  .danmaku-layer {
+    left: 10px;
+    right: 10px;
+    top: 44px;
+    height: 34%;
+  }
+  .danmaku {
+    font-size: 12px;
+  }
+  .danmaku-last {
+    bottom: 12px;
+    max-width: calc(100% - 2 * var(--bar-side-space));
+    font-size: 11.5px;
+  }
+  .stage.dialogue-subtitle .coach-panel { bottom: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .danmaku,
+  .danmaku--static { animation: none; }
+}
 
 /* 视频框右下角的全屏按钮：点了放大的是视频框本身，不是整个 HTML 页面 */
 .stage-btn {

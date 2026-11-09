@@ -2199,6 +2199,120 @@ console.log('\n[9] 主页 / 动作页 / 弹窗面板共用同一套渐变（视�
     /classList\.add\('in-workout'\)/.test(showWorkoutFn) && /classList\.remove\('is-home'\)/.test(showWorkoutFn));
 }
 
+/* ---------- 10. 对话弹幕 + 火山 TTS（P3.6） ---------- */
+console.log('\n[10] 对话弹幕：#danmakuLayer 在舞台内 / 不挡点击 / z-index 顺序 / 设置默认弹幕');
+{
+  const html = read('index.html');
+  const css = read('style.css');
+  // 注释里会解释「为什么」，断言只读真正的规则
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const app = read('src/app.js');
+  const coachSrc = read('src/voice/coach.js');
+  const danmakuSrc = read('src/voice/danmaku.js');
+  const ttsSrc = read('src/voice/tts-volc.js');
+  const serverSrc = read('preview-server.js');
+
+  ok('#danmakuLayer 挂在 #stage 里（叠在 video / canvas 之上）',
+    (ancestorIds(html, 'danmakuLayer') || []).includes('stage'),
+    JSON.stringify(ancestorIds(html, 'danmakuLayer')));
+  ok('底部「最近一句」#danmakuLast 也在 #stage 里',
+    (ancestorIds(html, 'danmakuLast') || []).includes('stage'));
+
+  const layerRule = /^\.danmaku-layer\s*\{([\s\S]*?)\n\}/m.exec(code)?.[1] || '';
+  ok('弹幕层 position:absolute + pointer-events:none（绝不吃鼠标 / 手势）',
+    /position:\s*absolute/.test(layerRule) && /pointer-events:\s*none/.test(layerRule),
+    layerRule.replace(/\s+/g, ' ').slice(0, 120));
+  ok('弹幕层只占上半屏（height:40%），左右避开 HUD 与右上圆环（left/right: var(--bar-side-space)）',
+    /height:\s*40%/.test(layerRule)
+    && /left:\s*var\(--bar-side-space\)/.test(layerRule)
+    && /right:\s*var\(--bar-side-space\)/.test(layerRule));
+  ok('弹幕层 z-index:3（高于 video/canvas，低于菜单 / 圆环 / 弹窗）',
+    /z-index:\s*3\s*;/.test(layerRule), layerRule.match(/z-index:[^;]+/)?.[0] || '');
+
+  const mediaRule = /^\.stage video,\s*\n\.stage canvas\s*\{([\s\S]*?)\n\}/m.exec(code)?.[1] || '';
+  ok('video / canvas 没有更高的 z-index（弹幕一定在画面之上）',
+    !/z-index/.test(mediaRule));
+  const menuRule = /^\.gesture-menu\s*\{([\s\S]*?)\n\}/m.exec(code)?.[1] || '';
+  const cornerRule = /^\.corner-ring\s*\{([\s\S]*?)\n\}/m.exec(code)?.[1] || '';
+  const modalRule = /^\.modal\s*\{([\s\S]*?)\n\}/m.exec(code)?.[1] || '';
+  const zOf = (rule) => Number((/z-index:\s*(\d+)/.exec(rule) || [])[1]);
+  ok('z-index 顺序：弹幕 3 < 手势菜单 4 < 圆环 6 < 弹窗 60',
+    zOf(layerRule) === 3 && zOf(menuRule) === 4
+    && zOf(cornerRule) === 6 && zOf(modalRule) === 60,
+    JSON.stringify({ danmaku: zOf(layerRule), menu: zOf(menuRule), corner: zOf(cornerRule), modal: zOf(modalRule) }));
+
+  ok('两种颜色走令牌：用户青 --danmaku-user:#38bdf8 / 教练薄荷绿 --danmaku-coach:#34e5c4',
+    /--danmaku-user:\s*#38bdf8/.test(code) && /--danmaku-coach:\s*#34e5c4/.test(code));
+  ok('4 条轨道的定位类都在（.danmaku--lane-0…3，最高一条 74% 仍在上半屏内）',
+    [0, 1, 2, 3].every((i) => new RegExp(`\\.danmaku--lane-${i}\\s*\\{\\s*top:\\s*\\d+%`).test(code))
+    && /\.danmaku--lane-3\s*\{\s*top:\s*74%/.test(code));
+  ok('.danmaku--user / .danmaku--coach 只引用令牌（不另抄一份颜色）',
+    /\.danmaku--user\s*\{[^}]*color:\s*var\(--danmaku-user\)/.test(code)
+    && /\.danmaku--coach\s*\{[^}]*color:\s*var\(--danmaku-coach\)/.test(code));
+  ok('弹幕从右飞到左（@keyframes danmakuFly：left 100% → -100%）',
+    /@keyframes danmakuFly\s*\{[\s\S]*?from\s*\{\s*left:\s*100%;\s*\}[\s\S]*?to\s*\{\s*left:\s*-100%;\s*\}/.test(code));
+  ok('prefers-reduced-motion：不飞行 + 降级静态两行（.danmaku-layer--static）',
+    /\.danmaku-layer--static\s*\{[^}]*display:\s*flex/.test(code)
+    && /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.danmaku[\s\S]{0,160}?animation:\s*none/.test(code));
+  ok('「最近一句」固定单行省略，且被抬到判定条上方（bottom: calc(10px + var(--criteria-bar-h) + 8px)）',
+    /\.danmaku-last\s*\{[^}]*bottom:\s*calc\(10px \+ var\(--criteria-bar-h\) \+ 8px\)/.test(code)
+    && /\.danmaku-last\s*\{[^}]*white-space:\s*nowrap/.test(code));
+
+  /* ---- 设置项：对话显示三选一（默认弹幕）+ 音色来源 + 语速 ---- */
+  const dialogueSel = /<select id="dialogueSel">([\s\S]*?)<\/select>/.exec(html)?.[1] || '';
+  ok('设置里有「对话显示」三选一：danmaku / subtitle / off',
+    /value="danmaku"/.test(dialogueSel) && /value="subtitle"/.test(dialogueSel)
+    && /value="off"/.test(dialogueSel));
+  ok('「对话显示」默认是弹幕（第一个 option 是 danmaku，且 settings 默认 DANMAKU_DEFAULT_MODE）',
+    /^\s*<option value="danmaku"/.test(dialogueSel)
+    && /dialogue:\s*DANMAKU_DEFAULT_MODE/.test(app)
+    && /DANMAKU_DEFAULT_MODE\s*=\s*'danmaku'/.test(danmakuSrc));
+  const sourceSel = /<select id="ttsSourceSel">([\s\S]*?)<\/select>/.exec(html)?.[1] || '';
+  ok('设置里有「音色来源」三选一：auto / volc / system（自动默认）',
+    /value="auto"/.test(sourceSel) && /value="volc"/.test(sourceSel)
+    && /value="system"/.test(sourceSel) && /ttsSource:\s*TTS_DEFAULT_SOURCE/.test(app));
+  const rateSel = /<select id="ttsRateSel">([\s\S]*?)<\/select>/.exec(html)?.[1] || '';
+  ok('设置里有「语速」下拉（0.5~2 内的六档，默认 1）',
+    /value="0\.8"/.test(rateSel) && /value="1"/.test(rateSel) && /value="1\.5"/.test(rateSel)
+    && /ttsRate:\s*1/.test(app));
+
+  /* ---- 接线：final → 弹幕、教练回复 → 弹幕、partial 只更新最近一句 ---- */
+  ok('app.js 用 createDanmaku 接线弹幕层（layer / lastEl / settings）',
+    /createDanmaku\(\{/.test(app) && /layer:\s*\$\('danmakuLayer'\)/.test(app)
+    && /lastEl:\s*\$\('danmakuLast'\)/.test(app));
+  ok('ASR final → danmaku.push({kind:\'user\'})（教练回复 → kind:\'coach\'）',
+    /danmaku\.push\(\{\s*text:\s*userLine,\s*kind:\s*'user'\s*\}\)/.test(app)
+    && /danmaku\.push\(\{\s*text:\s*coachLine,\s*kind:\s*'coach'\s*\}\)/.test(app));
+  ok('partial 只更新「最近一句」实时行（danmaku.setInterim），不弹弹幕',
+    /danmaku\.setInterim\(String\(snap\.interimText/.test(app)
+    && !/danmaku\.push\([^)]*interim/i.test(app));
+  ok('两行字幕面板在「弹幕」模式隐藏、只在「字幕」模式出现（coach.js）',
+    /dialogueMode === 'subtitle'/.test(coachSrc)
+    && /setDialogueMode/.test(coachSrc));
+  ok('app.js 用 createVolcTts（火山优先）且保留系统 TTS 作降级',
+    /createVolcTts\(\{/.test(app) && /fallback:\s*coachSystemTts/.test(app)
+    && /const coachSystemTts\s*=\s*createTts\(/.test(app));
+
+  /* ---- 火山 TTS 的协议 / 缓存 / 降级要点（源码级） ---- */
+  ok('服务端 /tts 与 /tts/health 都接到预览服务器',
+    /createTtsRoutes/.test(serverSrc) && /ttsRoute\(req, res\)/.test(serverSrc)
+    && /TTS_HEALTH_PATH/.test(serverSrc) && /TTS_PATH/.test(serverSrc));
+  ok('服务端照 server/tts-probe.mjs 的 v3 写法（X-Api-App-Id / X-Api-Key / X-Api-Resource-Id）',
+    /X-Api-App-Id/.test(read('server/volc-tts.mjs'))
+    && /X-Api-Key/.test(read('server/volc-tts.mjs'))
+    && /X-Api-Resource-Id/.test(read('server/volc-tts.mjs')));
+  ok('服务端缓存 key = voice|rate|text，上限 200 条 / 20MB，LRU',
+    /voice.*\|.*rate.*\|.*text/.test(read('server/volc-tts.mjs'))
+    && /TTS_CACHE_MAX_ENTRIES\s*=\s*200/.test(read('server/volc-tts.mjs'))
+    && /TTS_CACHE_MAX_BYTES\s*=\s*20 \* 1024 \* 1024/.test(read('server/volc-tts.mjs')));
+  ok('前端 3s 超时 + tts:fallback 诊断 + blob URL 释放（不泄漏）',
+    /TTS_TIMEOUT_MS\s*=\s*3000/.test(ttsSrc)
+    && /tts:fallback/.test(ttsSrc)
+    && /revokeObjectURL/.test(ttsSrc) && /dropUrl/.test(ttsSrc));
+  ok('前端 speak() 前先 stop() 上一句（打断 + 释放）',
+    /function speak\([\s\S]{0,400}?stop\(\)/.test(ttsSrc));
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
 if (failures.length) {
   console.log('失败项：');

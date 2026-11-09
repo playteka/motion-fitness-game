@@ -476,10 +476,13 @@ console.log('\n[1c] AI 语音教练（P3.0 基座：Ctrl+I + 设置开关 + 麦�
     api.state.voice.state === 'listening' && api.state.voice.enabled === true
     && api.state.settings.coachEnabled === true,
     JSON.stringify({ state: api.state.voice.state, enabled: api.state.voice.enabled }));
-  ok('字幕面板出现，教练自我介绍来自 coach.intro 词条',
-    elements.get('coachPanel').hidden === false
-    && elements.get('coachCoachText').textContent === tCoach('coach.intro'),
-    elements.get('coachCoachText').textContent);
+  ok('弹幕模式：两行字幕面板收起，教练自我介绍进弹幕「最近一句」',
+    elements.get('coachPanel').hidden === true
+    && elements.get('coachCoachText').textContent === tCoach('coach.intro')
+    && elements.get('danmakuLast').textContent
+      === tCoach('voice.coach') + tCoach('coach.intro'),
+    JSON.stringify({ panel: elements.get('coachPanel').hidden,
+      last: elements.get('danmakuLast').textContent }));
   ok('打开时真的请求了麦克风（getUserMedia({ audio: true })）',
     coachStubs.micCalls.length === micBefore + 1
     && coachStubs.micCalls.at(-1).audio === true,
@@ -522,6 +525,18 @@ console.log('\n[1c] AI 语音教练（P3.0 基座：Ctrl+I + 设置开关 + 麦�
     elements.get('coachYouText').textContent === '我在听',
     elements.get('coachYouText').textContent);
 
+  // ②e P3.6 弹幕：partial **不弹**（只更新底部灰色实时行）
+  const dmLayer = elements.get('danmakuLayer');
+  const dmLast = elements.get('danmakuLast');
+  const bulletsBeforeFinal = dmLayer.children.length;
+  ok('partial 不弹弹幕：只更新底部「最近一句」灰色实时行',
+    dmLayer.children.length === bulletsBeforeFinal
+    && dmLast.hidden === false
+    && dmLast.textContent === tCoach('voice.you') + '我在听'
+    && dmLast.classList.contains('danmaku-last--interim'),
+    JSON.stringify({ n: dmLayer.children.length, last: dmLast.textContent,
+      cls: dmLast.className }));
+
   // ③ 用户说一句 → 字幕 → 罐头回复 → TTS → 回到聆听
   rec.emit('你好');
   await new Promise((r) => setTimeout(r, 450));   // app 里 thinkDelay = 360ms
@@ -543,13 +558,83 @@ console.log('\n[1c] AI 语音教练（P3.0 基座：Ctrl+I + 设置开关 + 麦�
   ok('TTS 念完 → 回到 listening（还能继续问下一句）',
     api.state.voice.state === 'listening', api.state.voice.state);
 
+  // ③b P3.6 弹幕：final → 一条 user 弹幕；教练回复 → 一条 coach 弹幕（颜色类不同）
+  {
+    const userBullets = dmLayer.children.filter((n) => n.className.includes('danmaku--user'));
+    const coachBullets = dmLayer.children.filter((n) => n.className.includes('danmaku--coach'));
+    ok('final 结果弹出一条 user 弹幕（「你：」前缀 + 青色类）',
+      userBullets.length === 1
+      && userBullets[0].textContent === tCoach('voice.you') + '你好'
+      && userBullets[0].classList.contains('danmaku--user'),
+      JSON.stringify(userBullets.map((n) => n.textContent)));
+    ok('教练回复弹出一条 coach 弹幕（「教练：」前缀 + 薄荷绿类）',
+      coachBullets.length >= 1
+      && coachBullets.at(-1).textContent
+        === tCoach('voice.coach') + elements.get('coachCoachText').textContent
+      && coachBullets.at(-1).classList.contains('danmaku--coach'),
+      JSON.stringify(coachBullets.map((n) => n.textContent)));
+    ok('用户和教练的弹幕颜色类**不同**（一眼能分出谁说的）',
+      userBullets[0].className !== coachBullets.at(-1).className,
+      JSON.stringify({ user: userBullets[0].className, coach: coachBullets.at(-1).className }));
+    ok('底部「最近一句」跟着最新一句（教练那句）',
+      dmLast.hidden === false
+      && dmLast.textContent === tCoach('voice.coach') + elements.get('coachCoachText').textContent
+      && dmLast.classList.contains('danmaku-last--coach'),
+      dmLast.textContent);
+  }
+
+  // ③c P3.6 设置：对话显示 弹幕 / 字幕 / 关闭 三档行为正确，并持久化
+  {
+    const savedMM = windowStub.matchMedia;
+    api.applyDialogueMode('subtitle');
+    ok('设置切「字幕」：弹幕层隐藏、两行字幕面板恢复、最近一句仍在',
+      dmLayer.hidden === true
+      && elements.get('coachPanel').hidden === false
+      && dmLast.hidden === false,
+      JSON.stringify({ layer: dmLayer.hidden, panel: elements.get('coachPanel').hidden,
+        last: dmLast.hidden }));
+    api.applyDialogueMode('off');
+    ok('设置切「关闭」：弹幕层 / 两行字幕 / 最近一句都隐藏（状态环仍在）',
+      dmLayer.hidden === true && elements.get('coachPanel').hidden === true
+      && dmLast.hidden === true && elements.get('coachDock').hidden === false,
+      JSON.stringify({ layer: dmLayer.hidden, panel: elements.get('coachPanel').hidden,
+        last: dmLast.hidden, dock: elements.get('coachDock').hidden }));
+    api.applyDialogueMode('danmaku');
+    const saved = JSON.parse(store.get('mfg.settings.v1') || '{}');
+    ok('切回「弹幕」：两行字幕面板收起、弹幕层恢复，并写进 localStorage',
+      dmLayer.hidden === false && elements.get('coachPanel').hidden === true
+      && saved.dialogue === 'danmaku',
+      JSON.stringify({ layer: dmLayer.hidden, panel: elements.get('coachPanel').hidden,
+        saved: saved.dialogue }));
+
+    // 减少动效：不飞行，降级成静态两行（只保留最新两条）
+    api.danmaku.clear();
+    windowStub.matchMedia = (q) => ({
+      matches: q === '(prefers-reduced-motion: reduce)',
+      addEventListener() {},
+    });
+    api.danmaku.push({ text: '一', kind: 'user' });
+    api.danmaku.push({ text: '二', kind: 'coach' });
+    api.danmaku.push({ text: '三', kind: 'user' });
+    ok('prefers-reduced-motion：弹幕不飞行，降级成静态两行（只留最新两条）',
+      dmLayer.classList.contains('danmaku-layer--static')
+      && dmLayer.children.length === 2
+      && dmLayer.children.every((n) => n.classList.contains('danmaku--static')),
+      JSON.stringify({ cls: dmLayer.className, n: dmLayer.children.length }));
+    windowStub.matchMedia = savedMM;
+    api.applyDialogueMode('danmaku');
+    api.danmaku.clear();
+    ok('恢复动效后静态类被摘掉（下次说话照常飞行）',
+      !dmLayer.classList.contains('danmaku-layer--static'));
+  }
+
   // ④ 页面隐藏自动暂停聆听，回到前台恢复
   documentStub.hidden = true;
   documentStub.dispatch('visibilitychange');
   await flush();
   ok('页面隐藏 → 自动暂停聆听（状态 listening + paused，状态环还在）',
     api.state.voice.paused === true && api.state.voice.state === 'listening'
-    && elements.get('coachPanel').hidden === false,
+    && elements.get('coachDock').hidden === false,
     JSON.stringify({ state: api.state.voice.state, paused: api.state.voice.paused }));
   documentStub.hidden = false;
   documentStub.dispatch('visibilitychange');

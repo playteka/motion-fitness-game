@@ -38,6 +38,17 @@ export default {
     skeleton: '🦴 Skeleton',
     angles: '📐 Angles',
     debug: '🐞 Metrics',
+    // P3.6 danmaku / Volcengine TTS (the three selects in Settings)
+    dialogue: 'Dialogue display',
+    dialogueDanmaku: 'Danmaku',
+    dialogueSubtitle: 'Subtitles',
+    dialogueOff: 'Off',
+    ttsSource: 'Voice source',
+    ttsAuto: 'Auto (Volcengine first)',
+    ttsVolc: 'Volcengine TTS',
+    ttsSystem: 'System TTS',
+    ttsRate: 'Speech rate',
+    ttsRateNormal: '1x (normal)',
     fullscreen: 'Fullscreen video frame',
     // Recording badge in the bottom-right of the stage: number + unit, hover shows this line
     recUnit: 'frames logged',
@@ -972,6 +983,10 @@ export default {
     coachMic: 'Starting your first workout asks for microphone access at the same time (one combined prompt with the camera; it is released right after, never held open). You can also turn the AI coach on / off with Ctrl+I at any time.',
     coachMute: 'While the AI coach is on, the built-in voice prompts turn off automatically (so they do not repeat the coach); the beeps, dings, error buzz and rep ticks are unaffected.',
     coachPrivacy: 'This round the audio is processed only in your browser and never uploaded; Chromium-based browsers work, Firefox / iOS do not support speech recognition yet.',
+    // P3.6: danmaku + Volcengine TTS (all three settings apply immediately and persist with the rest)
+    dialogueGroup: 'Dialogue & voice',
+    dialogueLead: 'How coach replies are shown: one danmaku line per sentence (you in cyan, the coach in mint), or the original two-line subtitles.',
+    ttsHint: 'Coach speech uses Volcengine TTS by default (through the local /tts proxy; each sentence is synthesized once and cached). If it fails or takes over 3 seconds, it falls back to the system TTS automatically, so it never goes silent.',
   },
 
   /* ---------------- What each exercise is scored by ---------------- */

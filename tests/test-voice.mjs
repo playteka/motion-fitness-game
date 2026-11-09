@@ -35,6 +35,18 @@ import {
 } from '../src/voice/diag.js';
 import { createSelfTest, SELF_TEST_STEPS } from '../src/voice/selftest.js';
 import {
+  createDanmaku, createDanmakuModel, pickLane, layoutBullet,
+  DANMAKU_LANE_COUNT, DANMAKU_MAX_ON_SCREEN, DANMAKU_QUEUE_MAX, DANMAKU_DEDUPE_MS,
+  DANMAKU_FLIGHT_MS, DANMAKU_COLORS, DANMAKU_MODES, DANMAKU_DEFAULT_MODE,
+} from '../src/voice/danmaku.js';
+import {
+  createVolcTts, normalizeTtsRate, TTS_TIMEOUT_MS, TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH,
+} from '../src/voice/tts-volc.js';
+import {
+  createVolcTts as createVolcTtsServer, createTtsRoutes, createTtsCache, loadTtsConfig,
+  ttsCacheKey, TTS_PATH as TTS_SERVER_PATH, TTS_HEALTH_PATH, TTS_MAX_TEXT,
+} from '../server/volc-tts.mjs';
+import {
   downsampleToPcm16, pcm16Rms, pcm16Peak, pcmBytesToMs, floatToPcm16,
   createPcmFramer, pcmBytesPerSec,
   FRAME_MS, FRAME_SAMPLES, FRAME_BYTES, EXPECTED_BYTES_PER_SEC,
@@ -2911,6 +2923,667 @@ console.log('\n[25] 预览服务器：COOP+COEP / no-store / 文本 gzip（wasm 
     JSON.stringify({ modelSize }));
 
   await new Promise((r) => srv.close(r));
+}
+
+/* ================================================================== *
+ * [26] 对话弹幕：轨道 / 布局 / 去重 / 上限 / 排队 / 模式（纯逻辑 + DOM 渲染分层）
+ * ================================================================== */
+console.log('\n[26] 对话弹幕：pickLane / layoutBullet / 模型（去重·上限·排队）/ DOM 渲染');
+{
+  /* ---- 纯函数：选轨道 ---- */
+  ok('pickLane：有空轨道 → 取下标最小的那条',
+    pickLane([0, 0, 0, 0], 100) === 0 && pickLane([500, 0, 0, 0], 100) === 1);
+  ok('pickLane：全满 → 取**最早空出**的那条（不会等最久）',
+    pickLane([500, 120, 300, 160], 100) === 1);
+  ok('pickLane：空数组 / 非法值不崩',
+    pickLane([], 0) === 0 && pickLane(null, 0) === 0);
+  ok('轨道数按用户口径是 4 条（只占上半屏）', DANMAKU_LANE_COUNT === 4);
+
+  /* ---- 纯函数：单条版面 ---- */
+  const laid = layoutBullet({ text: '开始深蹲', kind: 'coach', lane: 2, startAt: 1000 });
+  ok('layoutBullet：kind / lane / startAt / endAt 一次算好',
+    laid.kind === 'coach' && laid.lane === 2 && laid.startAt === 1000
+    && laid.endAt === 1000 + DANMAKU_FLIGHT_MS && laid.text === '开始深蹲');
+  ok('layoutBullet：lane 越界会被夹回 [0, 3]',
+    layoutBullet({ lane: 99 }).lane === 3 && layoutBullet({ lane: -5 }).lane === 0);
+  ok('layoutBullet：kind 只认 coach，其它都当 user',
+    layoutBullet({ kind: 'system' }).kind === 'user' && layoutBullet({ kind: 'coach' }).kind === 'coach');
+  ok('颜色口径：用户青 #38bdf8 / 教练薄荷绿 #34e5c4',
+    DANMAKU_COLORS.user === '#38bdf8' && DANMAKU_COLORS.coach === '#34e5c4'
+    && DANMAKU_MODES.join(',') === 'danmaku,subtitle,off' && DANMAKU_DEFAULT_MODE === 'danmaku');
+
+  /* ---- 模型：去重（同 text + kind 1.5s 内只弹一次） ---- */
+  {
+    let clock = 0;
+    const model = createDanmakuModel({ now: () => clock });
+    const first = model.push({ text: '你好', kind: 'user' });
+    const dup = model.push({ text: '你好', kind: 'user' });
+    ok('去重：同一句 1.5s 内只弹一条',
+      first.ok && !first.queued && !dup.ok && dup.reason === 'duplicate',
+      JSON.stringify({ first, dup }));
+    clock = DANMAKU_DEDUPE_MS - 1;
+    ok('去重：1.5s 内（差 1ms）仍然算重复',
+      model.push({ text: '你好', kind: 'user' }).reason === 'duplicate');
+    clock = DANMAKU_DEDUPE_MS;
+    ok('去重：超过 1.5s 可以再弹同一句', model.push({ text: '你好', kind: 'user' }).ok);
+    ok('去重按 kind 分开：同一句话教练说一遍不算重复',
+      model.push({ text: '你好', kind: 'coach' }).ok);
+  }
+
+  /* ---- 模型：4 条轨道依次填满，满了回到最早空出的 ---- */
+  {
+    const model = createDanmakuModel({ now: () => 0, laneGapMs: 2200 });
+    const lanes = [];
+    for (let i = 0; i < 5; i += 1) {
+      const r = model.push({ text: `第 ${i} 句`, kind: i % 2 ? 'coach' : 'user' });
+      lanes.push(r.bullet ? r.bullet.lane : -1);
+    }
+    ok('模型：前 4 条依次落在 0/1/2/3 轨道，第 5 条回到最早空出的 0',
+      lanes.join(',') === '0,1,2,3,0', lanes.join(','));
+  }
+
+  /* ---- 模型：同屏上限 8 / 队列 12 / 满则丢弃 ---- */
+  {
+    let clock = 0;
+    const model = createDanmakuModel({
+      now: () => clock, maxOnScreen: DANMAKU_MAX_ON_SCREEN, queueMax: DANMAKU_QUEUE_MAX,
+      dedupeMs: 0, flightMs: 1000, laneGapMs: 0,
+    });
+    for (let i = 0; i < DANMAKU_MAX_ON_SCREEN; i += 1) model.push({ text: `屏 ${i}`, kind: 'user' });
+    ok('上限：同屏最多 8 条', model.onScreen === DANMAKU_MAX_ON_SCREEN,
+      String(model.onScreen));
+    const queued = model.push({ text: '排队 1', kind: 'user' });
+    ok('上限：第 9 条进队列（不是丢掉）', queued.ok && queued.queued && model.queued === 1);
+    for (let i = 2; i <= DANMAKU_QUEUE_MAX; i += 1) model.push({ text: `排队 ${i}`, kind: 'user' });
+    ok('队列上限 12 条', model.queued === DANMAKU_QUEUE_MAX, String(model.queued));
+    const dropped = model.push({ text: '再多一条', kind: 'user' });
+    ok('队列满了不再堆积：直接丢弃并计数',
+      !dropped.ok && dropped.reason === 'queue-full' && model.snapshot().dropped === 1);
+    clock = 1000;
+    const drained = model.expire(clock);
+    ok('到点后队列自动补位：同屏仍 8 条，队列从 12 降到 4',
+      drained.removed.length === DANMAKU_MAX_ON_SCREEN
+      && drained.added.length === DANMAKU_MAX_ON_SCREEN
+      && model.onScreen === DANMAKU_MAX_ON_SCREEN && model.queued === DANMAKU_QUEUE_MAX - DANMAKU_MAX_ON_SCREEN,
+      JSON.stringify({ added: drained.added.length, onScreen: model.onScreen, queued: model.queued }));
+  }
+
+  /* ---- 模型：模式切换 / 清理 ---- */
+  {
+    let clock = 0;
+    const model = createDanmakuModel({ now: () => clock, dedupeMs: 1500 });
+    model.push({ text: '字幕一句', kind: 'user' });
+    model.setMode('subtitle');
+    ok('切到「字幕」模式：弹幕层清空，push 不再产弹幕',
+      model.onScreen === 0 && model.mode === 'subtitle'
+      && model.push({ text: 'x' }).reason === 'mode');
+    model.setMode('off');
+    ok('切到「关闭」模式：同样不产弹幕', model.mode === 'off' && !model.push({ text: 'y' }).ok);
+    model.setMode(DANMAKU_DEFAULT_MODE);
+    model.push({ text: '重新开始', kind: 'user' });
+    model.clear();
+    ok('clear() 同时清空同屏 / 队列 / 去重表',
+      model.onScreen === 0 && model.queued === 0
+      && model.push({ text: '重新开始', kind: 'user' }).ok);
+  }
+
+  /* ---- DOM 渲染层：颜色类 / 前缀 / 最近一句 / 去重 / 模式 ---- */
+  function fakeClassList(initial = '') {
+    const set = new Set(String(initial).split(/\s+/).filter(Boolean));
+    return {
+      add: (...cs) => { for (const c of cs) set.add(c); },
+      remove: (...cs) => { for (const c of cs) set.delete(c); },
+      contains: (c) => set.has(c),
+      toggle: (c, force) => {
+        const on = force === undefined ? !set.has(c) : !!force;
+        if (on) set.add(c); else set.delete(c);
+        return on;
+      },
+      _set: set,
+    };
+  }
+  function fakeEl(tag = 'div') {
+    const classes = fakeClassList();
+    const el = {
+      tagName: tag.toUpperCase(),
+      dataset: {},
+      style: { setProperty() {} },
+      textContent: '',
+      hidden: false,
+      classList: classes,
+      appendChild(child) { return child; },
+    };
+    // className 与 classList 在真浏览器里是同一份数据：桩里也保持同步
+    Object.defineProperty(el, 'className', {
+      get() { return [...classes._set].join(' '); },
+      set(v) {
+        classes._set.clear();
+        for (const c of String(v).split(/\s+/)) if (c) classes._set.add(c);
+      },
+    });
+    return el;
+  }
+  function fakeDoc() {
+    return {
+      createElement: (tag) => fakeEl(tag),
+    };
+  }
+  function fakeLayer() {
+    const el = fakeEl('div');
+    el.children = [];
+    el.appendChild = (child) => { el.children.push(child); return child; };
+    el.removeChild = (child) => { el.children = el.children.filter((c) => c !== child); return child; };
+    el.classList = fakeClassList();
+    return el;
+  }
+  function newDetached({ reduce = false, model = null } = {}) {
+    const layer = fakeLayer();
+    const last = fakeEl('div');
+    const win = { matchMedia: () => ({ matches: reduce, addEventListener() {} }) };
+    const timers = [];
+    let clock = 0;
+    const dm = createDanmaku({
+      layer,
+      lastEl: last,
+      doc: fakeDoc(),
+      win,
+      now: () => clock,
+      setTimer: (fn, ms) => { timers.push({ fn, at: clock + ms }); return timers.length; },
+      clearTimer: () => {},
+      model,
+    });
+    return { dm, layer, last, timers, advance(ms) { clock += ms; }, get clock() { return clock; } };
+  }
+
+  {
+    const { dm, layer, last } = newDetached();
+    dm.push({ text: '你好', kind: 'user' });
+    dm.push({ text: '我在，说话就行。', kind: 'coach' });
+    const [userNode, coachNode] = layer.children;
+    ok('DOM：一句一条，用户 / 教练各一条', layer.children.length === 2);
+    ok('DOM：用户弹幕是青色类（.danmaku--user）+「你：」前缀',
+      userNode.classList.contains('danmaku')
+      && userNode.classList.contains('danmaku--user')
+      && userNode.textContent === `${t('voice.you')}你好`,
+      userNode.className);
+    ok('DOM：教练弹幕是薄荷绿类（.danmaku--coach）+「教练：」前缀',
+      coachNode.classList.contains('danmaku--coach')
+      && coachNode.textContent === `${t('voice.coach')}我在，说话就行。`,
+      coachNode.className);
+    ok('DOM：两条弹幕的颜色类**不同**', userNode.className !== coachNode.className);
+    ok('DOM：底部「最近一句」显示最新一句（教练说的那句）',
+      last.hidden === false && last.textContent === `${t('voice.coach')}我在，说话就行。`
+      && last.classList.contains('danmaku-last--coach'), last.textContent);
+
+    dm.setInterim('我在听');
+    ok('DOM：partial 只更新「最近一句」灰色实时行，不新增弹幕',
+      layer.children.length === 2 && last.textContent === `${t('voice.you')}我在听`
+      && last.classList.contains('danmaku-last--interim'), last.textContent);
+
+    const before = layer.children.length;
+    const dup = dm.push({ text: '你好', kind: 'user' });
+    ok('DOM：去重命中时不再插一条（同步更新最近一句）',
+      layer.children.length === before && dup.reason === 'duplicate' && !dm.snapshot().interim,
+      JSON.stringify({ children: layer.children.length, dup }));
+  }
+
+  {
+    const { dm, layer, last } = newDetached();
+    dm.push({ text: 'x', kind: 'user' });
+    dm.setMode('subtitle');
+    ok('DOM：切「字幕」→ 弹幕层隐藏、清空；最近一句仍在',
+      layer.hidden === true && layer.children.length === 0 && last.hidden === false);
+    dm.setMode('off');
+    ok('DOM：切「关闭」→ 弹幕层与最近一句都隐藏', layer.hidden === true && last.hidden === true);
+    dm.setMode('danmaku');
+    ok('DOM：切回「弹幕」→ 弹幕层重新出现', layer.hidden === false);
+  }
+
+  {
+    const { dm, layer } = newDetached();
+    for (let i = 0; i < DANMAKU_MAX_ON_SCREEN + 1; i += 1) dm.push({ text: `满 ${i}`, kind: 'user' });
+    ok('DOM：同屏最多渲染 8 条（第 9 条排队）',
+      layer.children.length === DANMAKU_MAX_ON_SCREEN && dm.queued === 1,
+      JSON.stringify({ children: layer.children.length, queued: dm.queued }));
+  }
+
+  {
+    const model = createDanmakuModel({ now: () => 0, maxOnScreen: 2, queueMax: 4, dedupeMs: 0, flightMs: 1000 });
+    const { dm, layer, timers, advance } = newDetached({ model });
+    dm.push({ text: '甲', kind: 'user' });
+    dm.push({ text: '乙', kind: 'coach' });
+    dm.push({ text: '丙', kind: 'user' });
+    ok('DOM：同屏满了先进队列', layer.children.length === 2 && dm.queued === 1);
+    advance(1000);
+    timers[0].fn();
+    ok('DOM：到点移除 + 队列补位（新的一句被渲染出来）',
+      layer.children.length === 1 && dm.queued === 0
+      && layer.children[0].textContent === `${t('voice.you')}丙`,
+      layer.children.map((n) => n.textContent).join(' | '));
+  }
+
+  {
+    const { dm, layer } = newDetached({ reduce: true });
+    dm.push({ text: '一', kind: 'user' });
+    dm.push({ text: '二', kind: 'coach' });
+    dm.push({ text: '三', kind: 'user' });
+    ok('prefers-reduced-motion：不飞行，降级成静态两行（只留最新两条）',
+      layer.classList.contains('danmaku-layer--static')
+      && layer.children.length === 2
+      && layer.children.every((n) => n.classList.contains('danmaku--static')),
+      JSON.stringify({ cls: [...layer.classList._set], n: layer.children.length }));
+  }
+}
+
+/* ================================================================== *
+ * [27] 火山 TTS 前端：200 播放 / 502·超时回落系统 TTS / stop 打断 / blob 释放
+ * （不联网：fetch / Audio / URL.createObjectURL 全部注入假实现）
+ * ================================================================== */
+console.log('\n[27] 火山 TTS 前端：播放 / 502·超时回落 / 打断 / blob URL 释放');
+{
+  const tick = async (n = 8) => { for (let i = 0; i < n; i += 1) await Promise.resolve(); };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function fakeSystem() {
+    return {
+      spoken: [], cancelled: 0, lastOnEnd: null,
+      speak(text, { onEnd } = {}) { this.spoken.push(text); this.lastOnEnd = onEnd; return true; },
+      finish() { this.lastOnEnd?.(); },
+      cancel() { this.cancelled += 1; },
+      setRate() {},
+    };
+  }
+  function audioFactory() {
+    const list = [];
+    class FakeAudio {
+      constructor(src) { this.src = src; this.playCalls = 0; this.paused = 0; list.push(this); }
+      play() { this.playCalls += 1; return Promise.resolve(); }
+      pause() { this.paused += 1; }
+      finish() { this.onended?.(); }
+    }
+    return { FakeAudio, list };
+  }
+  function urlFactory() {
+    let n = 0;
+    const revoked = [];
+    return {
+      revoked,
+      create: () => `blob:fake/${(n += 1)}`,
+      revoke: (u) => { revoked.push(u); },
+    };
+  }
+  const json = (text) => ({ ok: true, status: 200, blob: async () => ({ size: text.length, type: 'audio/mpeg' }) });
+
+  /* ---- ① 200 → 真的播放；播放结束释放 blob URL ---- */
+  {
+    const sys = fakeSystem();
+    const urls = urlFactory();
+    const { FakeAudio, list } = audioFactory();
+    const calls = [];
+    const diagEvents = [];
+    const tts = createVolcTts({
+      fallback: sys,
+      AudioCtor: FakeAudio,
+      createObjectURL: urls.create,
+      revokeObjectURL: urls.revoke,
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      fetchImpl: async (url, init) => { calls.push({ url, init }); return json('开始深蹲'); },
+      rate: 1,
+    });
+    const ends = [];
+    const started = tts.speak('开始深蹲', { onEnd: () => ends.push('end') });
+    await tick();
+    ok('200：POST 到 /tts，body 带 text + rate',
+      started === true && calls.length === 1 && calls[0].url === TTS_PATH
+      && JSON.parse(calls[0].init.body).text === '开始深蹲'
+      && JSON.parse(calls[0].init.body).rate === 1,
+      JSON.stringify(calls[0] ? { url: calls[0].url, body: calls[0].init.body } : null));
+    ok('200：拿到 blob 后用 Audio 播放，没有回退系统 TTS',
+      list.length === 1 && list[0].src === 'blob:fake/1' && list[0].playCalls === 1
+      && sys.spoken.length === 0,
+      JSON.stringify({ audio: list.length, spoken: sys.spoken }));
+    ok('200：诊断记一条 tts:say（source=volc）',
+      diagEvents.some((e) => e.type === 'tts:say' && e.data.source === 'volc'));
+    list[0].finish();
+    ok('播完回调 onEnd 并释放 blob URL（不泄漏）',
+      ends.length === 1 && urls.revoked.includes('blob:fake/1'),
+      JSON.stringify({ ends, revoked: urls.revoked }));
+  }
+
+  /* ---- ② 502 → 自动回落系统 TTS，并记 tts:fallback ---- */
+  {
+    const sys = fakeSystem();
+    const diagEvents = [];
+    const tts = createVolcTts({
+      fallback: sys,
+      AudioCtor: audioFactory().FakeAudio,
+      createObjectURL: () => 'blob:x',
+      revokeObjectURL: () => {},
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      fetchImpl: async () => ({ ok: false, status: 502 }),
+    });
+    tts.speak('靶心收紧');
+    await tick();
+    ok('502：自动回落到系统 TTS（同一句照样念出来）',
+      sys.spoken.length === 1 && sys.spoken[0] === '靶心收紧');
+    ok('502：诊断记 tts:fallback（code=upstream）',
+      diagEvents.some((e) => e.type === 'tts:fallback' && e.data.code === 'upstream'),
+      JSON.stringify(diagEvents));
+  }
+
+  /* ---- ③ 超时 → 系统 TTS；不把会话晾在 speaking ---- */
+  {
+    const sys = fakeSystem();
+    const diagEvents = [];
+    const tts = createVolcTts({
+      fallback: sys,
+      timeoutMs: 15,
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      // 永不 resolve 的 fetch：只能靠 3s（这里调成 15ms）超时兜底
+      fetchImpl: (url, init) => new Promise((resolve, reject) => {
+        init.signal?.addEventListener?.('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+      }),
+    });
+    let errors = 0;
+    const started = tts.speak('请开始深蹲', { onError: () => { errors += 1; } });
+    ok('超时前 speak() 已经接下这一句（返回 true，异步播放）', started === true);
+    await wait(40);
+    ok('超时：自动回落系统 TTS', sys.spoken.length === 1, JSON.stringify(sys.spoken));
+    ok('超时：诊断记 tts:fallback（code=timeout）',
+      diagEvents.some((e) => e.type === 'tts:fallback' && e.data.code === 'timeout'),
+      JSON.stringify(diagEvents));
+    ok('超时回落后不调用 onError（已经改由系统 TTS 念）', errors === 0);
+  }
+
+  /* ---- ④ 打断：新一句先说 stop 上一句；stop() 释放 blob URL ---- */
+  {
+    const urls = urlFactory();
+    const { FakeAudio, list } = audioFactory();
+    let calls = 0;
+    const tts = createVolcTts({
+      fallback: fakeSystem(),
+      AudioCtor: FakeAudio,
+      createObjectURL: urls.create,
+      revokeObjectURL: urls.revoke,
+      fetchImpl: async () => { calls += 1; return json('x'); },
+    });
+    const ends = [];
+    tts.speak('第一句', { onEnd: () => ends.push('one') });
+    await tick();
+    tts.speak('第二句', { onEnd: () => ends.push('two') });
+    await tick();
+    ok('打断：上一句先被 pause + 释放 blob URL，再播下一句',
+      list.length === 2 && list[0].paused >= 1 && urls.revoked.includes('blob:fake/1')
+      && list[1].src === 'blob:fake/2' && calls === 2,
+      JSON.stringify({ audio: list.length, paused: list[0]?.paused, revoked: urls.revoked }));
+    tts.stop();
+    ok('stop()：停当前这句并释放它的 blob URL',
+      list[1].paused >= 1 && urls.revoked.includes('blob:fake/2'));
+    tts.close();
+    tts.close();
+  }
+
+  /* ---- ⑤ 音色来源 = 系统 → 完全不发 /tts ---- */
+  {
+    let calls = 0;
+    const sys = fakeSystem();
+    const tts = createVolcTts({
+      fallback: sys, source: 'system',
+      fetchImpl: async () => { calls += 1; return json('x'); },
+    });
+    tts.speak('系统念这一句');
+    ok('「音色来源=系统」时不发 /tts，直接交系统 TTS',
+      calls === 0 && sys.spoken.length === 1);
+    ok('音色来源常量就是 auto / volc / system（默认 auto）',
+      TTS_SOURCES.join(',') === 'auto,volc,system' && TTS_DEFAULT_SOURCE === 'auto');
+  }
+
+  /* ---- ⑥ 语速真的进了请求体（缓存 key 也按 rate 分） ---- */
+  {
+    const calls = [];
+    const tts = createVolcTts({
+      fallback: fakeSystem(),
+      AudioCtor: audioFactory().FakeAudio,
+      createObjectURL: () => 'blob:r',
+      revokeObjectURL: () => {},
+      fetchImpl: async (url, init) => { calls.push(JSON.parse(init.body)); return json('x'); },
+      rate: 1.5,
+    });
+    tts.speak('快一点');
+    await tick();
+    ok('语速传给 /tts 的 rate（1.5）', calls.length === 1 && calls[0].rate === 1.5,
+      JSON.stringify(calls[0] || null));
+    ok('语速归一化：0.5~2，非法值回 1',
+      normalizeTtsRate(1.5) === 1.5 && normalizeTtsRate(9) === 2
+      && normalizeTtsRate(0) === 1 && normalizeTtsRate('x') === 1
+      && tts.setRate(9) === 2 && tts.setRate(1.5) === 1.5);
+  }
+
+  /* ---- ⑦ 服务端缓存命中 → 客户端仍然是 200 播放（缓存对前端透明） ---- */
+  {
+    const sys = fakeSystem();
+    const { FakeAudio, list } = audioFactory();
+    const tts = createVolcTts({
+      fallback: sys,
+      AudioCtor: FakeAudio,
+      createObjectURL: () => 'blob:hit',
+      revokeObjectURL: () => {},
+      fetchImpl: async () => json('缓存命中'),
+    });
+    tts.speak('缓存命中');
+    await tick();
+    ok('服务端缓存命中：客户端照常 200 → 播放（不会因为“没重新合成”而卡住）',
+      list.length === 1 && list[0].playCalls === 1 && sys.spoken.length === 0);
+    tts.close();
+  }
+
+  ok('默认超时时间就是 3 秒（用户口径）', TTS_TIMEOUT_MS === 3000);
+}
+
+/* ================================================================== *
+ * [28] 火山 TTS 服务端：假 fetch 验缓存 / 502 / 超时 / health 不带密钥
+ * ================================================================== */
+console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health 不泄露凭证');
+{
+  const config = {
+    configured: true, missing: [], appId: 'test-app-id', apiKey: 'test-api-key',
+    voice: 'zh_female_vv_uranus_bigtts', resource: 'volc.seedtts.default',
+    endpoint: 'https://example.invalid/tts',
+  };
+  const logLines = [];
+  const logger = (fields) => logLines.push(fields);
+  const makeFetch = () => {
+    let calls = 0;
+    let last = null;
+    const fn = async (url, init) => {
+      calls += 1;
+      last = { url, init };
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => Uint8Array.from([1, 2, 3, 4, 5]).buffer,
+      };
+    };
+    return { fn, get calls() { return calls; }, get last() { return last; } };
+  };
+
+  const fake = makeFetch();
+  const cache = createTtsCache({ maxEntries: 200, maxBytes: 1024 });
+  const service = createVolcTtsServer({
+    config, fetchImpl: fake.fn, cache, timeoutMs: 100, logger,
+  });
+
+  const first = await service.synthesize('开始深蹲', 1);
+  const second = await service.synthesize('开始深蹲', 1);
+  ok('缓存：同一句 + 同一语速只调一次上游（第二次 cached=true）',
+    fake.calls === 1 && first.ok && !first.cached && second.ok && second.cached
+    && second.bytes === 5,
+    JSON.stringify({ calls: fake.calls, first, second }));
+  ok('缓存 key = voice|rate|text',
+    ttsCacheKey({ voice: config.voice, rate: 1, text: '开始深蹲' })
+    === `${config.voice}|1.00|开始深蹲`
+    && ttsCacheKey({ voice: config.voice, rate: 1.2, text: '开始深蹲' })
+    !== ttsCacheKey({ voice: config.voice, rate: 1, text: '开始深蹲' }));
+  ok('上游请求照 server/tts-probe.mjs 那一份可用写法：v3 端点 + 三个 X-Api 头 + speaker/mp3',
+    fake.last.url === config.endpoint
+    && fake.last.init.headers['X-Api-App-Id'] === config.appId
+    && fake.last.init.headers['X-Api-Key'] === config.apiKey
+    && fake.last.init.headers['X-Api-Resource-Id'] === config.resource
+    && JSON.parse(fake.last.init.body).req_params.speaker === config.voice
+    && JSON.parse(fake.last.init.body).req_params.audio_params.format === 'mp3'
+    && JSON.parse(fake.last.init.body).req_params.text === '开始深蹲',
+    JSON.stringify(fake.last));
+  ok('缓存日志只有 chars / cache / status（不含文本与凭证）',
+    logLines.length >= 2 && logLines.every((f) => Object.keys(f).sort().join(',') === 'cache,chars,status')
+    && !JSON.stringify(logLines).includes('test-api-key'),
+    JSON.stringify(logLines));
+
+  const health = service.health();
+  ok('health：只有 configured（true）+ missing，绝不带 appId / apiKey',
+    health.configured === true
+    && !JSON.stringify(health).includes(config.apiKey)
+    && !JSON.stringify(health).includes(config.appId),
+    JSON.stringify(health));
+
+  /* ---- 上游 502 / 未配置 / 空文本 ---- */
+  const bad = createVolcTtsServer({
+    config,
+    fetchImpl: async () => ({ ok: false, status: 503 }),
+    cache: createTtsCache(),
+    timeoutMs: 100,
+    logger: () => {},
+  });
+  const badResult = await bad.synthesize('x');
+  ok('上游失败 → 502（客户端据此回落系统 TTS）',
+    !badResult.ok && badResult.status === 502 && badResult.code === 'upstream',
+    JSON.stringify(badResult));
+
+  const off = createVolcTtsServer({
+    config: { configured: false, missing: ['VOLC_TTS_VOICE'], appId: '', apiKey: '', voice: '', resource: '', endpoint: '' },
+    fetchImpl: async () => { throw new Error('should not be called'); },
+    cache: createTtsCache(),
+  });
+  const offResult = await off.synthesize('x');
+  ok('没配置 → 502 not-configured（不抛错、不发请求）',
+    !offResult.ok && offResult.code === 'not-configured' && offResult.status === 502);
+  ok('空文本 → 400 empty（不合成）', (await service.synthesize('   ')).code === 'empty');
+  ok('超长文本裁到 300 字（TTS_MAX_TEXT）',
+    TTS_MAX_TEXT === 300 && (await service.synthesize('字'.repeat(400))).ok);
+
+  /* ---- 缓存容量：200 条 / 20MB（LRU） ---- */
+  {
+    const small = createTtsCache({ maxEntries: 2, maxBytes: 1024 });
+    small.set('a', Buffer.alloc(2));
+    small.set('b', Buffer.alloc(2));
+    small.set('c', Buffer.alloc(2));
+    ok('缓存上限 200 条：超过就按 LRU 淘汰最老的',
+      small.maxEntries === 200 || (small.size === 2 && !small.has('a')),
+      JSON.stringify({ size: small.size, keys: small.keys() }));
+    ok('缓存默认上限就是 200 条 / 20MB',
+      createTtsCache().maxEntries === 200 && createTtsCache().maxBytes === 20 * 1024 * 1024);
+    const byteCap = createTtsCache({ maxEntries: 100, maxBytes: 4 });
+    byteCap.set('a', Buffer.alloc(3));
+    byteCap.set('b', Buffer.alloc(3));   // 放不进 → 淘汰 a 后 b 也超 → 最终只留不下
+    ok('缓存上限 20MB：单条太大就不缓存（不会把整个缓存清空）',
+      byteCap.size <= 1 && byteCap.bytes <= 4,
+      JSON.stringify({ size: byteCap.size, bytes: byteCap.bytes }));
+  }
+
+  /* ---- 真 http：/tts 返回 audio/mpeg，/tts/health 不带密钥 ---- */
+  {
+    const http = await import('node:http');
+    const srv = http.createServer(createTtsRoutes({ service }));
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+    const request = (method, p, body = null) => new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port, path: p, method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+      });
+      req.on('error', reject);
+      if (body) req.write(body);
+      req.end();
+    });
+
+    const callsBefore = fake.calls;
+    const res = await request('POST', TTS_SERVER_PATH, JSON.stringify({ text: '开始深蹲', rate: 1 }));
+    ok('POST /tts 命中服务端缓存 → 200 + audio/mpeg + 5 字节（不再请求上游）',
+      res.status === 200 && /audio\/mpeg/.test(String(res.headers['content-type']))
+      && res.body.length === 5 && fake.calls === callsBefore,
+      JSON.stringify({ status: res.status, ct: res.headers['content-type'], len: res.body.length, calls: fake.calls }));
+
+    const healthRes = await request('GET', TTS_HEALTH_PATH);
+    const healthBody = healthRes.body.toString('utf8');
+    ok('GET /tts/health → configured:true，且响应里没有 appId / apiKey',
+      healthRes.status === 200
+      && JSON.parse(healthBody).configured === true
+      && !healthBody.includes(config.apiKey) && !healthBody.includes(config.appId),
+      healthBody);
+
+    const badBody = await request('POST', TTS_SERVER_PATH, JSON.stringify({ text: '' }));
+    ok('POST /tts 空文本 → 400（不是 200 的空音频）', badBody.status === 400,
+      String(badBody.status));
+    await new Promise((r) => srv.close(r));
+  }
+
+  /* ---- 超时：3s（测试调小）→ 502 timeout ---- */
+  {
+    const http = await import('node:http');
+    const slowService = createVolcTtsServer({
+      config,
+      fetchImpl: () => new Promise(() => {}),   // 永不返回
+      cache: createTtsCache(),
+      timeoutMs: 20,
+      logger: () => {},
+    });
+    const srv = http.createServer(createTtsRoutes({ service: slowService }));
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+    const res = await new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port, path: TTS_SERVER_PATH, method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => resolve({ status: r.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      });
+      req.on('error', reject);
+      req.end(JSON.stringify({ text: '超时测试' }));
+    });
+    ok('超时（3s）→ 502 + 简短错误 JSON（code=timeout）',
+      res.status === 502 && JSON.parse(res.body).error === 'timeout',
+      JSON.stringify(res));
+    await new Promise((r) => srv.close(r));
+  }
+
+  /* ---- 配置读取：键名兼容 + 缺字段只报字段名 ---- */
+  {
+    const parsed = loadTtsConfig({
+      envPath: '/definitely/not/here.env',
+      env: {
+        VOLC_TTS_APP_ID: 'a', VOLC_TTS_API_KEY: 'k', VOLC_TTS_VOICE: 'v',
+        VOLC_TTS_RESOURCE: 'r', VOLC_TTS_ENDPOINT: 'https://example.invalid/x',
+      },
+    });
+    ok('loadTtsConfig：读到 appId / key / voice / resource / endpoint 就算 configured',
+      parsed.config.configured === true && parsed.config.missing.length === 0
+      && parsed.config.voice === 'v');
+    const missing = loadTtsConfig({ envPath: '/definitely/not/here.env', env: { VOLC_APP_ID: 'a' } });
+    ok('loadTtsConfig：缺字段只列字段名（key 不出现）',
+      missing.config.configured === false
+      && missing.config.missing.includes('VOLC_TTS_API_KEY')
+      && missing.config.missing.includes('VOLC_TTS_VOICE')
+      && !JSON.stringify(missing.config.missing).includes('a'));
+    const previewSrc = fs.readFileSync(new URL('../preview-server.js', import.meta.url), 'utf8');
+    ok('预览服务器接线：/tts 与 /tts/health 走 createTtsRoutes（启动日志只报“配没配”）',
+      /createTtsRoutes/.test(previewSrc) && /ttsRoute\(req, res\)/.test(previewSrc)
+      && /TTS_HEALTH_PATH/.test(previewSrc));
+  }
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

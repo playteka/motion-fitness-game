@@ -93,6 +93,18 @@
           <video id="video" playsinline muted autoplay></video>
           <canvas id="overlay"></canvas>
 
+          <!-- 对话弹幕（P3.6）：用户说一句 / 教练答一句，各飞出一条。
+               · 只占舞台**上半屏 4 条轨道**（不压 HUD 圆环 / 判定条 / 右下按钮）；
+               · z-index 3：在 video / canvas 之上，在菜单（4）、圆环（6）、弹窗（60）之下；
+               · `pointer-events: none`：弹幕只是画面，绝不吃鼠标 / 触摸；
+               · 颜色走令牌 `--danmaku-user` / `--danmaku-coach`（用户=青，教练=薄荷绿）；
+               · `prefers-reduced-motion` 时不飞行，降级成静态两行（见 style.css）。
+               内容由 src/voice/danmaku.js 的 createDanmaku() 管，app.js 只负责把 final 句喂进来。 -->
+          <div class="danmaku-layer" id="danmakuLayer" aria-hidden="true"></div>
+          <!-- 底部「最近一句」静态行：弹幕 / 字幕两种模式下都保留，关闭模式时隐藏；
+               `role="status"` + aria-live 让读屏也能听清最近这一句（弹幕层本身 aria-hidden）。 -->
+          <div class="danmaku-last" id="danmakuLast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
           <div class="stage-mask" id="stageMask">
             <div class="mask-inner">
               <div class="mask-icon" id="maskIcon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg></div>
@@ -619,6 +631,44 @@
           <!-- 用户要求：AI 教练开启时系统语音自动让位（避免重复、也避免 cancel 掐断教练），提示音不变 -->
           <p class="modal-hint" data-i18n="settings.coachMute"></p>
           <p class="modal-hint" data-i18n="settings.coachPrivacy"></p>
+        </div>
+
+        <!-- 对话显示 + 语音合成（P3.6）：
+             · 对话显示三选一：弹幕（默认）/ 字幕 / 关闭，持久化到 settings.dialogue；
+             · 音色来源：自动（火山优先）/ 火山 / 系统，持久化到 settings.ttsSource；
+             · 语速：0.8~1.5，传给 /tts 的 rate（系统 TTS 也按同一档）；
+             这三项与 src/voice/danmaku.js、src/voice/tts-volc.js 里的常量一一对应。 -->
+        <div class="modal-group">
+          <h3 class="modal-group-title" data-i18n="settings.dialogueGroup"></h3>
+          <p class="modal-hint" data-i18n="settings.dialogueLead"></p>
+          <label class="field wide">
+            <span data-i18n="ui.dialogue"></span>
+            <select id="dialogueSel">
+              <option value="danmaku" data-i18n="ui.dialogueDanmaku"></option>
+              <option value="subtitle" data-i18n="ui.dialogueSubtitle"></option>
+              <option value="off" data-i18n="ui.dialogueOff"></option>
+            </select>
+          </label>
+          <label class="field wide">
+            <span data-i18n="ui.ttsSource"></span>
+            <select id="ttsSourceSel">
+              <option value="auto" data-i18n="ui.ttsAuto"></option>
+              <option value="volc" data-i18n="ui.ttsVolc"></option>
+              <option value="system" data-i18n="ui.ttsSystem"></option>
+            </select>
+          </label>
+          <label class="field wide">
+            <span data-i18n="ui.ttsRate"></span>
+            <select id="ttsRateSel">
+              <option value="0.8">0.8×</option>
+              <option value="0.9">0.9×</option>
+              <option value="1" data-i18n="ui.ttsRateNormal"></option>
+              <option value="1.1">1.1×</option>
+              <option value="1.2">1.2×</option>
+              <option value="1.5">1.5×</option>
+            </select>
+          </label>
+          <p class="modal-hint" data-i18n="settings.ttsHint"></p>
         </div>
 
         <!-- 调试数据记录（用户要求）：**全局配置**里的隐藏分组 ——

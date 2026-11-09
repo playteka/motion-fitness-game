@@ -23,6 +23,14 @@ import {
   createLogger as createAsrLogger,
   loadAsrConfig,
 } from './server/coach-proxy.mjs';
+// 语音合成（P3.6）：/tts 代理火山 TTS + 内存缓存，凭证同样只在本进程里读 coach.env
+import {
+  TTS_PATH,
+  TTS_HEALTH_PATH,
+  createTtsRoutes,
+  createVolcTts,
+  loadTtsConfig,
+} from './server/volc-tts.mjs';
 
 const PORT = Number(process.env.PORT || 4174);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -93,6 +101,19 @@ function explainMissingCert() {
  */
 const asr = loadAsrConfig();
 const asrLogger = createAsrLogger();
+/**
+ * 火山 TTS：和 ASR 一样**只在启动时读一次** `coach.env`（缺文件 / 缺字段都不抛错）。
+ * 日志只打「配没配 / 缺哪些字段名」，绝不打印值；`/tts` 的每一句只打 chars / cache / status。
+ */
+const ttsConfig = loadTtsConfig();
+const ttsService = createVolcTts({
+  config: ttsConfig.config,
+  logger: (fields) => {
+    // 只允许这几个字段：字数 / 缓存命中 / 状态码 —— 没有文本、没有凭证
+    console.log(`[tts] chars=${fields.chars} cache=${fields.cache} status=${fields.status}`);
+  },
+});
+const ttsRoute = createTtsRoutes({ service: ttsService });
 
 /**
  * 能 gzip 的后缀（文本类）。
@@ -165,6 +186,9 @@ function serveStatic(req, res, file) {
  * 只有作为主模块启动时才会真的 listen，被测试 import 时不会占端口。
  */
 export const previewHandler = (req, res) => {
+  // 语音合成（P3.6）：POST /tts（音频）与 GET /tts/health（配没配），先于静态资源处理
+  if (ttsRoute(req, res)) return;
+
   // 调试数据记录（页面「运动设定」里的「记录调试数据」开关）：
   // 页面把每一批采样（JSONL 文本）POST 到这里，服务端**追加**写进 logs/ 下的文件 ——
   // 这样真机测试完之后，日志就落在项目目录里，可以直接拿来分析「为什么没计上」。
@@ -465,6 +489,14 @@ function startServer() {
       + (asr.config.configured ? '（火山凭证已配置）' : '（缺火山凭证 → 页面会自动回退浏览器识别）'));
     console.log(`Speech proxy in this same server: ${PROTO === 'https' ? 'wss' : 'ws'}://127.0.0.1:${PORT}${ASR_PATH}`
       + (asr.config.configured ? ' (Volcengine credentials configured)' : ' (no credentials → the page falls back to Web Speech)'));
+    // 火山 TTS：只报「配没配」，不报任何值（音色 / 资源 / key 一律不出现）
+    console.log(`语音合成（火山 TTS）： ${ttsService.configured ? '已配置，火山优先' : '未配置 → 自动回退系统 TTS'}`
+      + `  [${TTS_HEALTH_PATH}]`);
+    console.log(`Text-to-speech (Volcengine TTS): ${ttsService.configured ? 'configured (Volcengine first)' : 'not configured → system TTS fallback'}`
+      + `  [${TTS_PATH}]`);
+    if (!ttsService.configured) {
+      console.warn(`  ⚠️ TTS 缺字段：${ttsService.missing.join(', ')}（在 ${path.basename(ttsConfig.envPath)} 里填；不填也能用，只是回退系统 TTS）`);
+    }
     if (!asr.config.configured) {
       console.warn(`  ⚠️ 没读到完整凭证：${asr.config.missing.join(', ')}（在 ${path.basename(asr.envPath)} 里填；不填也能练，只是语音识别会回退）`);
       console.warn('  ⚠️ Missing: ' + asr.config.missing.join(', ') + ` in ${path.basename(asr.envPath)} — the game still works, speech falls back.`);
