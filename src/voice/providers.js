@@ -20,7 +20,10 @@
  */
 
 import { t, tList, getLang, getMeta } from '../i18n.js';
-import { downsampleToPcm16 } from './pcm.js';
+import {
+  createPcmFramer,
+  FRAME_MS, FRAME_BYTES, EXPECTED_BYTES_PER_SEC,
+} from './pcm.js';
 
 /* ================================================================== *
  * 工具
@@ -527,7 +530,7 @@ export async function startPcmCapture({
     throw Object.assign(new Error('audio capture unavailable'), { code: 'mic-empty' });
   }
   const source = ctx.createMediaStreamSource(stream);
-  const state = { mode: 'none', node: null, source, gain: null };
+  const state = { mode: 'none', node: null, source, gain: null, flush: () => {} };
   function stop() {
     try { state.node?.port?.close?.(); } catch { /* ignore */ }
     try { state.node?.port && (state.node.port.onmessage = null); } catch { /* ignore */ }
@@ -540,18 +543,48 @@ export async function startPcmCapture({
     }
     state.node = null;
     state.gain = null;
+    state.flush = () => {};
   }
   state.stop = stop;
 
   if (pickCaptureMode(ctx, w) === 'worklet') {
     try {
       await ctx.audioWorklet.addModule(PCM_WORKLET_URL);
-      const node = new w.AudioWorkletNode(ctx, 'mfg-pcm-capture');
-      node.port.onmessage = (event) => onChunk(event && event.data);
+      // worklet 在音频线程里按 100ms 定帧（frameMs 与 pcm.js 的 FRAME_MS 同一份常量）
+      const node = new w.AudioWorkletNode(ctx, 'mfg-pcm-capture', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        channelCount: 1,
+        channelCountMode: 'explicit',
+        processorOptions: { frameMs: FRAME_MS },
+      });
+      node.port.onmessage = (event) => {
+        const data = event && event.data;
+        // 新格式 {type:'pcm', samples}；旧 worklet 直接回 Float32Array 也兼容
+        const samples = data && data.samples ? data.samples : data;
+        if (samples) onChunk(samples);
+      };
+      // 必须把节点接到 destination（音量 0）：AudioWorkletNode 的输出不接到音频图里时，
+      // 部分浏览器不会持续拉取它 —— 这是以前「帧数比预期少」的另一个来源。
+      const gain = typeof ctx.createGain === 'function' ? ctx.createGain() : null;
+      if (gain) {
+        try { gain.gain.value = 0; } catch { /* ignore */ }
+      }
       source.connect(node);
+      if (gain) {
+        node.connect(gain);
+        gain.connect(ctx.destination);
+      } else {
+        node.connect(ctx.destination);
+      }
       state.node = node;
+      state.gain = gain;
       state.mode = 'worklet';
-      diag?.record?.('worklet:ok', { module: 'pcm-worklet' });
+      state.flush = () => {
+        try { node.port.postMessage({ type: 'flush' }); } catch { /* ignore */ }
+      };
+      diag?.record?.('worklet:ok', { module: 'pcm-worklet', frameMs: FRAME_MS });
       diag?.record?.('capture:mode', { mode: 'worklet' });
       return state;
     } catch (err) {
@@ -615,6 +648,13 @@ export function createVolcAsr({
   diag = null,
   connectTimeoutMs = 5000,
   readyTimeoutMs = 8000,
+  /** stop() 之后最多等多久让服务端把 final 送回来（服务端自己还有 3s 上限） */
+  finalWaitMs = 4000,
+  /** 100ms 一帧（与 pcm.js 的 FRAME_MS 同源） */
+  frameMs = FRAME_MS,
+  now = () => Date.now(),
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
 } = {}) {
   const w = rootWin(win);
   const handlers = {
@@ -628,10 +668,16 @@ export function createVolcAsr({
   let fallback = null;
   let connectTimer = null;
   let readyTimer = null;
+  let stopTimer = null;
   let audio = { ctx: null, capture: null };
+  let framer = null;
   let chunks = 0;
   let sentBytes = 0;
   let framesLogged = 0;
+  let rateMarkAt = 0;
+  let rateMarkBytes = 0;
+  let lastRate = 0;
+  let firstFrameAt = 0;
 
   function logFrames(force = false) {
     if (!chunks) return;
@@ -640,9 +686,26 @@ export function createVolcAsr({
     diag?.record?.('ws:frames', { n: chunks, bytes: sentBytes });
   }
 
+  /**
+   * 实时码率（诊断面板那一行）：每 1 秒按「这段时间真正发出去的字节」算一次。
+   * 正常应该 ≈ 32000 B/s（16k / 16bit / 单声道）。明显偏低 = 采集没跟上 / 帧被丢 / 采样率没降对。
+   */
+  function recordRate(force = false) {
+    const t = Number(now()) || 0;
+    if (!rateMarkAt) { rateMarkAt = t; rateMarkBytes = sentBytes; return; }
+    const dt = t - rateMarkAt;
+    // 平时每 1 秒一次；stop 时强制补一次，但样本太短（<500ms）就不覆盖上一次的准确值
+    if (dt < (force ? 500 : 1000)) return;
+    lastRate = Math.round(((sentBytes - rateMarkBytes) * 1000) / dt);
+    rateMarkAt = t;
+    rateMarkBytes = sentBytes;
+    diag?.record?.('ws:rate', { bytesPerSec: lastRate, expected: EXPECTED_BYTES_PER_SEC });
+  }
+
   function clearTimers() {
-    if (connectTimer !== null) { try { clearTimeout(connectTimer); } catch { /* ignore */ } connectTimer = null; }
-    if (readyTimer !== null) { try { clearTimeout(readyTimer); } catch { /* ignore */ } readyTimer = null; }
+    if (connectTimer !== null) { try { clearTimer(connectTimer); } catch { /* ignore */ } connectTimer = null; }
+    if (readyTimer !== null) { try { clearTimer(readyTimer); } catch { /* ignore */ } readyTimer = null; }
+    if (stopTimer !== null) { try { clearTimer(stopTimer); } catch { /* ignore */ } stopTimer = null; }
   }
 
   function sendJson(obj) {
@@ -656,6 +719,7 @@ export function createVolcAsr({
   }
 
   function closeSocket(closingReason = 'client-stop') {
+    if (stopTimer !== null) { try { clearTimer(stopTimer); } catch { /* ignore */ } stopTimer = null; }
     const sock = ws;
     ws = null;
     ready = false;
@@ -671,7 +735,9 @@ export function createVolcAsr({
   function teardownAudio() {
     const current = audio;
     audio = { ctx: null, capture: null };
+    framer = null;
     logFrames(true);
+    recordRate(true);
     try { current.capture?.stop?.(); } catch { /* ignore */ }
     if (current.ctx) {
       try {
@@ -727,6 +793,21 @@ export function createVolcAsr({
     return true;
   }
 
+  /** 发一帧 16k PCM（100ms / 3200 字节）；返回是否真的发出去了 */
+  function sendPcmFrame(pcm) {
+    if (!pcm || !pcm.length) return false;
+    if (manualStop || !ready) return false;
+    if (!sendBytes(pcm.buffer)) return false;
+    chunks += 1;
+    if (chunks === 1) {
+      firstFrameAt = Number(now()) || 0;
+      diag?.record?.('ws:firstFrame', { bytes: pcm.byteLength });
+    }
+    logFrames();
+    recordRate();
+    return true;
+  }
+
   /** 一收到 ready 就开始采集：音频晚一点发没关系，但没有 ready 前别白占麦克风 */
   async function startCapture() {
     const Ctx = w.AudioContext || w.webkitAudioContext;
@@ -741,14 +822,15 @@ export function createVolcAsr({
     }
     const inputRate = Number(ctx.sampleRate) || 48000;
     diag?.record?.('ctx:sampleRate', { value: inputRate, state: String(ctx.state || '') });
+    // 100ms 定帧 + 降采样到 16k：每帧 1600 样本 / 3200 字节，正常 32KB/s
+    framer = createPcmFramer({ inputRate, frameMs });
+    rateMarkAt = Number(now()) || 0;
+    rateMarkBytes = sentBytes;
+    lastRate = 0;
+    firstFrameAt = 0;
     const emitChunk = (samples) => {
-      if (manualStop || !ready || !samples) return;
-      const pcm = downsampleToPcm16(samples, inputRate);
-      if (!pcm.length) return;
-      if (!sendBytes(pcm.buffer)) return;
-      chunks += 1;
-      if (chunks === 1) diag?.record?.('ws:firstFrame', { bytes: pcm.buffer.byteLength });
-      logFrames();
+      if (manualStop || !ready || !samples || !framer) return;
+      for (const pcm of framer.push(samples)) sendPcmFrame(pcm);
     };
 
     let capture;
@@ -791,12 +873,15 @@ export function createVolcAsr({
       diag?.record?.('asr:final', { text });
       if (text) handlers.result?.(text, { isFinal: true });
       else handlers.interim?.('', { clear: true });
+      // stop() 之后还在等这一包：收到 final 就可以安心关连接了
+      if (manualStop) closeSocket('server-final');
       return;
     }
     if (msg.type === 'error') {
       const code = String(msg.code || 'error');
       diag?.record?.('asr:error', { code, message: String(msg.message || '') });
       handlers.notice?.({ code: 'asr-fallback', raw: code });
+      if (manualStop) { closeSocket(`server-${code}`); return; }
       fallbackToWebSpeech(`server-${code}`);
     }
   }
@@ -816,9 +901,9 @@ export function createVolcAsr({
     sock.onopen = () => {
       if (manualStop || ws !== sock) return;
       diag?.record?.('ws:open', {});
-      if (connectTimer !== null) { clearTimeout(connectTimer); connectTimer = null; }
+      if (connectTimer !== null) { try { clearTimer(connectTimer); } catch { /* ignore */ } connectTimer = null; }
       sendJson({ type: 'start', lang: speechLang(lang) });
-      readyTimer = setTimeout(() => {
+      readyTimer = setTimer(() => {
         readyTimer = null;
         if (!ready && !manualStop) fallbackToWebSpeech('ready-timeout');
       }, readyTimeoutMs);
@@ -829,6 +914,7 @@ export function createVolcAsr({
         name: (err && err.name) || 'error',
         message: (err && err.message) || '',
       });
+      if (manualStop) { closeSocket('ws-error'); return; }
       if (!ready) fallbackToWebSpeech('ws-error');
     };
     sock.onclose = (event) => {
@@ -836,10 +922,11 @@ export function createVolcAsr({
         code: Number(event && event.code) || 0,
         reason: String((event && event.reason) || ''),
       });
+      if (stopTimer !== null) { try { clearTimer(stopTimer); } catch { /* ignore */ } stopTimer = null; }
       if (manualStop || ws !== sock) return;
       fallbackToWebSpeech('ws-closed');
     };
-    connectTimer = setTimeout(() => {
+    connectTimer = setTimer(() => {
       connectTimer = null;
       if (!ready && !manualStop) fallbackToWebSpeech('connect-timeout');
     }, connectTimeoutMs);
@@ -858,6 +945,10 @@ export function createVolcAsr({
     get ready() { return ready; },
     get chunks() { return chunks; },
     get sentBytes() { return sentBytes; },
+    /** 最近一次测得的发送码率（B/s；正常 ≈ 32000） */
+    get bytesPerSec() { return lastRate; },
+    /** 一帧的字节数（100ms @16k/16bit/单声道 = 3200） */
+    get frameBytes() { return FRAME_BYTES; },
     onResult(fn) { handlers.result = fn; return api; },
     onInterim(fn) { handlers.interim = fn; return api; },
     onError(fn) { handlers.error = fn; return api; },
@@ -871,13 +962,19 @@ export function createVolcAsr({
         currentRoute = '';
         return false;
       }
+      if (ws) closeSocket('restart');
       manualStop = false;
       running = true;
       ready = false;
       fallback = null;
+      framer = null;
       chunks = 0;
       sentBytes = 0;
       framesLogged = 0;
+      lastRate = 0;
+      firstFrameAt = 0;
+      rateMarkAt = 0;
+      rateMarkBytes = 0;
       currentRoute = ASR_ROUTES.VOLC;
       diag?.record?.('route:volc', {});
       handlers.route?.({ route: ASR_ROUTES.VOLC });
@@ -885,18 +982,48 @@ export function createVolcAsr({
       startVolc();
       return true;
     },
+    /**
+     * 停止。**不能**像以前那样发完 stop 就立刻关 WS：
+     * 服务端收到 stop 后要等火山把最后一帧 final 吐出来（最多 3s）再 flush 给浏览器；
+     * 浏览器先关的话，那一句就永远收不到了（日志里的 `final:false` / `segments:0`）。
+     * 所以：先 flush 最后不足 100ms 的尾巴 → 发 stop → 关采集 → **等 final / 超时**再关 WS。
+     */
     stop() {
-      manualStop = true;
+      if (manualStop) return;
       running = false;
-      ready = false;
       clearTimers();
+      // 尾巴（不足一帧）也要发出去，别把最后一个字切掉
+      if (framer) {
+        const tail = framer.flush();
+        framer = null;
+        if (tail && tail.length) sendPcmFrame(tail);
+      }
+      if (chunks) {
+        diag?.record?.('ws:sent', {
+          frames: chunks,
+          bytes: sentBytes,
+          ms: firstFrameAt ? Math.max(1, (Number(now()) || 0) - firstFrameAt) : 0,
+        });
+      }
+      recordRate(true);
+      const canWait = !!(ws && ws.readyState === 1 && ready);
+      manualStop = true;
+      ready = false;
       sendJson({ type: 'stop' });
       const fb = fallback;
       fallback = null;
       try { fb?.stop?.(); } catch { /* ignore */ }
-      closeSocket('client-stop');
       teardownAudio();
       currentRoute = '';
+      if (!canWait) { closeSocket('client-stop'); return; }
+      diag?.record?.('ws:drain', { ms: finalWaitMs });
+      stopTimer = setTimer(() => {
+        stopTimer = null;
+        closeSocket('stop-timeout');
+      }, finalWaitMs);
+      if (stopTimer && typeof stopTimer.unref === 'function') {
+        try { stopTimer.unref(); } catch { /* ignore */ }
+      }
     },
   };
   return api;

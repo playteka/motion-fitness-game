@@ -26,6 +26,7 @@ import { t } from '../i18n.js';
 import { libIconSVG } from '../icons.js';
 import { voiceErrorKey, voiceNoticeKey } from './session.js';
 import { createVuMeter, smoothLevel, levelToColor } from './providers.js';
+import { EXPECTED_BYTES_PER_SEC } from './pcm.js';
 
 /** 状态 → 文案键（`voice.status.*`） */
 export const COACH_STATUS_KEYS = Object.freeze({
@@ -210,8 +211,8 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
     for (const id of ['coachDock', 'coachRing', 'coachRingSvg', 'coachRingFill', 'coachRingIcon',
       'coachPanel', 'coachAvatar', 'coachStatus', 'coachSubtitles', 'coachYouText', 'coachCoachText',
       'coachNotice', 'coachRoute', 'coachHint', 'coachDiagBtn', 'coachDiag', 'coachDiagClose',
-      'coachDiagRoute', 'coachDiagWs', 'coachDiagFrames', 'coachDiagResults', 'coachDiagError',
-      'coachDiagMic', 'coachDiagWorklet', 'btnVoiceSelfTestPanel', 'coachSelfTestMic',
+      'coachDiagRoute', 'coachDiagWs', 'coachDiagFrames', 'coachDiagRate', 'coachDiagResults',
+      'coachDiagError', 'coachDiagMic', 'coachDiagWorklet', 'btnVoiceSelfTestPanel', 'coachSelfTestMic',
       'coachSelfTestWs', 'coachSelfTestSend', 'coachSelfTestResult', 'coachSelfTestVolume',
       'coachSelfTestResultText']) {
       el[id] = $(id);
@@ -436,6 +437,15 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
         n: (snap.frames && snap.frames.n) || 0,
         bytes: (snap.frames && snap.frames.bytes) || 0,
       }));
+      // 实时码率：正常 ≈32KB/s；明显偏低时这一行会直接暴露「发了很多帧、但每帧太小 / 采集没跟上」
+      const frames = snap.frames || {};
+      const expected = Number(frames.expected) || EXPECTED_BYTES_PER_SEC;
+      setText('coachDiagRate', frames.bytesPerSec > 0
+        ? t('coach.diag.rateValue', {
+          rate: (Number(frames.bytesPerSec) / 1000).toFixed(1),
+          expected: (expected / 1000).toFixed(0),
+        })
+        : t('coach.diag.ratePending'));
       setText('coachDiagResults', t('coach.diag.resultsValue', {
         partial: snap.partials || 0,
         final: snap.finals || 0,

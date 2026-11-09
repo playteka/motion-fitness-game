@@ -27,6 +27,7 @@ import {
   buildStartFrame,
   buildAudioFrame,
   createFrameParser as createVolcFrameParser,
+  createTranscriptReducer,
   parseResponseFrame,
   sanitizeDetail,
 } from './volc-protocol.mjs';
@@ -240,9 +241,13 @@ export function createVolcSession({
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   idleTimeoutMs = VOLC_DEFAULTS.idleTimeoutMs,
+  throttleMs = undefined,
+  now = Date.now,
 } = {}) {
   const secrets = [config.appId, config.apiKey].filter((s) => s && String(s).length >= 3);
   const safe = (text) => sanitizeDetail(text, secrets);
+  // 服务端解析：final 去重（segment key + 文本）、partial 只发正在说的部分、300ms 节流
+  const reducer = createTranscriptReducer({ ...(throttleMs === undefined ? {} : { throttleMs }), now });
 
   let socket = null;
   let started = false;
@@ -253,6 +258,7 @@ export function createVolcSession({
   let segments = 0;
   let frames = 0;
   let lastText = '';
+  let lastFinalText = '';
   let gotFinal = false;
 
   const emit = (event) => {
@@ -329,10 +335,21 @@ export function createVolcSession({
         emit({ ...event, message: safe(event.message) });
         return;
       }
-      if (event.text) { lastText = event.text; segments += 1; }
       clearIdle();   // 上游说话了：不再算「连上后一直没响应」
-      if (event.type === 'final') { gotFinal = true; }
-      emit(event);
+      // 记住最后可见文本：stop 之后如果上游一直不回 final，代理用它兜底 flush
+      if (event.pending) lastText = event.pending;
+      else if (event.text && event.type !== 'final') lastText = event.text;
+      if (event.type === 'final' && event.text && !event.segments?.length) lastText = event.text;
+      // 只有 reducer 认可的「新的一句」才发给浏览器；重复的累计文本在这里被吃掉
+      for (const out of reducer.push(event)) {
+        if (out.type === 'final') {
+          gotFinal = true;
+          segments += 1;
+          lastFinalText = out.text;
+          if (out.text) lastText = out.text;
+        }
+        emit(out);
+      }
     });
     sock.onClose?.((info) => {
       if (closed) return;
@@ -409,9 +426,16 @@ export function createVolcSession({
     stop,
     close,
     get bytes() { return bytes; },
+    /** 定稿句数（reducer 真正发出去的 final 条数，不再被重复响应刷高） */
     get segments() { return segments; },
+    /** 发给浏览器的 partial / final 条数（诊断日志用） */
+    get partials() { return reducer.stats.partials; },
+    get finals() { return reducer.stats.finals; },
+    get skippedFinals() { return reducer.stats.skippedFinals; },
+    get skippedPartials() { return reducer.stats.skippedPartials; },
     get frames() { return frames; },
     get lastText() { return lastText; },
+    get lastFinalText() { return lastFinalText; },
     get gotFinal() { return gotFinal; },
     get closed() { return closed; },
     get stopped() { return stopped; },

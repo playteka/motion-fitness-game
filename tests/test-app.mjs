@@ -972,9 +972,13 @@ console.log('\n[1c3] P3.1 火山模式：选路 / 16k 分片 / 字幕 / 关闭�
   await api.setCoachEnabled(false);
   await flush();
   const tracks = coachStubs.micTracks.slice(micBefore);
-  ok('关闭教练：断 WS、关 AudioContext、断开处理节点（不留后台麦克风 / 连接）',
-    sock.closed === true && capCtx.closed === true && capCtx.node.disconnected === true,
+  ok('关闭教练：立刻关 AudioContext / 采集节点，但 WS 先留着等最后一包 final（不丢收尾）',
+    sock.closed === false && capCtx.closed === true && capCtx.node.disconnected === true,
     JSON.stringify({ ws: sock.closed, ctx: capCtx.closed, node: capCtx.node.disconnected }));
+  sock.message({ type: 'final', text: '深蹲 暂停' });
+  await flush();
+  ok('收到服务端 flush 的 final 之后才断 WS（不留后台连接）',
+    sock.closed === true, JSON.stringify({ ws: sock.closed }));
   ok('整个开启期间只取了一次麦克风（主路 / 音量表共享；不存在第二路 getUserMedia）',
     coachStubs.micCalls.length === micCallsBefore + 1 && tracks.length === 1,
     JSON.stringify({ micCalls: coachStubs.micCalls.length - micCallsBefore, tracks: tracks.length }));
@@ -1034,6 +1038,7 @@ console.log('\n[1c4] P3.5 诊断面板 + 语音自检（mic → ws → send → 
   api.coachDiag.record('ws:connecting', {});
   api.coachDiag.record('ws:open', {});
   api.coachDiag.record('ws:frames', { n: 5, bytes: 16000 });
+  api.coachDiag.record('ws:rate', { bytesPerSec: 32000, expected: 32000 });
   api.coachDiag.record('asr:partial', { text: '你好' });
   api.coachDiag.record('asr:final', { text: '你好世界' });
   api.coachDiag.record('mic:ok', { tracks: 1, labels: ['audio-1'] });
@@ -1042,16 +1047,19 @@ console.log('\n[1c4] P3.5 诊断面板 + 语音自检（mic → ws → send → 
   api.coachDiag.record('capture:mode', { mode: 'processor' });
   api.coachDiag.record('asr:error', { code: 'network' });   // 最近错误最后写，面板显示它
   await flush();
-  ok('诊断面板显示路由 / WS / 帧数 / partial·final 计数',
+  ok('诊断面板显示路由 / WS / 帧数 / 实时码率 / partial·final 计数',
     elements.get('coachDiagRoute').textContent === 'volc'
     && elements.get('coachDiagWs').textContent === 'open'
     && elements.get('coachDiagFrames').textContent.includes('5')
     && elements.get('coachDiagFrames').textContent.includes('16000')
+    && elements.get('coachDiagRate').textContent.includes('32.0')
+    && elements.get('coachDiagRate').textContent.includes('32')
     && elements.get('coachDiagResults').textContent.includes('partial')
     && elements.get('coachDiagResults').textContent.includes('final'),
     JSON.stringify({ route: elements.get('coachDiagRoute').textContent,
       ws: elements.get('coachDiagWs').textContent,
       frames: elements.get('coachDiagFrames').textContent,
+      rate: elements.get('coachDiagRate').textContent,
       results: elements.get('coachDiagResults').textContent }));
   ok('诊断面板显示最近错误 / 麦克风轨数 + AudioContext 状态 / Worklet 兜底',
     elements.get('coachDiagError').textContent.includes('network')

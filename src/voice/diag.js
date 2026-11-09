@@ -20,11 +20,16 @@
  *   - 本模块**不碰 DOM**，也不知道 coach.env 的内容。
  */
 
+import { EXPECTED_BYTES_PER_SEC } from './pcm.js';
+
 export const DIAG_FILE = 'coach-diag.jsonl';
 export const DIAG_ENDPOINT = `/__debug/log?file=${DIAG_FILE}`;
 export const DIAG_FLUSH_MS = 2000;
 export const DIAG_BATCH_SIZE = 20;
 export const DIAG_MAX_TEXT = 80;
+
+/** 16k / 16bit / 单声道应有的发送码率（与 pcm.js 的 EXPECTED_BYTES_PER_SEC 同源，不另抄一份） */
+export { EXPECTED_BYTES_PER_SEC };
 
 /** 这些键名的值一律不上报（音频 / 凭证 / 原始缓冲） */
 const SECRET_KEY = /(?:api[-_]?key|access[-_]?key|secret|token|password|passwd|credential|authorization|bearer|audio|pcm|sample|buffer|waveform|arraybuffer)/i;
@@ -84,7 +89,7 @@ function blankSnapshot() {
     lastType: '',
     route: '',
     ws: { state: 'idle', code: null, reason: '' },
-    frames: { n: 0, bytes: 0 },
+    frames: { n: 0, bytes: 0, bytesPerSec: 0, expected: EXPECTED_BYTES_PER_SEC },
     partials: 0,
     finals: 0,
     lastPartial: '',
@@ -189,10 +194,18 @@ export function createDiag({
         setLastError(`ws: ${entry.name || 'error'}`);
         break;
       case 'ws:firstFrame':
-        state.frames = { n: 1, bytes: Number(entry.bytes) || 0 };
+        state.frames = { ...state.frames, n: 1, bytes: Number(entry.bytes) || 0 };
         break;
       case 'ws:frames':
-        state.frames = { n: Number(entry.n) || 0, bytes: Number(entry.bytes) || 0 };
+        state.frames = { ...state.frames, n: Number(entry.n) || 0, bytes: Number(entry.bytes) || 0 };
+        break;
+      case 'ws:rate':
+        // 实时码率（用户要求的那一行）：正常 ≈ 32000 B/s；偏低说明采集 / 定帧没做对
+        state.frames = {
+          ...state.frames,
+          bytesPerSec: Number(entry.bytesPerSec) || 0,
+          expected: Number(entry.expected) || state.frames.expected || EXPECTED_BYTES_PER_SEC,
+        };
         break;
       case 'asr:partial':
         state.partials += 1;

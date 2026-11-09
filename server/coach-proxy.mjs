@@ -56,8 +56,10 @@ export const CLOSE_CODE_CONFIG = 4401;
 
 /** 单条 WebSocket 消息上限（一包 16k PCM 只有几 KB，1MB 已经很宽松） */
 const MAX_CLIENT_MESSAGE = 1024 * 1024;
-/** 收到 stop 之后最多再等多久让火山把最后一帧吐出来 */
-const FINAL_GRACE_MS = 3000;
+/** 收到 stop 之后最多再等多久让火山把最后一帧吐出来（浏览器端会等 same 4s） */
+export const FINAL_GRACE_MS = 3000;
+/** 同一段文本在这个窗口内不重复发 final（与 volc-protocol 的节流同一档） */
+export const FINAL_THROTTLE_MS = 300;
 
 /** 短连接 id（日志用，不含任何可追踪信息） */
 function shortId() {
@@ -85,10 +87,14 @@ export function createLogger({ sink = console, file = '' } = {}) {
 }
 
 /** 每个浏览器的连接：解 WS 帧 → 控制消息 / 音频 → 火山会话 */
-function attachClient(socket, { config, logger, envPath, head = null }) {
+function attachClient(socket, {
+  config, logger, envPath, head = null,
+  relayFactory = createVolcSession,
+  finalGraceMs = FINAL_GRACE_MS,
+}) {
   const id = shortId();
   const wsParser = createFrameParser();
-  const audio = { bytes: 0, chunks: 0 };
+  const audio = { bytes: 0, chunks: 0, firstAt: 0, lastAt: 0 };
   let relay = null;
   let started = false;
   let stopRequested = false;
@@ -96,6 +102,11 @@ function attachClient(socket, { config, logger, envPath, head = null }) {
   let closing = false;
   let finalTimer = null;
   let closed = false;
+  let partialsSent = 0;
+  let finalsSent = 0;
+  let lastFinalText = '';
+  const finalSentAt = new Map();   // 文本 → 上次发送时间（300ms 节流用）
+  const partialAt = new Map();     // partial 文本 → 上次发送时间（300ms 节流用）
 
   logger.info('client connected', { id });
 
@@ -119,9 +130,56 @@ function attachClient(socket, { config, logger, envPath, head = null }) {
     }
   }
 
+  /**
+   * 发一条 final —— **同一段文本只发一次**。
+   *
+   * 以前上游每个响应都把「之前已定稿的句子 + 累计全文」重发一遍，代理照单全收，
+   * 日志里同一句 4 个字能在几秒内刷几百行（`final {chars:4}`），客户端被刷屏 / 去重，
+   * 用户就「看不到结果」。这里做三层保护：
+   *   1. 同一段文本连续出现（lastFinalText）不再发；
+   *   2. 同一文本 300ms 内不再发；
+   *   3. 空字符串收尾只发一次（前面的 final 已经有内容时不再补空包）。
+   * @returns {boolean} 是否真的发了
+   */
+  function sendFinal(text, { reason = 'upstream' } = {}) {
+    const body = String(text == null ? '' : text);
+    const at = Date.now();
+    if (body === '' && finalSent) return false;
+    if (body && body === lastFinalText) return false;
+    const prev = finalSentAt.get(body);
+    if (prev !== undefined && at - prev < FINAL_THROTTLE_MS) return false;
+    finalSentAt.set(body, at);
+    if (finalSentAt.size > 256) {
+      for (const [k, t] of finalSentAt) if (at - t > 60000) finalSentAt.delete(k);
+    }
+    lastFinalText = body;
+    finalSent = true;
+    finalsSent += 1;
+    clearFinalTimer();
+    send({ type: 'final', text: body });
+    logger.info('final', { id, chars: body.length, reason, n: finalsSent });
+    return true;
+  }
+
+  function sendPartial(text) {
+    const body = String(text == null ? '' : text);
+    if (!body) return false;
+    const at = Date.now();
+    const prev = partialAt.get(body);
+    if (prev !== undefined && at - prev < FINAL_THROTTLE_MS) return false;
+    partialAt.set(body, at);
+    if (partialAt.size > 256) {
+      for (const [k, t] of partialAt) if (at - t > 60000) partialAt.delete(k);
+    }
+    partialsSent += 1;
+    send({ type: 'partial', text: body });
+    return true;
+  }
+
   function closeClient() {
     if (closed) return;
     const segments = relay ? relay.segments : 0;
+    const durationMs = audio.firstAt ? Math.max(1, (audio.lastAt || Date.now()) - audio.firstAt) : 0;
     closed = true;
     clearFinalTimer();
     closing = true;
@@ -136,6 +194,11 @@ function attachClient(socket, { config, logger, envPath, head = null }) {
       id,
       audioBytes: audio.bytes,
       chunks: audio.chunks,
+      // 每帧字节数 / 每秒字节数：正常应是 3200 字节/帧、≈32000 B/s
+      bytesPerChunk: audio.chunks ? Math.round(audio.bytes / audio.chunks) : 0,
+      bytesPerSec: durationMs ? Math.round((audio.bytes * 1000) / durationMs) : 0,
+      partials: partialsSent,
+      finals: finalsSent,
       segments,
       final: finalSent,
     });
@@ -164,14 +227,12 @@ function attachClient(socket, { config, logger, envPath, head = null }) {
     if (event.type === 'partial') {
       const text = String(event.text || '');
       if (!text) return;
-      send({ type: 'partial', text });
+      // 中间结果要真的发给浏览器：客户端只靠 partial 才会上屏（以前日志里完全没有 partial）
+      sendPartial(text);
       return;
     }
     if (event.type === 'final') {
-      finalSent = true;
-      clearFinalTimer();
-      send({ type: 'final', text: String(event.text || '') });
-      logger.info('final', { id, chars: String(event.text || '').length });
+      sendFinal(event.text, { reason: stopRequested ? 'stop' : 'upstream' });
       if (stopRequested) finishSoon(120);
       return;
     }
@@ -209,7 +270,7 @@ function attachClient(socket, { config, logger, envPath, head = null }) {
       });
       return;
     }
-    relay = createVolcSession({ config, onEvent: onVolcEvent });
+    relay = relayFactory({ config, onEvent: onVolcEvent });
     logger.info('asr start', { id, lang, resource: config.resource });
     const ok = await relay.start({ lang });
     if (!ok) {
@@ -225,21 +286,19 @@ function attachClient(socket, { config, logger, envPath, head = null }) {
     clearFinalTimer();
     const r = relay;
     if (!r) {
-      send({ type: 'final', text: '' });
+      sendFinal('', { reason: 'stop-empty' });
       finishSoon(80);
       return;
     }
     logger.info('asr stop', { id, audioBytes: audio.bytes, chunks: audio.chunks });
     r.stop();
-    // 火山有时最后一帧回得很慢：最多等 FINAL_GRACE_MS，到点用已经收到的最后一句定稿
+    // 火山有时最后一帧回得很慢：最多等 finalGraceMs；到点用「最后一句可见文本」flush。
+    // （以前这里直接 send final 并立刻关连接，最后一包经常丢 —— 客户端现在会一直等到这一包。）
     finalTimer = setTimeout(() => {
       finalTimer = null;
-      if (!finalSent) {
-        finalSent = true;
-        send({ type: 'final', text: r.lastText || '' });
-      }
+      sendFinal(String(r.lastText || ''), { reason: 'stop-flush' });
       finishSoon(60);
-    }, FINAL_GRACE_MS);
+    }, finalGraceMs);
     finalTimer.unref?.();
   }
 
@@ -273,11 +332,23 @@ function attachClient(socket, { config, logger, envPath, head = null }) {
     }
     if (opcode !== OPCODES.BINARY) return;
     if (!relay || stopRequested) return;
+    const now = Date.now();
+    if (!audio.firstAt) audio.firstAt = now;
+    audio.lastAt = now;
     audio.bytes += payload.length;
     audio.chunks += 1;
     relay.audio(payload);
-    if (audio.chunks % 64 === 0) {
-      logger.info('audio', { id, chunks: audio.chunks, bytes: audio.bytes });
+    // 每 10 帧（≈1 秒）打一次：正常是 3200 字节/帧、≈32000 B/s。
+    // 一句日志就能看出「帧很多但每帧太小」还是「采集没跟上」。
+    if (audio.chunks % 10 === 0) {
+      const span = Math.max(1, audio.lastAt - audio.firstAt);
+      logger.info('audio', {
+        id,
+        chunks: audio.chunks,
+        bytes: audio.bytes,
+        bytesPerChunk: Math.round(audio.bytes / audio.chunks),
+        bytesPerSec: Math.round((audio.bytes * 1000) / span),
+      });
     }
   }, { maxBytes: MAX_CLIENT_MESSAGE });
 
@@ -366,7 +437,11 @@ function configErrorMessage(config) {
  * @param {object} [opts] `{ config, logger, envPath }`
  * @returns {boolean} 是否把连接交给了火山会话
  */
-export function handleAsrUpgrade(req, socket, head, { config, logger = createLogger(), envPath = '' } = {}) {
+export function handleAsrUpgrade(req, socket, head, {
+  config, logger = createLogger(), envPath = '',
+  relayFactory = createVolcSession,
+  finalGraceMs = FINAL_GRACE_MS,
+} = {}) {
   const log = logger || createLogger();
 
   if (!isUpgradeRequest(req)) {
@@ -398,7 +473,7 @@ export function handleAsrUpgrade(req, socket, head, { config, logger = createLog
     try { socket.destroy(); } catch { /* ignore */ }
     return false;
   }
-  attachClient(socket, { config, logger: log, envPath, head });
+  attachClient(socket, { config, logger: log, envPath, head, relayFactory, finalGraceMs });
   return true;
 }
 
@@ -416,6 +491,8 @@ export function createAsrUpgradeHandler({
   logger = createLogger(),
   envPath = '',
   unknown = 'destroy',
+  relayFactory = createVolcSession,
+  finalGraceMs = FINAL_GRACE_MS,
 } = {}) {
   return (req, socket, head) => {
     let pathname = '';
@@ -427,7 +504,7 @@ export function createAsrUpgradeHandler({
       try { socket.destroy(); } catch { /* ignore */ }
       return;
     }
-    handleAsrUpgrade(req, socket, head, { config, logger, envPath });
+    handleAsrUpgrade(req, socket, head, { config, logger, envPath, relayFactory, finalGraceMs });
   };
 }
 

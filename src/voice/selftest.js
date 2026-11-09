@@ -21,7 +21,7 @@ import {
   createVuMeter, startPcmCapture, resolveAsrUrl, sameOriginAsrUrl,
   DEFAULT_ASR_WS_URL,
 } from './providers.js';
-import { downsampleToPcm16 } from './pcm.js';
+import { createPcmFramer, FRAME_BYTES } from './pcm.js';
 
 export const SELF_TEST_STEPS = Object.freeze(['mic', 'ws', 'send', 'result']);
 export const SELF_TEST_STEP_KEYS = Object.freeze({
@@ -433,6 +433,21 @@ export function createSelfTest({
         state: String(ctx.state || ''),
       });
       const inputRate = Number(ctx.sampleRate) || 48000;
+      // 与主流程共用同一套 100ms 定帧：自检发出去的码率 / 帧大小和真实会话完全一致
+      const framer = createPcmFramer({ inputRate });
+      const sendPcm = (pcm) => {
+        if (stale() || !socket || socket.readyState !== 1 || !pcm || !pcm.length) return;
+        try {
+          socket.send(pcm.buffer);
+        } catch {
+          return;
+        }
+        bytes += pcm.byteLength;
+        frames += 1;
+        if (frames === 1) diag?.record?.('ws:firstFrame', { bytes: pcm.byteLength });
+        if (frames % 8 === 0) diag?.record?.('ws:frames', { n: frames, bytes });
+        emit();
+      };
       const capture = await startPcmCapture({
         win: w,
         ctx,
@@ -440,21 +455,15 @@ export function createSelfTest({
         diag,
         onChunk: (samples) => {
           if (stale() || !socket || socket.readyState !== 1) return;
-          const pcm = downsampleToPcm16(samples, inputRate);
-          if (!pcm.length) return;
-          try {
-            socket.send(pcm.buffer);
-          } catch {
-            return;
-          }
-          bytes += pcm.buffer.byteLength;
-          frames += 1;
-          if (frames === 1) diag?.record?.('ws:firstFrame', { bytes: pcm.buffer.byteLength });
-          if (frames % 8 === 0) diag?.record?.('ws:frames', { n: frames, bytes });
-          emit();
+          for (const pcm of framer.push(samples)) sendPcm(pcm);
         },
       });
       mine.capture = capture;
+      // stop 时把主线程余下的不足一帧 PCM 也发出去（worklet 内部那 <100ms 由 capture.flush 兜底）
+      mine.flushTail = () => {
+        const tail = framer.flush();
+        if (tail) sendPcm(tail);
+      };
     } catch (err) {
       if (stale()) return finish(false, 'send', 'cancelled');
       return failAt('send', (err && (err.code || err.name)) || 'capture');
@@ -467,10 +476,17 @@ export function createSelfTest({
       }
     });
     if (stale()) return finish(false, 'send', 'cancelled');
+    // 先把最后不足 100ms 的尾巴补发出去，再告诉服务端 stop（否则最后一个字会被切掉）
+    try { mine.flushTail?.(); } catch { /* ignore */ }
+    try { mine.capture?.flush?.(); } catch { /* ignore */ }
     try { mine.capture?.stop?.(); } catch { /* ignore */ }
     try { socket.send(JSON.stringify({ type: 'stop' })); } catch { /* ignore */ }
     if (frames <= 0) return failAt('send', 'no-frames');
-    diag?.record?.('ws:frames', { n: frames, bytes });
+    diag?.record?.('ws:frames', { n: frames, bytes, frameBytes: FRAME_BYTES });
+    diag?.record?.('ws:rate', {
+      bytesPerSec: Math.round((bytes * 1000) / Math.max(1, Date.now() - startedAt)),
+      expected: FRAME_BYTES * 10,
+    });
     setStep('send', 'ok');
 
     /* ---- ④ 服务端结果 --------------------------------------------- */

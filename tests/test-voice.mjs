@@ -24,7 +24,7 @@ import {
 } from '../src/voice/commands.js';
 import {
   createLlm, createAsr, createVuMeter, createVolcAsr, createAutoAsr,
-  pickAsrRoute, resolveAsrUrl, pickCaptureMode, volcErrorCode,
+  pickAsrRoute, resolveAsrUrl, pickCaptureMode, volcErrorCode, startPcmCapture,
   DEFAULT_ASR_WS_URL, ASR_ROUTES,
   rmsToLevel, smoothLevel, levelToColor,
   VU_COLORS, VU_LEVEL_VOICE, VU_LEVEL_LOUD,
@@ -36,6 +36,8 @@ import {
 import { createSelfTest, SELF_TEST_STEPS } from '../src/voice/selftest.js';
 import {
   downsampleToPcm16, pcm16Rms, pcm16Peak, pcmBytesToMs, floatToPcm16,
+  createPcmFramer, pcmBytesPerSec,
+  FRAME_MS, FRAME_SAMPLES, FRAME_BYTES, EXPECTED_BYTES_PER_SEC,
 } from '../src/voice/pcm.js';
 import { parseEnv, volcConfigFrom, maskSecret, redactSecrets } from '../server/env.mjs';
 import {
@@ -45,6 +47,7 @@ import {
 import {
   buildFrame, buildStartFrame, buildStartPayload, buildAudioFrame, parseFrame,
   createFrameParser as createVolcFrameParser, parseResponseFrame, buildAuthHeaders,
+  parseResultJson, createTranscriptReducer, FINAL_THROTTLE_MS,
   volcErrorCode as mapVolcCode, HOTWORDS, MESSAGE_TYPES, FLAGS, SERIALIZATION, COMPRESSION,
   sanitizeDetail,
 } from '../server/volc-protocol.mjs';
@@ -1198,8 +1201,9 @@ console.log('\n[14] 火山会话层（假 socket）：开始 / 音频 / 定稿 /
     && session.lastText === '深蹲 暂停' && session.gotFinal === true);
 
   session.close();
-  ok('close() 之后 socket 被关闭、bytes / segments 统计还在（日志只打数字）',
-    upstream.closed === true && session.bytes === 3200 && session.segments >= 2);
+  ok('close() 之后 socket 被关闭、bytes / 定稿句数统计还在（日志只打数字）',
+    upstream.closed === true && session.bytes === 3200 && session.segments === 1
+    && session.finals === 1);
 }
 {
   const events = [];
@@ -1226,6 +1230,141 @@ console.log('\n[14] 火山会话层（假 socket）：开始 / 音频 / 定稿 /
   });
   ok('coach.env 缺字段 → config 错误，且根本不去连火山',
     await session.start() === false && events.at(-1).code === 'config' && opened === 0);
+}
+
+/* ================================================================== *
+ * 14b. 真实火山响应样式：partial 先上屏、定稿只发一次（用户反馈「发送的帧很多却没有结果」）
+ *
+ * 上游的 result.text 是**累计文本**，已定稿的 utterances 每个响应都会重发一遍。
+ * 以前代理只看 text / definite，同一句 4 个字能当 final 连发几百次（日志里 segments:1291）；
+ * 现在按 segment key + 文本去重，非定稿部分发 partial，并有 300ms 节流。
+ * ================================================================== */
+console.log('\n[14b] 火山响应序列：partial → final、重复 final 只发一次、300ms 节流');
+{
+  const utt = (text, definite, startTime) => ({
+    text, definite, start_time: startTime, end_time: startTime + 800,
+  });
+  const response = (json, opts = {}) => parseResponseFrame(parseFrame(volcResponseFrame(json, opts)));
+  let clock = 0;
+  const reducer = createTranscriptReducer({ now: () => clock });
+  const take = (json, opts = {}, at = null) => {
+    if (at !== null) clock = at;
+    const event = response(json, opts);
+    return { event, out: reducer.push(event) };
+  };
+
+  const parsed = parseResultJson({
+    result: { text: '深蹲 暂停', utterances: [utt('深蹲', true, 0), utt('暂停', false, 800)] },
+  });
+  ok('parseResultJson：definite 段落带稳定 key（start_time + 文本），pending 只留没定稿的部分',
+    parsed.segments.length === 1 && parsed.segments[0].key === '0:深蹲'
+    && parsed.segments[0].text === '深蹲' && parsed.pending === '暂停' && parsed.text === '深蹲 暂停',
+    JSON.stringify(parsed));
+
+  const first = take({ result: { text: '深蹲', utterances: [utt('深蹲', false, 0)] } }, {}, 0);
+  ok('第一帧（definite=false）→ 只出 partial「深蹲」，不出 final',
+    first.event.type === 'partial' && first.out.length === 1
+    && first.out[0].type === 'partial' && first.out[0].text === '深蹲',
+    JSON.stringify(first.out));
+
+  const dupPartial = take({ result: { text: '深蹲', utterances: [utt('深蹲', false, 0)] } }, {}, 100);
+  ok('同一段文本的重复 partial（300ms 内）不再发（客户端字幕不会被反复刷）',
+    dupPartial.out.length === 0 && reducer.stats.skippedPartials >= 1,
+    JSON.stringify({ out: dupPartial.out, stats: reducer.stats }));
+
+  const finDeep = take({ result: { text: '深蹲', utterances: [utt('深蹲', true, 0)] } }, {}, 400);
+  ok('definite=true → 出 final「深蹲」',
+    finDeep.out.length === 1 && finDeep.out[0].type === 'final' && finDeep.out[0].text === '深蹲',
+    JSON.stringify(finDeep.out));
+
+  const finDup = take({ result: { text: '深蹲', utterances: [utt('深蹲', true, 0)] } }, {}, 500);
+  ok('同一段 final 重复回来 → 一条都不发（这就是「几百行 final」的根因）',
+    finDup.out.length === 0 && reducer.stats.skippedFinals >= 1,
+    JSON.stringify({ out: finDup.out, stats: reducer.stats }));
+
+  const nextPartial = take({
+    result: { text: '深蹲 暂停', utterances: [utt('深蹲', true, 0), utt('暂停', false, 800)] },
+  }, {}, 600);
+  ok('上一句已定稿、下一句正在说 → 出 partial「暂停」（不能只等 final）',
+    nextPartial.out.length === 1 && nextPartial.out[0].type === 'partial'
+    && nextPartial.out[0].text === '暂停',
+    JSON.stringify(nextPartial.out));
+
+  const finPause = take({
+    result: { text: '深蹲 暂停', utterances: [utt('深蹲', true, 0), utt('暂停', true, 800)] },
+  }, {}, 900);
+  ok('第二句定稿 → 只发**新的一句**「暂停」，不再把累计全文「深蹲 暂停」当 final',
+    finPause.out.length === 1 && finPause.out[0].type === 'final'
+    && finPause.out[0].text === '暂停',
+    JSON.stringify(finPause.out));
+
+  const finPauseDup = take({
+    result: { text: '深蹲 暂停', utterances: [utt('深蹲', true, 0), utt('暂停', true, 800)] },
+  }, {}, 1000);
+  ok('重复的定稿响应 → 一条也不发',
+    finPauseDup.out.length === 0, JSON.stringify(finPauseDup.out));
+
+  const lastCumulative = take({
+    result: { text: '深蹲 暂停', utterances: [utt('深蹲', true, 0), utt('暂停', true, 800)] },
+  }, { flags: FLAGS.LAST, seq: null }, 1200);
+  ok('最后一包（flags=LAST）把已定稿全文重发一遍 → 也不再发重复 final',
+    lastCumulative.out.length === 0 && reducer.stats.finals === 2,
+    JSON.stringify({ out: lastCumulative.out, finals: reducer.stats.finals }));
+
+  const lastNoUtterances = take({ result: { text: '深蹲，暂停。' } },
+    { flags: FLAGS.LAST_NEGATIVE_SEQUENCE, seq: -1 }, 1400);
+  ok('最后一包没有 utterances、全文（含标点）也已发过 → 不重复',
+    lastNoUtterances.out.length === 0, JSON.stringify(lastNoUtterances.out));
+
+  const err = reducer.push({ type: 'error', code: 'upstream', message: 'boom' });
+  ok('error 事件不参与去重 / 节流，原样透传',
+    err.length === 1 && err[0].type === 'error' && err[0].code === 'upstream');
+
+  /* ---- 300ms 节流：同一文本过了窗口才允许再发 ---- */
+  let clock2 = 0;
+  const th = createTranscriptReducer({ throttleMs: FINAL_THROTTLE_MS, now: () => clock2 });
+  const p1 = th.push({ type: 'partial', pending: '继续' });
+  const f1 = th.push({
+    type: 'final', text: '继续', pending: '',
+    segments: [{ key: '2:继续', text: '继续' }], isLast: false,
+  });
+  clock2 = 200;
+  const p2 = th.push({ type: 'partial', pending: '继续' });
+  clock2 = 400;
+  const p3 = th.push({ type: 'partial', pending: '继续' });
+  ok(`300ms 节流：t=0 partial / t=0 final / t=200 同文本 partial 被压掉 / t=400 才允许再发`,
+    p1.length === 1 && f1.length === 1 && p2.length === 0 && p3.length === 1
+    && FINAL_THROTTLE_MS === 300,
+    JSON.stringify({ p1: p1.length, f1: f1.length, p2: p2.length, p3: p3.length }));
+
+  /* ---- 会话层：同一份上游响应喂两遍，只发一次 final ---- */
+  {
+    const events = [];
+    const upstream = fakeUpstream();
+    const session = createVolcSession({
+      config: { appId: 'test-app', apiKey: 'test-key', resource: 'volc.test' },
+      onEvent: (event) => events.push(event),
+      openSocket: async () => upstream,
+    });
+    await session.start();
+    const feed = (json) => upstream.feed(volcResponseFrame(json));
+    const partial = { result: { text: '深蹲', utterances: [utt('深蹲', false, 0)] } };
+    const final = { result: { text: '深蹲', utterances: [utt('深蹲', true, 0)] } };
+    feed(partial);
+    feed(partial);
+    feed(final);
+    feed(final);
+    feed(final);
+    const finals = events.filter((e) => e.type === 'final');
+    const partials = events.filter((e) => e.type === 'partial');
+    ok('会话层：重复响应只发 1 条 final；partial 先出现、且不会把同一句刷屏',
+      finals.length === 1 && finals[0].text === '深蹲'
+      && partials.length === 1 && partials[0].text === '深蹲'
+      && session.finals === 1 && session.partials === 1
+      && session.skippedFinals >= 2,
+      JSON.stringify({ finals, partials, stats: { f: session.finals, s: session.skippedFinals } }));
+    session.close();
+  }
 }
 
 /* ================================================================== *
@@ -1258,6 +1397,55 @@ console.log('\n[15] 16k 降采样（纯函数）：长度 / 振幅 / 静音 / �
     && floatToPcm16(new Float32Array([2, -2, 0.5]))[2] === 16384);
   ok('16k / 16bit / 单声道：3200 字节 = 100ms',
     pcmBytesToMs(3200) === 100 && pcmBytesToMs(32) === 1);
+
+  /* ---- 100ms 定帧（A1：用户日志里「帧很多、每帧只有 86 字节」的修复） ---- */
+  ok('常量：100ms = 1600 样本 = 3200 字节；16k/16bit/单声道 = 32000 B/s',
+    FRAME_MS === 100 && FRAME_SAMPLES === 1600 && FRAME_BYTES === 3200
+    && EXPECTED_BYTES_PER_SEC === 32000 && pcmBytesPerSec() === 32000,
+    JSON.stringify({ FRAME_MS, FRAME_SAMPLES, FRAME_BYTES, EXPECTED_BYTES_PER_SEC }));
+
+  const f48 = createPcmFramer({ inputRate: 48000 });
+  let frames48 = [];
+  for (let i = 0; i < 10; i += 1) {
+    frames48 = frames48.concat(f48.push(sineSamples(4800, { rate: 48000 })));
+  }
+  const bytes48 = frames48.reduce((n, pcm) => n + pcm.byteLength, 0);
+  ok('48k：1 秒（10 × 4800 样本）→ 10 帧 × 3200 字节 = 32000 B/s（±10%）',
+    frames48.length === 10 && frames48.every((p) => p.length === 1600 && p.byteLength === 3200)
+    && bytes48 === 32000
+    && Math.abs(bytes48 - EXPECTED_BYTES_PER_SEC) <= EXPECTED_BYTES_PER_SEC * 0.1
+    && f48.pending === 0,
+    JSON.stringify({ frames: frames48.length, bytes: bytes48, pending: f48.pending }));
+
+  const fSmall = createPcmFramer({ inputRate: 48000 });
+  let smallFrames = [];
+  for (let i = 0; i < 375; i += 1) {   // 375 × 128 = 48000 = 1 秒（AudioWorklet 渲染块大小）
+    smallFrames = smallFrames.concat(fSmall.push(new Float32Array(128).fill(0.1)));
+  }
+  ok('48k：按 128 样本小包喂（真实渲染块）也照样攒成 10 帧 × 3200 字节',
+    smallFrames.length === 10 && smallFrames.every((p) => p.byteLength === 3200),
+    JSON.stringify({ frames: smallFrames.length }));
+
+  const f44 = createPcmFramer({ inputRate: 44100 });
+  let frames44 = [];
+  for (let i = 0; i < 10; i += 1) {
+    frames44 = frames44.concat(f44.push(sineSamples(4410, { rate: 44100 })));
+  }
+  ok('44.1k：4410 输入样本 → 1600 输出样本（每帧仍 100ms / 3200 字节）',
+    f44.frameSamples === 4410 && frames44.length === 10
+    && frames44.every((p) => p.length === 1600 && p.byteLength === 3200),
+    JSON.stringify({ frameSamples: f44.frameSamples, frames: frames44.length }));
+
+  const fOdd = createPcmFramer({ inputRate: 48000 });
+  const half = fOdd.push(new Float32Array(2400).fill(0.2));   // 50ms
+  const tail = fOdd.flush();
+  ok('flush()：stop 时不足 100ms 的尾巴也发出去（不会把最后一个字切掉）',
+    half.length === 0 && !!tail && tail.length === 800 && tail.byteLength === 1600
+    && fOdd.pending === 0,
+    JSON.stringify({ half: half.length, tail: tail && tail.length }));
+
+  ok('非法采样率 → 不产出任何帧（不会除零 / 发垃圾）',
+    createPcmFramer({ inputRate: 0 }).push(new Float32Array(4800)).length === 0);
 }
 
 /* ================================================================== *
@@ -1349,10 +1537,14 @@ console.log('\n[17] createVolcAsr：采集 → 发送 → partial / final → �
     got.result.at(-1)?.text === '深蹲 暂停' && got.result.at(-1)?.info?.isFinal === true);
 
   asr.stop();
-  const lastSent = log.websockets[0].sent.at(-1);
-  ok('stop()：发 {"type":"stop"}、关 WS、关 AudioContext、断开处理节点（不留后台麦克风）',
-    JSON.parse(lastSent).type === 'stop' && log.websockets[0].closed === true
+  const sock0 = log.websockets[0];
+  const lastSent = sock0.sent.at(-1);
+  ok('stop()：先发 {"type":"stop"}、立刻关采集（AudioContext / 节点），但**不立刻关 WS** —— 要等服务端那包 final',
+    JSON.parse(lastSent).type === 'stop' && sock0.closed === false
     && ctx.closed === true && node.disconnected === true && asr.active === false);
+  sock0.message({ type: 'final', text: '深蹲 暂停' });
+  ok('收到服务端 flush 的 final 之后才关 WS（最后一句话不会丢）',
+    sock0.closed === true && got.result.at(-1)?.text === '深蹲 暂停');
   ok('stop() 之后 route 清空', asr.route === '');
 }
 {
@@ -1391,6 +1583,183 @@ console.log('\n[17] createVolcAsr：采集 → 发送 → partial / final → �
   ok('代理不可用且浏览器也没有 Web Speech → onError(asr-unsupported)，不静默',
     errors.at(-1)?.code === 'asr-unsupported', JSON.stringify(errors));
   asr.stop();
+}
+
+/* ================================================================== *
+ * 17b. 48kHz → 每帧 3200 字节 / 32KB/s；Worklet 定帧接线；stop 等 final
+ * ================================================================== */
+console.log('\n[17b] 48kHz 采集：100ms/帧、≈32KB/s、Worklet 100ms 定帧、stop 等 final');
+{
+  /** 假 AudioWorklet 环境（记录 node 参数 / 接线 / flush 消息） */
+  const fakeWorklet = () => {
+    const log = { modules: [], nodes: [], gains: [] };
+    class FakePort {
+      constructor() { this.posted = []; this.onmessage = null; }
+      postMessage(msg) { this.posted.push(msg); }
+      close() { this.closed = true; }
+    }
+    class FakeNode {
+      constructor(ctx, name, opts) {
+        this.ctx = ctx;
+        this.name = name;
+        this.opts = opts || {};
+        this.port = new FakePort();
+        this.connected = 0;
+        log.nodes.push(this);
+      }
+      connect(target) { this.connected += 1; target._inputs = (target._inputs || 0) + 1; }
+      disconnect() { this.disconnected = true; }
+    }
+    const destination = { _inputs: 0 };
+    const ctx = {
+      sampleRate: 48000,
+      state: 'running',
+      destination,
+      audioWorklet: { addModule: async (url) => { log.modules.push(url); } },
+      createMediaStreamSource: () => ({ connect() {}, disconnect() {} }),
+      createGain: () => {
+        const g = { gain: { value: 1 }, connect: (t) => { t._inputs = (t._inputs || 0) + 1; }, disconnect() {} };
+        log.gains.push(g);
+        return g;
+      },
+      close() { this.closed = true; },
+    };
+    return { win: { AudioWorkletNode: FakeNode }, ctx, log };
+  };
+  {
+    const { win, ctx, log } = fakeWorklet();
+    const got = [];
+    const capture = await startPcmCapture({
+      win, ctx, stream: {}, onChunk: (samples) => got.push(samples),
+    });
+    const node = log.nodes[0];
+    ok('AudioWorklet 采集：processorOptions.frameMs=100、单声道，并接到 destination（gain=0）',
+      capture.mode === 'worklet' && !!node
+      && node.opts.processorOptions?.frameMs === 100
+      && node.opts.channelCount === 1 && node.opts.channelCountMode === 'explicit'
+      && node.connected >= 1 && log.gains.length === 1
+      && ctx.destination._inputs === 1,
+      JSON.stringify({ mode: capture.mode, opts: node && node.opts }));
+    node.port.onmessage({ data: { type: 'pcm', samples: new Float32Array(4800), frameMs: 100 } });
+    ok('worklet 回传 {type:"pcm",samples} 时主线程拿到 samples（旧格式 Float32Array 也兼容）',
+      got.length === 1 && got[0].length === 4800);
+    capture.flush();
+    ok('capture.flush() 通知 worklet 把不足 100ms 的尾巴发出来',
+      node.port.posted.some((m) => m && m.type === 'flush'));
+    capture.stop();
+
+    /* ---- 真跑一遍 worklet 处理器（Node 里补上三个 worklet 全局量） ---- */
+    let Registered = null;
+    const saved = {
+      awp: globalThis.AudioWorkletProcessor,
+      rp: globalThis.registerProcessor,
+      sr: globalThis.sampleRate,
+    };
+    globalThis.sampleRate = 48000;
+    globalThis.AudioWorkletProcessor = class {
+      constructor() {
+        this.port = { posted: [], postMessage: (msg) => { this.port.posted.push(msg); } };
+      }
+    };
+    globalThis.registerProcessor = (name, cls) => { Registered = { name, cls }; };
+    try {
+      await import(new URL('../src/voice/pcm-worklet.js?worklet-test=1', import.meta.url).href);
+      const proc = new Registered.cls();
+      const block = new Float32Array(128).fill(0.2);
+      for (let i = 0; i < 375; i += 1) proc.process([[block]]);
+      ok('真跑 worklet：1 秒 375 个渲染块 → 只 post 10 个 100ms 块（4800 样本）',
+        Registered.name === 'mfg-pcm-capture' && proc.port.posted.length === 10
+        && proc.port.posted.every((m) => m.type === 'pcm' && m.samples.length === 4800
+          && m.sampleRate === 48000 && m.frameMs === 100),
+        JSON.stringify({ name: Registered.name, posted: proc.port.posted.length }));
+      proc.process([[new Float32Array(2400).fill(0.2)]]);
+      proc.port.onmessage({ data: { type: 'flush' } });
+      const workletTail = proc.port.posted.at(-1);
+      ok('worklet flush：不足 100ms 的尾巴也 post 出来（2400 样本 = 50ms）',
+        workletTail.samples.length === 2400, JSON.stringify({ len: workletTail.samples.length }));
+    } finally {
+      globalThis.AudioWorkletProcessor = saved.awp;
+      globalThis.registerProcessor = saved.rp;
+      globalThis.sampleRate = saved.sr;
+    }
+  }
+
+  /* ---- createVolcAsr：真实发送节奏（48k → 100ms 帧）---- */
+  const { win, log } = fakeVolcWindow({ rate: 48000 });
+  const entries = [];
+  const diag = { record(type, data) { entries.push({ type, ...(data || {}) }); } };
+  const timers = [];
+  const cleared = new Set();
+  let clock = 1000000;
+  const asr = createVolcAsr({
+    win,
+    mic: { stream: { getTracks: () => [] }, close() {} },
+    url: 'ws://127.0.0.1:5999/asr',
+    diag,
+    now: () => clock,
+    setTimer: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t; },
+    clearTimer: (t) => { if (t) cleared.add(t); },
+  });
+  const got = { result: [], interim: [] };
+  asr.onResult((text) => got.result.push(text));
+  asr.onInterim((text) => got.interim.push(text));
+  asr.start();
+  const sock = log.websockets[0];
+  sock.open();
+  sock.message({ type: 'ready' });
+  await tick(3);
+  const ctx = log.contexts[0];
+  const node = ctx.node;
+  for (let i = 0; i < 10; i += 1) {
+    clock += 100;
+    node.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(4800).fill(0.25) } });
+  }
+  const binary = sock.sent.filter((x) => typeof x !== 'string');
+  ok('48k 1 秒音频 → 10 条二进制帧、每条 3200 字节（不是以前的 375 条 × 86 字节）',
+    binary.length === 10 && binary.every((b) => b.byteLength === 3200)
+    && asr.chunks === 10 && asr.sentBytes === 32000 && asr.frameBytes === 3200,
+    JSON.stringify({ frames: binary.length, bytes: asr.sentBytes, frameBytes: asr.frameBytes }));
+  const rate = entries.filter((e) => e.type === 'ws:rate').at(-1);
+  ok('诊断码率：实测 ≈32000 B/s（±10%），expected 也是 32000（面板那一行就是它）',
+    !!rate && rate.bytesPerSec === 32000 && rate.expected === EXPECTED_BYTES_PER_SEC
+    && asr.bytesPerSec === 32000,
+    JSON.stringify(rate));
+
+  asr.stop();
+  const stopMsg = JSON.parse(sock.sent.at(-1));
+  const drain = timers.find((t) => t.ms === 4000 && !cleared.has(t));
+  ok('stop()：flush 尾巴 + 发 stop、立刻关采集，但 WS 还开着等 final',
+    stopMsg.type === 'stop' && sock.closed === false && ctx.closed === true
+    && !!drain && asr.active === false,
+    JSON.stringify({ stop: stopMsg.type, closed: sock.closed, drainMs: drain && drain.ms }));
+  sock.message({ type: 'final', text: '深蹲' });
+  ok('收到 final → 关 WS + 把定稿交给会话（用户能听到 / 看到最后一句）',
+    sock.closed === true && got.result.at(-1) === '深蹲');
+
+  /* ---- 上游一直不回 final：到点也要关连接（不永远挂着）---- */
+  {
+    const w2 = fakeVolcWindow({ rate: 48000 });
+    const timers2 = [];
+    const diag2 = { record() {} };
+    const a2 = createVolcAsr({
+      win: w2.win,
+      mic: { stream: { getTracks: () => [] }, close() {} },
+      url: 'ws://127.0.0.1:5999/asr',
+      diag: diag2,
+      setTimer: (fn, ms) => { const t = { fn, ms }; timers2.push(t); return t; },
+      clearTimer: () => {},
+    });
+    a2.start();
+    const s2 = w2.log.websockets[0];
+    s2.open();
+    s2.message({ type: 'ready' });
+    await tick(3);
+    a2.stop();
+    const timer = timers2.find((t) => t.ms === 4000);
+    timer?.fn();
+    ok('final 一直不来 → 4s 超时关 WS（不会永远挂着 / 也不会提前关）',
+      s2.closed === true && a2.active === false);
+  }
 }
 
 /* ================================================================== *
@@ -1641,6 +2010,158 @@ async function waitFor(fn, ms = 1500) {
   ok('loadAsrConfig：coach.env 不存在也不抛错，只报「缺两个字段」（预览服务器照常启动）',
     lazy.config.configured === false && lazy.config.missing.length === 2 && lazy.loaded.ok === false,
     JSON.stringify({ configured: lazy.config.configured, missing: lazy.config.missing }));
+}
+
+/* ================================================================== *
+ * 21b. 代理收尾（A2/A3）：partial 真的下发、重复 final 只发一次、
+ *      stop 等上游 final（或超时 flush）、关闭日志带每帧 / 每秒字节数
+ * ================================================================== */
+console.log('\n[21b] 代理收尾：partial 下发 / 重复 final 只发一次 / stop 等 final / 码率日志');
+{
+  const { createAsrUpgradeHandler } = await import('../server/coach-proxy.mjs');
+  const http = await import('node:http');
+  const net = await import('node:net');
+
+  const logs = [];
+  const logger = {
+    info: (m, e) => logs.push({ level: 'info', m, e }),
+    warn: (m, e) => logs.push({ level: 'warn', m, e }),
+    error: (m, e) => logs.push({ level: 'error', m, e }),
+  };
+  const relays = [];
+  const makeServer = async (finalGraceMs) => {
+    const srv = http.createServer((req, res) => { res.writeHead(404); res.end('nope'); });
+    const sockets = new Set();
+    srv.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
+    srv.on('upgrade', createAsrUpgradeHandler({
+      config: {
+        configured: true, missing: [], appId: 'test-app', apiKey: 'fake-token-123',
+        resource: 'volc.test', endpoint: 'wss://example.test/asr', authStyle: 'auto',
+      },
+      logger,
+      finalGraceMs,
+      relayFactory: ({ onEvent }) => {
+        const relay = {
+          onEvent,
+          started: 0,
+          stopped: 0,
+          audios: 0,
+          audiosBytes: 0,
+          lastText: '',
+          lastFinalText: '',
+          start: async () => {
+            relay.started += 1;
+            setTimeout(() => onEvent({ type: 'ready' }), 0);
+            return true;
+          },
+          audio(buf) { relay.audios += 1; relay.audiosBytes += buf.length; },
+          stop() { relay.stopped += 1; },
+          close() { relay.closed = true; },
+          get segments() { return 0; },
+        };
+        relays.push(relay);
+        return relay;
+      },
+    }));
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    return {
+      port: srv.address().port,
+      close: () => new Promise((resolve) => {
+        for (const s of sockets) { try { s.destroy(); } catch { /* ignore */ } }
+        srv.close(() => resolve());
+      }),
+    };
+  };
+  const connectAsr = (port) => new Promise((resolve) => {
+    const sock = net.connect(port, '127.0.0.1');
+    const state = { data: Buffer.alloc(0), closed: false };
+    sock.on('data', (chunk) => { state.data = Buffer.concat([state.data, chunk]); });
+    sock.on('close', () => { state.closed = true; });
+    sock.on('error', () => { /* 对端关闭是预期 */ });
+    sock.on('connect', () => {
+      sock.write(`GET /asr HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n`
+        + 'Upgrade: websocket\r\nConnection: Upgrade\r\n'
+        + 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n');
+      resolve({
+        sock,
+        state,
+        text: (obj) => sock.write(encodeFrame({
+          opcode: OPCODES.TEXT, payload: JSON.stringify(obj), mask: true,
+        })),
+        audio: (buf) => sock.write(encodeFrame({ opcode: OPCODES.BINARY, payload: buf, mask: true })),
+      });
+    });
+  });
+  /** 从响应里解出所有完整的文本消息（JSON） */
+  const textMessages = (state) => {
+    const headEnd = state.data.indexOf('\r\n\r\n');
+    if (headEnd < 0) return [];
+    return decodeFrames(state.data.subarray(headEnd + 4)).frames
+      .filter((f) => f.opcode === OPCODES.TEXT)
+      .map((f) => {
+        try { return JSON.parse(f.payload.toString('utf8')); } catch { return null; }
+      })
+      .filter(Boolean);
+  };
+
+  /* ---- ① stop 之后等上游 final；重复 final 只发一次 ---- */
+  const s1 = await makeServer(120);
+  const c1 = await connectAsr(s1.port);
+  await waitFor(() => c1.state.data.includes('\r\n\r\n'));
+  c1.text({ type: 'start', lang: 'zh-CN' });
+  await waitFor(() => textMessages(c1.state).some((m) => m.type === 'ready'));
+  const relay1 = relays.at(-1);
+  for (let i = 0; i < 10; i += 1) {
+    c1.audio(Buffer.alloc(3200, i));
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await waitFor(() => relay1.audios === 10);
+  relay1.onEvent({ type: 'partial', text: '深蹲' });
+  ok('上游 partial → 浏览器真的收到 partial（以前日志里完全没有 partial）',
+    await waitFor(() => textMessages(c1.state).some((m) => m.type === 'partial' && m.text === '深蹲')));
+  relay1.onEvent({ type: 'partial', text: '深蹲' });
+  ok('同一段 partial 重复 → 代理不重复下发（partial 也节流）',
+    textMessages(c1.state).filter((m) => m.type === 'partial' && m.text === '深蹲').length === 1,
+    JSON.stringify(textMessages(c1.state).filter((m) => m.type === 'partial')));
+
+  c1.text({ type: 'stop' });
+  await waitFor(() => relay1.stopped === 1);
+  ok('stop：代理先让上游定稿，**不立刻**关浏览器连接（等服务端 flush）',
+    relay1.stopped === 1 && c1.state.closed === false);
+  relay1.onEvent({ type: 'final', text: '深蹲' });
+  relay1.onEvent({ type: 'final', text: '深蹲' });
+  relay1.onEvent({ type: 'final', text: '深蹲' });
+  const closed1 = await waitFor(() => c1.state.closed === true, 1500);
+  const finals1 = textMessages(c1.state).filter((m) => m.type === 'final');
+  ok('同一段 final 连续来 3 次 → 浏览器只收到 1 条，然后连接关闭',
+    closed1 && finals1.length === 1 && finals1[0].text === '深蹲',
+    JSON.stringify({ closed: closed1, finals: finals1 }));
+  const closedLog = logs.filter((l) => l.m === 'client closed').at(-1);
+  ok('关闭日志报「每帧字节 / 每秒字节 / partial·final 条数」（以后一眼看码率）',
+    !!closedLog && closedLog.e.bytesPerChunk === 3200
+    && closedLog.e.bytesPerSec > 0 && closedLog.e.audioBytes === 32000
+    && closedLog.e.partials >= 1 && closedLog.e.finals === 1,
+    JSON.stringify(closedLog && closedLog.e));
+  c1.sock.destroy();
+  await s1.close();
+
+  /* ---- ② 上游一直不回 final：超时也要把最后一句 flush 出去 ---- */
+  const s2 = await makeServer(60);
+  const c2 = await connectAsr(s2.port);
+  await waitFor(() => c2.state.data.includes('\r\n\r\n'));
+  c2.text({ type: 'start', lang: 'zh-CN' });
+  await waitFor(() => textMessages(c2.state).some((m) => m.type === 'ready'));
+  const relay2 = relays.at(-1);
+  relay2.lastText = '暂停';
+  c2.text({ type: 'stop' });
+  await waitFor(() => relay2.stopped === 1);
+  const closed2 = await waitFor(() => c2.state.closed === true, 1500);
+  const finals2 = textMessages(c2.state).filter((m) => m.type === 'final');
+  ok('stop 后上游一直不回 final → 超时把最后一句 flush 给浏览器（不丢收尾）',
+    closed2 && finals2.length === 1 && finals2[0].text === '暂停',
+    JSON.stringify({ closed: closed2, finals: finals2 }));
+  c2.sock.destroy();
+  await s2.close();
 }
 
 /* ================================================================== *
@@ -2127,7 +2648,9 @@ console.log('\n[24] 语音诊断：事件收集 / 批量落盘 / snapshot / 脱�
       'lastPartial', 'lastFinal', 'lastError', 'mic', 'audio', 'capture', 'worklet', 'tts']
       .every((k) => k in initial)
     && initial.ws.state === 'idle' && initial.mic.tracks === 0
-    && initial.frames.n === 0 && initial.partials === 0 && initial.finals === 0,
+    && initial.frames.n === 0 && initial.frames.bytesPerSec === 0
+    && initial.frames.expected === 32000
+    && initial.partials === 0 && initial.finals === 0,
     JSON.stringify(initial));
 
   diag.record('route:volc', {});
@@ -2135,6 +2658,7 @@ console.log('\n[24] 语音诊断：事件收集 / 批量落盘 / snapshot / 脱�
   diag.record('ws:open', {});
   diag.record('ws:firstFrame', { bytes: 3200 });
   diag.record('ws:frames', { n: 12, bytes: 38400 });
+  diag.record('ws:rate', { bytesPerSec: 32000, expected: 32000 });
   diag.record('ctx:sampleRate', { value: 48000, state: 'running' });
   diag.record('worklet:fail', { name: 'NotSupportedError', message: 'addModule failed' });
   diag.record('capture:mode', { mode: 'processor' });
@@ -2143,9 +2667,10 @@ console.log('\n[24] 语音诊断：事件收集 / 批量落盘 / snapshot / 脱�
   diag.record('mic:ok', { tracks: 1, labels: ['audio-1'] });
   diag.record('mic:release', { reason: 'webspeech' });
   const snap = diag.snapshot();
-  ok('snapshot 反映路由 / WS / 帧数 / partial·final 计数',
+  ok('snapshot 反映路由 / WS / 帧数 / 实时码率 / partial·final 计数',
     snap.route === 'volc' && snap.ws.state === 'open'
     && snap.frames.n === 12 && snap.frames.bytes === 38400
+    && snap.frames.bytesPerSec === 32000 && snap.frames.expected === 32000
     && snap.partials === 1 && snap.finals === 1 && snap.lastPartial === '你好'
     && snap.lastFinal.length === 80,
     JSON.stringify({ route: snap.route, ws: snap.ws, frames: snap.frames,
@@ -2295,10 +2820,11 @@ console.log('\n[24] 语音诊断：事件收集 / 批量落盘 / snapshot / 脱�
  * 用户反馈「下载运行库很慢」「初始化识别器失败」之后定的三条：
  *   ① COOP + COEP 必须**同时**在（crossOriginIsolated 才能为 true，wasm 才拿得到该有的能力）；
  *   ② 静态资源**一律不缓存**（`no-store`）—— 坏文件不会被一直用下去；
- *   ③ 文本 / wasm 走 gzip，且**解压后与磁盘文件逐字节一致**（用 zlib.gunzipSync 自证，不靠嘴说）。
+ *   ③ 文本走 gzip（解压后与磁盘文件逐字节一致）；**wasm 不压** —— c0eaa16 实测
+ *      9.3MB 在本机 gzip 要 0.3~1.7s，直接发只要 86ms（本地回环带宽远大于压缩速度）。
  * 这里起的是**真的 http server**（复用 preview-server.js 导出的 previewHandler），不是字符串断言。
  * ================================================================== */
-console.log('\n[25] 预览服务器：COOP+COEP / no-store / gzip 解压后与原文件一致');
+console.log('\n[25] 预览服务器：COOP+COEP / no-store / 文本 gzip（wasm 不压）');
 {
   const http = await import('node:http');
   const path = await import('node:path');
@@ -2319,34 +2845,44 @@ console.log('\n[25] 预览服务器：COOP+COEP / no-store / gzip 解压后与�
 
   const wasmPath = '/vendor/tasks-vision/wasm/vision_wasm_internal.wasm';
   const wasmRaw = fs.readFileSync(path.join(ROOT, wasmPath.slice(1)));
-  const gz = await get(wasmPath, { 'Accept-Encoding': 'gzip' });
-  const wasmGz = zlib.gunzipSync(gz.body);
-  ok('wasm 走 gzip：有 Content-Encoding: gzip 与 Vary: Accept-Encoding（9.3MB 压到约 3MB）',
-    gz.status === 200 && gz.headers['content-encoding'] === 'gzip'
-    && /accept-encoding/i.test(String(gz.headers.vary))
-    && gz.body.length < wasmRaw.length * 0.5,
-    JSON.stringify({ gz: gz.body.length, raw: wasmRaw.length }));
-  ok('gzip 解压后与磁盘上的原文件**逐字节一致**（zlib.gunzipSync 自证，没截断没损坏）',
-    wasmGz.equals(wasmRaw), JSON.stringify({ gunzip: wasmGz.length, raw: wasmRaw.length }));
+  const wasm = await get(wasmPath, { 'Accept-Encoding': 'gzip' });
+  ok('wasm **不** gzip（本机压缩比直接发还慢）：即使请求 gzip 也原样发、字节数 = 文件大小',
+    wasm.status === 200 && wasm.headers['content-encoding'] === undefined
+    && wasm.body.length === wasmRaw.length
+    && Number(wasm.headers['content-length']) === wasmRaw.length,
+    JSON.stringify({ ce: wasm.headers['content-encoding'], len: wasm.body.length, raw: wasmRaw.length }));
   ok('运行库 / 模型都不缓存：Cache-Control 是 no-store（不是 max-age / immutable）',
-    gz.headers['cache-control'] === 'no-store'
-    && !/max-age|immutable/i.test(String(gz.headers['cache-control'])),
-    String(gz.headers['cache-control']));
+    wasm.headers['cache-control'] === 'no-store'
+    && !/max-age|immutable/i.test(String(wasm.headers['cache-control'])),
+    String(wasm.headers['cache-control']));
   ok('静态资源同时带 COOP + COEP（crossOriginIsolated 才能为 true）',
-    gz.headers['cross-origin-opener-policy'] === 'same-origin'
-    && gz.headers['cross-origin-embedder-policy'] === 'credentialless',
+    wasm.headers['cross-origin-opener-policy'] === 'same-origin'
+    && wasm.headers['cross-origin-embedder-policy'] === 'credentialless',
     JSON.stringify({
-      coop: gz.headers['cross-origin-opener-policy'], coep: gz.headers['cross-origin-embedder-policy'],
+      coop: wasm.headers['cross-origin-opener-policy'], coep: wasm.headers['cross-origin-embedder-policy'],
     }));
   ok('wasm 的 Content-Type 是 application/wasm（instantiateStreaming 认这个 MIME）',
-    /application\/wasm/.test(String(gz.headers['content-type'])),
-    String(gz.headers['content-type']));
+    /application\/wasm/.test(String(wasm.headers['content-type'])),
+    String(wasm.headers['content-type']));
 
-  const noGzip = await get(wasmPath);
+  /* ---- 文本走 gzip：解压后必须与磁盘逐字节一致 ---- */
+  const textPath = '/src/voice/pcm.js';
+  const textRaw = fs.readFileSync(path.join(ROOT, textPath.slice(1)));
+  const textGz = await get(textPath, { 'Accept-Encoding': 'gzip' });
+  const textUnz = zlib.gunzipSync(textGz.body);
+  ok('文本资源（.js）走 gzip：Content-Encoding + Vary，解压后与磁盘文件逐字节一致',
+    textGz.status === 200 && textGz.headers['content-encoding'] === 'gzip'
+    && /accept-encoding/i.test(String(textGz.headers.vary))
+    && textGz.body.length < textRaw.length
+    && textUnz.equals(textRaw),
+    JSON.stringify({ gz: textGz.body.length, raw: textRaw.length }));
+
+  const textPlain = await get(textPath);
   ok('请求头不带 Accept-Encoding 时不压（原样发，Content-Length = 文件大小）',
-    noGzip.status === 200 && noGzip.headers['content-encoding'] === undefined
-    && Number(noGzip.headers['content-length']) === wasmRaw.length,
-    JSON.stringify({ ce: noGzip.headers['content-encoding'], len: noGzip.headers['content-length'] }));
+    textPlain.status === 200 && textPlain.headers['content-encoding'] === undefined
+    && Number(textPlain.headers['content-length']) === textRaw.length
+    && textPlain.body.equals(textRaw),
+    JSON.stringify({ ce: textPlain.headers['content-encoding'], len: textPlain.headers['content-length'] }));
 
   const html = await get('/');
   ok('index.html 也是 no-store + COOP + COEP（页面自己必须先跨源隔离，wasm 才拿得到 SharedArrayBuffer）',

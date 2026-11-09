@@ -350,12 +350,32 @@ export function buildAudioFrame(chunk, { last = false, gzip = zlib.gzipSync } = 
  * ================================================================== */
 
 /**
+ * 一句 utterance 的稳定标识（用于「同一段文本只发一次 final」）。
+ *
+ * 火山的 `utterances[]` 一般带 `start_time` / `end_time`（有的版本带 `segment_id`）。
+ * 优先用 segment_id，其次 start_time，最后退到数组下标；**再拼上文本**，
+ * 这样同一段文字重复回来（上游每个响应都把已定稿句子重发一遍）只算一段。
+ */
+function segmentKey(utterance, index) {
+  const u = utterance || {};
+  const raw = u.segment_id ?? u.segmentId ?? u.start_time ?? u.startTime ?? null;
+  const id = raw === null || raw === undefined || raw === '' ? `#${index}` : String(raw);
+  return `${id}:${typeof u.text === 'string' ? u.text : ''}`;
+}
+
+/**
  * 解析响应 JSON 的文本与定稿标志。
  *
  *   {"result":{"text":"…","utterances":[{"text":"…","definite":true}]}}
  *
  * `result.text` 是完整文本；没有 `text` 时退回把 utterances 拼起来。
- * @returns {{text: string, definite: boolean, utterances: Array}}
+ *
+ * 关键：`result.text` 是**累计**文本，`utterances[].definite` 表示「这一句已经定稿」。
+ * 上游每次响应都会把之前定稿的句子再带一遍 —— 所以只有 `segments`（每段的稳定 key + 文本）
+ * 才能判断「这次有没有新的定稿」，不能只看 `text` 变没变。
+ *
+ * @returns {{text: string, definite: boolean, utterances: Array,
+ *   segments: Array<{key:string,text:string}>, pending: string}}
  */
 export function parseResultJson(json) {
   const result = json && typeof json === 'object' ? (json.result || json) : {};
@@ -365,16 +385,29 @@ export function parseResultJson(json) {
   if (!text && utterances.length) {
     text = utterances.map((u) => (u && typeof u.text === 'string' ? u.text : '')).join('');
   }
-  const definite = utterances.some((u) => !!(u && u.definite === true));
-  return { text: String(text || ''), definite, utterances };
+  const segments = [];
+  const pendingParts = [];
+  utterances.forEach((u, i) => {
+    const part = u && typeof u.text === 'string' ? u.text : '';
+    if (!part) return;
+    if (u.definite === true) segments.push({ key: segmentKey(u, i), text: part });
+    else pendingParts.push(part);
+  });
+  const definite = segments.length > 0;
+  // 没有 utterances（有的响应只给 result.text）时，pending 就是整段文本
+  const pending = utterances.length ? pendingParts.join('') : text;
+  return { text: String(text || ''), definite, utterances, segments, pending };
 }
 
 /**
  * 把一帧服务端响应变成给浏览器的事件（纯函数，不碰网络）。
  *
- *   全服务端响应 → { type:'partial'|'final', text, sequence }
+ *   全服务端响应 → { type:'partial'|'final', text, pending, segments, isLast, sequence }
  *   错误帧       → { type:'error', code, volcCode, message }
  *   其它（如 ack）→ null
+ *
+ * `type:'final'` 只表示「这一帧里有定稿信息」；到底要不要真的发给浏览器，由
+ * `createTranscriptReducer()` 按 **segment key + 文本** 去重后决定（见下）。
  */
 export function parseResponseFrame(frame, { secrets = [] } = {}) {
   if (!frame) return null;
@@ -399,12 +432,192 @@ export function parseResponseFrame(frame, { secrets = [] } = {}) {
     };
   }
   const parsed = parseResultJson(json);
-  const final = isLastFlags(frame.flags) || parsed.definite;
+  const isLast = isLastFlags(frame.flags);
+  const final = isLast || parsed.definite;
   return {
     type: final ? 'final' : 'partial',
     text: parsed.text,
+    pending: parsed.pending,
     definite: parsed.definite,
+    segments: parsed.segments,
+    isLast,
     sequence: frame.sequence,
+  };
+}
+
+/** 同一段文本在这个窗口内不重复发（final / partial 各算各的） */
+export const FINAL_THROTTLE_MS = 300;
+
+/**
+ * 把「上游响应事件」变成「发给浏览器的事件」的**有状态**归约器（纯逻辑，Node 可测）。
+ *
+ * 为什么需要它：用户日志里同一句 4 个字的结果被当成 `final` 连续发了几百次
+ * （`segments:1291`）—— 因为火山的 `result.text` 是累计文本、`utterances` 里
+ * 之前定稿的句子每次都重发；只看 `text` 或只看 `definite` 都会把同一句反复当 final。
+ *
+ * 规则：
+ *   1. **final 去重**：按 `segment_id/start_time + text`（没有就退到 text）记住已发过的段，
+ *      同一段只发一次；`flags` 的最后一包（isLast）没有新段时**不再**把累计全文重发一遍。
+ *   2. **partial 只发「正在说的那部分」**：优先用非 definite utterances 拼出的 `pending`，
+ *      没有 utterances 时才用 `text`；文本没变就不发（上游每个音频包都可能回一次相同文本）。
+ *   3. **节流**：同一文本 300ms 内不重复发（`FINAL_THROTTLE_MS`）；不同文本立即发。
+ *   4. `error` 事件原样透传（错误不能节流 / 去重）。
+ *
+ * @param {object} [opts]
+ * @param {number} [opts.throttleMs] 同一文本的节流窗口（默认 300ms）
+ * @param {Function} [opts.now]      时钟（测试注入）
+ */
+export function createTranscriptReducer({ throttleMs = FINAL_THROTTLE_MS, now = Date.now } = {}) {
+  const finalKeys = new Set();
+  const emittedAt = new Map();   // `${type}\u0000${text}` → 上次发送时间
+  let lastPartialText = '';
+  let lastFinalText = '';
+  /** 已经发出去的累计文本（用来识别「最后一包把全文又重发一遍」） */
+  let sentTranscript = '';
+  let emptyFinalSent = false;
+  const stats = {
+    partials: 0, finals: 0, skippedPartials: 0, skippedFinals: 0,
+  };
+
+  function clock() {
+    const n = Number(now());
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  /** 比较累计文本时忽略空白 / 标点差异（火山的 result.text 与 utterances 拼接不总是逐字相同） */
+  const normText = (s) => String(s || '').replace(/[\s\p{P}]/gu, '');
+  /** 把 tail 里「已经发过的前缀」去掉，只留新内容（按去掉空白 / 标点后的长度对齐） */
+  function tailAfterPrefix(prefix, tail) {
+    const want = normText(prefix).length;
+    if (!want) return tail;
+    let matched = 0;
+    let i = 0;
+    for (; i < tail.length && matched < want; i += 1) {
+      if (normText(tail[i])) matched += 1;
+    }
+    return tail.slice(i).replace(/^[\s\p{P}]+/u, '');
+  }
+
+  function throttled(type, text, at) {
+    const key = `${type}\u0000${text}`;
+    const prev = emittedAt.get(key);
+    if (prev !== undefined && at - prev < throttleMs) return true;
+    emittedAt.set(key, at);
+    if (emittedAt.size > 256) {
+      // 只留最近一分钟的键，别让长会话把 Map 撑大
+      for (const [k, t] of emittedAt) if (at - t > 60000) emittedAt.delete(k);
+    }
+    return false;
+  }
+
+  /** 把「正在说的那部分」发成 partial（文本没变 / 300ms 内重复 → 不发） */
+  function emitPartial(raw, at, out) {
+    const text = String(raw == null ? '' : raw);
+    if (!text) {
+      if (lastPartialText) lastPartialText = '';
+      return false;
+    }
+    if (text === lastPartialText) {
+      stats.skippedPartials += 1;
+      return false;
+    }
+    if (throttled('partial', text, at)) {
+      stats.skippedPartials += 1;
+      return false;
+    }
+    lastPartialText = text;
+    stats.partials += 1;
+    out.push({ type: 'partial', text, definite: false });
+    return true;
+  }
+
+  function push(event) {
+    if (!event || !event.type) return [];
+    if (event.type === 'error') return [event];
+    const at = clock();
+    const out = [];
+
+    if (event.type === 'final') {
+      const segs = Array.isArray(event.segments) ? event.segments : [];
+      const fresh = [];
+      for (const seg of segs) {
+        const text = String((seg && seg.text) || '');
+        if (!text) continue;
+        const key = String((seg && (seg.key ?? seg.id)) ?? text);
+        if (finalKeys.has(key)) continue;
+        finalKeys.add(key);
+        fresh.push({ key, text });
+      }
+      let text = fresh.map((s) => s.text).join('');
+      let fromLast = false;
+      if (!text && event.isLast && segs.length === 0) {
+        // 没有 utterances 的最后一包：用还没发过的全文收尾（累计文本已经发过就不再重发）
+        const tail = String(event.text || event.pending || '');
+        if (tail && normText(tail) === normText(sentTranscript)) {
+          // 上游把已定稿的全文又重发了一遍 —— 吃掉
+        } else if (tail && sentTranscript && normText(tail).startsWith(normText(sentTranscript))) {
+          text = tailAfterPrefix(sentTranscript, tail);
+          fromLast = true;
+        } else if (tail && tail !== lastFinalText) {
+          text = tail;
+          fromLast = true;
+        }
+      }
+      const emptyTail = !text && event.isLast && !lastFinalText
+        && finalKeys.size === 0 && !emptyFinalSent && segs.length === 0
+        && !String(event.text || event.pending || '');
+      if (text || fresh.length > 0 || emptyTail) {
+        if (emptyTail) emptyFinalSent = true;
+        if (throttled('final', text, at)) {
+          stats.skippedFinals += 1;
+        } else {
+          lastFinalText = text;
+          lastPartialText = '';
+          sentTranscript += text;
+          stats.finals += 1;
+          out.push({
+            type: 'final',
+            text,
+            definite: true,
+            segment: fresh.length === 1 ? fresh[0].key : undefined,
+            fromLast,
+          });
+        }
+      } else {
+        // 全是已经发过的段（或没有文本的定稿帧）：不再刷屏
+        stats.skippedFinals += 1;
+      }
+      // 同一帧里可能已经带着「正在说的下一句」：把 pending 也发出去，
+      // 否则第一句定稿之后 partial 就永远不出来了（客户端只靠 partial 上屏）。
+      // 没有 utterances 的帧（pending 退化成累计全文）不发，避免把整段又当 partial 刷一遍。
+      if (segs.length > 0 && event.pending !== undefined) emitPartial(event.pending, at, out);
+      return out;
+    }
+
+    // partial：优先用「正在说的那部分」（非 definite utterances）；没有这个字段才退回全文
+    emitPartial(event.pending !== undefined ? event.pending : event.text, at, out);
+    return out;
+  }
+
+  return {
+    push,
+    stats,
+    get lastFinalText() { return lastFinalText; },
+    get lastPartialText() { return lastPartialText; },
+    get finals() { return stats.finals; },
+    get partials() { return stats.partials; },
+    reset() {
+      finalKeys.clear();
+      emittedAt.clear();
+      lastPartialText = '';
+      lastFinalText = '';
+      sentTranscript = '';
+      emptyFinalSent = false;
+      stats.partials = 0;
+      stats.finals = 0;
+      stats.skippedPartials = 0;
+      stats.skippedFinals = 0;
+    },
   };
 }
 
