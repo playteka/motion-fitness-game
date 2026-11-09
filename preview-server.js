@@ -433,6 +433,25 @@ export const previewHandler = (req, res) => {
     return;
   }
 
+  /**
+   * 短网址：`/progress` 和 `/p` 直接跳到进度看板（用户反馈原地址太长、不好输入 ✗）。
+   * 用 302 而不是直接返回文件，是为了以后看板改名/搬家时这里不用跟着改 ✓。
+   */
+  if (req.method === 'GET') {
+    const short = (req.url || '').split('?')[0];
+    if (short === '/progress' || short === '/p' || short === '/dashboard') {
+      res.writeHead(302, { Location: '/progress-dashboard.html', 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+    // 顺手：`/health` 一眼看服务与两个代理是否就绪（排障用）
+    if (short === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ ok: true, port: PORT }));
+      return;
+    }
+  }
+
   let urlPath;
   try {
     urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
