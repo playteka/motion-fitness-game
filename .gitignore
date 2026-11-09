@@ -21,3 +21,4 @@ progress-dashboard.html
 _gitout.tmp
 coach.env
 coach.env.local
+.progress-task.json

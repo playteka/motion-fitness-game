@@ -349,6 +349,41 @@ export const previewHandler = (req, res) => {
         return { sha, ts: (Number(ts) || 0) * 1000, subject: rest.join('|') };
       });
 
+    /**
+     * 任务进度（用户要求：「假设要改 10 个文件，改好 5 个进度就到一半」）。
+     *
+     * 怎么知道「总共要改几个文件」？靠**任务清单文件** `.progress-task.json`（gitignore 掉）：
+     *   { "title": "…", "planned": ["src/a.js", …], "startedAt": 1699999999999 }
+     * → done = 清单里**修改时间晚于 startedAt** 的文件数 ✓（真的按文件算，不是估算 ✓）。
+     * 没有清单文件 → task 为 null，看板退回「忙/闲」总览（不影响原有信息 ✓）。
+     */
+    const taskProgress = () => {
+      const file = path.join(ROOT, '.progress-task.json');
+      let spec = null;
+      try {
+        spec = JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch {
+        return null;
+      }
+      const planned = Array.isArray(spec && spec.planned) ? spec.planned.filter(Boolean) : [];
+      if (!planned.length) return null;
+      const startedAt = Number(spec.startedAt) || 0;
+      const items = planned.map((rel) => {
+        let mtime = 0;
+        try { mtime = fs.statSync(path.join(ROOT, rel)).mtimeMs; } catch { mtime = 0; }
+        return { path: rel, mtime, done: mtime > 0 && mtime >= startedAt };
+      });
+      const done = items.filter((it) => it.done).length;
+      return {
+        title: String((spec && spec.title) || ''),
+        startedAt,
+        total: items.length,
+        done,
+        percent: Math.round((done / items.length) * 100),
+        items,
+      };
+    };
+
     let payload;
     try {
       const porcelain = run(['status', '--porcelain']).split('\n').filter(Boolean);
@@ -356,8 +391,17 @@ export const previewHandler = (req, res) => {
       const files = porcelain.map((l) => l.slice(3)).filter((f) => !ignore.has(f));
       const localScripts = porcelain.map((l) => l.slice(3)).filter((f) => ignore.has(f) && f.endsWith('.cmd'));
       const recent = scanRecent();
+      // 每个「正在改动」的文件也带上最后修改时间（用户要求）
+      const st = (rel) => {
+        try { return fs.statSync(path.join(ROOT, rel)).mtimeMs; } catch { return 0; }
+      };
+      const now = Date.now();
+      const fileDetails = files.map((rel) => {
+        const m = st(rel);
+        return { path: rel, mtime: m, agoMs: m ? Math.max(0, now - m) : -1 };
+      });
       payload = {
-        updated: Date.now(),
+        updated: now,
         branch: run(['rev-parse', '--abbrev-ref', 'HEAD']).trim() || '(unknown)',
         ahead: (() => {
           const n = run(['rev-list', '--count', 'origin/main..HEAD']).trim();
@@ -365,18 +409,20 @@ export const previewHandler = (req, res) => {
         })(),
         lastCommit: run(['log', '--oneline', '-1']).trim() || '(unavailable)',
         files,
+        fileDetails,
         localScripts,
         tree: treeStat(),
         recentFiles: recent,
         recentCommits: recentCommits(),
+        task: taskProgress(),
         // 「有没有在干活」：有未提交改动，或最近 150 秒内有文件被写过 ✓
         busy: files.length > 0 || (recent[0] ? recent[0].agoMs < 150000 : false),
       };
     } catch {
       payload = {
         updated: Date.now(), branch: '?', ahead: 0, lastCommit: '(unavailable)',
-        files: [], localScripts: [], tree: { files: 0, add: 0, del: 0 },
-        recentFiles: [], recentCommits: [], busy: false,
+        files: [], fileDetails: [], localScripts: [], tree: { files: 0, add: 0, del: 0 },
+        recentFiles: [], recentCommits: [], task: null, busy: false,
       };
     }
     res.writeHead(200, {
