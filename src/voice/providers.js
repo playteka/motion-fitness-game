@@ -1377,12 +1377,29 @@ export function createLlm({ pick = Math.random } = {}) {
  *
  * `speechSynthesis` 不可用时返回 `false`（**只出字幕**，不抛错）；会话会按字数留一段
  * 展示时间再回到聆听状态。
+ *
+ * ⚠️ 两条用户反馈（2026-11）都钉在这里：
+ *   - 系统 TTS 的 `error` 事件里 `canceled` / `interrupted` **不是失败** —— 那是我们自己
+ *     `cancel()` 造成的，记成 `tts:fail` 只会把排障日志搅浑（上一次就是这样把「火山其实
+ *     一次都没播出声」掩盖掉的）；
+ *   - `synthesis-unavailable` / `voice-unavailable` / `language-unavailable` 这类是**硬失败**
+ *     （这台机器就没有可用语音），再试一百遍也不会出声 → 之后只出弹幕，不再徒劳调用。
  */
 export function createTts({ win = null, lang = null, rate = 1, diag = null } = {}) {
   const w = rootWin(win);
   let speaking = false;
   let currentRate = Number(rate) > 0 ? Number(rate) : 1;
   let failLogged = false;
+  /** 硬失败（系统没有可用语音）：true 之后 speak() 直接返回 false，只出字幕 */
+  let dead = false;
+
+  /** 我们自己 cancel() 引起的错误码：不是失败，不记 tts:fail */
+  const BENIGN_ERRORS = new Set(['canceled', 'cancelled', 'interrupted']);
+  /** 重试也不会出声的错误码：别再让每一句都白跑一遍合成器 */
+  const HARD_ERRORS = new Set([
+    'synthesis-unavailable', 'synthesis-failed',
+    'language-unavailable', 'voice-unavailable',
+  ]);
 
   function synth() { return w.speechSynthesis || null; }
   function Utterance() {
@@ -1393,10 +1410,12 @@ export function createTts({ win = null, lang = null, rate = 1, diag = null } = {
   const api = {
     kind: 'mock',
     name: 'speechSynthesis',
-    get supported() { return !!(synth() && Utterance()); },
+    get supported() { return !dead && !!(synth() && Utterance()); },
     get speaking() { return speaking; },
     get rate() { return currentRate; },
     get lang() { return speechLang(lang); },
+    /** 系统语音不可用（硬失败）—— 上层据此只出弹幕 */
+    get unavailable() { return dead; },
     setRate(n) {
       const v = Number(n);
       if (Number.isFinite(v) && v > 0) currentRate = Math.min(2, Math.max(0.5, v));
@@ -1406,10 +1425,12 @@ export function createTts({ win = null, lang = null, rate = 1, diag = null } = {
       const s = synth();
       const U = Utterance();
       const body = String(text == null ? '' : text);
-      if (!s || !U || !body.trim()) {
-        if (!failLogged) {
+      if (!s || !U || !body.trim() || dead) {
+        if (!failLogged && !dead) {
           failLogged = true;
-          diag?.record?.('tts:fail', { code: s && U ? 'empty' : 'unsupported' });
+          diag?.record?.('tts:fail', {
+            code: s && U ? 'empty' : 'unsupported', where: 'system', chars: body.length,
+          });
         }
         return false;
       }
@@ -1421,7 +1442,14 @@ export function createTts({ win = null, lang = null, rate = 1, diag = null } = {
         u.onend = () => { speaking = false; try { onEnd?.(); } catch { /* ignore */ } };
         u.onerror = (err) => {
           speaking = false;
-          diag?.record?.('tts:fail', { code: (err && err.error) || 'error' });
+          const code = String((err && (err.error || err.name)) || 'error');
+          if (HARD_ERRORS.has(code)) dead = true;
+          if (!BENIGN_ERRORS.has(code)) {
+            const info = { code, where: 'system', chars: body.length, errName: code };
+            const message = String((err && err.message) || '').slice(0, 80);
+            if (message) info.errMessage = message;
+            diag?.record?.('tts:fail', info);
+          }
           try { onError?.(err); } catch { /* ignore */ }
         };
         s.speak(u);
@@ -1431,7 +1459,7 @@ export function createTts({ win = null, lang = null, rate = 1, diag = null } = {
         return true;
       } catch {
         speaking = false;
-        diag?.record?.('tts:fail', { code: 'speak' });
+        diag?.record?.('tts:fail', { code: 'speak', where: 'system', chars: body.length });
         return false;
       }
     },

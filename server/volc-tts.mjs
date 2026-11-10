@@ -5,7 +5,8 @@
  *   POST https://openspeech.bytedance.com/api/v3/tts/unidirectional
  *   headers: X-Api-App-Id / X-Api-Key / X-Api-Resource-Id / X-Api-Request-Id
  *   body   : { user: { uid }, req_params: { text, speaker, audio_params } }
- * 返回 `audio/mpeg` 二进制。
+ * 返回**不是**裸 MP3，而是 NDJSON 信封（`{"code":0,"data":"<base64 MP3>"}`），
+ * 见 `unwrapVolcAudio()` / `createVolcMessageParser()`：对外只给**真音频字节**。
  *
  * 用户要求：
  *   - `POST /tts`（body `{"text":"…","rate":1.0}`）→ 音频 / 502；
@@ -212,6 +213,161 @@ function toBuffer(chunk) {
   return Buffer.from(chunk);
 }
 
+/* ================================================================== *
+ * 上游响应是「NDJSON + base64」，不是裸 MP3（2026-11 实测，见文件头）
+ * ================================================================== */
+
+/**
+ * v3 `unidirectional` 的响应体是**一串 JSON 对象**（每个一行，不一定按行切）：
+ *
+ *   {"code":0,"message":"","data":"SUQzBAAAAA…"}   ← data = base64 的 **MP3 字节**（`SUQz` = "ID3"）
+ *   {"code":0,"message":"","data":"","sentence":{…}} ← 句子标记（字幕用，没有音频）
+ *   {"code":20000000,"message":"OK","data":null}   ← 正常结束
+ *
+ * 🐞 2026-11 的真实事故：这两步**原来都没做** —— 服务端把整包 JSON 原样当 `audio/mpeg` 转发，
+ * 浏览器拿到的是 `{"code":0,…` 这样的文本：
+ *   - 流式：`decodeAudioData` 解 JSON 必然失败 → `tts:stream-fail`；
+ *   - 整段：`new Audio(blob).play()` 报 `NotSupportedError`（DOMException 9）→ `tts:fail code:"audio"`；
+ *   - 一路降到系统 TTS（用户听到的确实是系统播报）。
+ * 所以下面这层「拆信封」是**必须**的，不是可选的兼容。
+ */
+export const VOLC_TTS_CODE_AUDIO = 0;
+/** 上游正常结束码（`message: "OK"`）；它不是错误，别当失败处理 */
+export const VOLC_TTS_CODE_DONE = 20000000;
+
+/** 增量 NDJSON 解析：上游把对象切在任意字节处也能拼回来（纯函数，Node 里可直接断言） */
+export function createVolcMessageParser() {
+  let pending = '';
+
+  /**
+   * 喂一段文本，返回**已经完整**的 JSON 对象（不完整的尾巴留在 pending 里）。
+   * 扫的是花括号配平（含字符串转义），不依赖换行 —— 上游不保证一个 chunk 一个对象。
+   */
+  function push(text) {
+    const piece = String(text == null ? '' : text);
+    if (!piece) return [];
+    pending += piece;
+    const out = [];
+    let i = 0;
+    let consumed = 0;
+    const n = pending.length;
+    while (i < n) {
+      const ch = pending.charCodeAt(i);
+      // 空白 / 非对象噪声（BOM、上游偶尔的心跳日志）：跳过
+      if (ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d || ch === 0xfeff) {
+        i += 1;
+        consumed = i;
+        continue;
+      }
+      if (ch !== 0x7b) {
+        i += 1;
+        consumed = i;
+        continue;
+      }
+      let depth = 0;
+      let inStr = false;
+      let esc = false;
+      let end = -1;
+      for (let j = i; j < n; j += 1) {
+        const c = pending.charCodeAt(j);
+        if (inStr) {
+          if (esc) esc = false;
+          else if (c === 0x5c) esc = true;
+          else if (c === 0x22) inStr = false;
+          continue;
+        }
+        if (c === 0x22) { inStr = true; continue; }
+        if (c === 0x7b) depth += 1;
+        else if (c === 0x7d) {
+          depth -= 1;
+          if (depth === 0) { end = j; break; }
+        }
+      }
+      if (end < 0) break;          // 这个对象还没收全：等下一块
+      const txt = pending.slice(i, end + 1);
+      i = end + 1;
+      consumed = i;
+      try {
+        const obj = JSON.parse(txt);
+        if (obj && typeof obj === 'object') out.push(obj);
+      } catch { /* 坏对象跳过：一句音频不值得整句失败 */ }
+    }
+    if (consumed) pending = pending.slice(consumed);
+    return out;
+  }
+
+  /** 收尾：把最后一截（没有换行 / 没有后续块）也解析掉 */
+  function flush() {
+    const rest = pending.trim();
+    pending = '';
+    if (!rest) return [];
+    try {
+      const obj = JSON.parse(rest);
+      return obj && typeof obj === 'object' ? [obj] : [];
+    } catch { return []; }
+  }
+
+  return { push, flush, get pending() { return pending.length; } };
+}
+
+/** 一条上游消息里的音频字节（base64 → Buffer）；不是音频块 → null */
+export function volcAudioBytes(message) {
+  if (!message || typeof message !== 'object') return null;
+  const data = typeof message.data === 'string' ? message.data : '';
+  if (!data) return null;
+  try {
+    const buf = Buffer.from(data, 'base64');
+    return buf.length ? buf : null;
+  } catch { return null; }
+}
+
+/** 上游错误码（0 = 音频块、20000000 = 正常结束，都不算错） */
+export function isVolcErrorCode(code) {
+  const n = Number(code);
+  return Number.isFinite(n) && n !== VOLC_TTS_CODE_AUDIO && n !== VOLC_TTS_CODE_DONE && n !== 0;
+}
+
+/** 第一个非空白字节（用来判断上游给的是 JSON 信封还是裸音频） */
+function firstMeaningfulByte(buf) {
+  for (let i = 0; i < buf.length; i += 1) {
+    const b = buf[i];
+    if (b === 0x20 || b === 0x09 || b === 0x0a || b === 0x0d) continue;
+    return b;
+  }
+  return -1;
+}
+
+/**
+ * 整段响应 → **真音频字节**。
+ *
+ * 上游给 JSON 信封就拆信封（base64 解码后拼起来），给裸二进制就原样返回 ——
+ * 后者是为了老假上游 / 灰度期间的上游实现，不是主路径。
+ *
+ * @returns {{audio:Buffer, encoded:boolean, messages:number, code:number, error:string}}
+ */
+export function unwrapVolcAudio(raw) {
+  const buf = toBuffer(raw);
+  if (!buf.length) return { audio: buf, encoded: false, messages: 0, code: 0, error: '' };
+  if (firstMeaningfulByte(buf) !== 0x7b) {
+    // 不是 JSON：当成上游直接给的音频字节（ID3 / MP3 帧同步都在这一类）
+    return { audio: buf, encoded: false, messages: 0, code: 0, error: '' };
+  }
+  const parser = createVolcMessageParser();
+  const messages = [...parser.push(buf.toString('utf8')), ...parser.flush()];
+  const parts = [];
+  let code = 0;
+  let error = '';
+  for (const m of messages) {
+    const bytes = volcAudioBytes(m);
+    if (bytes) parts.push(bytes);
+    else if (!error && isVolcErrorCode(m.code)) {
+      code = Number(m.code) || 0;
+      error = String(m.message || 'tts-error').slice(0, 80);
+    }
+  }
+  return { audio: Buffer.concat(parts), encoded: true, messages: messages.length, code, error };
+}
+
 /**
  * 创建火山 TTS 服务。
  *
@@ -342,10 +498,23 @@ export function createVolcTts({
           cached: false,
         };
       }
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (!buf.length) {
+      const raw = Buffer.from(await res.arrayBuffer());
+      if (!raw.length) {
         log({ chars: body.length, cache: 'miss', status: 502 });
         return { ok: false, code: 'empty-audio', status: 502, cached: false };
+      }
+      // 上游给的是 NDJSON + base64 信封：**拆掉之后**才是能播的 MP3
+      const unwrapped = unwrapVolcAudio(raw);
+      const buf = unwrapped.audio;
+      if (!buf.length) {
+        log({ chars: body.length, cache: 'miss', status: 502 });
+        return {
+          ok: false,
+          code: unwrapped.error ? 'tts-failed' : 'empty-audio',
+          upstream: unwrapped.code || 0,
+          status: 502,
+          cached: false,
+        };
       }
       store.set(key, buf);
       log({ chars: body.length, cache: 'miss', status: 200 });
@@ -448,21 +617,68 @@ export function createVolcTts({
         try { onChunk?.(chunk); } catch { /* 客户端已断 */ }
       };
 
+      /* 上游的 JSON 对象可能被切在任意字节处，一条 msg 也可能跨好几个 chunk：
+       * 用 streaming 的 TextDecoder 拼文本（base64 是 ASCII，但 sentence 里有中文），
+       * 再按花括号配平取对象 —— **不能按行切**，也不能按 chunk 切。 */
+      const parser = createVolcMessageParser();
+      const decoder = typeof TextDecoder === 'function' ? new TextDecoder('utf-8') : null;
+      const decodeText = (buf, stream = true) => (decoder
+        ? decoder.decode(buf, { stream })
+        : Buffer.from(buf).toString('utf8'));
+      let mode = '';                       // '' 未定 | 'json' 信封 | 'raw' 裸音频
+      let probe = Buffer.alloc(0);         // 还没判定模式时先攒着（可能全是空白）
+      let upstreamCode = 0;
+      let upstreamError = '';
+
+      const feedMessages = (messages) => {
+        for (const m of messages) {
+          const audio = volcAudioBytes(m);
+          if (audio) emit(audio);
+          else if (!upstreamError && isVolcErrorCode(m.code)) {
+            upstreamCode = Number(m.code) || 0;
+            upstreamError = String(m.message || 'tts-error').slice(0, 80);
+          }
+        }
+      };
+
+      const accept = (piece) => {
+        const chunk = toBuffer(piece);
+        if (!chunk.length) return;
+        if (mode === 'raw') { emit(chunk); return; }
+        if (mode === 'json') { feedMessages(parser.push(decodeText(chunk))); return; }
+        // 还没判定：看第一个非空白字节（`{` = JSON 信封；其它 = 上游直接给的音频）
+        probe = probe.length ? Buffer.concat([probe, chunk]) : Buffer.from(chunk);
+        const head = firstMeaningfulByte(probe);
+        if (head < 0) return;
+        mode = head === 0x7b ? 'json' : 'raw';
+        const buffered = probe;
+        probe = Buffer.alloc(0);
+        if (mode === 'raw') { emit(buffered); return; }
+        feedMessages(parser.push(decodeText(buffered)));
+      };
+
       reader = pickBodyReader(res.body);
       if (!reader) {
         // 假上游 / 老实现只给 arrayBuffer：整段读一次，但**仍然走流式的响应头**（不缓存）
-        const full = toBuffer(await res.arrayBuffer());
-        emit(full);
+        accept(await res.arrayBuffer());
       } else {
         while (true) {
           const step = await reader.next();
           if (!step || step.done) break;
-          emit(step.value);
+          accept(step.value);
         }
       }
+      // 收尾：把解码器 / 解析器里最后一点不完整的尾巴也吐出来
+      feedMessages(parser.push(decodeText(Buffer.alloc(0), false)));
+      feedMessages(parser.flush());
       if (!bytes) {
         log({ chars: body.length, cache: 'stream', status: 502 });
-        return result({ ok: false, code: 'empty-audio', status: 502 });
+        return result({
+          ok: false,
+          code: upstreamError ? 'tts-failed' : 'empty-audio',
+          status: 502,
+          upstream: upstreamCode || 0,
+        });
       }
       log({ chars: body.length, cache: 'stream', status: 200 });
       return result({ ok: true, status: 200 });
@@ -699,10 +915,16 @@ export default {
   TTS_PATH,
   TTS_STREAM_PATH,
   TTS_HEALTH_PATH,
+  VOLC_TTS_CODE_AUDIO,
+  VOLC_TTS_CODE_DONE,
   loadTtsConfig,
   createTtsCache,
   createVolcTts,
   createTtsRoutes,
+  createVolcMessageParser,
+  volcAudioBytes,
+  isVolcErrorCode,
+  unwrapVolcAudio,
   ttsCacheKey,
   normalizeRate,
 };

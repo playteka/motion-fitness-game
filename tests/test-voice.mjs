@@ -24,6 +24,7 @@ import {
 } from '../src/voice/commands.js';
 import {
   createLlm, createAsr, createVuMeter, createVolcAsr, createAutoAsr,
+  createTts as createSystemTts,
   pickAsrRoute, resolveAsrUrl, pickCaptureMode, volcErrorCode, startPcmCapture,
   DEFAULT_ASR_WS_URL, ASR_ROUTES,
   rmsToLevel, smoothLevel, levelToColor,
@@ -42,6 +43,7 @@ import {
 import {
   createVolcTts, normalizeTtsRate, TTS_TIMEOUT_MS, TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH,
   TTS_STREAM_PATH, planStreamQueue, createAudioQueuePlayer, TTS_STREAM_LEAD_SEC,
+  createMp3FrameSplitter, parseMp3FrameHeader, createMseAppendQueue, mseSupportsMpeg, MSE_MIME,
 } from '../src/voice/tts-volc.js';
 import {
   createBargeIn, BARGE_IN_WINDOW_MS, BARGE_IN_MIN_CHARS, BARGE_IN_LEVEL,
@@ -51,6 +53,7 @@ import {
   createVolcTts as createVolcTtsServer, createTtsRoutes, createTtsCache, loadTtsConfig,
   ttsCacheKey, TTS_PATH as TTS_SERVER_PATH, TTS_STREAM_PATH as TTS_SERVER_STREAM_PATH,
   TTS_HEALTH_PATH, TTS_MAX_TEXT, TTS_STREAM_FIRST_MS,
+  createVolcMessageParser, volcAudioBytes, unwrapVolcAudio,
 } from '../server/volc-tts.mjs';
 import {
   downsampleToPcm16, pcm16Rms, pcm16Peak, pcmBytesToMs, floatToPcm16,
@@ -4964,6 +4967,625 @@ console.log('\n[34] 服务端 /tts/stream：转发字节与上游一致 / 客户
     } finally {
       await close(srv);
     }
+  }
+}
+
+/* ================================================================== *
+ * [35] 🐞 上游是 NDJSON + base64 信封，不是裸 MP3（2026-11 真实事故）
+ *
+ * 现场：`tts:first-audio` 有值（火山确实回了音频）→ `tts:stream-fail` →
+ * `tts:whole` → `tts:fail code:"audio"` → `tts:say source:"system"`。
+ * 根因：服务端把 `{"code":0,"data":"SUQz…"}` 整包当 `audio/mpeg` 转发，
+ * 两端解码器拿到的都不是音频 → 一路降级到系统播报（用户听到的确实是系统语音）。
+ * ================================================================== */
+console.log('\n[35] 上游信封拆解：NDJSON + base64 → 真 MP3（/tts 与 /tts/stream 都对）');
+{
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /* ---- 合成一段「真 MP3」：ID3v2 头 + N 个 192 字节的帧（MPEG2 Layer III / 24kHz / 64kbps） ---- */
+  const FRAME_LEN = 192;
+  const FRAME_HEADER = [0xff, 0xf3, 0x84, 0xc4];
+  function mp3Frame(fill) {
+    const buf = new Uint8Array(FRAME_LEN);
+    buf.set(FRAME_HEADER, 0);
+    buf.fill(fill, 4);
+    return buf;
+  }
+  function id3Tag() {
+    // 实测上游的 45 字节头：ID3 / v2.4 / flags 0 / size(35) 的 syncsafe 写法
+    const buf = new Uint8Array(45);
+    buf.set([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23], 0);
+    return buf;
+  }
+  const concatAll = (list) => {
+    const out = new Uint8Array(list.reduce((n, b) => n + b.length, 0));
+    let at = 0;
+    for (const b of list) { out.set(b, at); at += b.length; }
+    return out;
+  };
+  const F1 = mp3Frame(1);
+  const F2 = mp3Frame(2);
+  const F3 = mp3Frame(3);
+  const FULL = concatAll([id3Tag(), F1, F2, F3]);          // 45 + 192*3 = 621 字节
+  /** 上游把这条 MP3 拆成两块 base64 送回来（一块带 ID3，另一块是纯帧） */
+  const PARTS = [concatAll([id3Tag(), F1]), concatAll([F2, F3])];
+  const b64 = (bytes) => Buffer.from(bytes).toString('base64');
+  /** 真实响应形状：音频块 + 句子标记 + 结束码（20000000 = OK） */
+  const envelope = (audioParts, tail = { code: 20000000, message: 'OK', data: null }) => Buffer.from(
+    [
+      ...audioParts.map((part) => JSON.stringify({ code: 0, message: '', data: b64(part) })),
+      JSON.stringify({ code: 0, message: '', data: '', sentence: { text: '请开始深蹲' } }),
+      JSON.stringify(tail),
+    ].join('\n') + '\n',
+    'utf8',
+  );
+
+  /* ---- ① 增量解析：对象被切在任意字节处也要拼回来 ---- */
+  {
+    const text = envelope(PARTS).toString('utf8');
+    const parser = createVolcMessageParser();
+    const got = [];
+    for (let i = 0; i < text.length; i += 17) got.push(...parser.push(text.slice(i, i + 17)));
+    got.push(...parser.flush());
+    ok('增量解析：对象被切成 17 字节一段也能拼成 4 条（音频 x2 + 句子 + 结束）',
+      got.length === 4 && got.filter((m) => typeof m.data === 'string' && m.data.length > 0).length === 2,
+      JSON.stringify(got.map((m) => ({ code: m.code, dataLen: (m.data || '').length, sentence: !!m.sentence }))));
+    ok('增量解析：带 sentence 的标记块与结束码 20000000 都认得（不是错误）',
+      !!got[2].sentence && got[3].code === 20000000 && got[3].message === 'OK',
+      JSON.stringify({ sentence: !!got[2]?.sentence, tail: got[3] }));
+  }
+
+  /* ---- ② unwrapVolcAudio：拆信封 / 裸字节透传 / 上游错误码 ---- */
+  {
+    const unwrapped = unwrapVolcAudio(envelope(PARTS));
+    ok('unwrapVolcAudio：base64 拆出来拼成**真 MP3**（621 字节、首字节是 ID3 的 0x49）',
+      unwrapped.encoded === true && unwrapped.audio.length === FULL.length
+      && unwrapped.audio[0] === 0x49 && unwrapped.audio[1] === 0x44 && unwrapped.audio[2] === 0x33
+      && Buffer.compare(unwrapped.audio, Buffer.from(FULL)) === 0,
+      JSON.stringify({ encoded: unwrapped.encoded, len: unwrapped.audio.length, head: [...unwrapped.audio.slice(0, 3)] }));
+
+    const raw = unwrapVolcAudio(Buffer.from(FULL));
+    ok('unwrapVolcAudio：上游直接给裸音频就原样返回（老假上游 / 灰度期兼容）',
+      raw.encoded === false && raw.audio.length === FULL.length
+      && Buffer.compare(raw.audio, Buffer.from(FULL)) === 0);
+
+    const bad = unwrapVolcAudio(envelope([], { code: 45000001, message: 'invalid speaker', data: null }));
+    ok('unwrapVolcAudio：结束码是错误码且没有音频 → 记下 code / message（不冒充成功）',
+      bad.encoded === true && bad.audio.length === 0 && bad.code === 45000001
+      && bad.error === 'invalid speaker',
+      JSON.stringify({ code: bad.code, error: bad.error, len: bad.audio.length }));
+
+    ok('volcAudioBytes：data 空串 / null / 非对象 → null（句子标记块不会被当成音频）',
+      volcAudioBytes({ code: 0, data: '' }) === null
+      && volcAudioBytes({ code: 0, data: null }) === null
+      && volcAudioBytes(null) === null);
+  }
+
+  /* ---- ③ 真 http：POST /tts 回来的就是那 621 字节（Content-Length 也一致） ---- */
+  {
+    const http = await import('node:http');
+    const config = {
+      configured: true, missing: [], appId: 'test-app-id', apiKey: 'test-secret-key',
+      voice: 'zh_female_test', resource: 'volc.seedtts.default', endpoint: 'https://example.invalid/tts',
+    };
+    const service = createVolcTtsServer({
+      config,
+      cache: createTtsCache(),
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => Uint8Array.from(envelope(PARTS)).buffer,
+      }),
+    });
+    const srv = http.createServer(createTtsRoutes({ service }));
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+    const request = (method, p, body = null) => new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port, path: p, method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+      });
+      req.on('error', reject);
+      if (body) req.write(body);
+      req.end();
+    });
+    try {
+      const res = await request('POST', TTS_SERVER_PATH, JSON.stringify({ text: '请开始深蹲', rate: 1 }));
+      ok('POST /tts：响应体就是拆出来的 MP3 字节（不是 JSON 文本），且与 Content-Length 一致',
+        res.status === 200 && res.body.length === FULL.length
+        && res.body[0] === 0x49 && Buffer.compare(res.body, Buffer.from(FULL)) === 0
+        && Number(res.headers['content-length']) === FULL.length,
+        JSON.stringify({
+          status: res.status, len: res.body.length, ct: res.headers['content-type'],
+          cl: res.headers['content-length'], head: res.body.slice(0, 4).toString('hex'),
+        }));
+      ok('POST /tts：Content-Type 仍是 audio/mpeg（现在这个声明才是真的）',
+        /audio\/mpeg/.test(String(res.headers['content-type'])));
+    } finally {
+      await new Promise((r) => srv.close(r));
+    }
+  }
+
+  /* ---- ④ 真 http：/tts/stream 把信封切在任意字节处，转发出来仍是那 621 字节 ---- */
+  {
+    const http = await import('node:http');
+    const config = {
+      configured: true, missing: [], appId: 'test-app-id', apiKey: 'test-secret-key',
+      voice: 'zh_female_test', resource: 'volc.seedtts.default', endpoint: 'https://example.invalid/tts',
+    };
+    const wire = envelope(PARTS);
+    const service = createVolcTtsServer({
+      config,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        // 每 23 字节吐一块：对象一定被切开，而且切在 base64 中间
+        body: (async function* stream() {
+          for (let i = 0; i < wire.length; i += 23) {
+            await wait(1);
+            yield wire.slice(i, i + 23);
+          }
+        })(),
+      }),
+    });
+    const srv = http.createServer(createTtsRoutes({ service }));
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+    try {
+      const received = await new Promise((resolve, reject) => {
+        const chunks = [];
+        const req = http.request({
+          host: '127.0.0.1', port, path: TTS_SERVER_STREAM_PATH, method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }, (res) => {
+          res.on('data', (c) => chunks.push(Buffer.from(c)));
+          res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+          res.on('error', reject);
+        });
+        req.on('error', reject);
+        req.end(JSON.stringify({ text: '请开始深蹲', rate: 1 }));
+      });
+      ok('/tts/stream：上游信封被切在 base64 中间，转发出来仍是完整的 621 字节 MP3（首字节 0x49）',
+        received.status === 200 && received.body.length === FULL.length
+        && received.body[0] === 0x49
+        && Buffer.compare(received.body, Buffer.from(FULL)) === 0,
+        JSON.stringify({ status: received.status, len: received.body.length }));
+    } finally {
+      await new Promise((r) => srv.close(r));
+    }
+  }
+}
+
+/* ================================================================== *
+ * [36] 客户端播放：MSE 追加队列 / MP3 帧对齐 / blob 释放时机 / tts:fail 字段
+ * ================================================================== */
+console.log('\n[36] 客户端播放：MSE 追加队列 / 帧对齐 / blob 不提前 revoke / 失败能看出原因');
+{
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const tick = async (n = 10) => { for (let i = 0; i < n; i += 1) await Promise.resolve(); };
+  const FRAME_LEN = 192;
+  const FRAME_HEADER = [0xff, 0xf3, 0x84, 0xc4];
+  function mp3Frame(fill) {
+    const buf = new Uint8Array(FRAME_LEN);
+    buf.set(FRAME_HEADER, 0);
+    buf.fill(fill, 4);
+    return buf;
+  }
+  function id3Tag() {
+    const buf = new Uint8Array(45);
+    buf.set([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23], 0);
+    return buf;
+  }
+  const concatAll = (list) => {
+    const out = new Uint8Array(list.reduce((n, b) => n + b.length, 0));
+    let at = 0;
+    for (const b of list) { out.set(b, at); at += b.length; }
+    return out;
+  };
+
+  /* ---- ① MP3 帧头 / 帧对齐（纯函数） ---- */
+  {
+    const hdr = parseMp3FrameHeader(mp3Frame(0));
+    ok('MP3 帧头：192 字节 / 24kHz / 64kbps 的 MPEG2 Layer III 帧算得对（火山实测就是这一种）',
+      !!hdr && hdr.frameLength === 192 && hdr.sampleRate === 24000 && hdr.bitrate === 64000
+      && hdr.mpeg1 === false, JSON.stringify(hdr));
+    ok('MP3 帧头：不是同步字 / Layer II / bitrate 15 一律返回 null（不乱猜）',
+      parseMp3FrameHeader(new Uint8Array([0, 1, 2, 3])) === null
+      && parseMp3FrameHeader(new Uint8Array([0xff, 0xf5, 0x84, 0xc4])) === null
+      && parseMp3FrameHeader(new Uint8Array([0xff, 0xfb, 0xf4, 0xc4])) === null);
+
+    const splitter = createMp3FrameSplitter();
+    const head = splitter.push(concatAll([id3Tag(), mp3Frame(1).slice(0, 100)]));
+    ok('帧对齐：ID3 头 + 半帧先攒着（push 返回 null，不会把半帧送去解码）', head === null);
+    const rest = splitter.push(mp3Frame(1).slice(100));
+    ok('帧对齐：补齐后正好吐 1 个完整帧（192 字节、帧同步开头、不含 ID3）',
+      !!rest && rest.length === 192 && rest[0] === 0xff && (rest[1] & 0xe0) === 0xe0,
+      JSON.stringify({ len: rest && rest.length }));
+    ok('帧对齐：ID3 那 45 字节记进 dropped（诊断能看出元数据被跳过）',
+      splitter.dropped === 45 && splitter.frames === 1, JSON.stringify({ dropped: splitter.dropped }));
+
+    const zero = createMp3FrameSplitter();
+    const passthrough = zero.push(new Uint8Array(64));
+    ok('帧对齐：判不出帧结构就原样透传（全零 / 假字节交给解码器去报错，绝不静默吞掉）',
+      !!passthrough && passthrough.length === 64 && zero.passthrough === true);
+  }
+
+  /* ---- ② MSE appendBuffer 队列：不乱序、不并发、QuotaExceeded 重试 ---- */
+  function fakeSourceBuffer({ quotaOnce = false } = {}) {
+    const sb = {
+      mime: '', updating: false, list: [], listeners: {}, quotas: 0, appended: 0,
+      quotaOnce,
+      addEventListener(n, fn) { (this.listeners[n] || (this.listeners[n] = [])).push(fn); },
+      removeEventListener(n, fn) { this.listeners[n] = (this.listeners[n] || []).filter((f) => f !== fn); },
+      emit(n) { for (const fn of [...(this.listeners[n] || [])]) fn({ type: n }); },
+      endUpdate() { this.updating = false; this.emit('updateend'); },
+      appendBuffer(bytes) {
+        if (this.updating) throw Object.assign(new Error('append while updating'), { name: 'InvalidStateError' });
+        if (this.quotaOnce) {
+          this.quotaOnce = false;
+          this.quotas += 1;
+          throw Object.assign(new Error('quota exceeded'), { name: 'QuotaExceededError' });
+        }
+        const view = new Uint8Array(bytes);
+        this.list.push([...view]);
+        this.appended += view.length;
+        this.updating = true;
+        setTimeout(() => this.endUpdate(), 0);
+      },
+      endOfStream() {},
+      abort() {},
+    };
+    return sb;
+  }
+  {
+    const sb = fakeSourceBuffer();
+    const queue = createMseAppendQueue({ sourceBuffer: sb });
+    const p1 = queue.append(new Uint8Array([1, 1]));
+    const p2 = queue.append(new Uint8Array([2, 2]));
+    await tick(6);
+    ok('MSE 队列：上一块 updateend 之前不会追加下一块（否则 InvalidStateError）',
+      sb.list.length === 1 && queue.queued === 1,
+      JSON.stringify({ appended: sb.list.length, queued: queue.queued }));
+    await wait(10);
+    await Promise.all([p1, p2]);
+    ok('MSE 队列：两块按收到顺序进缓冲（不是倒着 / 不是并行）',
+      sb.list.length === 2 && sb.list.map((x) => x[0]).join(',') === '1,2'
+      && sb.appended === 4 && queue.chunks === 2,
+      JSON.stringify({ order: sb.list.map((x) => x[0]), appended: sb.appended }));
+  }
+  {
+    const sb = fakeSourceBuffer({ quotaOnce: true });
+    const queue = createMseAppendQueue({ sourceBuffer: sb });
+    const got = await queue.append(new Uint8Array([7, 7, 7]));
+    await wait(5);
+    ok('MSE 队列：QuotaExceededError 之后重试成功、不丢块（quotas=1，字节最终进去了）',
+      got === 3 && sb.quotas === 1 && sb.list.length === 1 && queue.chunks === 1
+      && sb.appended === 3,
+      JSON.stringify({ got, quotas: sb.quotas, appended: sb.appended }));
+  }
+
+  /* ---- ③ 假 MediaSource / 假 Audio 元素 ---- */
+  function fakeMediaSourceFactory() {
+    const created = [];
+    class FakeMediaSource {
+      constructor() {
+        this.readyState = 'closed';
+        this.buffers = [];
+        this.listeners = {};
+        this.endOfStreamCalls = 0;
+        created.push(this);
+        setTimeout(() => {
+          this.readyState = 'open';
+          for (const fn of [...(this.listeners.sourceopen || [])]) fn({ type: 'sourceopen' });
+        }, 0);
+      }
+      static isTypeSupported(type) { return type === MSE_MIME; }
+      addEventListener(n, fn) { (this.listeners[n] || (this.listeners[n] = [])).push(fn); }
+      removeEventListener(n, fn) { this.listeners[n] = (this.listeners[n] || []).filter((f) => f !== fn); }
+      addSourceBuffer(mime) {
+        if (this.failAdd) throw new Error('addSourceBuffer failed');
+        const sb = fakeSourceBuffer();
+        sb.mime = mime;
+        this.buffers.push(sb);
+        return sb;
+      }
+      endOfStream() { this.endOfStreamCalls += 1; this.readyState = 'ended'; }
+    }
+    return { FakeMediaSource, created };
+  }
+  function fakeElementAudio() {
+    const list = [];
+    class FakeAudio {
+      constructor(src) { this.src = src; this.playCalls = 0; this.paused = 0; list.push(this); }
+      play() { this.playCalls += 1; return Promise.resolve(); }
+      pause() { this.paused += 1; }
+      finish() { this.onended?.(); }
+      fail() { this.onerror?.(); }
+    }
+    return { FakeAudio, list };
+  }
+  function urlFactory() {
+    let n = 0;
+    const revoked = [];
+    return { revoked, create: () => `blob:fake/${(n += 1)}`, revoke: (u) => { revoked.push(u); } };
+  }
+  function fakeSystem() {
+    return {
+      spoken: [], cancelled: 0,
+      speak(text) { this.spoken.push(text); return true; },
+      cancel() { this.cancelled += 1; },
+      setRate() {},
+    };
+  }
+  const streamRes = (chunks) => {
+    let i = 0;
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => (i < chunks.length
+            ? { done: false, value: chunks[i++] }
+            : { done: true, value: undefined }),
+          cancel: async () => {},
+        }),
+      },
+    };
+  };
+  const wholeRes = { ok: true, status: 200, blob: async () => ({ size: 8, type: 'audio/mpeg' }) };
+
+  /* ---- ④ 支持 MSE 时走 MSE：append 到 SourceBuffer、首块记 mode=mse、结束后 endOfStream ---- */
+  {
+    const { FakeMediaSource, created } = fakeMediaSourceFactory();
+    const { FakeAudio, list } = fakeElementAudio();
+    const urls = urlFactory();
+    const diagEvents = [];
+    const sys = fakeSystem();
+    const tts = createVolcTts({
+      fallback: sys,
+      MediaSourceCtor: FakeMediaSource,
+      AudioCtor: FakeAudio,
+      createObjectURL: urls.create,
+      revokeObjectURL: urls.revoke,
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      fetchImpl: async (url) => (url === TTS_STREAM_PATH ? streamRes([mp3Frame(1), mp3Frame(2)]) : wholeRes),
+    });
+    tts.speak('用 MSE 播');
+    await wait(30);
+    const ms = created[0];
+    ok('MSE 可用时走 MSE：addSourceBuffer("audio/mpeg") 真的被调用',
+      !!ms && ms.buffers.length === 1 && ms.buffers[0].mime === MSE_MIME,
+      JSON.stringify({ buffers: ms && ms.buffers.length, mime: ms && ms.buffers[0]?.mime }));
+    ok('MSE：两帧按序 append 进缓冲（192 x 2 = 384 字节），没有回退系统 TTS',
+      ms.buffers[0].appended === 384 && ms.buffers[0].list.length === 2 && sys.spoken.length === 0,
+      JSON.stringify({ appended: ms.buffers[0].appended, chunks: ms.buffers[0].list.length, spoken: sys.spoken }));
+    const first = diagEvents.find((e) => e.type === 'tts:first-audio');
+    ok('MSE：tts:first-audio 带上 mode=mse（面板能看出用的哪个播放引擎）',
+      !!first && first.data.mode === 'mse' && first.data.bytes === 192,
+      JSON.stringify(first));
+    ok('MSE：播起来以后记 tts:say source=volc stream=true', diagEvents.some(
+      (e) => e.type === 'tts:say' && e.data.source === 'volc' && e.data.stream === true));
+    await wait(20);
+    ok('MSE：流收完 → endOfStream 被调用（不然浏览器会一直等后续数据）',
+      ms.endOfStreamCalls === 1 && ms.readyState === 'ended',
+      JSON.stringify({ calls: ms.endOfStreamCalls, state: ms.readyState }));
+    ok('MSE：播放期间 blob URL 不 revoke（提前 revoke = 音频元素读不到数据）',
+      urls.revoked.length === 0, JSON.stringify(urls.revoked));
+    list[0].finish();
+    ok('MSE：播完释放 blob URL', urls.revoked.length === 1, JSON.stringify(urls.revoked));
+    tts.close();
+  }
+
+  /* ---- ⑤ 不支持 MSE（isTypeSupported 为 false）→ 走帧对齐解码队列，mode=decode ---- */
+  {
+    function NoMse() { throw new Error('should not build MediaSource'); }
+    NoMse.isTypeSupported = () => false;
+    const decoded = [];
+    class FakeCtx {
+      constructor() { this.currentTime = 1; this.state = 'running'; this.destination = {}; }
+      createGain() { return { connect() {}, disconnect() {} }; }
+      createBufferSource() { return { connect() {}, start() {}, stop() {}, disconnect() {} }; }
+      decodeAudioData(buf) { decoded.push(buf.byteLength); return Promise.resolve({ duration: buf.byteLength / 192000, length: 1 }); }
+      close() { this.state = 'closed'; return Promise.resolve(); }
+    }
+    const diagEvents = [];
+    const sys = fakeSystem();
+    const tts = createVolcTts({
+      fallback: sys,
+      MediaSourceCtor: NoMse,
+      AudioContextCtor: FakeCtx,
+      AudioCtor: fakeElementAudio().FakeAudio,
+      createObjectURL: () => 'blob:x',
+      revokeObjectURL: () => {},
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      // 第一块把 ID3 + 半帧切在一起：帧对齐之后只喂完整帧
+      fetchImpl: async (url) => (url === TTS_STREAM_PATH
+        ? streamRes([concatAll([id3Tag(), mp3Frame(1).slice(0, 100)]), mp3Frame(1).slice(100)])
+        : wholeRes),
+    });
+    tts.speak('解码队列播');
+    await wait(20);
+    ok('不支持 MSE → 走解码队列，mode=decode', diagEvents.some(
+      (e) => e.type === 'tts:first-audio' && e.data.mode === 'decode'));
+    ok('解码队列：只解完整帧（解到 1 块 192 字节，半帧那段没被送去解码）',
+      decoded.length === 1 && decoded[0] === 192 && sys.spoken.length === 0,
+      JSON.stringify({ decoded, spoken: sys.spoken }));
+    tts.close();
+  }
+
+  /* ---- ⑥ 整段路径：blob URL 播放结束前不 revoke；play() 被拒时 tts:fail 带 where/errName ---- */
+  {
+    const urls = urlFactory();
+    const { FakeAudio, list } = fakeElementAudio();
+    const tts = createVolcTts({
+      fallback: fakeSystem(),
+      AudioCtor: FakeAudio,
+      createObjectURL: urls.create,
+      revokeObjectURL: urls.revoke,
+      AudioContextCtor: null,             // 没有 AudioContext → 流式直接跳过，只打整段
+      fetchImpl: async () => wholeRes,
+    });
+    tts.speak('整段播放');
+    await wait(10);
+    ok('整段：开始播放时 blob URL 还在（没有提前 revoke）',
+      list.length === 1 && list[0].playCalls === 1 && urls.revoked.length === 0,
+      JSON.stringify({ audio: list.length, revoked: urls.revoked }));
+    list[0].finish();
+    ok('整段：播完才 revoke blob URL（提前 revoke 就是 NotSupportedError 的来源）',
+      urls.revoked.length === 1, JSON.stringify(urls.revoked));
+    tts.close();
+  }
+  {
+    class RejectAudio {
+      constructor(src) { this.src = src; this.paused = 0; }
+      play() {
+        return Promise.reject(Object.assign(new Error('The element has no supported sources.'), {
+          name: 'NotSupportedError', code: 9,
+        }));
+      }
+      pause() { this.paused += 1; }
+    }
+    const diagEvents = [];
+    const sys = fakeSystem();
+    const tts = createVolcTts({
+      fallback: sys,
+      AudioCtor: RejectAudio,
+      createObjectURL: () => 'blob:bad',
+      revokeObjectURL: () => {},
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      fetchImpl: async () => wholeRes,
+    });
+    tts.speak('播放被拒');
+    await wait(10);
+    const fails = diagEvents.filter((e) => e.type === 'tts:fail');
+    ok('tts:fail 带 where=whole + code=9（DOMException NOT_SUPPORTED_ERR）+ errName/errMessage',
+      fails.length === 1 && fails[0].data.where === 'whole' && fails[0].data.code === 9
+      && fails[0].data.errName === 'NotSupportedError'
+      && typeof fails[0].data.errMessage === 'string' && fails[0].data.errMessage.length <= 80,
+      JSON.stringify(fails));
+    ok('play() 被拒后回退系统 TTS（同一句照样念出来，不哑掉）', sys.spoken.length === 1,
+      JSON.stringify(sys.spoken));
+  }
+  {
+    // onerror 路径：记 where=whole / code=audio，而且**不再**被 play() 的 rejection 重复记一条
+    const { FakeAudio, list } = fakeElementAudio();
+    const diagEvents = [];
+    class RejectAfterError extends FakeAudio {
+      play() {
+        this.playCalls = (this.playCalls || 0) + 1;
+        this.onerror?.();
+        return Promise.reject(Object.assign(new Error('no supported sources'), { name: 'NotSupportedError', code: 9 }));
+      }
+    }
+    const tts = createVolcTts({
+      fallback: fakeSystem(),
+      AudioCtor: RejectAfterError,
+      createObjectURL: () => 'blob:err',
+      revokeObjectURL: () => {},
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      fetchImpl: async () => wholeRes,
+    });
+    tts.speak('元素报错');
+    await wait(10);
+    const fails = diagEvents.filter((e) => e.type === 'tts:fail');
+    ok('音频元素 onerror：记 where=whole + code=audio，且同一个失败只记一条（不重复刷）',
+      fails.length === 1 && fails[0].data.where === 'whole' && fails[0].data.code === 'audio',
+      JSON.stringify(fails));
+    ok('onerror 之后回退系统 TTS', diagEvents.some(
+      (e) => e.type === 'tts:say' && e.data.source === 'system'));
+  }
+
+  /* ---- ⑦ MSE 的 play() 被自动播放策略拒绝 → 不当作未捕获异常，改走整段 ---- */
+  {
+    const { FakeMediaSource } = fakeMediaSourceFactory();
+    class BlockedAudio {
+      constructor(src) { this.src = src; this.paused = 0; }
+      play() {
+        return Promise.reject(Object.assign(new Error('play() failed because the user did not interact'), {
+          name: 'NotAllowedError',
+        }));
+      }
+      pause() { this.paused += 1; }
+      finish() { this.onended?.(); }
+    }
+    const calls = [];
+    const sys = fakeSystem();
+    const tts = createVolcTts({
+      fallback: sys,
+      MediaSourceCtor: FakeMediaSource,
+      AudioCtor: BlockedAudio,
+      createObjectURL: () => 'blob:mse-blocked',
+      revokeObjectURL: () => {},
+      diag: { record: () => {} },
+      fetchImpl: async (url) => {
+        calls.push(url);
+        return url === TTS_STREAM_PATH ? streamRes([mp3Frame(1)]) : wholeRes;
+      },
+    });
+    tts.speak('被自动播放策略挡住');
+    await wait(30);
+    ok('MSE 的 play() 被拒（NotAllowedError）→ 自动降级到整段 /tts，不是「悄悄没声音」',
+      calls.join(',') === `${TTS_STREAM_PATH},${TTS_PATH}`,
+      JSON.stringify({ calls, spoken: sys.spoken }));
+    tts.close();
+  }
+
+  /* ---- ⑧ 系统 TTS：硬失败 / 被打断的区别 ---- */
+  function fakeSystemSynth({ autoEnd = false } = {}) {
+    const spoken = [];
+    let utter = null;
+    const win = {
+      navigator: { language: 'zh-CN' },
+      speechSynthesis: {
+        speak(u) {
+          spoken.push(u);
+          utter = u;
+          if (autoEnd) setTimeout(() => u.onend?.(), 0);
+        },
+        cancel() {},
+      },
+      SpeechSynthesisUtterance: class {
+        constructor(text) { this.text = String(text); }
+      },
+    };
+    return { win, spoken, get utter() { return utter; } };
+  }
+  {
+    const harness = fakeSystemSynth();
+    const events = [];
+    const tts = createSystemTts({
+      win: harness.win, lang: 'zh-CN',
+      diag: { record: (type, data) => events.push({ type, data }) },
+    });
+    ok('系统 TTS：第一句交给合成器（返回 true、记 tts:say）',
+      tts.speak('第一句') === true && harness.spoken.length === 1
+      && events.some((e) => e.type === 'tts:say'));
+    harness.utter.onerror({ error: 'synthesis-unavailable' });
+    const fails = events.filter((e) => e.type === 'tts:fail');
+    ok('系统 TTS：synthesis-unavailable 记 tts:fail，且带 where=system（下次一眼看出是系统这级）',
+      fails.length === 1 && fails[0].data.where === 'system'
+      && fails[0].data.code === 'synthesis-unavailable',
+      JSON.stringify(fails));
+    ok('系统 TTS：硬失败之后不再徒劳调用（第二句返回 false，只出弹幕）',
+      tts.speak('第二句') === false && harness.spoken.length === 1
+      && tts.unavailable === true && tts.supported === false);
+  }
+  {
+    // 我们自己 cancel() 造成的 'interrupted' 不是失败：不该刷 tts:fail（上次就是它把日志搅浑的）
+    const harness = fakeSystemSynth();
+    const events = [];
+    const tts = createSystemTts({
+      win: harness.win, lang: 'zh-CN',
+      diag: { record: (type, data) => events.push({ type, data }) },
+    });
+    tts.speak('被打断');
+    harness.utter.onerror({ error: 'interrupted' });
+    ok('系统 TTS：interrupted / canceled（我们自己 cancel 的）不记 tts:fail，也不算不可用',
+      !events.some((e) => e.type === 'tts:fail') && tts.unavailable === false);
   }
 }
 

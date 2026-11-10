@@ -104,8 +104,9 @@ function blankSnapshot() {
      * TTS（P3.6 整段 / P3.4 流式 + 插话打断）：
      *   state = idle | say | fallback | fail | first | barge
      *   firstAudioMs = 最近一次流式「首字」耗时；bargeMs = 最近一次插话打断耗时
+     *   mode = 流式用的播放引擎（mse / decode）；where = 失败发生在哪一级
      */
-    tts: { state: 'idle', last: '', firstAudioMs: 0, bargeMs: 0 },
+    tts: { state: 'idle', last: '', firstAudioMs: 0, bargeMs: 0, mode: '', where: '', errName: '' },
   };
 }
 
@@ -274,11 +275,12 @@ export function createDiag({
         state.tts = { ...state.tts, state: 'say', last: String(entry.chars || '') };
         break;
       case 'tts:first-audio':
-        // 流式首字延迟（用户要求：诊断面板显示「首字 xx ms」）
+        // 流式首字延迟（用户要求：诊断面板显示「首字 xx ms」）+ 用的是哪个播放引擎（mse / decode）
         state.tts = {
           ...state.tts,
           state: 'first',
           firstAudioMs: Math.max(0, Number(entry.ms) || 0),
+          mode: String(entry.mode || ''),
         };
         break;
       case 'tts:stream-fail':
@@ -301,7 +303,14 @@ export function createDiag({
         state.tts = { ...state.tts, state: 'fallback', last: String(entry.code || '') };
         break;
       case 'tts:fail':
-        state.tts = { ...state.tts, state: 'fail', last: String(entry.code || '') };
+        // where = 哪一级失败（stream / whole / system）+ 真实 errName，面板一眼看出卡在哪
+        state.tts = {
+          ...state.tts,
+          state: 'fail',
+          last: String(entry.code || ''),
+          where: String(entry.where || ''),
+          errName: String(entry.errName || ''),
+        };
         break;
       case 'vu:open':
         break;
