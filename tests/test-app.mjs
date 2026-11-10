@@ -9280,6 +9280,21 @@ console.log('\n[20] P3.3 自由对话：/llm → 工具调用真的改界面（�
     elements.get('btnFreeChat').dispatch('click');
     await flush();
     ok('再点一下 → 打开', api.state.settings.freeChat === true);
+
+    /* ---- P3.4 插话打断开关：默认开、点一下关掉、再点打开（随设置持久化） ---- */
+    ok('「允许插话打断」默认开（settings.bargeIn === true，按钮 aria-pressed=true）',
+      api.state.settings.bargeIn === true
+      && elements.get('btnBargeIn').getAttribute('aria-pressed') === 'true',
+      JSON.stringify({ setting: api.state.settings.bargeIn,
+        pressed: elements.get('btnBargeIn').getAttribute('aria-pressed') }));
+    elements.get('btnBargeIn').dispatch('click');
+    await flush();
+    ok('点「允许插话打断」→ 立刻关掉（settings.bargeIn=false，按钮同步）',
+      api.state.settings.bargeIn === false
+      && elements.get('btnBargeIn').getAttribute('aria-pressed') === 'false');
+    elements.get('btnBargeIn').dispatch('click');
+    await flush();
+    ok('再点一下 → 重新打开（默认值不变）', api.state.settings.bargeIn === true);
   }
 
   api.llmClient.setFetch(null);   // 还原：后续用例不再走假 fetch

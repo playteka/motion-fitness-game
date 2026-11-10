@@ -99,6 +99,7 @@ export function voiceNoticeKey(code) {
  * @param {object}   [opts.tts]        语音合成适配器（speak / cancel / supported）
  * @param {number}   [opts.thinkDelay] 「思考中」至少停留多久（毫秒；0 = 同步，测试用）
  * @param {number}   [opts.silenceMs]  进入聆听后多久没结果就提示「没听到声音」（0 = 关闭）
+ * @param {Function} [opts.onInterim]  每个 ASR partial 的旁路（P3.4 插话打断用；含「说话中」的 partial）
  * @param {Function} [opts.setTimer]   可注入的 setTimeout（测试模拟时间用）
  * @param {Function} [opts.clearTimer] 可注入的 clearTimeout
  */
@@ -113,6 +114,8 @@ export function createVoiceSession({
   commandCtx = null,
   thinkDelay = 0,
   silenceMs = VOICE_SILENCE_MS,
+  /** 每个 partial 的旁路（P3.4 插话打断；说话中也照常收到） */
+  onInterim = null,
   /** 「退出」这类命令等待确认的最长时间（默认 8 秒；测试可以调小） */
   confirmMs = COMMAND_CONFIRM_MS,
   /** 发出去多久还没回来就显示「教练在想…」（默认 1.5s；测试可以调小） */
@@ -506,6 +509,15 @@ export function createVoiceSession({
   function onUserText(text, info = {}) {
     const body = String(text == null ? '' : text).trim();
     if (info && info.isFinal === false) {
+      /**
+       * P3.4 插话打断：**每个 partial 都先喂给旁路**，包括教练正在说话的时候
+       * （下面那条「迟到的 interim 不能盖掉定稿」的守卫只管字幕，不影响打断判断）。
+       */
+      if (typeof onInterim === 'function') {
+        try {
+          onInterim(body, info, { state, enabled, paused });
+        } catch { /* 打断逻辑出错不该影响字幕 */ }
+      }
       // 迟到的 interim 不能在 thinking / speaking 里把已经定稿的那句话盖掉
       if (state !== 'listening' || paused) {
         if ((info.clear === true || !body) && interimText) { interimText = ''; emit(); }
@@ -639,9 +651,29 @@ export function createVoiceSession({
     return snapshot();
   }
 
+  /**
+   * 插话打断（P3.4 barge-in）：用户截断了教练这句话。
+   *
+   * 只做三件事：停 TTS（`tts.cancel()` → 停播放 + abort 流式请求 + 释放解码队列 / blob URL）、
+   * 回到 `listening`、重开静音计时。**字幕 / 弹幕一个字都不动**（用户要求：
+   * 「教练那句话的字幕照常留在屏幕上，只是语音停了」），ASR 也一直在听 ——
+   * 用户接着说的那句 final 会照常走 `thinking`。
+   */
+  function interrupt() {
+    if (!enabled || paused || state !== 'speaking') return snapshot();
+    epoch += 1;                     // 让这句话残留的 TTS 回调（onEnd / onError）失效
+    if (speakTimer !== null) {
+      try { clearTimer(speakTimer); } catch { /* ignore */ }
+      speakTimer = null;
+    }
+    try { tts?.cancel?.(); } catch { /* ignore */ }
+    state = 'listening';
+    armSilence();
+    return emit();
+  }
+
   /** 关闭：任意状态 → off；停 TTS、停识别、释放麦克风 */
-  function stop() {
-    epoch += 1;
+  function stop() {    epoch += 1;
     clearPending();
     clearTimers();
     clearSilence();
@@ -728,6 +760,7 @@ export function createVoiceSession({
     resume,
     onUserText,
     onCoachText,
+    interrupt,
     fail,
     setMuted,
     setCommandCtx(ctx) {

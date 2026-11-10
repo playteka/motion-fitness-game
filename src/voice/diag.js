@@ -100,7 +100,12 @@ function blankSnapshot() {
     audio: { sampleRate: 0, state: '' },
     capture: '',
     worklet: { state: 'none', error: '' },
-    tts: { state: 'idle', last: '' },
+    /**
+     * TTS（P3.6 整段 / P3.4 流式 + 插话打断）：
+     *   state = idle | say | fallback | fail | first | barge
+     *   firstAudioMs = 最近一次流式「首字」耗时；bargeMs = 最近一次插话打断耗时
+     */
+    tts: { state: 'idle', last: '', firstAudioMs: 0, bargeMs: 0 },
   };
 }
 
@@ -266,14 +271,37 @@ export function createDiag({
         state.capture = String(entry.mode || '');
         break;
       case 'tts:say':
-        state.tts = { state: 'say', last: String(entry.chars || '') };
+        state.tts = { ...state.tts, state: 'say', last: String(entry.chars || '') };
+        break;
+      case 'tts:first-audio':
+        // 流式首字延迟（用户要求：诊断面板显示「首字 xx ms」）
+        state.tts = {
+          ...state.tts,
+          state: 'first',
+          firstAudioMs: Math.max(0, Number(entry.ms) || 0),
+        };
+        break;
+      case 'tts:stream-fail':
+        // 流式不可用 / 失败 → 已经（或即将）走整段 / 系统 TTS，不是致命错误
+        state.tts = { ...state.tts, state: 'fallback', last: String(entry.code || 'stream') };
+        break;
+      case 'tts:whole':
+        state.tts = { ...state.tts, state: 'say', last: 'whole' };
+        break;
+      case 'tts:barge-in':
+        // 用户插话打断：面板上留最近一次的耗时（触发 → 静音）
+        state.tts = {
+          ...state.tts,
+          state: 'barge',
+          bargeMs: Math.max(0, Number(entry.ms) || 0),
+        };
         break;
       case 'tts:fallback':
         // 火山 TTS 超时 / 502 / 网络错 → 已经自动改用系统 TTS（不是致命错误，只在面板留痕）
-        state.tts = { state: 'fallback', last: String(entry.code || '') };
+        state.tts = { ...state.tts, state: 'fallback', last: String(entry.code || '') };
         break;
       case 'tts:fail':
-        state.tts = { state: 'fail', last: String(entry.code || '') };
+        state.tts = { ...state.tts, state: 'fail', last: String(entry.code || '') };
         break;
       case 'vu:open':
         break;

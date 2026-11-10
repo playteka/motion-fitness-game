@@ -41,10 +41,16 @@ import {
 } from '../src/voice/danmaku.js';
 import {
   createVolcTts, normalizeTtsRate, TTS_TIMEOUT_MS, TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH,
+  TTS_STREAM_PATH, planStreamQueue, createAudioQueuePlayer, TTS_STREAM_LEAD_SEC,
 } from '../src/voice/tts-volc.js';
 import {
+  createBargeIn, BARGE_IN_WINDOW_MS, BARGE_IN_MIN_CHARS, BARGE_IN_LEVEL,
+  BARGE_IN_PLAYBACK_LEVEL, BARGE_IN_MAX_LATENCY_MS,
+} from '../src/voice/bargein.js';
+import {
   createVolcTts as createVolcTtsServer, createTtsRoutes, createTtsCache, loadTtsConfig,
-  ttsCacheKey, TTS_PATH as TTS_SERVER_PATH, TTS_HEALTH_PATH, TTS_MAX_TEXT,
+  ttsCacheKey, TTS_PATH as TTS_SERVER_PATH, TTS_STREAM_PATH as TTS_SERVER_STREAM_PATH,
+  TTS_HEALTH_PATH, TTS_MAX_TEXT, TTS_STREAM_FIRST_MS,
 } from '../server/volc-tts.mjs';
 import {
   downsampleToPcm16, pcm16Rms, pcm16Peak, pcmBytesToMs, floatToPcm16,
@@ -154,8 +160,37 @@ function fakeTts({ supported = true } = {}) {
   };
 }
 
-function makeSession(opts = {}) {
-  return createVoiceSession({
+/**
+ * 假 AudioContext（P3.4 流式解码队列）。
+ * 不解真音频：`duration = 字节数 / 1000`（200 字节 = 0.2 秒），source 只记录 `start(when)`。
+ * 只给需要「证明流式这一级真的被尝试」的用例注入（真实浏览器都有 AudioContext）。
+ */
+function fakeAudioContext() {
+  const ctxs = [];
+  class FakeSource {
+    constructor() { this.startedAt = null; this.stopped = 0; }
+    connect() { return this; }
+    disconnect() { return this; }
+    start(when) { this.startedAt = when; }
+    stop() { this.stopped += 1; }
+  }
+  class FakeCtx {
+    constructor() {
+      this.currentTime = 0;
+      this.state = 'running';
+      this.destination = {};
+      this.sources = [];
+      ctxs.push(this);
+    }
+    createGain() { return { connect() {}, disconnect() {}, gain: { value: 1 } }; }
+    createBufferSource() { const s = new FakeSource(); this.sources.push(s); return s; }
+    decodeAudioData(buf) { return Promise.resolve({ duration: (buf.byteLength || 0) / 1000, length: 1 }); }
+    close() { this.state = 'closed'; return Promise.resolve(); }
+  }
+  return { FakeCtx, ctxs };
+}
+
+function makeSession(opts = {}) {  return createVoiceSession({
     mic: opts.mic || fakeMic(),
     asr: opts.asr || fakeAsr(),
     llm: opts.llm || createLlm({ pick: () => 0 }),
@@ -3242,6 +3277,7 @@ console.log('\n[27] 火山 TTS 前端：播放 / 502·超时回落 / 打断 / bl
     const tts = createVolcTts({
       fallback: sys,
       AudioCtor: FakeAudio,
+      AudioContextCtor: fakeAudioContext().FakeCtx,
       createObjectURL: urls.create,
       revokeObjectURL: urls.revoke,
       diag: { record: (type, data) => diagEvents.push({ type, data }) },
@@ -3251,11 +3287,17 @@ console.log('\n[27] 火山 TTS 前端：播放 / 502·超时回落 / 打断 / bl
     const ends = [];
     const started = tts.speak('开始深蹲', { onEnd: () => ends.push('end') });
     await tick();
-    ok('200：POST 到 /tts，body 带 text + rate',
-      started === true && calls.length === 1 && calls[0].url === TTS_PATH
+    ok('先试流式 /tts/stream（响应没有可读流 → 自动降级整段），两次 body 都带 text + rate',
+      started === true && calls.length === 2
+      && calls[0].url === TTS_STREAM_PATH && calls[1].url === TTS_PATH
       && JSON.parse(calls[0].init.body).text === '开始深蹲'
-      && JSON.parse(calls[0].init.body).rate === 1,
-      JSON.stringify(calls[0] ? { url: calls[0].url, body: calls[0].init.body } : null));
+      && JSON.parse(calls[0].init.body).rate === 1
+      && JSON.parse(calls[1].init.body).text === '开始深蹲'
+      && JSON.parse(calls[1].init.body).rate === 1,
+      JSON.stringify(calls.map((c) => ({ url: c.url, body: c.init.body }))));
+    ok('流式不可用会记一条 tts:stream-fail（诊断面板能看出降级到哪一级）',
+      diagEvents.some((e) => e.type === 'tts:stream-fail' && e.data.code === 'no-body'),
+      JSON.stringify(diagEvents.map((e) => e.type + ':' + (e.data.code || ''))));
     ok('200：拿到 blob 后用 Audio 播放，没有回退系统 TTS',
       list.length === 1 && list[0].src === 'blob:fake/1' && list[0].playCalls === 1
       && sys.spoken.length === 0,
@@ -3305,7 +3347,8 @@ console.log('\n[27] 火山 TTS 前端：播放 / 502·超时回落 / 打断 / bl
     let errors = 0;
     const started = tts.speak('请开始深蹲', { onError: () => { errors += 1; } });
     ok('超时前 speak() 已经接下这一句（返回 true，异步播放）', started === true);
-    await wait(40);
+    // 流式 15ms 超时 → 整段再 15ms 超时 → 系统 TTS（两级都超时，所以等宽一点）
+    await wait(200);
     ok('超时：自动回落系统 TTS', sys.spoken.length === 1, JSON.stringify(sys.spoken));
     ok('超时：诊断记 tts:fallback（code=timeout）',
       diagEvents.some((e) => e.type === 'tts:fallback' && e.data.code === 'timeout'),
@@ -3317,13 +3360,13 @@ console.log('\n[27] 火山 TTS 前端：播放 / 502·超时回落 / 打断 / bl
   {
     const urls = urlFactory();
     const { FakeAudio, list } = audioFactory();
-    let calls = 0;
+    const reqUrls = [];
     const tts = createVolcTts({
       fallback: fakeSystem(),
       AudioCtor: FakeAudio,
       createObjectURL: urls.create,
       revokeObjectURL: urls.revoke,
-      fetchImpl: async () => { calls += 1; return json('x'); },
+      fetchImpl: async (url) => { reqUrls.push(url); return json('x'); },
     });
     const ends = [];
     tts.speak('第一句', { onEnd: () => ends.push('one') });
@@ -3332,8 +3375,9 @@ console.log('\n[27] 火山 TTS 前端：播放 / 502·超时回落 / 打断 / bl
     await tick();
     ok('打断：上一句先被 pause + 释放 blob URL，再播下一句',
       list.length === 2 && list[0].paused >= 1 && urls.revoked.includes('blob:fake/1')
-      && list[1].src === 'blob:fake/2' && calls === 2,
-      JSON.stringify({ audio: list.length, paused: list[0]?.paused, revoked: urls.revoked }));
+      && list[1].src === 'blob:fake/2'
+      && reqUrls.filter((u) => u === TTS_PATH).length === 2,
+      JSON.stringify({ audio: list.length, paused: list[0]?.paused, revoked: urls.revoked, reqUrls }));
     tts.stop();
     ok('stop()：停当前这句并释放它的 blob URL',
       list[1].paused >= 1 && urls.revoked.includes('blob:fake/2'));
@@ -3362,6 +3406,7 @@ console.log('\n[27] 火山 TTS 前端：播放 / 502·超时回落 / 打断 / bl
     const tts = createVolcTts({
       fallback: fakeSystem(),
       AudioCtor: audioFactory().FakeAudio,
+      AudioContextCtor: fakeAudioContext().FakeCtx,
       createObjectURL: () => 'blob:r',
       revokeObjectURL: () => {},
       fetchImpl: async (url, init) => { calls.push(JSON.parse(init.body)); return json('x'); },
@@ -3369,8 +3414,9 @@ console.log('\n[27] 火山 TTS 前端：播放 / 502·超时回落 / 打断 / bl
     });
     tts.speak('快一点');
     await tick();
-    ok('语速传给 /tts 的 rate（1.5）', calls.length === 1 && calls[0].rate === 1.5,
-      JSON.stringify(calls[0] || null));
+    ok('语速传给请求（流式与整段都带 rate=1.5）',
+      calls.length === 2 && calls.every((c) => c.rate === 1.5),
+      JSON.stringify(calls));
     ok('语速归一化：0.5~2，非法值回 1',
       normalizeTtsRate(1.5) === 1.5 && normalizeTtsRate(9) === 2
       && normalizeTtsRate(0) === 1 && normalizeTtsRate('x') === 1
@@ -4393,6 +4439,531 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
     ok('模型只调工具、没给文字 → 会话层用命令表那条命令的短确认（数字与措辞都来自一处定义）',
       s4.snapshot().coachText === t('coach.cmdAck.done'), s4.snapshot().coachText);
     s4.stop();
+  }
+}
+
+/* ================================================================== *
+ * [30] P3.4 流式调度：纯函数排程 + AudioContext 解码队列（不联网、不碰真音频）
+ * ================================================================== */
+console.log('\n[30] 流式调度：按序入队 / 不丢块 / 不重叠（纯函数 + 解码队列）');
+{
+  ok('默认提前量就是 60ms（一处定义）', TTS_STREAM_LEAD_SEC === 0.06);
+
+  const plan = planStreamQueue([{ durationSec: 0.2 }, { durationSec: 0.2 }, { durationSec: 0.2 }],
+    { nowSec: 1, leadSec: 0.1 });
+  ok('给定块序列 + 时间轴：按序排（index 0,1,2），起点接着上一块终点（不重叠）',
+    plan.length === 3 && plan.map((p) => p.index).join(',') === '0,1,2'
+    && plan[0].startSec === 1.1 && plan[1].startSec === 1.3 && plan[2].startSec === 1.5
+    && plan.every((p, i) => i === 0 || p.startSec >= plan[i - 1].endSec - 1e-9)
+    && plan.every((p) => p.endSec - p.startSec > 0),
+    JSON.stringify(plan));
+  ok('不丢块：输入几块就排出几块（0 时长的块也保留，不会被悄悄丢掉）',
+    planStreamQueue([0.1, 0, 0.1]).length === 3
+    && planStreamQueue([]).length === 0);
+  ok('解码 / 网络来晚了：不会排到「过去」，从 now + lead 接着排（不追赶、不重叠）',
+    (() => {
+      const late = planStreamQueue([0.2, 0.2], { nowSec: 5, leadSec: 0.1, startAtSec: 1 });
+      return late[0].startSec === 5.1 && late[1].startSec === 5.3;
+    })());
+
+  /* ---- 解码队列：3 块依次 push，必须都排上、顺序与起止时间都对 ---- */
+  const ctxs = [];
+  class FakeSource {
+    constructor() { this.startedAt = null; this.stopped = 0; }
+    connect() { return this; }
+    disconnect() { return this; }
+    start(when) { this.startedAt = when; }
+    stop() { this.stopped += 1; }
+  }
+  class FakeCtx {
+    constructor() {
+      this.currentTime = 2;
+      this.state = 'running';
+      this.destination = {};
+      this.sources = [];
+      ctxs.push(this);
+    }
+    createGain() { return { connect() {}, disconnect() {}, gain: { value: 1 } }; }
+    createBufferSource() { const s = new FakeSource(); this.sources.push(s); return s; }
+    decodeAudioData(buf) { return Promise.resolve({ duration: (buf.byteLength || 0) / 1000, length: 1 }); }
+    close() { this.state = 'closed'; return Promise.resolve(); }
+  }
+  const ended = [];
+  const player = createAudioQueuePlayer({
+    AudioContextCtor: FakeCtx,
+    leadSec: 0.1,
+    onEnd: () => ended.push(1),
+  });
+  const pushes = [];
+  for (const bytes of [200, 300, 400]) pushes.push(await player.push(new Uint8Array(bytes)));
+  const sources = ctxs[0].sources;
+  ok('解码队列：3 块都排上了（不丢块），每块起点 = 上一块终点（不重叠）',
+    player.chunks === 3 && sources.length === 3
+    && pushes.every((p, i) => i === 0 || p.startSec >= pushes[i - 1].endSec - 1e-9)
+    && sources.map((s) => s.startedAt).join(',') === pushes.map((p) => p.startSec).join(','),
+    JSON.stringify({ pushes: pushes.map((p) => [p.startSec, p.endSec]), starts: sources.map((s) => s.startedAt) }));
+  ok('字节数如实累计（200 + 300 + 400 = 900）', player.bytes === 900, String(player.bytes));
+  player.finish();
+  ok('finish() 之后还有块没播完 → 不提前回调 onEnd', ended.length === 0);
+  for (const s of sources) s.onended?.();
+  ok('所有块都播完 → onEnd 只回调一次（不重复、也不会 hang）', ended.length === 1);
+  player.stop();
+  /* ---- stop()：还在播的 source 全部停掉、AudioContext 关掉（插话打断不留声音） ---- */
+  const player2 = createAudioQueuePlayer({ AudioContextCtor: FakeCtx, leadSec: 0.1 });
+  await player2.push(new Uint8Array(100));
+  await player2.push(new Uint8Array(100));
+  const liveSources = ctxs[1].sources;
+  player2.stop();
+  ok('stop() 停掉所有还没播完的 source 并关闭 AudioContext（插话打断不留声音）',
+    liveSources.length === 2 && liveSources.every((s) => s.stopped === 1)
+    && ctxs[1].state === 'closed',
+    JSON.stringify({ stopped: liveSources.map((s) => s.stopped), state: ctxs[1].state }));
+}
+
+/* ================================================================== *
+ * [31] P3.4 三级降级：/tts/stream 404 → /tts；/tts 502 → 系统 TTS
+ * ================================================================== */
+console.log('\n[31] 三级降级：/tts/stream 404 → /tts；/tts 502 → 系统 TTS（每级都记诊断）');
+{
+  const tick = async (n = 10) => { for (let i = 0; i < n; i += 1) await Promise.resolve(); };
+  function fakeSystem() {
+    return {
+      spoken: [], cancelled: 0,
+      speak(text) { this.spoken.push(text); return true; },
+      cancel() { this.cancelled += 1; },
+      setRate() {},
+    };
+  }
+  function audioFactory() {
+    const list = [];
+    class FakeAudio {
+      constructor(src) { this.src = src; this.playCalls = 0; this.paused = 0; list.push(this); }
+      play() { this.playCalls += 1; return Promise.resolve(); }
+      pause() { this.paused += 1; }
+    }
+    return { FakeAudio, list };
+  }
+  const blobRes = { ok: true, status: 200, blob: async () => ({ size: 8, type: 'audio/mpeg' }) };
+  /** 假流式响应：按给定块依次吐出（ReadableStream 的 getReader 形状） */
+  const streamRes = (chunks) => {
+    let i = 0;
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => (i < chunks.length
+            ? { done: false, value: chunks[i++] }
+            : { done: true, value: undefined }),
+          cancel: async () => {},
+        }),
+      },
+    };
+  };
+
+  /* ---- ① stream 404 → 整段成功（真的播放，不是哑掉） ---- */
+  {
+    const urls = [];
+    const sys = fakeSystem();
+    const { FakeAudio, list } = audioFactory();
+    const diagEvents = [];
+    let n = 0;
+    const tts = createVolcTts({
+      fallback: sys,
+      AudioCtor: FakeAudio,
+      AudioContextCtor: fakeAudioContext().FakeCtx,
+      createObjectURL: () => `blob:${(n += 1)}`,
+      revokeObjectURL: () => {},
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      fetchImpl: async (url) => {
+        urls.push(url);
+        if (url === TTS_STREAM_PATH) return { ok: false, status: 404 };
+        return blobRes;
+      },
+    });
+    tts.speak('降一级');
+    await tick();
+    ok('/tts/stream 404 → 自动降级到整段 /tts 并真的播放（没有回退系统 TTS）',
+      urls.join(',') === `${TTS_STREAM_PATH},${TTS_PATH}`
+      && list.length === 1 && list[0].playCalls === 1 && sys.spoken.length === 0,
+      JSON.stringify({ urls, audio: list.length, spoken: sys.spoken.length }));
+    ok('404 记 tts:stream-fail（code=not-supported）', diagEvents.some(
+      (e) => e.type === 'tts:stream-fail' && e.data.code === 'not-supported'),
+      JSON.stringify(diagEvents.map((e) => `${e.type}:${e.data.code || ''}`)));
+    ok('降级到整段时也记了 tts:whole（每级都留痕）', diagEvents.some((e) => e.type === 'tts:whole'));
+  }
+
+  /* ---- ② /tts 502 → 系统 TTS ---- */
+  {
+    const urls = [];
+    const sys = fakeSystem();
+    const diagEvents = [];
+    const tts = createVolcTts({
+      fallback: sys,
+      // 没有 AudioContext → 流式这一级直接跳过（记 no-audio-context），只打整段
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      fetchImpl: async (url) => { urls.push(url); return { ok: false, status: url === TTS_STREAM_PATH ? 404 : 502 }; },
+    });
+    tts.speak('降两级');
+    await tick();
+    ok('/tts 502 → 再降级到系统 TTS（同一句照常念出来，不会哑掉）',
+      sys.spoken.length === 1 && sys.spoken[0] === '降两级',
+      JSON.stringify({ urls, spoken: sys.spoken }));
+    ok('系统 TTS 那一级也记诊断（tts:say source=system + tts:fallback code=upstream）',
+      diagEvents.some((e) => e.type === 'tts:say' && e.data.source === 'system')
+      && diagEvents.some((e) => e.type === 'tts:fallback' && e.data.code === 'upstream'),
+      JSON.stringify(diagEvents.map((e) => `${e.type}:${e.data.code || e.data.source || ''}`)));
+  }
+
+  /* ---- ③ 流式首块解码失败（MP3 帧被切断）→ 整段重试，句子不能被吞掉 ---- */
+  {
+    class BadCtx {
+      constructor() { this.currentTime = 0; this.state = 'running'; this.destination = {}; }
+      createGain() { return { connect() {}, disconnect() {} }; }
+      createBufferSource() { return { connect() {}, start() {}, stop() {}, disconnect() {} }; }
+      decodeAudioData() { return Promise.reject(new Error('decode failed')); }
+      close() { this.state = 'closed'; return Promise.resolve(); }
+    }
+    const urls = [];
+    const sys = fakeSystem();
+    const { FakeAudio, list } = audioFactory();
+    const diagEvents = [];
+    const tts = createVolcTts({
+      fallback: sys,
+      AudioCtor: FakeAudio,
+      AudioContextCtor: BadCtx,
+      createObjectURL: () => 'blob:bad',
+      revokeObjectURL: () => {},
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      fetchImpl: async (url) => {
+        urls.push(url);
+        if (url === TTS_STREAM_PATH) return streamRes([new Uint8Array([1, 2, 3])]);
+        return blobRes;
+      },
+    });
+    tts.speak('解码失败');
+    await tick(30);
+    ok('流式第一块解码失败 → 自动整段重试 /tts（这句话不会静悄悄消失）',
+      urls.join(',') === `${TTS_STREAM_PATH},${TTS_PATH}` && list.length === 1
+      && sys.spoken.length === 0,
+      JSON.stringify({ urls, audio: list.length, spoken: sys.spoken.length }));
+    ok('解码失败也记了 tts:stream-fail（code=stream）',
+      diagEvents.some((e) => e.type === 'tts:stream-fail' && e.data.code === 'stream'),
+      JSON.stringify(diagEvents.map((e) => `${e.type}:${e.data.code || ''}`)));
+  }
+}
+
+/* ================================================================== *
+ * [32] P3.4 插话打断状态机（假时钟）：该停的停、不该停的绝不动
+ * ================================================================== */
+console.log('\n[32] 插话打断（假时钟）：连续 2 个够响的 partial 才停；1 个 / 太轻 / 开关关都不打断');
+{
+  ok('常量：连续窗口 600ms、至少 2 字、播放期阈值比平时高、打断目标 ≤150ms',
+    BARGE_IN_WINDOW_MS === 600 && BARGE_IN_MIN_CHARS === 2
+    && BARGE_IN_LEVEL === 0.18 && BARGE_IN_PLAYBACK_LEVEL > BARGE_IN_LEVEL
+    && BARGE_IN_MAX_LATENCY_MS === 150,
+    JSON.stringify({ BARGE_IN_WINDOW_MS, BARGE_IN_MIN_CHARS, BARGE_IN_LEVEL, BARGE_IN_PLAYBACK_LEVEL }));
+
+  /** 一个小夹具：假时钟 + 记录 stop / interrupt / 诊断 */
+  function harness({ playing = true, on = true, startAt = 0 } = {}) {
+    const clock = { t: startAt };
+    const state = { playing, on };
+    const stopped = [];
+    const interrupts = [];
+    const events = [];
+    const barge = createBargeIn({
+      stop: () => stopped.push(clock.t),
+      isPlaying: () => state.playing,
+      getLevel: () => 0,
+      enabled: () => state.on,
+      onInterrupt: (info) => { interrupts.push(info); state.playing = false; },
+      diag: { record: (type, data) => events.push({ type, data }) },
+      now: () => clock.t,
+    });
+    return { clock, state, stopped, interrupts, events, barge };
+  }
+
+  /* ---- ① 正常触发：两个够响的 partial（间隔 90ms）→ 停 ---- */
+  {
+    const h = harness({ startAt: 1000 });
+    const first = h.barge.onPartial('你好', { level: 0.4 });
+    h.clock.t = 1090;
+    const second = h.barge.onPartial('你好啊', { level: 0.4 });
+    ok('连续 2 个 partial（间隔 90ms）+ 能量过播放期阈值 → 触发打断，stop() 被调用',
+      first.triggered === false && second.triggered === true && h.stopped.length === 1,
+      JSON.stringify({ first, second, stopped: h.stopped }));
+    ok('距第一个 partial ≤150ms（实测 90ms）',
+      second.ms === 90 && second.ms <= BARGE_IN_MAX_LATENCY_MS, String(second.ms));
+    ok('触发在同一个 tick 完成：stop() 与状态切换耗时 0ms（远小于 150ms）',
+      second.sinceTriggerMs === 0 && h.interrupts.length === 1);
+    ok('诊断记一条 tts:barge-in {ms}（面板显示插话耗时）',
+      h.events.some((e) => e.type === 'tts:barge-in' && e.data.ms === 90),
+      JSON.stringify(h.events));
+    ok('打断后控制器不再挂着一个「第一个 partial」（不会连停两次）',
+      h.barge.pending === null && h.stopped.length === 1);
+  }
+
+  /* ---- ② 只有 1 个 partial → 不打断 ---- */
+  {
+    const h = harness({ startAt: 2000 });
+    const r = h.barge.onPartial('我要', { level: 0.5 });
+    ok('只有 1 个 partial → 不打断（只记成「第一个」）',
+      r.triggered === false && r.reason === 'first' && h.stopped.length === 0);
+    h.clock.t = 2000 + BARGE_IN_WINDOW_MS + 10;
+    const tooLate = h.barge.onPartial('我要加练', { level: 0.5 });
+    ok('第二个 partial 超过 600ms 才来 → 不算连续，仍然不打断',
+      tooLate.triggered === false && h.stopped.length === 0,
+      JSON.stringify(tooLate));
+  }
+
+  /* ---- ③ 能量低（像教练自己的声音 / 环境噪声）→ 不打断 ---- */
+  {
+    const h = harness({ startAt: 3000 });
+    h.barge.onPartial('你好', { level: 0.2 });
+    h.clock.t = 3080;
+    const r = h.barge.onPartial('你好啊', { level: 0.2 });
+    ok('能量 0.20（高于聆听期 0.18、低于播放期阈值）→ 不打断：播放期阈值更高正是为了挡自己的声音',
+      r.triggered === false && r.reason === 'quiet' && r.threshold === BARGE_IN_PLAYBACK_LEVEL
+      && h.stopped.length === 0,
+      JSON.stringify(r));
+  }
+
+  /* ---- ④ 开关关闭 → 不打断 ---- */
+  {
+    const h = harness({ startAt: 4000, on: false });
+    h.barge.onPartial('你好', { level: 0.6 });
+    h.clock.t = 4050;
+    const r = h.barge.onPartial('你好啊', { level: 0.6 });
+    ok('设置里关掉「允许插话打断」→ 再响也不打断',
+      r.triggered === false && r.reason === 'disabled' && h.stopped.length === 0);
+  }
+
+  /* ---- ⑤ 没在说话 → 不需要打断（也清掉旧的配对记录） ---- */
+  {
+    const h = harness({ startAt: 5000, playing: false });
+    h.barge.onPartial('你好', { level: 0.9 });
+    h.clock.t = 5050;
+    const r = h.barge.onPartial('你好啊', { level: 0.9 });
+    ok('教练没在说话时收到 partial → 不打断（没有可停的）',
+      r.triggered === false && r.reason === 'not-playing' && h.stopped.length === 0 && h.barge.pending === null);
+  }
+
+  /* ---- ⑥ 1 个字（「嗯」「啊」）不算插话 ---- */
+  {
+    const h = harness({ startAt: 6000 });
+    h.barge.onPartial('嗯', { level: 0.9 });
+    h.clock.t = 6040;
+    const r = h.barge.onPartial('啊', { level: 0.9 });
+    ok('1 个字的「嗯 / 啊」不触发（至少 2 个字）',
+      r.triggered === false && r.reason === 'too-short' && h.stopped.length === 0);
+  }
+}
+
+/* ================================================================== *
+ * [33] P3.4 会话 interrupt()：只停语音，字幕 / 弹幕不动，ASR 不停
+ * ================================================================== */
+console.log('\n[33] 会话 interrupt()：插话打断只停语音（字幕照常、ASR 不停、迟到的 onEnd 不翻状态）');
+{
+  /* ---- ① 说话中 interrupt() ---- */
+  {
+    const asr = fakeAsr();
+    const tts = fakeTts();
+    const session = makeSession({ asr, tts, llm: { reply: () => '这是一句很长的话' } });
+    await session.start();
+    session.onUserText('今天感觉怎么样');
+    await tick(8);
+    ok('前置：教练已经开始说话（speaking），TTS 收到一句',
+      session.snapshot().state === 'speaking' && tts.spoken.length === 1,
+      JSON.stringify({ state: session.snapshot().state, spoken: tts.spoken }));
+    const asrStops = asr.stopped;
+    const snap = session.interrupt();
+    ok('interrupt() → 立刻回到 listening，且 tts.cancel() 被调用（语音停）',
+      snap.state === 'listening' && tts.cancelled >= 1,
+      JSON.stringify({ state: snap.state, cancelled: tts.cancelled }));
+    ok('教练那句话的字幕还在（弹幕不会被清掉，只是不念了）',
+      snap.coachText === '这是一句很长的话', snap.coachText);
+    ok('ASR 没有停（还在听，用户接着说的那句照常走 thinking）', asr.stopped === asrStops);
+    tts.finish();   // 被掐断那句迟到的 onEnd
+    ok('被打断那句迟到的 onEnd 不会把状态改回去（epoch 已提升）',
+      session.snapshot().state === 'listening');
+    ok('不在 speaking 时 interrupt() 是幂等的（不动状态）', session.interrupt().state === 'listening');
+    session.stop();
+  }
+
+  /* ---- ② onInterim 旁路：教练说话时的 partial 也收得到（插话打断的入口） ---- */
+  {
+    const asr = fakeAsr();
+    const tts = fakeTts();
+    const seen = [];
+    const session = createVoiceSession({
+      mic: fakeMic(),
+      asr,
+      tts,
+      llm: { reply: () => '好的' },
+      thinkDelay: 0,
+      onInterim: (text, info, st) => seen.push({ text, final: info.isFinal, state: st.state }),
+    });
+    await session.start();
+    session.onUserText('随便聊两句');
+    await tick(8);
+    asr.emitInterim('打断一下');
+    ok('onInterim 旁路：教练说话（speaking）时也能收到 partial —— 打断判断才有输入',
+      session.snapshot().state === 'speaking'
+      && seen.length === 1 && seen[0].text === '打断一下'
+      && seen[0].final === false && seen[0].state === 'speaking',
+      JSON.stringify({ seen, state: session.snapshot().state }));
+    session.stop();
+  }
+}
+
+/* ================================================================== *
+ * [34] P3.4 服务端 /tts/stream：边收边转发 / 客户端中断 → 上游 abort / 日志不打印 key
+ * （真实 http server + 假上游，不联网、不用真凭证）
+ * ================================================================== */
+console.log('\n[34] 服务端 /tts/stream：转发字节与上游一致 / 客户端中断 → 上游 abort / 日志不含 key');
+{
+  const http = await import('node:http');
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const config = {
+    configured: true, missing: [], appId: 'test-app-id', apiKey: 'test-secret-key',
+    voice: 'zh_female_test', resource: 'volc.seedtts.default', endpoint: 'https://example.invalid/tts',
+  };
+  const logLines = [];
+  const logger = (fields) => logLines.push(fields);
+  const CHUNKS = [Buffer.from([1, 2, 3, 4]), Buffer.from([5, 6]), Buffer.from([7, 8, 9])];
+
+  function listen(srv) {
+    return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve(srv.address().port)));
+  }
+  function close(srv) {
+    return new Promise((resolve) => { try { srv.close(() => resolve()); } catch { resolve(); } });
+  }
+  function postStream(port, text, onFirstData = null) {
+    return new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const req = http.request({
+        host: '127.0.0.1', port, path: TTS_SERVER_STREAM_PATH, method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, (res) => {
+        let total = 0;
+        let chunks = 0;
+        let firstAt = 0;
+        res.on('data', (buf) => {
+          if (!firstAt) firstAt = Date.now() - t0;
+          total += buf.length;
+          chunks += 1;
+          onFirstData?.(res, req);
+        });
+        res.on('end', () => resolve({
+          status: res.statusCode, headers: res.headers, total, chunks, firstAt, ms: Date.now() - t0,
+        }));
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      req.end(JSON.stringify({ text, rate: 1 }));
+    });
+  }
+
+  /* ---- ① 正常：三块依次到达，字节数与上游一致 ---- */
+  {
+    let upstreamCalls = 0;
+    const upstream = { signal: null, aborted: false };
+    const service = createVolcTtsServer({
+      config,
+      logger,
+      fetchImpl: (url, init) => {
+        upstreamCalls += 1;
+        upstream.signal = init.signal;
+        init.signal?.addEventListener?.('abort', () => { upstream.aborted = true; });
+        // 假上游：分块返回（每块之间隔 8ms，好让「边收边转发」看得出来）
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: (async function* stream() {
+            for (const chunk of CHUNKS) {
+              await wait(8);
+              yield chunk;
+            }
+          })(),
+        });
+      },
+    });
+    const srv = http.createServer(createTtsRoutes({ service, logger }));
+    const port = await listen(srv);
+    try {
+      const res = await postStream(port, '流式测试');
+      const okStatus = res.status === 200;
+      ok('POST /tts/stream → 200 + audio/mpeg + Transfer-Encoding: chunked（边收边转发）',
+        okStatus && /audio\/mpeg/.test(String(res.headers['content-type']))
+        && String(res.headers['transfer-encoding'] || '').toLowerCase() === 'chunked',
+        JSON.stringify({ status: res.status, headers: res.headers }));
+      ok('转发字节数与上游完全一致（4 + 2 + 3 = 9 字节，一块都不少）',
+        res.total === 9 && res.total === Buffer.concat(CHUNKS).length, String(res.total));
+      ok('是真的分块到达（不是攒成一整段再发）：至少 2 个数据事件',
+        res.chunks >= 2, JSON.stringify({ chunks: res.chunks }));
+      ok('首块时间早于整句完成时间（有「首字」优势，不是等全部收完）',
+        res.firstAt > 0 && res.firstAt <= res.ms, JSON.stringify({ firstAt: res.firstAt, ms: res.ms }));
+      ok('流式不缓存：同一句再发一次 → 上游被请求第二次',
+        await (async () => { await postStream(port, '流式测试'); return upstreamCalls === 2; })(),
+        String(upstreamCalls));
+      const allLogs = JSON.stringify(logLines);
+      ok('服务端日志只有 chars / cache / status，绝不含 appId / apiKey',
+        logLines.length > 0
+        && logLines.every((f) => Object.keys(f).sort().join(',') === 'cache,chars,status')
+        && !allLogs.includes('test-secret-key') && !allLogs.includes('test-app-id'),
+        allLogs);
+    } finally {
+      await close(srv);
+    }
+  }
+
+  /* ---- ② 客户端中途断开 → 上游立刻被 abort ---- */
+  {
+    const upstream = { signal: null, aborted: false };
+    const service = createVolcTtsServer({
+      config,
+      fetchImpl: (url, init) => {
+        upstream.signal = init.signal;
+        init.signal?.addEventListener?.('abort', () => { upstream.aborted = true; });
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: (async function* stream() {
+            yield Buffer.from([1, 2, 3]);
+            await wait(150);          // 还「在合成」的时候客户端走了
+            yield Buffer.from([4, 5, 6]);
+          })(),
+        });
+      },
+    });
+    const srv = http.createServer(createTtsRoutes({ service }));
+    const port = await listen(srv);
+    let received = 0;
+    try {
+      await new Promise((resolve) => {
+        const req = http.request({
+          host: '127.0.0.1', port, path: TTS_SERVER_STREAM_PATH, method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }, (res) => {
+          res.once('data', (buf) => {
+            received = buf.length;
+            res.destroy();     // 客户端断开（等价于插话打断 / 关页面）
+            req.destroy();
+            resolve();
+          });
+        });
+        req.on('error', () => resolve());
+        req.end(JSON.stringify({ text: '打断这一句', rate: 1 }));
+      });
+      await wait(60);
+      ok('客户端断开 → 服务端立刻 abort 上游（不继续烧钱）',
+        upstream.signal && upstream.signal.aborted === true && upstream.aborted === true,
+        JSON.stringify({ signal: !!upstream.signal, aborted: upstream.aborted }));
+      ok('断开前确实已经收到第一块（说明是「播到一半」被掐断，不是压根没开始）',
+        received === 3, String(received));
+    } finally {
+      await close(srv);
+    }
   }
 }
 

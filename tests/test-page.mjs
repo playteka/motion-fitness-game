@@ -2316,6 +2316,31 @@ console.log('\n[10] 对话弹幕：#danmakuLayer 在舞台内 / 不挡点击 / z
     && /revokeObjectURL/.test(ttsSrc) && /dropUrl/.test(ttsSrc));
   ok('前端 speak() 前先 stop() 上一句（打断 + 释放）',
     /function speak\([\s\S]{0,400}?stop\(\)/.test(ttsSrc));
+
+  /* ---- P3.4：流式 TTS + 插话打断 ---- */
+  const serverTtsSrc = read('server/volc-tts.mjs');
+  ok('P3.4 服务端有 /tts/stream：Transfer-Encoding: chunked + 客户端断开 abort 上游',
+    /TTS_STREAM_PATH\s*=\s*'\/tts\/stream'/.test(serverTtsSrc)
+    && /'Transfer-Encoding':\s*'chunked'/.test(serverTtsSrc)
+    && /controller\?\.abort/.test(serverTtsSrc)
+    && /TTS_STREAM_PATH/.test(serverSrc));
+  ok('P3.4 前端优先 /tts/stream：AudioContext 解码队列 + 纯函数排程（不丢块 / 不重叠）',
+    /TTS_STREAM_PATH/.test(ttsSrc) && /createAudioQueuePlayer/.test(ttsSrc)
+    && /export function planStreamQueue/.test(ttsSrc) && /tts:first-audio/.test(ttsSrc));
+  ok('P3.4 三级降级每一级都有诊断（stream-fail → whole → fallback）',
+    /tts:stream-fail/.test(ttsSrc) && /tts:whole/.test(ttsSrc) && /tts:fallback/.test(ttsSrc));
+  const bargeBtn = /<button class="toggle" id="btnBargeIn"[^>]*aria-pressed="true"[^>]*data-i18n="settings\.bargeInToggle"/.exec(html)?.[0] || '';
+  ok('设置里有「允许插话打断」开关（默认开 + 中英词条 + 默认设置 bargeIn:true）',
+    bargeBtn !== '' && /bargeIn:\s*true/.test(app)
+    && /bargeInToggle/.test(read('src/locales/zh.js'))
+    && /bargeInToggle/.test(read('src/locales/en.js')));
+  ok('诊断面板新增「语音合成」一行（首字 xx ms / 插话 xx ms）',
+    /id="coachDiagTts"/.test(html) && /ttsValue:\s*'首字/.test(read('src/locales/zh.js'))
+    && /ttsValue:\s*'first audio/.test(read('src/locales/en.js'))
+    && /coachDiagTts/.test(coachSrc));
+  ok('app.js 接线 createBargeIn：会话层 onInterim 旁路 → 打断 → 回 listening',
+    /createBargeIn\(\{/.test(app) && /onInterim:\s*\(text\)\s*=>\s*bargeIn\.onPartial/.test(app)
+    && /onInterrupt:\s*\(\)\s*=>\s*voice\.interrupt\(\)/.test(app));
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

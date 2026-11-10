@@ -218,7 +218,7 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
       'coachPanel', 'coachAvatar', 'coachStatus', 'coachSubtitles', 'coachYouText', 'coachCoachText',
       'coachNotice', 'coachRoute', 'coachHint', 'coachThinking', 'coachDiagBtn', 'coachDiag', 'coachDiagClose',
       'coachDiagRoute', 'coachDiagWs', 'coachDiagFrames', 'coachDiagRate', 'coachDiagResults',
-      'coachDiagError', 'coachDiagMic', 'coachDiagWorklet', 'btnVoiceSelfTestPanel', 'coachSelfTestMic',
+      'coachDiagError', 'coachDiagMic', 'coachDiagWorklet', 'coachDiagTts', 'btnVoiceSelfTestPanel', 'coachSelfTestMic',
       'coachSelfTestWs', 'coachSelfTestSend', 'coachSelfTestResult', 'coachSelfTestVolume',
       'coachSelfTestResultText']) {
       el[id] = $(id);
@@ -380,6 +380,21 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
     return t('coach.diag.workletNone');
   }
 
+  /**
+   * TTS 那一行（P3.4）：流式**首字 xx ms** + 最近一次**插话打断 xx ms**。
+   * 还没说过话 → 「无」；说过但没打点（走了整段 / 系统 TTS）→ 只显示有的那一项。
+   */
+  function ttsText(snap) {
+    const tts = (snap && snap.tts) || {};
+    const first = Number(tts.firstAudioMs) || 0;
+    const barge = Number(tts.bargeMs) || 0;
+    if (!first && !barge) return t('coach.diag.none');
+    return t('coach.diag.ttsValue', {
+      first: first > 0 ? String(Math.round(first)) : '—',
+      barge: barge > 0 ? String(Math.round(barge)) : '—',
+    });
+  }
+
   function renderSelfTest(snap = {}) {
     const names = {
       mic: t('coach.selfTest.step.mic'),
@@ -462,6 +477,7 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
         state: (snap.audio && snap.audio.state) || '—',
       }));
       setText('coachDiagWorklet', workletText(snap));
+      setText('coachDiagTts', ttsText(snap));
     }
     if (selfTest) renderSelfTest(selfTest.snapshot());
     return api;

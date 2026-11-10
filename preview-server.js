@@ -23,9 +23,10 @@ import {
   createLogger as createAsrLogger,
   loadAsrConfig,
 } from './server/coach-proxy.mjs';
-// 语音合成（P3.6）：/tts 代理火山 TTS + 内存缓存，凭证同样只在本进程里读 coach.env
+// 语音合成（P3.6）：/tts 代理火山 TTS + 内存缓存；P3.4 再加 /tts/stream（边收边转发，不缓存）
 import {
   TTS_PATH,
+  TTS_STREAM_PATH,
   TTS_HEALTH_PATH,
   createTtsRoutes,
   createVolcTts,
@@ -605,9 +606,9 @@ function startServer() {
     console.log(`Speech proxy in this same server: ${PROTO === 'https' ? 'wss' : 'ws'}://127.0.0.1:${PORT}${ASR_PATH}`
       + (asr.config.configured ? ' (Volcengine credentials configured)' : ' (no credentials → the page falls back to Web Speech)'));
     // 火山 TTS：只报「配没配」，不报任何值（音色 / 资源 / key 一律不出现）
-    console.log(`语音合成（火山 TTS）： ${ttsService.configured ? '已配置，火山优先' : '未配置 → 自动回退系统 TTS'}`
-      + `  [${TTS_HEALTH_PATH}]`);
-    console.log(`Text-to-speech (Volcengine TTS): ${ttsService.configured ? 'configured (Volcengine first)' : 'not configured → system TTS fallback'}`
+    console.log(`语音合成（火山 TTS）： ${ttsService.configured ? '已配置，火山优先（流式 /tts/stream，整段 /tts 带缓存）' : '未配置 → 自动回退系统 TTS'}`
+      + `  [${TTS_STREAM_PATH} + ${TTS_HEALTH_PATH}]`);
+    console.log(`Text-to-speech (Volcengine TTS): ${ttsService.configured ? 'configured (Volcengine first; streaming /tts/stream, whole /tts with cache)' : 'not configured → system TTS fallback'}`
       + `  [${TTS_PATH}]`);
     if (!ttsService.configured) {
       console.warn(`  ⚠️ TTS 缺字段：${ttsService.missing.join(', ')}（在 ${path.basename(ttsConfig.envPath)} 里填；不填也能用，只是回退系统 TTS）`);

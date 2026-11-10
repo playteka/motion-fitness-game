@@ -979,7 +979,12 @@ export default {
     // P3.6：对话弹幕 + 火山 TTS（三项设置都立刻生效，随设置持久化）
     dialogueGroup: '对话显示与语音',
     dialogueLead: '教练的回答怎么显示：一句一条的弹幕（用户青色、教练薄荷绿），或者原来的两行字幕。',
-    ttsHint: '教练说话默认走火山 TTS（本机 /tts 代理，同一句只合成一次并缓存）；超过 3 秒或失败会自动改用系统 TTS，不会哑掉。',
+    ttsHint: '教练说话默认走火山 TTS（本机 /tts/stream 流式代理，边收边播；同一句整段接口只合成一次并缓存）；超过 3 秒或失败会依次降级到整段 / 系统 TTS，不会哑掉。',
+    // P3.4：允许插话打断（默认开；关掉后教练说话时不会被打断，但仍在聆听）
+    bargeInToggle: '允许插话打断',
+    bargeInHint: '教练说话时你直接开口就能把它打断（只停语音，字幕 / 弹幕照常留着）。'
+      + '为了避免误触发：要连续 2 个识别结果（间隔 <0.6 秒）、每个至少 2 个字，'
+      + '而且麦克风音量要明显高于教练自己的声音才会停 —— 安静房间里的咳嗽 / 键盘声不会打断。',
     // P3.3 自由对话：默认开；关掉就只走命令快车道（不联网、不花钱）
     freeChatToggle: '自由对话',
     freeChatHint: '开着的时候，没命中命令的话会发给大模型（DeepSeek / 豆包方舟 / OpenAI）——它能看到你正在做哪个动作、'
@@ -1541,6 +1546,7 @@ export default {
       errorLabel: '最近错误',
       micLabel: '麦克风',
       workletLabel: 'Worklet',
+      ttsLabel: '语音合成',
       framesValue: '{n} 帧 / {bytes} 字节',
       rateValue: '{rate} KB/s（应在 {expected} KB/s 左右）',
       ratePending: '—（还没开始发音频）',
@@ -1550,6 +1556,8 @@ export default {
       workletFail: 'fail（已用 ScriptProcessor 兜底）',
       workletProcessor: 'ScriptProcessor 兜底',
       workletNone: '未使用',
+      // P3.4：流式首字 / 插话打断耗时（目标：首字 ≤800ms、打断 ≤150ms）
+      ttsValue: '首字 {first} ms · 插话 {barge} ms',
     },
     /**
      * 「语音自检」四步：麦克风 → 代理连接 → 录 2 秒并发送 → 服务端 partial / final。

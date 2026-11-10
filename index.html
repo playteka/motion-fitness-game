@@ -274,6 +274,9 @@
               <div class="coach-diag-row">
                 <dt data-i18n="coach.diag.workletLabel"></dt><dd id="coachDiagWorklet"></dd>
               </div>
+              <div class="coach-diag-row">
+                <dt data-i18n="coach.diag.ttsLabel"></dt><dd id="coachDiagTts"></dd>
+              </div>
             </dl>
             <div class="coach-diag-selftest">
               <button class="ghost-btn coach-diag-run" id="btnVoiceSelfTestPanel" type="button"
@@ -678,6 +681,12 @@
             </select>
           </label>
           <p class="modal-hint" data-i18n="settings.ttsHint"></p>
+          <!-- P3.4 插话打断：默认开；关掉后教练说话时不会被打断（只影响打断，不影响聆听） -->
+          <div class="toggle-grid">
+            <button class="toggle" id="btnBargeIn" type="button" aria-pressed="true"
+                    data-i18n="settings.bargeInToggle"></button>
+          </div>
+          <p class="modal-hint" data-i18n="settings.bargeInHint"></p>
         </div>
 
         <!-- 调试数据记录（用户要求）：**全局配置**里的隐藏分组 ——

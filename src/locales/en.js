@@ -986,7 +986,12 @@ export default {
     // P3.6: danmaku + Volcengine TTS (all three settings apply immediately and persist with the rest)
     dialogueGroup: 'Dialogue & voice',
     dialogueLead: 'How coach replies are shown: one danmaku line per sentence (you in cyan, the coach in mint), or the original two-line subtitles.',
-    ttsHint: 'Coach speech uses Volcengine TTS by default (through the local /tts proxy; each sentence is synthesized once and cached). If it fails or takes over 3 seconds, it falls back to the system TTS automatically, so it never goes silent.',
+    ttsHint: 'Coach speech uses Volcengine TTS by default (through the local /tts/stream proxy, played as it arrives; the whole-sentence endpoint synthesizes each sentence once and caches it). If it fails or takes over 3 seconds, it degrades to the whole-sentence request and then to system TTS, so it never goes silent.',
+    // P3.4 interruption (on by default; off keeps the coach from being cut off, still listening)
+    bargeInToggle: 'Allow interruption',
+    bargeInHint: 'While the coach is talking you can cut in just by speaking (only the audio stops; the subtitle / danmaku stays). '
+      + 'To avoid false triggers it needs two consecutive recognition results (less than 0.6s apart), at least 2 characters each, '
+      + 'and microphone loudness clearly above the coach\'s own voice - a cough or keyboard clatter in a quiet room will not stop it.',
     // P3.3 free chat: on by default; turning it off keeps everything on the offline command fast-lane
     freeChatToggle: 'Free chat',
     freeChatHint: 'While this is on, anything that is not a known command is sent to an LLM (DeepSeek / Volcengine Ark / OpenAI). '
@@ -1536,6 +1541,7 @@ export default {
       errorLabel: 'Last error',
       micLabel: 'Microphone',
       workletLabel: 'Worklet',
+      ttsLabel: 'TTS',
       framesValue: '{n} frames / {bytes} bytes',
       rateValue: '{rate} KB/s (should be about {expected} KB/s)',
       ratePending: '— (no audio sent yet)',
@@ -1545,6 +1551,8 @@ export default {
       workletFail: 'fail (ScriptProcessor fallback)',
       workletProcessor: 'ScriptProcessor fallback',
       workletNone: 'not used',
+      // P3.4: streaming first-audio / interruption latency (targets: first audio <= 800 ms, interrupt <= 150 ms)
+      ttsValue: 'first audio {first} ms · interrupt {barge} ms',
     },
     /**
      * The four "voice self-check" steps: microphone → proxy → record 2 s and send → server partial / final.

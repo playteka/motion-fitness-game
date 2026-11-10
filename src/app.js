@@ -37,8 +37,10 @@ import {
   createDanmaku, DANMAKU_MODES, DANMAKU_DEFAULT_MODE, DANMAKU_COLORS,
 } from './voice/danmaku.js';
 import {
-  createVolcTts, TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH,
+  createVolcTts, TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH, TTS_STREAM_PATH,
 } from './voice/tts-volc.js';
+// P3.4：插话打断（教练说话时也一直听；连续 2 个够响的 partial 才停）
+import { createBargeIn, BARGE_IN_MAX_LATENCY_MS } from './voice/bargein.js';
 // P3.5 语音排障：诊断收集（批量落盘 logs/coach-diag.jsonl）+ 独立的「语音自检」
 import { createDiag } from './voice/diag.js';
 import { createSelfTest } from './voice/selftest.js';
@@ -129,6 +131,11 @@ const DEFAULT_SETTINGS = {
   ttsSource: TTS_DEFAULT_SOURCE,
   /** 语速：传给 /tts 的 rate（0.5~2，界面给 0.8~1.5 六档） */
   ttsRate: 1,
+  /**
+   * 插话打断（P3.4）：**默认开**。教练说话时你直接开口 → 连续 2 个够响的 partial 就停，
+   * 字幕 / 弹幕照常留着；关掉就只是「不自打断」，聆听不受影响。
+   */
+  bargeIn: true,
   /**
    * 自由对话（P3.3）：**默认开**。
    * 关掉 = 只走命令快车道（命中就执行、没命中回罐头回复），**完全不发 /llm 请求**；
@@ -340,6 +347,24 @@ const danmaku = createDanmaku({
   lastEl: $('danmakuLast'),
   settings: state.settings,
 });
+/**
+ * ---------------- P3.4 插话打断（barge-in） ----------------
+ *
+ * 教练说话时 ASR 一直在发 partial（会话层 `onInterim` 旁路），这里做**防误触发**判断：
+ *   正在说话 + 设置开着 + 连续 2 个 partial（<0.6s）+ 每个 ≥2 字 + 麦克风 RMS 过阈值
+ *   → **同步** `tts.stop()`（停播放 + abort 流式请求 + 释放解码队列 / blob URL）
+ *   → `voice.interrupt()`（状态环切回 listening、**字幕 / 弹幕不动**）→ 记 `tts:barge-in`。
+ * 音量取自 coach.js 的 VU（`coach.vuLevel`），播放期阈值更高（0.30 vs 0.18），
+ * 所以外放的教练声音不会把自己打断。
+ */
+const bargeIn = createBargeIn({
+  stop: () => { try { coachTts.stop(); } catch { /* ignore */ } },
+  isPlaying: () => voice.state === 'speaking',
+  getLevel: () => coach.vuLevel,
+  enabled: () => !!state.settings.bargeIn,
+  onInterrupt: () => voice.interrupt(),
+  diag: coachDiag,
+});
 /** 「别说话」命令的开关：只关教练朗读，字幕照常（session.setMuted） */
 let coachMuted = false;
 /**
@@ -422,6 +447,8 @@ const voice = createVoiceSession({
   tts: coachTts,
   commandCtx: voiceCommandCtx,
   thinkDelay: 360,       // 让「正在想…」真的看得见，不然 thinking 一闪而过
+  // P3.4：每个 partial（含教练说话时）都喂给插话打断；音量从 VU 实时读
+  onInterim: (text) => bargeIn.onPartial(text, { level: coach.vuLevel }),
 });
 /** 第一次打开才说自我介绍（同一次页面生命周期里不重复） */
 let coachIntroSaid = false;
@@ -601,6 +628,23 @@ function applyTtsSettings() {
   coachTts.setSource(state.settings.ttsSource);
   coachTts.setRate(state.settings.ttsRate);
   return { source: coachTts.source, rate: coachTts.rate };
+}
+
+/**
+ * 「允许插话打断」开关（P3.4）：默认开，随设置持久化。
+ * 关掉后教练说话时**不会**被用户插话打断（仍在聆听，只是不自动切回 listening）。
+ */
+function syncBargeInToggle() {
+  const btn = $('btnBargeIn');
+  if (btn) btn.setAttribute('aria-pressed', String(!!state.settings.bargeIn));
+}
+
+function applyBargeIn(on) {
+  state.settings.bargeIn = !!on;
+  saveSettings();
+  syncBargeInToggle();
+  if (!state.settings.bargeIn) bargeIn.reset();
+  return state.settings.bargeIn;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1006,6 +1050,8 @@ function openSettings() {
   renderPoseLogStatus();
   // AI 教练开关：Ctrl+I 在弹窗外面也能改状态，打开弹窗时按最新值对齐一次
   syncCoachToggle(!!state.settings.coachEnabled);
+  // 插话打断（P3.4）：同样按最新设置对齐一次
+  syncBargeInToggle();
   // 自由对话（P3.3）：开关 + 当前的 provider / model（health 是异步的，打开弹窗就刷一次）
   syncFreeChatToggle();
   refreshLlmStatus();
@@ -7300,6 +7346,15 @@ function bindUI() {
       });
     }
     applyTtsSettings();
+    // P3.4 插话打断：默认开；点一下立刻生效并持久化（关掉后教练说话不再被截断）
+    const bargeBtn = $('btnBargeIn');
+    if (bargeBtn) {
+      syncBargeInToggle();
+      bargeBtn.addEventListener('click', () => {
+        const v = !(bargeBtn.getAttribute('aria-pressed') === 'true');
+        applyBargeIn(v);
+      });
+    }
   }
 
   // [按钮 id（同一个开关可能有多个按钮，数组里列出来即可）, 设置键, 应用函数, 点击后要不要提示一句话]
@@ -7944,7 +7999,9 @@ window.__mfg = {
   //   coachSystemTts   : 原来的系统 TTS（降级兜底；测试用它确认 fallback 真的被调用）
   danmaku, applyDialogueMode, coachTts, coachSystemTts, applyTtsSettings,
   DANMAKU_MODES, DANMAKU_DEFAULT_MODE, DANMAKU_COLORS,
-  TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH,
+  TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH, TTS_STREAM_PATH,
+  // P3.4 插话打断：控制器（onPartial / reset / 常量）+ 设置入口 + 的「允许插话打断」开关
+  bargeIn, applyBargeIn, BARGE_IN_MAX_LATENCY_MS,
   // P3.5 语音排障：诊断收集器（snapshot / record / flush）+ 独立自检控制器
   //   coachDiag.snapshot() → 路由 / WS / 帧数 / partial·final / 最近错误 / 麦克风 / Worklet
   //   coachSelfTest.run()  → 麦克风 → 代理 → 录 2 秒发送 → 服务端结果（四步，独立于会话）
