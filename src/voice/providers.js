@@ -987,8 +987,12 @@ export function createVolcAsr({
      * 服务端收到 stop 后要等火山把最后一帧 final 吐出来（最多 3s）再 flush 给浏览器；
      * 浏览器先关的话，那一句就永远收不到了（日志里的 `final:false` / `segments:0`）。
      * 所以：先 flush 最后不足 100ms 的尾巴 → 发 stop → 关采集 → **等 final / 超时**再关 WS。
+     *
+     * `reason` 来自会话层（`user` / `pagehide` / `error` / `hidden`），只用于诊断：
+     * `ws:close {reason:'session:pagehide'}` 与 `mic:release` 一起，就是「谁关的会话」。
+     * **收到 final 不会调用它** —— final 只上屏 / 触发回复，会话继续听。
      */
-    stop() {
+    stop(reason = '') {
       if (manualStop) return;
       running = false;
       clearTimers();
@@ -1015,11 +1019,17 @@ export function createVolcAsr({
       try { fb?.stop?.(); } catch { /* ignore */ }
       teardownAudio();
       currentRoute = '';
-      if (!canWait) { closeSocket('client-stop'); return; }
+      /**
+       * 关闭原因写进日志（`ws:close {reason}`）：会话层会把「是谁关的」传下来
+       * （`session:user` = Ctrl+I / 设置里关、`session:pagehide` = 页面卸载、
+       * `session:error` = 不可恢复的错误），和 `mic:release {reason}` 对得上。
+       */
+      const closeReason = reason ? `session:${reason}` : 'client-stop';
+      if (!canWait) { closeSocket(closeReason); return; }
       diag?.record?.('ws:drain', { ms: finalWaitMs });
       stopTimer = setTimer(() => {
         stopTimer = null;
-        closeSocket('stop-timeout');
+        closeSocket(`${closeReason}-timeout`);
       }, finalWaitMs);
       if (stopTimer && typeof stopTimer.unref === 'function') {
         try { stopTimer.unref(); } catch { /* ignore */ }
@@ -1113,11 +1123,11 @@ export function createAutoAsr({
       try { started = inner.start() !== false; } catch { started = false; }
       return started;
     },
-    stop() {
+    stop(reason = '') {
       const adapter = inner;
       inner = null;
       lastRoute = '';
-      try { adapter?.stop?.(); } catch { /* ignore */ }
+      try { adapter?.stop?.(reason); } catch { /* ignore */ }
     },
   };
   return api;

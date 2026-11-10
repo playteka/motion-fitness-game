@@ -33,6 +33,28 @@ export const TTS_STREAM_PATH = '/tts/stream';
 export const TTS_HEALTH_PATH = '/tts/health';
 /** 服务端合成超时（客户端这段时间没拿到音频就往下走一级） */
 export const TTS_TIMEOUT_MS = 3000;
+/**
+ * 流式「中间断流」看门狗：首块到了之后，这么久没有新数据就**当成说完**收尾。
+ *
+ * 用户反馈「听不到任何声音」的那段日志里，`tts:first-audio` 之后既没有 `tts:say`
+ * 也没有 `onEnd` —— 说明流式响应流一直没结束（服务端 / 上游卡住），
+ * 于是 `player.finish()` 永远不调用 → MSE 不 `endOfStream()` → 音频不 `ended`
+ * → 会话卡在 `speaking`。有了这个看门狗，卡住也会正常收尾（并记 `tts:stream-idle`）。
+ */
+export const TTS_STREAM_IDLE_MS = 2500;
+/** 流式读取的硬上限：一次朗读最多读这么久（超了就 abort，按「说完了」收尾） */
+export const TTS_STREAM_READ_MAX_MS = 15000;
+/** 一句话的兜底总时长（onEnd 一直不回来也会在到点时让会话回聆听） */
+export const TTS_SPEAK_GUARD_MS = 20000;
+export const TTS_SPEAK_GUARD_MIN_MS = 6000;
+
+/** 一句话的兜底时长：按字数估（约 4 字/秒）+ 4s 首字 / 缓冲，夹在 [min, max] */
+export function ttsGuardMs(text, { min = TTS_SPEAK_GUARD_MIN_MS, max = TTS_SPEAK_GUARD_MS } = {}) {
+  const chars = ttsText(text).length;
+  const lo = Math.max(0, Number(min) || 0);
+  const hi = Math.max(lo, Number(max) || 0);
+  return Math.max(lo, Math.min(hi, chars * 250 + 4000));
+}
 /** 流式排程的提前量：第一块音频别卡在「刚好现在」，留一点解码 / 调度余量 */
 export const TTS_STREAM_LEAD_SEC = 0.06;
 /** 音色来源：自动（火山优先）/ 火山 / 系统 */
@@ -457,6 +479,7 @@ export function createMsePlayback({
   let queue = null;
   let stopped = false;
   let endOfStreamCalled = false;
+  let playError = null;
 
   const ready = new Promise((resolve, reject) => {
     const open = () => {
@@ -468,16 +491,28 @@ export function createMsePlayback({
         return;
       }
       queue = createMseAppendQueue({ sourceBuffer, onError: (err) => { try { onError?.(err); } catch { /* ignore */ } } });
-      // `play()` 被自动播放策略拒了（NotAllowedError）不能变成「未捕获的 rejection」：
-      // 让 ready 也 reject，上层据此走整段 / 系统 TTS（三级降级照旧）。
+      /**
+       * ⚠️ **绝不能让 `push()` 等 `play()` 的 Promise**（用户反馈「听不到任何声音」的根因）。
+       *
+       * MSE 的音频元素在**一个字节都没 append 之前** `readyState` 是 HAVE_NOTHING，
+       * 此时 `audio.play()` 返回的 Promise 会一直 pending（浏览器要等有数据才真的开始播）。
+       * 从前 `ready` 是等 play() resolve 才 resolve 的，而 `push()` 又在等 `ready`
+       * —— 死锁：第一块永远 append 不进去（一个字节都没播 / 完全没声音），
+       * 响应流也永远读不完（没有 `tts:say` / 没有 `onEnd` / 会话卡在 speaking）。
+       * 现在：`ready` = 「SourceBuffer 建好了」；play() 只做**旁路监听**。
+       */
       let started = null;
-      try { started = audio.play?.(); } catch { started = null; }
+      try { started = audio.play?.(); } catch (err) { started = Promise.reject(err); }
       if (started && typeof started.then === 'function') {
-        started.then(
-          () => resolve(queue),
-          (err) => reject(Object.assign(new Error('mse play rejected'), { code: 'mse-play', cause: err, causeName: err && err.name })),
-        );
-        return;
+        started.then(null, (err) => {
+          if (stopped) return;
+          playError = Object.assign(new Error('mse play rejected'), {
+            code: 'mse-play', cause: err, causeName: (err && err.name) || '',
+          });
+          // 自动播放被拒：没出过声，交给上层回退整段 / 系统 TTS（不是「悄悄没声音」）
+          stop();
+          try { onError?.(playError); } catch { /* ignore */ }
+        });
       }
       resolve(queue);
     };
@@ -564,6 +599,8 @@ export function createMsePlayback({
     get pending() { return queue ? queue.queued : 0; },
     get audio() { return audio; },
     get url() { return url; },
+    /** play() 被拒时的错误（上层据此回退整段；正常播放时是 null） */
+    get playError() { return playError; },
   };
   return api;
 }
@@ -785,6 +822,9 @@ export function createAudioQueuePlayer({
  * @param {boolean} [opts.stream]       是否先试流式（默认 true；测试可关掉）
  * @param {boolean} [opts.mse]          流式是否优先用 MSE（默认 true；不支持会自动走解码队列）
  * @param {Function} [opts.MediaSourceCtor] 注入 MediaSource（Node 单测）
+ * @param {number} [opts.idleMs]        流式「中间断流」看门狗（默认 2500；0 = 关掉）
+ * @param {number} [opts.readMaxMs]     一次流式朗读的读取硬上限（默认 15000；0 = 关掉）
+ * @param {number} [opts.guardMs]       一句话的兜底总时长（默认按字数估，见 ttsGuardMs）
  */
 export function createVolcTts({
   fallback = null,
@@ -803,10 +843,16 @@ export function createVolcTts({
   streamEndpoint = TTS_STREAM_PATH,
   stream: useStream = true,
   mse: useMse = true,
+  idleMs = TTS_STREAM_IDLE_MS,
+  readMaxMs = TTS_STREAM_READ_MAX_MS,
+  guardMs = null,
   now = () => Date.now(),
 } = {}) {
   const w = win || (typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : {}));
   const timeout = Math.max(1, Number(timeoutMs) || TTS_TIMEOUT_MS);
+  const streamIdleMs = Math.max(0, Number(idleMs) || 0);
+  const streamReadMaxMs = Math.max(0, Number(readMaxMs) || 0);
+  const guardFixed = Number.isFinite(Number(guardMs)) && Number(guardMs) > 0 ? Number(guardMs) : 0;
   let currentSource = normalizeTtsSource(source);
   let currentRate = normalizeTtsRate(rate);
   let current = null;          // 正在播 / 正在取的那一句
@@ -901,6 +947,10 @@ export function createVolcTts({
   function releaseToken(token, { end = false, error = null } = {}) {
     if (!token) return;
     clearTimer(token);
+    if (token.guard !== null && token.guard !== undefined) {
+      try { clearTimeout(token.guard); } catch { /* ignore */ }
+      token.guard = null;
+    }
     token.stopped = true;
     releaseSources(token);
     if (token !== current) return;
@@ -980,6 +1030,13 @@ export function createVolcTts({
           revokeObjectURL,
           onEnd: () => releaseToken(token, { end: true }),
           onError: (err) => {
+            if (err && err.code === 'mse-play') {
+              // 自动播放被拒（还没出过声）：**不当作说完**，让上层回退整段 / 系统 TTS
+              diag?.record?.('tts:stream-fail', {
+                code: 'mse-play', where: 'stream', chars: body.length, ...errInfo(err),
+              });
+              return;
+            }
             // 播到一半 MSE 报错：已经出过声就不重念，直接收尾（避免「说到一半又从头说」）
             diag?.record?.('tts:fail', { code: 'audio', where: 'stream', chars: body.length, ...errInfo(err) });
             releaseToken(token, { end: true });
@@ -1040,32 +1097,93 @@ export function createVolcTts({
       }
       token.reader = reader;
       let first = false;
-      while (true) {
-        const step = await reader.next();
-        if (!step || step.done) break;
-        if (closed || token !== current || token.stopped) return true;
-        const piece = step.value;
-        if (!piece || !piece.length) continue;
-        if (!first) {
-          first = true;
-          clearTimer(token);   // 首块到了：不再按「整句超时」算
-          diag?.record?.('tts:first-audio', {
-            ms: Math.max(0, Math.round(now() - token.startedAt)),
-            bytes: toUint8(piece).length,
-            mode,
-          });
+      /**
+       * 两个看门狗（**首块到了之后**才启动，之前由上面的整句超时负责）：
+       *   - idle：`idleMs` 内没有新数据 → 当成说完（`reader.cancel()` 让 `next()` 收尾）；
+       *   - 硬上限 `readMaxMs`：一次朗读最多读这么久，超了 abort（按「说完了」收尾）。
+       * 没有它们时，只要响应流不结束（用户日志里就是这样）就永远到不了 `player.finish()`
+       * → MSE 不 `endOfStream()` → 没有 `ended` → 没有 `onEnd` → 会话卡在 `speaking`。
+       */
+      let idleTimer = null;
+      const idleMs = streamIdleMs;
+      const readMaxMs = streamReadMaxMs;
+      const clearIdle = () => {
+        if (idleTimer === null) return;
+        try { clearTimeout(idleTimer); } catch { /* ignore */ }
+        idleTimer = null;
+      };
+      const armIdle = () => {
+        clearIdle();
+        if (!(idleMs > 0)) return;
+        idleTimer = setTimeout(() => {
+          idleTimer = null;
+          diag?.record?.('tts:stream-idle', { ms: idleMs, chars: body.length, mode });
+          // 只取消读取：已经拿到的字节照常播完（不要 abort 整条请求，那会把尾巴切掉）
+          try { token.reader?.cancel?.(); } catch { /* ignore */ }
+        }, idleMs);
+        if (idleTimer && typeof idleTimer.unref === 'function') {
+          try { idleTimer.unref(); } catch { /* ignore */ }
         }
-        const scheduled = await player.push(piece);
-        /**
-         * 只有**真的排进播放引擎**才算「流式已经出声」：
-         * 第一块解码 / append 失败时 streamStarted 还是 false，
-         * 上层会整段重试 /tts，而不是静悄悄地把这句话吞掉。
-         */
-        if (scheduled) {
-          streamStarted = true;
-          token.streamStarted = true;
+      };
+      let readTimer = null;
+      if (readMaxMs > 0) {
+        readTimer = setTimeout(() => {
+          readTimer = null;
+          diag?.record?.('tts:stream-idle', { ms: readMaxMs, chars: body.length, mode, hard: true });
+          try { controller?.abort?.(); } catch { /* ignore */ }
+        }, readMaxMs);
+        if (readTimer && typeof readTimer.unref === 'function') {
+          try { readTimer.unref(); } catch { /* ignore */ }
         }
-        if (closed || token !== current || token.stopped) return true;
+      }
+      try {
+        while (true) {
+          const step = await reader.next();
+          if (!step || step.done) break;
+          if (closed || token !== current || token.stopped) return true;
+          const piece = step.value;
+          if (!piece || !piece.length) continue;
+          if (!first) {
+            first = true;
+            clearTimer(token);   // 首块到了：不再按「整句超时」算
+            diag?.record?.('tts:first-audio', {
+              ms: Math.max(0, Math.round(now() - token.startedAt)),
+              bytes: toUint8(piece).length,
+              mode,
+            });
+          }
+          armIdle();
+          const scheduled = await player.push(piece);
+          /**
+           * 只有**真的排进播放引擎**才算「流式已经出声」：
+           * 第一块解码 / append 失败时 streamStarted 还是 false，
+           * 上层会整段重试 /tts，而不是静悄悄地把这句话吞掉。
+           */
+          if (scheduled) {
+            if (!streamStarted) {
+              streamStarted = true;
+              token.streamStarted = true;
+              /**
+               * 「真的开始出声」就该有一条 `tts:say`：从前它记在**流读完之后**，
+               * 于是响应流一卡住，日志里就只剩 `tts:first-audio`、没有 `tts:say`
+               * （用户反馈「整个时段没有任何 tts 事件」其实就是这个形状）。
+               */
+              diag?.record?.('tts:say', {
+                chars: body.length, source: 'volc', stream: true, mode,
+              });
+            }
+          } else if (player.playError) {
+            // play() 被自动播放策略拒了：没出过声，交给整段 / 系统 TTS
+            break;
+          }
+          if (closed || token !== current || token.stopped) return true;
+        }
+      } finally {
+        clearIdle();
+        if (readTimer !== null) {
+          try { clearTimeout(readTimer); } catch { /* ignore */ }
+          readTimer = null;
+        }
       }
       token.reader = null;
       if (!first) {
@@ -1081,7 +1199,6 @@ export function createVolcTts({
         return false;
       }
       Promise.resolve(player.finish()).catch(() => {});
-      diag?.record?.('tts:say', { chars: body.length, source: 'volc', stream: true });
       return true;
     } catch (err) {
       if (closed || token !== current || token.stopped) return true;
@@ -1099,8 +1216,12 @@ export function createVolcTts({
         token.player = null;
         return false;
       }
-      // 已经出声了：不重念（重念会「说到一半又从头说」），就此收尾
-      releaseToken(token, { end: true });
+      /**
+       * 已经出声了：不重念（重念会「说到一半又从头说」）。
+       * 先 `finish()`（MSE → endOfStream → 播完会 `ended`），保证这句真的有 onEnd；
+       * 万一音频也卡住，`speak()` 里挂的 token.guard 会在到点时收尾。
+       */
+      Promise.resolve(player.finish()).catch(() => {});
       return true;
     } finally {
       clearTimer(token);
@@ -1202,6 +1323,7 @@ export function createVolcTts({
       audio: null,
       url: '',
       timer: null,
+      guard: null,
       done: false,
       stopped: false,
       controller: null,
@@ -1214,6 +1336,21 @@ export function createVolcTts({
     };
     current = token;
     speaking = true;
+    /**
+     * 兜底看门狗（最后一道保险）：不管卡在 MSE / 解码队列 / 系统 TTS 哪一级，
+     * 到点一定回调 **onEnd**，绝不把会话状态机晾在 `speaking`（那会让用户后面
+     * 说的每一句都被丢掉 —— 这就是「说完一句就再也不识别」的现场）。
+     */
+    const guard = guardFixed || ttsGuardMs(body);
+    token.guard = setTimeout(() => {
+      token.guard = null;
+      if (token !== current || token.done) return;
+      diag?.record?.('tts:guard', { ms: guard, chars: body.length, mode: token.mode });
+      releaseToken(token, { end: true });
+    }, guard);
+    if (token.guard && typeof token.guard.unref === 'function') {
+      try { token.guard.unref(); } catch { /* ignore */ }
+    }
     if (currentSource === 'system') {
       useFallback(token, body, '');
       return true;

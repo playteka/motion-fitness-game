@@ -362,7 +362,7 @@ const bargeIn = createBargeIn({
   isPlaying: () => voice.state === 'speaking',
   getLevel: () => coach.vuLevel,
   enabled: () => !!state.settings.bargeIn,
-  onInterrupt: () => voice.interrupt(),
+  onInterrupt: () => voice.interrupt('barge-in'),
   diag: coachDiag,
 });
 /** 「别说话」命令的开关：只关教练朗读，字幕照常（session.setMuted） */
@@ -447,6 +447,9 @@ const voice = createVoiceSession({
   tts: coachTts,
   commandCtx: voiceCommandCtx,
   thinkDelay: 360,       // 让「正在想…」真的看得见，不然 thinking 一闪而过
+  // 诊断：`session:stop {by}` / `session:say {by}` / `session:speak-timeout` 都进 coach-diag.jsonl，
+  // 「谁关的会话」「命令确认语有没有走 TTS」以后一眼能看出来（用户反馈的两个问题都靠它定位）。
+  diag: coachDiag,
   // P3.4：每个 partial（含教练说话时）都喂给插话打断；音量从 VU 实时读
   onInterim: (text) => bargeIn.onPartial(text, { level: coach.vuLevel }),
 });
@@ -576,11 +579,13 @@ async function setCoachEnabled(on, { silent = false } = {}) {
     if (!coachIntroSaid) {
       coachIntroSaid = true;
       // 自我介绍只上字幕、不抢着发声：开启瞬间用户可能还没准备好听
-      voice.onCoachText(t('coach.intro'), { speak: false });
+      voice.onCoachText(t('coach.intro'), { speak: false, source: 'intro' });
     }
     if (!silent) setCueLine(t('status.coachOn'), 'info');
   } else {
-    voice.stop();
+    // by:'user' → 日志里 `session:stop {by:'user'}` + `mic:release {reason:'user'}`，
+    // 和「页面卸载」那条（pagehide）分得开，这就是「谁关的会话」的答案。
+    voice.stop('user');
     coach.stopVu();
     if (!silent) setCueLine(t('status.coachOff'), 'info');
   }
@@ -7466,7 +7471,8 @@ function bindUI() {
     $('btnCloseVoiceHelp')?.addEventListener('click', () => closeVoiceHelp());
     $('voiceHelpBackdrop')?.addEventListener('click', () => closeVoiceHelp());
     // 页面被关掉 / 进 bfcache 时也把麦克风与 TTS 收掉，绝不留后台录音
-    window.addEventListener('pagehide', () => voice.stop());
+    // （by:'pagehide' 会一起记进 coach-diag.jsonl：以后能区分「用户按了 Ctrl+I」和「页面被关」）
+    window.addEventListener('pagehide', () => voice.stop('pagehide'));
   }
 
   {
@@ -7743,7 +7749,8 @@ function bindUI() {
     if (document.hidden) {
       if (state.session === 'running') pauseSession();
       // AI 教练：页面隐藏时自动暂停聆听（麦克风保持，避免回来又弹一次权限）
-      voice.pause();
+      // by:'hidden' → 日志里 `session:pause {by:'hidden'}`，和「用户主动关」区分开
+      voice.pause('hidden');
     } else {
       // 屏幕常亮：切到后台时浏览器会把 wakeLock 收回去，回到前台且还在练就重新申请一次
       if (state.session === 'running' && !state.wakeLock) requestWakeLock();

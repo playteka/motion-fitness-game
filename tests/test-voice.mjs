@@ -15,7 +15,10 @@
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 
-import { createVoiceSession, VOICE_STATES, VOICE_NOTICE_KEYS, VOICE_ERROR_KEYS, THINK_SLOW_MS } from '../src/voice/session.js';
+import {
+  createVoiceSession, VOICE_STATES, VOICE_NOTICE_KEYS, VOICE_ERROR_KEYS, THINK_SLOW_MS,
+  speakHoldMs, VOICE_SPEAK_MIN_MS, VOICE_SPEAK_MAX_MS,
+} from '../src/voice/session.js';
 import {
   parseCommand, cnToInt, normalizeText, isConfirmText, isCancelText,
 } from '../src/voice/parse.js';
@@ -5586,6 +5589,297 @@ console.log('\n[36] 客户端播放：MSE 追加队列 / 帧对齐 / blob 不提
     harness.utter.onerror({ error: 'interrupted' });
     ok('系统 TTS：interrupted / canceled（我们自己 cancel 的）不记 tts:fail，也不算不可用',
       !events.some((e) => e.type === 'tts:fail') && tts.unavailable === false);
+  }
+
+  /* ---- ⑨ 回归（用户反馈「听不到任何声音」的根因）：MSE 的 play() 一直不 resolve ----
+   *
+   * Chrome 在 SourceBuffer 里**一个字节都没有**之前，`audio.play()` 的 Promise 会一直
+   * pending。从前 `ready` 等 play() resolve，而 `push()` 又等 `ready` → 死锁：
+   * 第一块永远 append 不进去（一个字节都没播 = 完全没声音），响应流也读不完
+   * （没有 `tts:say` / 没有 `onEnd` / 会话卡在 speaking）。
+   * 这里用一个**永不 resolve 的 play()** 把这个死锁钉死：音频照样要进缓冲、照样要收尾。 */
+  {
+    const { FakeMediaSource, created } = fakeMediaSourceFactory();
+    const audioList = [];
+    class PendingPlayAudio {
+      constructor(src) { this.src = src; this.paused = 0; this.ended = 0; audioList.push(this); }
+      play() { this.playCalls = (this.playCalls || 0) + 1; return new Promise(() => {}); }
+      pause() { this.paused += 1; }
+      finish() { this.ended += 1; this.onended?.(); }
+    }
+    const diagEvents = [];
+    let ended = 0;
+    const tts = createVolcTts({
+      fallback: fakeSystem(),
+      MediaSourceCtor: FakeMediaSource,
+      AudioCtor: PendingPlayAudio,
+      createObjectURL: () => 'blob:mse-pending',
+      revokeObjectURL: () => {},
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      fetchImpl: async (url) => (url === TTS_STREAM_PATH ? streamRes([mp3Frame(1), mp3Frame(2)]) : wholeRes),
+    });
+    tts.speak('播放等数据', { onEnd: () => { ended += 1; } });
+    await wait(40);
+    const ms = created[0];
+    ok('MSE + play() 永远 pending：两块音频照样 append 进缓冲（不再等 play()，死锁已修）',
+      !!ms && ms.buffers[0] && ms.buffers[0].appended === 384 && ms.buffers[0].list.length === 2,
+      JSON.stringify({ appended: ms && ms.buffers[0] && ms.buffers[0].appended,
+        chunks: ms && ms.buffers[0] && ms.buffers[0].list.length }));
+    ok('MSE + play() 永远 pending：流读完照样 finish() → endOfStream（不会一直等后续数据）',
+      ms.endOfStreamCalls === 1 && ms.readyState === 'ended',
+      JSON.stringify({ calls: ms.endOfStreamCalls, state: ms.readyState }));
+    ok('MSE + play() 永远 pending：音频会话真的在播（audio.play() 被调用过一次）',
+      audioList.length === 1 && audioList[0].playCalls === 1,
+      JSON.stringify({ audios: audioList.length, plays: audioList[0] && audioList[0].playCalls }));
+    audioList[0].finish();
+    ok('MSE + play() 永远 pending：播完仍然回调 onEnd（会话能回到 listening）', ended === 1, String(ended));
+    tts.close();
+  }
+
+  /* ---- ⑩ 流式响应流卡住不结束 → 空闲看门狗收尾（tts:stream-idle）----
+   *
+   * 用户日志里 `tts:first-audio` 之后既没有 `tts:say` 也没有 `onEnd`：响应流一直没结束，
+   * 于是 `player.finish()` 永远不调用 → MSE 不 endOfStream → 没有 `ended` → 会话卡死。
+   * 现在首块之后挂一个空闲看门狗：到点就取消读取、正常收尾。 */
+  {
+    const { FakeMediaSource, created } = fakeMediaSourceFactory();
+    const { FakeAudio, list } = fakeElementAudio();
+    const diagEvents = [];
+    let ended = 0;
+    /** 只给第一块，之后的 read() 永远 pending；cancel() 才让它以 done 收尾 */
+    const stallingReader = (piece) => {
+      let first = true;
+      let pending = null;
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: () => {
+              if (first) { first = false; return Promise.resolve({ done: false, value: piece }); }
+              return new Promise((resolve) => { pending = resolve; });
+            },
+            cancel: async () => { pending?.({ done: true, value: undefined }); pending = null; },
+          }),
+        },
+      };
+    };
+    const tts = createVolcTts({
+      fallback: fakeSystem(),
+      MediaSourceCtor: FakeMediaSource,
+      AudioCtor: FakeAudio,
+      createObjectURL: () => 'blob:stall',
+      revokeObjectURL: () => {},
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      idleMs: 25,
+      readMaxMs: 0,
+      fetchImpl: async () => stallingReader(mp3Frame(1)),
+    });
+    tts.speak('这条流会卡住', { onEnd: () => { ended += 1; } });
+    await wait(80);
+    ok('流式卡住（响应流不再结束）→ 空闲看门狗记 tts:stream-idle 并收尾（不再挂死）',
+      diagEvents.some((e) => e.type === 'tts:stream-idle')
+      && created[0] && created[0].endOfStreamCalls === 1,
+      JSON.stringify({ idle: diagEvents.some((e) => e.type === 'tts:stream-idle'),
+        eos: created[0] && created[0].endOfStreamCalls }));
+    ok('流式卡住：首块就记了 tts:say（日志里能看出「这条确实尝试出声了」）',
+      diagEvents.some((e) => e.type === 'tts:say' && e.data.source === 'volc'),
+      JSON.stringify(diagEvents.map((e) => e.type)));
+    list[0].finish();
+    ok('流式卡住：收尾后播完仍然回调 onEnd', ended === 1, String(ended));
+    tts.close();
+  }
+
+  /* ---- ⑪ 兜底看门狗：所有播放引擎都不回调 onEnd 时，到点也必须 onEnd ---- */
+  {
+    const diagEvents = [];
+    let ended = 0;
+    const tts = createVolcTts({
+      fallback: fakeSystem(),
+      AudioCtor: fakeElementAudio().FakeAudio,
+      createObjectURL: () => 'blob:guard',
+      revokeObjectURL: () => {},
+      diag: { record: (type, data) => diagEvents.push({ type, data }) },
+      guardMs: 30,
+      fetchImpl: async () => wholeRes,     // 整段：Audio 永远不 ended
+    });
+    tts.speak('没人回调结束', { onEnd: () => { ended += 1; } });
+    await wait(80);
+    ok('兜底看门狗到点 → 记 tts:guard 并回调 onEnd（任何一级卡住都不会把会话晾在 speaking）',
+      ended === 1 && diagEvents.some((e) => e.type === 'tts:guard'),
+      JSON.stringify({ ended, events: diagEvents.map((e) => e.type) }));
+    tts.close();
+  }
+}
+
+/* ================================================================== *
+ * [37] 说完一句继续聆听（用户反馈钉住：final 之后不许关会话）
+ * ================================================================== */
+console.log('\n[37] final 之后继续聆听 / TTS 卡住也不吞掉下一句 / 谁关的会话有据可查');
+{
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  ok('speakHoldMs：短句按 min 兜底、超长句夹在 max（看门狗不会把正常朗读掐掉）',
+    speakHoldMs('好的', { min: 6000, max: 20000 }) === 6000
+    && speakHoldMs('字'.repeat(200), { min: 6000, max: 20000 }) === 20000
+    && speakHoldMs('字'.repeat(20), { min: 100, max: 20000 }) === 8200
+    && speakHoldMs('', { min: 100, max: 20000 }) === 3000,
+    JSON.stringify([speakHoldMs('好的'), speakHoldMs('字'.repeat(200)),
+      speakHoldMs('字'.repeat(20)), speakHoldMs('')]));
+
+  /** 记录诊断事件的假 diag */
+  const makeDiag = () => {
+    const events = [];
+    return { events, record: (type, data) => events.push({ type, data }) };
+  };
+
+  /* ---- ① final 之后：仍在 listening、ASR 没停、麦克风还在 ---- */
+  {
+    const mic = fakeMic();
+    const asr = fakeAsr();
+    const tts = fakeTts();
+    const diag = makeDiag();
+    const session = createVoiceSession({
+      mic, asr, tts, llm: { reply: () => '收到' }, thinkDelay: 0, diag,
+    });
+    await session.start();
+    asr.emit('你好');
+    await tick();
+    ok('① 一句 final → thinking → speaking（教练开口），ASR 一次都没停',
+      session.snapshot().state === 'speaking' && asr.stopped === 0 && mic.closed === 0,
+      JSON.stringify({ state: session.snapshot().state, asrStops: asr.stopped, micClosed: mic.closed }));
+
+    asr.emitInterim('再');
+    asr.emitInterim('再说');
+    asr.emitInterim('再说一句');
+    ok('① 教练念的时候连着 3 个 partial：状态不变、麦克风与识别都还在（不是「说完一句就关会话」）',
+      session.snapshot().state === 'speaking' && asr.stopped === 0 && mic.closed === 0
+      && session.enabled === true,
+      JSON.stringify({ state: session.snapshot().state, asrStops: asr.stopped, micClosed: mic.closed }));
+
+    tts.finish();
+    ok('① 这句念完 → 回到 listening，enabled 仍为 true（final 只上屏 / 触发回复，不结束会话）',
+      session.snapshot().state === 'listening' && session.enabled === true
+      && mic.closed === 0 && asr.stopped === 0,
+      JSON.stringify({ state: session.snapshot().state, enabled: session.enabled,
+        asrStops: asr.stopped, micClosed: mic.closed }));
+
+    asr.emit('设成 20 次');
+    await tick();
+    ok('① 下一句 final 照常被处理（命令快车道：TTS 收到第二句，状态又到 speaking）',
+      session.snapshot().state === 'speaking' && tts.spoken.length === 2,
+      JSON.stringify({ state: session.snapshot().state, spoken: tts.spoken }));
+    tts.finish();
+    ok('① 全程没有 stop：ASR 没停、麦克风没释放（正是用户要的「说完一句会继续聆听」）',
+      asr.stopped === 0 && mic.closed === 0 && session.snapshot().state === 'listening',
+      JSON.stringify({ asrStops: asr.stopped, micClosed: mic.closed, state: session.snapshot().state }));
+    ok('① 诊断：命令确认语也走了发声路径（session:say by=cmd + session:speak-end by=tts-end）',
+      diag.events.some((e) => e.type === 'session:say' && e.data.by === 'cmd')
+      && diag.events.some((e) => e.type === 'session:speak-end' && e.data.by === 'tts-end'),
+      JSON.stringify(diag.events.filter((e) => String(e.type).startsWith('session:'))));
+    ok('① 诊断里没有任何 session:stop（final 绝不会关会话）',
+      !diag.events.some((e) => e.type === 'session:stop'),
+      JSON.stringify(diag.events.map((e) => e.type)));
+    session.destroy();
+    ok('① destroy() 记为 by=destroy（「谁关的会话」有据可查）',
+      diag.events.some((e) => e.type === 'session:stop' && e.data.by === 'destroy')
+      && mic.closed === 1,
+      JSON.stringify(diag.events.filter((e) => e.type === 'session:stop')));
+  }
+
+  /* ---- ② TTS 卡住（onEnd 永远不回来）时用户说的下一句：当作插话，不能丢 ---- */
+  {
+    const mic = fakeMic();
+    const asr = fakeAsr();
+    const tts = fakeTts();          // speak() 返回 true 但测试里**永远不调 onEnd**（模拟卡住）
+    const diag = makeDiag();
+    const session = createVoiceSession({
+      mic, asr, tts, llm: { reply: () => '我在听' }, thinkDelay: 0, diag,
+    });
+    await session.start();
+    asr.emit('随便聊两句');
+    await tick(8);
+    ok('② 前置：教练卡在 speaking（TTS 的 onEnd 一直没回来）',
+      session.snapshot().state === 'speaking' && tts.spoken.length === 1,
+      JSON.stringify({ state: session.snapshot().state, spoken: tts.spoken }));
+    asr.emit('再说一句新的');
+    await tick(8);
+    ok('② 卡住时用户说完整的一句 → 先插话打断再处理（不再被静默丢掉）',
+      tts.spoken.length === 2 && session.snapshot().state === 'speaking',
+      JSON.stringify({ spoken: tts.spoken, state: session.snapshot().state }));
+    ok('② 打断记 session:barge-final；ASR 与麦克风都没停',
+      diag.events.some((e) => e.type === 'session:barge-final')
+      && asr.stopped === 0 && mic.closed === 0,
+      JSON.stringify({ barge: diag.events.filter((e) => e.type === 'session:barge-final'),
+        asrStops: asr.stopped, micClosed: mic.closed }));
+    session.stop('user');
+    ok('② stop(\'user\') → session:stop {by:user} + 麦克风按 user 释放（Ctrl+I 的记录方式）',
+      diag.events.some((e) => e.type === 'session:stop' && e.data.by === 'user')
+      && mic.closed === 1,
+      JSON.stringify(diag.events.filter((e) => e.type === 'session:stop')));
+  }
+
+  /* ---- ③ 说话看门狗：TTS 永远不回调 onEnd，到点也必须回 listening ---- */
+  {
+    const mic = fakeMic();
+    const asr = fakeAsr();
+    const tts = fakeTts();
+    const diag = makeDiag();
+    const session = createVoiceSession({
+      mic, asr, tts, llm: { reply: () => '一句不会结束的话' }, thinkDelay: 0, diag,
+      speakMinMs: 20, speakMaxMs: 40,
+    });
+    await session.start();
+    asr.emit('你好');
+    await tick(8);
+    ok('③ 前置：说话中（speaking）', session.snapshot().state === 'speaking');
+    await wait(90);
+    ok('③ 看门狗到点 → 强制回 listening（并记 session:speak-timeout / speak-end by=timeout）',
+      session.snapshot().state === 'listening'
+      && diag.events.some((e) => e.type === 'session:speak-timeout')
+      && diag.events.some((e) => e.type === 'session:speak-end' && e.data.by === 'timeout'),
+      JSON.stringify({ state: session.snapshot().state,
+        events: diag.events.filter((e) => String(e.type).startsWith('session:')).map((e) => e.type + ':' + (e.data.by || '')) }));
+    ok('③ 看门狗到点会先把 TTS 掐掉（tts.cancel），不会和下一句叠着说',
+      tts.cancelled >= 1, String(tts.cancelled));
+    asr.emit('下一句');
+    await tick(8);
+    ok('③ 看门狗救回来之后，下一句 final 照常处理', tts.spoken.length === 2,
+      JSON.stringify(tts.spoken));
+    session.stop('pagehide');
+    ok('③ stop(\'pagehide\') → session:stop {by:pagehide}（和用户主动关区分开）',
+      diag.events.some((e) => e.type === 'session:stop' && e.data.by === 'pagehide'),
+      JSON.stringify(diag.events.filter((e) => e.type === 'session:stop')));
+  }
+
+  /* ---- ④ 页面隐藏：pause 记 by=hidden；暂停期间不处理 final，resume 后恢复 ---- */
+  {
+    const mic = fakeMic();
+    const asr = fakeAsr();
+    const tts = fakeTts();
+    const diag = makeDiag();
+    const session = createVoiceSession({
+      mic, asr, tts, llm: { reply: () => '好的' }, thinkDelay: 0, diag,
+    });
+    await session.start();
+    session.pause('hidden');
+    ok('④ pause(\'hidden\') → session:pause {by:hidden}；麦克风保持（回到前台不用重新授权）',
+      diag.events.some((e) => e.type === 'session:pause' && e.data.by === 'hidden')
+      && session.enabled === true && session.paused === true && mic.closed === 0,
+      JSON.stringify({ paused: session.paused, micClosed: mic.closed,
+        events: diag.events.map((e) => e.type) }));
+    asr.emit('暂停时说的一句');
+    await tick(8);   // final 是异步派发的，和本文件其它用例一样多等几拍
+    ok('④ 暂停期间来的 final 不处理，但要留证据（session:drop state=…）',
+      tts.spoken.length === 0
+      && diag.events.some((e) => e.type === 'session:drop'),
+      JSON.stringify({ spoken: tts.spoken, drops: diag.events.filter((e) => e.type === 'session:drop') }));
+    session.resume();
+    ok('④ 回到前台 → resume 记 session:resume，状态回到 listening',
+      session.paused === false && session.snapshot().state === 'listening'
+      && diag.events.some((e) => e.type === 'session:resume'),
+      JSON.stringify({ paused: session.paused, state: session.snapshot().state }));
+    session.stop('user');
   }
 }
 

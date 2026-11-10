@@ -107,6 +107,15 @@ function blankSnapshot() {
      *   mode = 流式用的播放引擎（mse / decode）；where = 失败发生在哪一级
      */
     tts: { state: 'idle', last: '', firstAudioMs: 0, bargeMs: 0, mode: '', where: '', errName: '' },
+    /**
+     * 会话状态机（`session:*`）：
+     *   state = '' | listening | thinking | speaking | paused | off | error
+     *   sayBy = 最近一句是哪种回合（cmd 命令 / confirm 确认 / tool 工具 / llm / intro）
+     *   stopBy = 最近一次 `stop()` 是谁做的（user / pagehide / destroy）——「谁关的会话」
+     *   endBy = 最近一次回到 listening 的原因（tts-end / tts-error / timeout / hold）
+     * 用户反馈「听不到声音 + 之后的话都没识别」靠这三行就能定位。
+     */
+    session: { state: '', sayBy: '', stopBy: '', endBy: '' },
   };
 }
 
@@ -154,6 +163,7 @@ export function createDiag({
       audio: { ...state.audio },
       worklet: { ...state.worklet },
       tts: { ...state.tts },
+      session: { ...state.session },
       asrError: state.asrError ? { ...state.asrError } : null,
     };
   }
@@ -311,6 +321,50 @@ export function createDiag({
           where: String(entry.where || ''),
           errName: String(entry.errName || ''),
         };
+        break;
+      /* ---------------- 会话状态机（session:*） ----------------
+       * 用户要求「以后一眼看出是谁关的会话」：stop/pause 都带 by，
+       * say/speak-end 也各留一行，日志里能对上「final → say → speak-end → listening」。 */
+      case 'session:start':
+        state.session = { ...state.session, state: 'listening', stopBy: '', endBy: '' };
+        break;
+      case 'session:resume':
+        state.session = { ...state.session, state: 'listening' };
+        break;
+      case 'session:say':
+        state.session = {
+          ...state.session,
+          state: entry.muted === true || entry.speak === false ? 'listening' : 'speaking',
+          sayBy: String(entry.by || ''),
+        };
+        break;
+      case 'session:speak-end':
+        state.session = {
+          ...state.session,
+          state: 'listening',
+          endBy: String(entry.by || ''),
+        };
+        break;
+      case 'session:speak-timeout':
+        // 看门狗到点：紧接着一定还有一条 session:speak-end {by:'timeout'}，这里不改状态
+        break;
+      case 'session:interrupt':
+        state.session = { ...state.session, state: 'listening' };
+        break;
+      case 'session:pause':
+        state.session = { ...state.session, state: 'paused' };
+        break;
+      case 'session:stop':
+        // 「谁关的会话」：by = user（Ctrl+I / 设置）/ pagehide（页面卸载）/ destroy
+        state.session = {
+          ...state.session,
+          state: 'off',
+          stopBy: String(entry.by || ''),
+        };
+        break;
+      case 'session:fail':
+        state.session = { ...state.session, state: 'error' };
+        setLastError(`session: ${entry.code || 'fail'}`);
         break;
       case 'vu:open':
         break;

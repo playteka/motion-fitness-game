@@ -9,6 +9,12 @@
  *       │                                                                  │
  *       └──────────────────────── stop()（任意状态）◀──────────────────────┘
  *
+ * **final 只负责「上屏 + 触发回复」，绝不结束会话**：说完一句、教练答完，状态机回
+ * `listening` 继续听下一句。只有 `stop()`（Ctrl+I / 页面卸载）、`pause()`（页面隐藏）
+ * 和不可恢复的 `fail()` 才会停识别、放麦克风 —— 每次都由 `diag` 记下**是谁**做的：
+ * `session:stop {by:'user'|'pagehide'|'destroy'}` / `session:pause {by:'hidden'}` /
+ * `session:fail {code}`。看门狗到点也会记 `session:speak-timeout`。
+ *
  * 另外：
  *   - `pause()` / `resume()`：页面隐藏时暂停聆听，回到前台再恢复（不释放麦克风，避免重复授权）；
  *   - `fail()`：麦克风被拒 / ASR 不支持 / LLM 出错 → `error`（`stop()` 或重新 `start()` 都能离开）；
@@ -70,6 +76,30 @@ export const VOICE_NOTICE_KEYS = Object.freeze({
 export const VOICE_SILENCE_MS = 8000;
 
 /**
+ * 一句话最多占住 `speaking` 多久（说话看门狗）。
+ *
+ * 用户反馈「除了第一句有文字反馈，之后的话好像都没有识别」——`logs/coach-diag.jsonl` 里
+ * 那一整段的形状是：`asr:final` → `tts:first-audio` → **再也没有 `tts:say`**，
+ * 然后用户后面那几句的 `asr:final` 全被丢掉（`onUserText()` 只认 `listening`）。
+ * 根因是 TTS 的 `onEnd` 一直没回来（流式朗读卡在等响应流结束），状态机就永远停在
+ * `speaking`。看门狗是最后一道保险：到点强制回 `listening`，并记
+ * `session:speak-timeout` + `session:speak-end {by:'timeout'}`，下次一眼看出是「被看门狗救的」。
+ */
+export const VOICE_SPEAK_MIN_MS = 6000;
+export const VOICE_SPEAK_MAX_MS = 20000;
+
+/**
+ * 这句话的说话看门狗时长：按字数估（中文约 5 字/秒）+ 3 秒首字 / 缓冲，夹在 [min, max]。
+ * `min` 不能太小，否则「好的」这种短句会被自己掐掉。
+ */
+export function speakHoldMs(text, { min = VOICE_SPEAK_MIN_MS, max = VOICE_SPEAK_MAX_MS } = {}) {
+  const chars = String(text == null ? '' : text).trim().length;
+  const lo = Math.max(0, Number(min) || 0);
+  const hi = Math.max(lo, Number(max) || 0);
+  return Math.max(lo, Math.min(hi, chars * 260 + 3000));
+}
+
+/**
  * 一次 LLM 回答最多执行几个动作（护栏；服务端 llm-tools.mjs 的 MAX_TOOL_CALLS 同值）。
  * 模型偶尔会一口气调一堆工具 —— 只认前几个，剩下的丢掉。
  */
@@ -100,6 +130,9 @@ export function voiceNoticeKey(code) {
  * @param {number}   [opts.thinkDelay] 「思考中」至少停留多久（毫秒；0 = 同步，测试用）
  * @param {number}   [opts.silenceMs]  进入聆听后多久没结果就提示「没听到声音」（0 = 关闭）
  * @param {Function} [opts.onInterim]  每个 ASR partial 的旁路（P3.4 插话打断用；含「说话中」的 partial）
+ * @param {object}   [opts.diag]       诊断收集器（记录 `session:*`；可选，页面里传 coachDiag）
+ * @param {number}   [opts.speakMinMs] 说话看门狗下限（默认 6s；测试调小）
+ * @param {number}   [opts.speakMaxMs] 说话看门狗上限（默认 20s；测试调小）
  * @param {Function} [opts.setTimer]   可注入的 setTimeout（测试模拟时间用）
  * @param {Function} [opts.clearTimer] 可注入的 clearTimeout
  */
@@ -116,6 +149,11 @@ export function createVoiceSession({
   silenceMs = VOICE_SILENCE_MS,
   /** 每个 partial 的旁路（P3.4 插话打断；说话中也照常收到） */
   onInterim = null,
+  /** 诊断收集器：`session:stop / session:pause / session:fail / session:say …`（可选） */
+  diag = null,
+  /** 说话看门狗：默认按字数估，夹在 [speakMinMs, speakMaxMs]（测试可以调小） */
+  speakMinMs = VOICE_SPEAK_MIN_MS,
+  speakMaxMs = VOICE_SPEAK_MAX_MS,
   /** 「退出」这类命令等待确认的最长时间（默认 8 秒；测试可以调小） */
   confirmMs = COMMAND_CONFIRM_MS,
   /** 发出去多久还没回来就显示「教练在想…」（默认 1.5s；测试可以调小） */
@@ -159,7 +197,31 @@ export function createVoiceSession({
   let thinkSlowMsValue = Number.isFinite(Number(thinkSlowMs))
     ? Math.max(0, Number(thinkSlowMs))
     : THINK_SLOW_MS;
+  const speakMinMsValue = Number.isFinite(Number(speakMinMs))
+    ? Math.max(0, Number(speakMinMs))
+    : VOICE_SPEAK_MIN_MS;
+  const speakMaxMsValue = Math.max(
+    speakMinMsValue,
+    Number.isFinite(Number(speakMaxMs)) ? Math.max(0, Number(speakMaxMs)) : VOICE_SPEAK_MAX_MS,
+  );
   const listeners = new Set();
+
+  /** 记一条诊断（诊断出问题绝不能拖垮状态机） */
+  function note(type, data) {
+    try { diag?.record?.(type, data); } catch { /* ignore */ }
+  }
+
+  /**
+   * setTimeout 但尽量 `unref()`：说话看门狗 / 静音提示这类长定时器不该把 Node 测试
+   * 进程吊在这里等它跑完（浏览器里没有 unref，无副作用）。
+   */
+  function armTimer(fn, ms) {
+    const id = setTimer(fn, ms);
+    if (id && typeof id.unref === 'function') {
+      try { id.unref(); } catch { /* ignore */ }
+    }
+    return id;
+  }
 
   function snapshot() {
     return {
@@ -250,9 +312,15 @@ export function createVoiceSession({
     return text;
   }
 
-  /** run() 的返回值 → 真的把这句话念出来 */
-  function sayAck(result) {
-    return onCoachText(ackText(result));
+  /**
+   * run() 的返回值 → 真的把这句话念出来。
+   *
+   * **命令快车道的确认语也走 TTS**（和 LLM 回复同一条 `onCoachText()` 路径）：
+   * 用户反馈「命令回合没声音」，就是这里必须出声 —— `source` 会落进
+   * `session:say {by:'cmd'|'confirm'|'tool'}`，日志里能对上「这句是哪种回合」。
+   */
+  function sayAck(result, source = 'cmd') {
+    return onCoachText(ackText(result), { source });
   }
 
   /** 最近执行过的 intent（P3.3 Agent context 的 signals.recentCommands；只在内存里，最多 5 条） */
@@ -326,11 +394,11 @@ export function createVoiceSession({
         if (pendingConfirm) clearPending();   // 新命令优先，旧的确认作废
         if (cmd.confirm) {
           armPending(cmd, parsed.args);
-          sayAck({ key: 'coach.confirm.ask' });
+          sayAck({ key: 'coach.confirm.ask' }, 'confirm');
           return true;
         }
         const result = runCommand(cmd, parsed.args);
-        if (enabled && state !== 'off' && !paused) sayAck(result);
+        if (enabled && state !== 'off' && !paused) sayAck(result, 'cmd');
         return true;
       }
     }
@@ -340,15 +408,15 @@ export function createVoiceSession({
         clearPending();
         const cmd = commandTable.find((c) => c.intent === waiting.intent);
         const result = cmd ? runCommand(cmd, waiting.args) : { key: 'coach.cmdAck.done' };
-        if (enabled && state !== 'off' && !paused) sayAck(result);
+        if (enabled && state !== 'off' && !paused) sayAck(result, 'confirm');
         return true;
       }
       if (isCancelText(body)) {
         clearPending();
-        sayAck({ key: 'coach.confirm.cancelled' });
+        sayAck({ key: 'coach.confirm.cancelled' }, 'confirm');
         return true;
       }
-      sayAck({ key: 'coach.confirm.repeat' });
+      sayAck({ key: 'coach.confirm.repeat' }, 'confirm');
       return true;
     }
     return false;
@@ -429,8 +497,12 @@ export function createVoiceSession({
     return emit();
   }
 
-  function releaseAudio() {
-    try { asr?.stop?.(); } catch { /* ignore */ }
+  /**
+   * 停识别 + 停 TTS。`by` 会传给 ASR 适配器：`ws:close {reason}` 里就能看到
+   * 「是会话关的（user / pagehide）还是回退 Web Speech / 出错关的」。
+   */
+  function releaseAudio(by = 'release') {
+    try { asr?.stop?.(String(by)); } catch { /* ignore */ }
     try { tts?.cancel?.(); } catch { /* ignore */ }
   }
 
@@ -440,6 +512,11 @@ export function createVoiceSession({
    */
   function fail(code, err = null) {
     if (state === 'off') return snapshot();
+    note('session:fail', {
+      code: String(code || 'generic'),
+      raw: String((err && (err.raw || err.code)) || ''),
+      state,
+    });
     const raw = err && (err.raw || err.code);
     if (raw) lastError = String(raw);
     error = {
@@ -452,21 +529,31 @@ export function createVoiceSession({
     clearPending();
     clearTimers();
     clearSilence();
-    releaseAudio();
-    try { mic?.close?.(); } catch { /* ignore */ }
+    releaseAudio('error');
+    try { mic?.close?.('error'); } catch { /* ignore */ }
     enabled = true;   // 用户的「开」这个意愿还在；settings.coachEnabled 由 app 同步
     return setState('error');
   }
 
-  function finishSpeaking(myEpoch) {
+  function finishSpeaking(myEpoch, by = 'tts-end') {
     if (myEpoch !== epoch || !enabled || paused || state !== 'speaking') return;
-    speakTimer = null;
+    if (speakTimer !== null) {
+      try { clearTimer(speakTimer); } catch { /* ignore */ }
+      speakTimer = null;
+    }
+    note('session:speak-end', { by: String(by) });
     setState('listening');
     armSilence();
   }
 
-  /** 说一句教练的话：先上字幕（speaking），TTS 结束 / 不可用时回到聆听 */
-  function onCoachText(text, { speak = true } = {}) {
+  /**
+   * 说一句教练的话：先上字幕（speaking），TTS 结束 / 不可用时回到聆听。
+   *
+   * `source` 只是诊断用（`cmd` 命令快车道 / `confirm` 确认问句 / `tool` 工具回合 /
+   * `llm` 自由对话 / `intro` 自我介绍），日志里 `session:say {by}` 一眼看出
+   * 「这一句是哪种回合的确认语」—— 用户反馈「命令的确认语没声音」就是靠它对账。
+   */
+  function onCoachText(text, { speak = true, source = 'llm' } = {}) {
     const body = String(text == null ? '' : text).trim();
     if (!body || !enabled || state === 'off') return false;
     coachText = body;
@@ -479,6 +566,12 @@ export function createVoiceSession({
     const myEpoch = ++epoch;
     // 静音时只上字幕：和 speak:false 同一条路径（不占用 speaking 状态）
     const shouldSpeak = speak !== false && !muted;
+    note('session:say', {
+      by: String(source || 'llm'),
+      chars: body.length,
+      speak: speak !== false,
+      muted,
+    });
 
     if (!shouldSpeak) {
       // 自我介绍 / 收尾这类「只显示不念」的台词：不占用 speaking 状态
@@ -491,17 +584,34 @@ export function createVoiceSession({
     let spoke = false;
     try {
       spoke = tts ? tts.speak(body, {
-        onEnd: () => finishSpeaking(myEpoch),
-        onError: () => finishSpeaking(myEpoch),
+        onEnd: () => finishSpeaking(myEpoch, 'tts-end'),
+        onError: () => finishSpeaking(myEpoch, 'tts-error'),
       }) : false;
     } catch {
       spoke = false;
     }
-    if (!spoke) {
-      // 没有 speechSynthesis：只出字幕，留一段可读时间再回到聆听
-      const hold = Math.max(1200, Math.min(6000, body.length * 160));
-      speakTimer = setTimer(() => finishSpeaking(myEpoch), hold);
-    }
+    /**
+     * **无论 tts.speak() 返回什么，都挂一个看门狗**（这是「说完一句就再也不识别」的根因修复）：
+     * 从前只有 `spoke === false` 才计时，一旦 `spoke === true` 而 onEnd 没回来
+     * （流式朗读卡在等响应流结束 —— 日志里 `tts:first-audio` 之后没有 `tts:say`），
+     * 状态机就永远停在 `speaking`，`onUserText()` 把用户后面每一句 final 都丢掉。
+     * 现在：没在播 → 留一段可读时间；在播 → 到点先停 TTS 再回 listening，并记诊断。
+     */
+    const hold = spoke
+      ? speakHoldMs(body, { min: speakMinMsValue, max: speakMaxMsValue })
+      : Math.max(1200, Math.min(6000, body.length * 160));
+    speakTimer = armTimer(() => {
+      if (myEpoch !== epoch || state !== 'speaking') return;
+      if (spoke) {
+        note('session:speak-timeout', {
+          ms: hold,
+          chars: body.length,
+          by: String(source || 'llm'),
+        });
+        try { tts?.cancel?.(); } catch { /* ignore */ }
+      }
+      finishSpeaking(myEpoch, spoke ? 'timeout' : 'hold');
+    }, hold);
     return true;
   }
 
@@ -536,7 +646,29 @@ export function createVoiceSession({
       return false;
     }
     if (!body) return false;
-    if (!enabled || state !== 'listening' || paused) return false;
+    if (!enabled) return false;
+    if (paused) {
+      // 页面隐藏 / 用户暂停期间：不处理，但要留证据（下次看日志能区分「没听到」和「暂停了不处理」）
+      note('session:drop', { state, paused: true, chars: body.length });
+      return false;
+    }
+    /**
+     * 教练正在念（`speaking`）时用户说完整了一句：**这就是插话打断**（P3.4）。
+     * 先按 P3.4 的规则停语音、回 `listening`，再照常处理这句话。
+     *
+     * 从前这里直接 `return false`（丢掉）—— 一旦 TTS 的 onEnd 没回来、状态机停在
+     * `speaking`（用户日志里那一整段），用户后面说的每一句就都被静默丢掉，
+     * 表现正是「之后的话好像都没有识别」。现在「说话中听到一句完整的」永远有救。
+     */
+    if (state === 'speaking') {
+      note('session:barge-final', { chars: body.length });
+      interrupt('barge-final');
+    }
+    if (state !== 'listening') {
+      // 还在 thinking（上一句的回复没回来）/ paused：这一句确实处理不了，但要留证据
+      note('session:drop', { state, chars: body.length });
+      return false;
+    }
     userText = body;
     interimText = '';
     coachText = '';
@@ -599,7 +731,9 @@ export function createVoiceSession({
           fail('llm');
           return;
         }
-        onCoachText(String(answer));
+        // 工具回合的回复也走同一条 TTS 路（`by:'tool'`，日志里和快车道的 `by:'cmd'` 分开）
+        const by = askedConfirm ? 'confirm' : (actionsAck ? 'tool' : 'llm');
+        onCoachText(String(answer), { source: by });
       }).catch((err) => {
         clearThinkSlow();
         fail('llm', err);
@@ -627,6 +761,7 @@ export function createVoiceSession({
     interimText = '';
     coachText = '';
     setState('listening');
+    note('session:start', { state });
 
     try {
       if (mic) await mic.open();
@@ -659,8 +794,9 @@ export function createVoiceSession({
    * 「教练那句话的字幕照常留在屏幕上，只是语音停了」），ASR 也一直在听 ——
    * 用户接着说的那句 final 会照常走 `thinking`。
    */
-  function interrupt() {
+  function interrupt(by = 'interrupt') {
     if (!enabled || paused || state !== 'speaking') return snapshot();
+    note('session:interrupt', { by: String(by) });
     epoch += 1;                     // 让这句话残留的 TTS 回调（onEnd / onError）失效
     if (speakTimer !== null) {
       try { clearTimer(speakTimer); } catch { /* ignore */ }
@@ -672,15 +808,23 @@ export function createVoiceSession({
     return emit();
   }
 
-  /** 关闭：任意状态 → off；停 TTS、停识别、释放麦克风 */
-  function stop() {    epoch += 1;
+  /**
+   * 关闭：任意状态 → off；停 TTS、停识别、释放麦克风。
+   *
+   * `by` 只用于诊断（`user` = Ctrl+I / 设置里关掉、`pagehide` = 页面卸载、
+   * `destroy` = 销毁）：日志里 `session:stop {by}` + `mic:release {reason}` +
+   * `ws:close {reason}` 三处对得上，下次就能一眼看出「是谁关的会话」。
+   */
+  function stop(by = 'user') {
+    note('session:stop', { by: String(by), state });
+    epoch += 1;
     clearPending();
     clearTimers();
     clearSilence();
     enabled = false;
     paused = false;
-    releaseAudio();
-    try { mic?.close?.(); } catch { /* ignore */ }
+    releaseAudio(by);
+    try { mic?.close?.(String(by)); } catch { /* ignore */ }
     userText = '';
     interimText = '';
     coachText = '';
@@ -692,13 +836,14 @@ export function createVoiceSession({
   }
 
   /** 页面隐藏：暂停聆听 / 停掉正在念的那句（麦克风保持，回到前台直接恢复） */
-  function pause() {
+  function pause(by = 'hidden') {
     if (!enabled || state === 'off' || state === 'error' || paused) return snapshot();
+    note('session:pause', { by: String(by), state });
     epoch += 1;
     clearPending();
     clearTimers();
     clearSilence();
-    releaseAudio();
+    releaseAudio(by);
     paused = true;
     notice = null;
     state = 'listening';
@@ -708,6 +853,7 @@ export function createVoiceSession({
   /** 回到前台：如果用户还开着，就重新开始聆听 */
   function resume() {
     if (!enabled || !paused || state === 'off' || state === 'error') return snapshot();
+    note('session:resume', {});
     paused = false;
     state = 'listening';
     emit();
@@ -725,7 +871,7 @@ export function createVoiceSession({
   }
 
   function destroy() {
-    stop();
+    stop('destroy');
     listeners.clear();
   }
 

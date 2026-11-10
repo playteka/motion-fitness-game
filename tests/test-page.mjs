@@ -2340,7 +2340,7 @@ console.log('\n[10] 对话弹幕：#danmakuLayer 在舞台内 / 不挡点击 / z
     && /coachDiagTts/.test(coachSrc));
   ok('app.js 接线 createBargeIn：会话层 onInterim 旁路 → 打断 → 回 listening',
     /createBargeIn\(\{/.test(app) && /onInterim:\s*\(text\)\s*=>\s*bargeIn\.onPartial/.test(app)
-    && /onInterrupt:\s*\(\)\s*=>\s*voice\.interrupt\(\)/.test(app));
+    && /onInterrupt:\s*\(\)\s*=>\s*voice\.interrupt\(/.test(app));
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
