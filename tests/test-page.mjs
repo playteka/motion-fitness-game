@@ -2241,8 +2241,13 @@ console.log('\n[10] 对话弹幕：#danmakuLayer 在舞台内 / 不挡点击 / z
     && zOf(cornerRule) === 6 && zOf(modalRule) === 60,
     JSON.stringify({ danmaku: zOf(layerRule), menu: zOf(menuRule), corner: zOf(cornerRule), modal: zOf(modalRule) }));
 
-  ok('两种颜色走令牌：用户青 --danmaku-user:#38bdf8 / 教练薄荷绿 --danmaku-coach:#34e5c4',
-    /--danmaku-user:\s*#38bdf8/.test(code) && /--danmaku-coach:\s*#34e5c4/.test(code));
+  // 用户要求：颜色更鲜明（青 #3ff0ff / 薄荷绿 #7cffd4）
+  ok('两种颜色走令牌且更鲜明：用户 --danmaku-user:#3ff0ff / 教练 --danmaku-coach:#7cffd4',
+    /--danmaku-user:\s*#3ff0ff/.test(code) && /--danmaku-coach:\s*#7cffd4/.test(code));
+  // 用户要求：字号加大（≈关节角度标签的 1.6 倍）+ 移速更慢（11s）
+  ok('弹幕字号加大（≥18px）且飞行更慢（--danmaku-flight: 11s）',
+    /\.danmaku\s*\{[^}]*font-size:\s*clamp\(18px/.test(code)
+    && /--danmaku-flight:\s*11s/.test(code));
   ok('4 条轨道的定位类都在（.danmaku--lane-0…3，最高一条 74% 仍在上半屏内）',
     [0, 1, 2, 3].every((i) => new RegExp(`\\.danmaku--lane-${i}\\s*\\{\\s*top:\\s*\\d+%`).test(code))
     && /\.danmaku--lane-3\s*\{\s*top:\s*74%/.test(code));

@@ -29,9 +29,9 @@ export const DANMAKU_QUEUE_MAX = 12;
 /** 同一句（同 kind + 同 text）在这个窗口内不重复弹 */
 export const DANMAKU_DEDUPE_MS = 1500;
 /** 一条弹幕从右飞到左的时长（CSS 的 --danmaku-flight 与这里同一个数） */
-export const DANMAKU_FLIGHT_MS = 7000;
+export const DANMAKU_FLIGHT_MS = 11000;
 /** 同一条轨道上两条弹幕的最小间隔（避免首尾相接糊成一片） */
-export const DANMAKU_LANE_GAP_MS = 2200;
+export const DANMAKU_LANE_GAP_MS = 2800;
 /** 减少动效时最多留几行（用户口径：静态两行） */
 export const DANMAKU_STATIC_MAX = 2;
 

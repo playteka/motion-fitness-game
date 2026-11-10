@@ -18,10 +18,10 @@
    * 一处定义：`.danmaku--user` / `.danmaku--coach` / 底部「最近一句」都引用它，
    * src/voice/danmaku.js 的 DANMAKU_COLORS 是同一组值（测试会对照）。
    */
-  --danmaku-user: #38bdf8;
-  --danmaku-coach: #34e5c4;
+  --danmaku-user: #3ff0ff;   /* 更亮的青（用户）*/
+  --danmaku-coach: #7cffd4;  /* 更亮的薄荷绿（教练）*/
   /** 一条弹幕飞过舞台的时长（与 danmaku.js 的 DANMAKU_FLIGHT_MS = 7000 对应） */
-  --danmaku-flight: 7s;
+  --danmaku-flight: 11s;   /* 移速更慢（用户要求）*/
   --radius: 16px;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
   /**
@@ -415,17 +415,19 @@ kbd {
   position: absolute;
   left: 100%;
   max-width: 100%;
-  padding: 2px 10px;
+  padding: 4px 14px;
   border-radius: 999px;
-  background: rgba(5, 10, 18, 0.5);
+  background: rgba(5, 10, 18, 0.42);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  font-size: clamp(12px, 1.15vw, 15px);
-  font-weight: 700;
+  /* 用户要求：弹幕字号加大到与「关节角度标签」相当 —— 角度标签是 canvas 上的 base*11px，
+     这里放大到 clamp(18px, 1.9vw, 26px)（≈ 角度标签的 1.6~1.7 倍，一眼能看清）*/
+  font-size: clamp(18px, 1.9vw, 26px);
+  font-weight: 800;
   line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9), 0 0 14px currentColor;
   will-change: left;
   animation: danmakuFly var(--danmaku-flight) linear forwards;
 }
