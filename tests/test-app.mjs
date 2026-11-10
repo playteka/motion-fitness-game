@@ -9068,6 +9068,89 @@ console.log('\n[19] P3.2 命令快车道：喂一句话 → 界面真的变了')
       state: api.state.voice.state, panel: elements.get('coachPanel').hidden }));
   await finishSpeech(utter);
   api.showHome();
+
+  /* ---- ⑫ 用户反馈钉住（2026-11-10「听不到任何声音 + 第一句之后都没识别」）：
+   *   ① 命令回合的确认语**也走 TTS**（弹幕 + 朗读都要有），诊断里有 tts:*；
+   *   ② final 之后仍在 listening，麦克风 / 识别都没停（final 只上屏 + 触发回复）；
+   *   ③ 只有明确关掉（Ctrl+I / 设置 = user）/ 页面卸载（pagehide）/ 页面隐藏（pause）才会停。 ---- */
+  {
+    await api.setCoachEnabled(true);
+    await flush();
+    api.openExercise('squat');
+    api.state.session = 'running';
+    api.setTarget(20, 'squat');
+    await flush();
+
+    const seen = [];
+    const unsub = api.coachDiag.subscribe((snap) => seen.push(String(snap.lastType || '')));
+    // 这一套测试走的是「浏览器自带识别」那一路（Node 里没有 WebSocket / AudioContext）：
+    // 共享麦克风会按设计交给 SpeechRecognition，所以「还在听」要看识别器有没有被 stop，
+    // 而不是看 getUserMedia 那条轨道（volc 路由下才一直握着它）。
+    const rec = coachStubs.recognitions.at(-1);
+    const spokenBefore = coachStubs.utterances.length;
+
+    utter = await feed('设成 20 次');
+    const ackText = tC('coach.cmdAck.setTarget', { value: 20, unit: tC('ui.repsUnit') });
+    ok('⑫ 命令回合（「设成 20 次」）的确认语**真的走 TTS**（朗读队列收到这一句）',
+      coachStubs.utterances.length === spokenBefore + 1
+      && coachStubs.utterances.at(-1).text === ackText,
+      JSON.stringify({ before: spokenBefore, after: coachStubs.utterances.length,
+        last: coachStubs.utterances.at(-1)?.text, expect: ackText }));
+    ok('⑫ 同一回合也进了弹幕（文字反馈没丢）',
+      String(elements.get('danmakuLast').textContent).includes(ackText),
+      String(elements.get('danmakuLast').textContent));
+    ok('⑫ 诊断里出现 tts:* 与 session:say {by:cmd}（以后一眼看出「这回合走没走发声」）',
+      seen.some((x) => x.startsWith('tts:')) && seen.includes('session:say')
+      && api.coachDiag.snapshot().session.sayBy === 'cmd',
+      JSON.stringify({ seen: seen.slice(-10), sayBy: api.coachDiag.snapshot().session.sayBy }));
+
+    // 教练还在念的时候用户说下一句 → 当作插话处理，绝不静默丢弃
+    //（用户遇到的「第一句之后都没识别」正是卡在 speaking 时被丢掉的那一类）
+    ok('⑫ 前置：这一句还在念（speaking），ASR 没有被停',
+      api.state.voice.state === 'speaking' && rec && rec.stopped === 0,
+      JSON.stringify({ state: api.state.voice.state, stopped: rec && rec.stopped }));
+    api.voice.onUserText('加 5 个');
+    await flush();
+    ok('⑫ 教练说话中用户说的下一句照样处理（先插话打断再执行，不静默丢弃）',
+      api.state.settings.targets.squat === 25 && seen.includes('session:barge-final')
+      && api.state.voice.state === 'speaking',
+      JSON.stringify({ target: api.state.settings.targets.squat,
+        barge: seen.includes('session:barge-final'), state: api.state.voice.state }));
+    await finishSpeech(coachStubs.utterances.at(-1));
+    ok('⑫ 念完回 listening，识别器没被 stop（final 之后继续聆听，没有关会话）',
+      api.state.voice.state === 'listening' && api.state.voice.enabled === true
+      && rec && rec.stopped === 0,
+      JSON.stringify({ state: api.state.voice.state, enabled: api.state.voice.enabled,
+        stopped: rec && rec.stopped }));
+    ok('⑫ 诊断：session:speak-end {by:tts-end}（这句是正常念完的）',
+      api.coachDiag.snapshot().session.endBy === 'tts-end',
+      JSON.stringify(api.coachDiag.snapshot().session));
+
+    // 页面隐藏：允许暂停聆听（pause），但会话还在、麦克风不用重新授权
+    api.voice.pause('hidden');
+    await flush();
+    ok('⑫ 页面隐藏 → pause（by=hidden）：会话还在、还是 enabled（回前台直接恢复，不重新授权）',
+      api.state.voice.paused === true && api.state.voice.enabled === true
+      && seen.includes('session:pause'),
+      JSON.stringify({ paused: api.state.voice.paused, enabled: api.state.voice.enabled,
+        seen: seen.slice(-6) }));
+    api.voice.resume();
+    await flush();
+    ok('⑫ 回到前台 → resume 恢复聆听', api.state.voice.paused === false
+      && api.state.voice.state === 'listening',
+      JSON.stringify({ paused: api.state.voice.paused, state: api.state.voice.state }));
+
+    // 明确关掉（Ctrl+I / 设置）才允许真的 stop：释放麦克风，并留下 by=user
+    await api.setCoachEnabled(false);
+    await flush();
+    ok('⑫ 只有明确关掉（Ctrl+I / 设置）才 stop：session:stop {by:user} + 识别器被停',
+      api.state.voice.state === 'off'
+      && api.coachDiag.snapshot().session.stopBy === 'user'
+      && rec && rec.stopped > 0 && seen.includes('session:stop'),
+      JSON.stringify({ state: api.state.voice.state,
+        stopBy: api.coachDiag.snapshot().session.stopBy, stopped: rec && rec.stopped }));
+    unsub();
+  }
 }
 
 console.log('\n[20] P3.3 自由对话：/llm → 工具调用真的改界面（走现有 handler）');
