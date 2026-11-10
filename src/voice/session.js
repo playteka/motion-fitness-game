@@ -229,8 +229,8 @@ export function createVoiceSession({
     return snapshot();
   }
 
-  /** run() 的返回值 → 一句字幕（key 走 t()，也允许直接给 text） */
-  function sayAck(result) {
+  /** run() 的返回值 → 一句字幕文本（key 走 t()，也允许直接给 text） */
+  function ackText(result) {
     let payload = result;
     if (typeof payload === 'string') payload = { key: payload };
     if (!payload || typeof payload !== 'object') payload = { key: 'coach.cmdAck.done' };
@@ -244,7 +244,12 @@ export function createVoiceSession({
       text = '';
     }
     if (!text || text === payload.key) text = String(t('coach.cmdAck.done'));
-    return onCoachText(text);
+    return text;
+  }
+
+  /** run() 的返回值 → 真的把这句话念出来 */
+  function sayAck(result) {
+    return onCoachText(ackText(result));
   }
 
   /** 最近执行过的 intent（P3.3 Agent context 的 signals.recentCommands；只在内存里，最多 5 条） */
@@ -281,6 +286,7 @@ export function createVoiceSession({
     const list = Array.isArray(actions) ? actions.slice(0, VOICE_LLM_MAX_ACTIONS) : [];
     const done = [];
     let askedConfirm = false;
+    let ack = null;
     for (const action of list) {
       if (!action || typeof action !== 'object') continue;
       const intent = String(action.intent || '');
@@ -297,10 +303,10 @@ export function createVoiceSession({
         continue;
       }
       delete args.confirm;
-      runCommand(cmd, args);
+      ack = runCommand(cmd, args);
       done.push(intent);
     }
-    return { done, askedConfirm };
+    return { done, askedConfirm, ack };
   }
 
   /**
@@ -559,9 +565,11 @@ export function createVoiceSession({
          * `exit` 没带 confirm 时只问一次（`askedConfirm`），绝不擅自退出。
          */
         let askedConfirm = false;
+        let actionsAck = null;
         if (res && typeof res === 'object' && Array.isArray(res.actions) && res.actions.length) {
           const ran = runActions(res.actions);
           askedConfirm = ran.askedConfirm;
+          actionsAck = ran.ack;
         }
         /**
          * 没匹配上命令、LLM 也只回了「通用鼓励」时，换成一句**能照着说**的提示：
@@ -573,6 +581,8 @@ export function createVoiceSession({
           answer = t('coach.reply.fallback');
         }
         if (askedConfirm) answer = t('coach.confirm.ask');
+        // 模型只调了工具、没给文字：用**命令表自己的短确认**（比编一句「好，这就办」准确）
+        if (!answer && actionsAck) answer = ackText(actionsAck);
         if (!answer || !String(answer).trim()) {
           fail('llm');
           return;

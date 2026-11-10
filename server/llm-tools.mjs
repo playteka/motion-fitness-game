@@ -234,8 +234,10 @@ export const LLM_TOOL_DEFS = Object.freeze([
   Object.freeze({
     name: 'report_progress',
     intents: ['reportProgress'],
-    zh: '读出当前这一组的次数 / 秒数 / 分数（回答「我做了几个」）。',
-    en: 'Report current reps / hold seconds / score.',
+    zh: '把当前次数 / 秒数 / 分数**念给用户听**。只在用户明确要求「报一下 / 说给我听」时用；'
+      + '问「做得怎么样 / 哪里没做好」时请直接用 state 里的数字回答，不要调这个工具。',
+    en: 'Read the current reps / hold seconds / score **aloud**. Only when the user explicitly asks you to read it out; '
+      + 'for "how did I do / what was wrong" answer directly from the state instead of calling this tool.',
     parameters: schema(),
     map: () => ({ intent: 'reportProgress', args: {} }),
   }),
@@ -425,7 +427,9 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
     '   If unsure, ask a short clarifying question instead of guessing.',
     '5. 训练中话要短：一句话，口语，不超过 40 字；不要 Markdown / 列表 / emoji（会被 TTS 念出来）。',
     '   Keep it to one short spoken sentence (no markdown / lists / emoji).',
-    '6. 用户问「刚才哪里没做好」时，看 performance.keyframes / signals.keyframeHitRate，指出 1~2 个具体差距。',
+    '6. 用户问「刚才哪里没做好 / 这组怎么样」时：直接用 performance.keyframes / signals.keyframeHitRate 里的数字回答，'
+      + '**不要**调 report_progress（那是「念给我听」才用的）。',
+    '   For "how did I do / what went wrong", answer from performance / signals directly; do not call report_progress.',
     '7. 退出训练（exit_workout）必须先问一次；只有用户明确说「确认退出 / confirm exit」才带 confirm:true。',
     '8. 一次最多调用 3 个工具；改完目标不需要再调一次 report_progress。',
     `9. 用用户的语言回答 / Answer in: ${lang === 'en' ? 'English' : '中文'}。`,

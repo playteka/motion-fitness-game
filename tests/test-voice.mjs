@@ -79,7 +79,7 @@ import {
 } from '../server/llm-provider.mjs';
 import {
   LLM_TOOLS, LLM_TOOL_DEFS, TOOL_INTENT_MAP, TOOLED_INTENTS, UNCOVERED_INTENTS,
-  UNKNOWN_TOOLED_INTENTS, MAX_TOOL_CALLS, CONFIRM_PROMPT, EXERCISE_IDS,
+  UNKNOWN_TOOLED_INTENTS, MAX_TOOL_CALLS, CONFIRM_PROMPT, EMPTY_REPLY, EXERCISE_IDS,
   actionsFromToolCalls, toolHelpRows, resolveExerciseId,
 } from '../server/llm-tools.mjs';
 import { LOCALES, setLang, t } from '../src/i18n.js';
@@ -3937,6 +3937,55 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
     const noCtx = await request('POST', LLM_PATH, { text: '随便说一句', locale: 'zh', context: 'not-an-object' });
     ok('context 缺失 / 类型不对也不 500（服务端容错）', noCtx.status === 200 && JSON.parse(noCtx.body).ok === true);
 
+    /* 只调工具、没说话 → reply 留空（前端用命令表的短确认，不编「好，这就办」） */
+    {
+      const toolOnly = createMockLlmProvider({
+        script: [{ toolCalls: [{ name: 'start_workout', args: { exerciseId: 'plank', target: 30 } }] }],
+      });
+      const routeT = createLlmRoutes({ provider: toolOnly, config: cfg, guard: createLlmGuard(), logger: () => {} });
+      const srvT = httpMod.createServer(routeT);
+      await new Promise((r) => srvT.listen(0, '127.0.0.1', r));
+      const got = await new Promise((resolve, reject) => {
+        const req = httpMod.request({
+          host: '127.0.0.1', port: srvT.address().port, path: LLM_PATH, method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }, (r) => {
+          const chunks = [];
+          r.on('data', (c) => chunks.push(c));
+          r.on('end', () => resolve({ status: r.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+        });
+        req.on('error', reject);
+        req.end(JSON.stringify({ text: '换成平板支撑 30 秒', locale: 'zh' }));
+      });
+      const j = JSON.parse(got.body);
+      ok('模型只调工具没说话 → reply 留空（会话层改用命令表自己的短确认），actions 照常返回',
+        got.status === 200 && j.reply === '' && j.actions.length === 1 && j.actions[0].intent === 'startWorkout',
+        got.body);
+      await new Promise((r) => srvT.close(r));
+    }
+    /* 什么都没给 → 服务端补一句「没听懂」，不返回空回复 */
+    {
+      const emptyProvider = createMockLlmProvider({ script: [{ text: '' }] });
+      const routeE = createLlmRoutes({ provider: emptyProvider, config: cfg, guard: createLlmGuard(), logger: () => {} });
+      const srvE = httpMod.createServer(routeE);
+      await new Promise((r) => srvE.listen(0, '127.0.0.1', r));
+      const got = await new Promise((resolve, reject) => {
+        const req = httpMod.request({
+          host: '127.0.0.1', port: srvE.address().port, path: LLM_PATH, method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }, (r) => {
+          const chunks = [];
+          r.on('data', (c) => chunks.push(c));
+          r.on('end', () => resolve({ status: r.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+        });
+        req.on('error', reject);
+        req.end(JSON.stringify({ text: '……', locale: 'zh' }));
+      });
+      ok('模型既没说话也没调工具 → 服务端补一句「没听懂」（绝不返回空 reply）',
+        got.status === 200 && JSON.parse(got.body).reply === EMPTY_REPLY.zh, got.body);
+      await new Promise((r) => srvE.close(r));
+    }
+
     // 坏 JSON / 空文本 / GET 方法
     const badJson = await new Promise((resolve, reject) => {
       const req = httpMod.request({
@@ -4316,6 +4365,20 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
     ok('回答回来 → thinkingSlow 立刻收掉', s3.snapshot().thinkingSlow === false);
     s3.stop();
     ok('THINK_SLOW_MS 默认就是 1.5 秒（用户口径）', THINK_SLOW_MS === 1500);
+
+    // 模型只调了工具、没有文字：用那条命令自己的短确认（不是通用的「好，这就办」）
+    const s4 = createVoiceSession({
+      mic: fakeMic(), asr: fakeAsr(), tts: fakeTts(),
+      commands: [{ intent: 'reportProgress', run: () => ({ key: 'coach.cmdAck.done' }) }],
+      llm: { reply: () => ({ text: '', actions: [{ intent: 'reportProgress', args: {} }] }) },
+      commandCtx: {}, thinkDelay: 0,
+    });
+    await s4.start();
+    s4.onUserText('报一下');
+    await tick(8);
+    ok('模型只调工具、没给文字 → 会话层用命令表那条命令的短确认（数字与措辞都来自一处定义）',
+      s4.snapshot().coachText === t('coach.cmdAck.done'), s4.snapshot().coachText);
+    s4.stop();
   }
 }
 
