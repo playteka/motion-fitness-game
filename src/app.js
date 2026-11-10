@@ -44,6 +44,8 @@ import { createDiag } from './voice/diag.js';
 import { createSelfTest } from './voice/selftest.js';
 // P3.2 命令快车道：命令表是唯一来源（说法 / 帮助面板 / 测试都从它来）
 import { COMMANDS, commandHelpRows } from './voice/commands.js';
+// P3.3 自由对话：POST /llm 的客户端（密钥在服务端；这里只有同源的 /llm）
+import { createLlmClient, buildAgentContext } from './voice/llm.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -127,6 +129,12 @@ const DEFAULT_SETTINGS = {
   ttsSource: TTS_DEFAULT_SOURCE,
   /** 语速：传给 /tts 的 rate（0.5~2，界面给 0.8~1.5 六档） */
   ttsRate: 1,
+  /**
+   * 自由对话（P3.3）：**默认开**。
+   * 关掉 = 只走命令快车道（命中就执行、没命中回罐头回复），**完全不发 /llm 请求**；
+   * 适合「不想花钱 / 不想把话发到云端」的用户。
+   */
+  freeChat: true,
 };
 
 const REP_TARGETS = [8, 12, 15, 20, 30];
@@ -245,6 +253,9 @@ const state = {
   stepSig: '',
   calibSig: '',
   lastScoreMilestone: 0,
+  /* P3.3 Agent context：最近被提醒过的几句话 / 「太快了」出现过几次（只在内存里） */
+  recentNudges: [],
+  tooFastCount: 0,
   // ---- 限时计数（开合跳）----
   timeUp: false,            // 时间到：这一组停止计次，等庆祝动画走完再结算
   timeCallsSaid: null,      // 已经报过哪几档剩余时间（45/30/15/5 秒各报一次）
@@ -349,10 +360,65 @@ const voiceCommandCtx = {
   // 语音 / 查询
   setCoachMuted, setCoachEnabled, changeLang, getStateSnapshot,
 };
+/**
+ * ---------------- P3.3 自由对话（LLM + 工具调用） ----------------
+ *
+ * 顺序（用户要求，和 session.js 里那条注释一一对应）：
+ *   ① 命令快车道（`parseCommand` + 命令表）—— 命中就直接执行，不发请求、不花钱；
+ *   ② 没命中 → `POST /llm`（带上 `getLlmContext()` 的状态快照）；
+ *   ③ 成功 → 会话层拿 `actions` 的 `intent` 去命令表里跑**现有 handler**，
+ *      再把 `reply` 当教练说的话（弹幕 + TTS 都在 session → coachTts 那条路上）；
+ *   ④ 失败 / 超时 / 503 / 429 → 记 `llm:fallback`，回退 P3.0 的罐头回复，绝不崩。
+ *
+ * 密钥在服务端（`coach.env`），前端只知道同源的 `/llm`；这里也不打印任何状态。
+ */
+const coachLlmMock = createLlm();
+const coachLlmClient = createLlmClient({
+  diag: coachDiag,
+  // 浏览器里走 window.fetch（同源 /llm）；Node 集成测试用 __mfg.llmClient.setFetch() 换掉
+  fetchImpl: (...args) => {
+    const f = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch : null;
+    if (!f) throw new Error('fetch unavailable');
+    return f.apply(window, args);
+  },
+});
+
+/**
+ * 发给模型的**只读**状态快照（P3.3）。
+ *
+ * `getStateSnapshot()` 里放**原始事实**（动作 / 相位 / 关键帧 / 历史 / 提示…），
+ * `buildAgentContext()`（src/voice/llm.js，纯函数）再算成
+ * `now / session / performance / history / signals` 那份给 LLM 的结构 ——
+ * 分数 / 命中率 / 趋势全在前端算好，模型只负责解释与决策，不许自己编数。
+ */
+function getLlmContext(text = '') {
+  let snap = {};
+  try {
+    snap = getStateSnapshot();
+  } catch {
+    snap = {};
+  }
+  return buildAgentContext({ ...snap, utterance: String(text || ''), now: Date.now() });
+}
+
+/** 会话层用的 llm 适配器（自由对话关掉时就退回原来的 mock 罐头回复） */
+const voiceLlm = {
+  reply(text) {
+    if (!state.settings.freeChat) return coachLlmMock.reply(text);
+    return coachLlmClient
+      .respond(text, { locale: getLang(), context: getLlmContext(text) })
+      .then((res) => ({ text: res.reply, actions: res.actions }))
+      .catch((err) => {
+        coachDiag?.record?.('llm:fallback', { code: (err && err.code) || 'llm-error' });
+        return coachLlmMock.reply(text);
+      });
+  },
+};
+
 const voice = createVoiceSession({
   mic: coachMic,
   asr: coachAsr,
-  llm: createLlm(),
+  llm: voiceLlm,
   tts: coachTts,
   commandCtx: voiceCommandCtx,
   thinkDelay: 360,       // 让「正在想…」真的看得见，不然 thinking 一闪而过
@@ -535,6 +601,60 @@ function applyTtsSettings() {
   coachTts.setSource(state.settings.ttsSource);
   coachTts.setRate(state.settings.ttsRate);
   return { source: coachTts.source, rate: coachTts.rate };
+}
+
+/* ------------------------------------------------------------------ *
+ * P3.3 自由对话（LLM + 工具调用）
+ *
+ * 设置里只有一个开关「自由对话」：
+ *   开 → 命令快车道没命中的话，把这句话 + 当前状态发给 `POST /llm`；
+ *   关 → 完全不发请求，只用命令快车道 + 原来的罐头回复。
+ * 这里同时负责把 `/llm/health` 的 provider / model 显示在开关下面（**没有 key**）。
+ * ------------------------------------------------------------------ */
+
+/** 开关按钮与 state.settings.freeChat 对齐（打开设置弹窗、切换语言时都会调） */
+function syncFreeChatToggle() {
+  const btn = $('btnFreeChat');
+  if (btn) btn.setAttribute('aria-pressed', String(!!state.settings.freeChat));
+}
+
+/**
+ * 「自由对话：开 / 关」的唯一入口（默认开）。
+ * 关掉时顺手清掉对话记忆：下次打开不会带着关之前那几轮。
+ */
+function applyFreeChat(on) {
+  const next = !!on;
+  state.settings.freeChat = next;
+  saveSettings();
+  if (!next) coachLlmClient.reset();
+  syncFreeChatToggle();
+  return refreshLlmStatus();
+}
+
+/**
+ * 设置里的「当前 provider / model」那一行。
+ * 走 `GET /llm/health`（服务端只回 configured / provider / model / 护栏数值，**不含 key**）；
+ * 服务端没起 / 没配 key 都只显示一句说明，不报错、不弹窗。
+ */
+async function refreshLlmStatus() {
+  const el = $('llmStatus');
+  if (!el) return null;
+  if (!state.settings.freeChat) {
+    el.textContent = t('settings.freeChatOff');
+    el.hidden = false;
+    return null;
+  }
+  const health = await coachLlmClient.health();
+  if (!health) {
+    el.textContent = t('settings.freeChatNoServer');
+    el.hidden = false;
+    return null;
+  }
+  el.textContent = health.configured
+    ? t('settings.freeChatStatus', { provider: health.provider, model: health.model })
+    : t('settings.freeChatNotConfigured', { provider: health.provider, model: health.model });
+  el.hidden = false;
+  return health;
 }
 function loadList(key) {
   try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -886,6 +1006,9 @@ function openSettings() {
   renderPoseLogStatus();
   // AI 教练开关：Ctrl+I 在弹窗外面也能改状态，打开弹窗时按最新值对齐一次
   syncCoachToggle(!!state.settings.coachEnabled);
+  // 自由对话（P3.3）：开关 + 当前的 provider / model（health 是异步的，打开弹窗就刷一次）
+  syncFreeChatToggle();
+  refreshLlmStatus();
   const first = modal.querySelector('select, button');
   if (first) first.focus({ preventScroll: true });
 }
@@ -5040,13 +5163,58 @@ function updateHud() {
  * 命令的 `run()` 不许直接读 `state` / 改 `state`，只能拿这一份快照做判断：
  * 「暂停」要知道现在是不是 running、「我做了几个」要读次数与分数、
  * 「第三个」要知道菜单开没开。这里只读，不触发任何刷新。
+ *
+ * P3.3 Agent 化（用户要求）后这份快照也是 LLM context 的**原始事实来源**：
+ * 除了命令要用的字段，还带上「现在在哪个界面 / 这一组的关键帧 / 最近练过什么 /
+ * 最近被提示了什么 / 今天练了多少」—— 再由 `buildAgentContext()` 算成结构化 context。
  */
 function getStateSnapshot() {
   const ex = localizedExercise(state.exerciseId);
   const det = state.detector;
+  /* 关键帧（判据）进度：名称 / 是否达标 / 得分 / 满分（只给这一组，不塞原始关节角度） */
+  const stages = Array.isArray(state.criteriaStages) ? state.criteriaStages : [];
+  const criteria = stages.map((stage, i) => {
+    let name = '';
+    let condition = '';
+    try {
+      const text = stageText(stage) || {};
+      name = text.short || '';
+      condition = text.cond || '';
+    } catch { /* 判据取不到就不带这一项 */ }
+    const max = state.criteriaMax?.[i] || null;
+    return {
+      name,
+      condition,
+      hit: i <= state.criteriaIdx,
+      pts: Number(state.criteriaPts?.[i]) || 0,
+      max: max ? (Number(max.points) || 0) + (Number(max.bonus) || 0) : 0,
+    };
+  });
+  /* 最近练过的几组（localStorage 里的记录，最新在前；名字按当前语言取） */
+  const history = loadList(STORE.history).slice(0, 10).map((rec) => {
+    const meta = localizedExercise(rec.exerciseId);
+    return {
+      exerciseId: rec.exerciseId,
+      name: meta ? meta.name : String(rec.exerciseId || ''),
+      kind: rec.kind,
+      at: Number(rec.at) || 0,
+      value: Number(rec.value) || 0,
+      target: Number(rec.target) || 0,
+      score: Number(rec.score) || 0,
+      seconds: Number(rec.seconds) || 0,
+    };
+  });
+  /* 历史最佳分（各动作最好成绩里最高的那个） */
+  let bestScore = 0;
+  try {
+    for (const rec of Object.values(loadRecords() || {})) {
+      bestScore = Math.max(bestScore, Number(rec && rec.score) || 0);
+    }
+  } catch { /* 记录读不出来就不带最佳分 */ }
   return {
     exerciseId: state.exerciseId,
     exerciseName: ex ? ex.name : '',
+    kind: ex ? ex.kind : 'rep',
     target: state.target,
     targetUnit: ex ? ex.targetUnit : '',
     session: state.session,
@@ -5066,6 +5234,22 @@ function getStateSnapshot() {
     voiceHelpOpen: voiceHelpOpen(),
     lang: getLang(),
     muted: coachMuted,
+    /* ---------------- P3.3：给 Agent context 的原始事实 ---------------- */
+    view: state.homeMode ? 'home' : (state.menuMode ? 'menu' : 'workout'),
+    fullscreen: stageFullscreenOn(),
+    coachOn: !!state.voice?.enabled,
+    dialogue: state.settings.dialogue !== 'off',
+    ttsSource: state.settings.ttsSource,
+    freeChat: !!state.settings.freeChat,
+    timed: !!(ex && ex.timed),
+    criteria,
+    gateOk: det ? det.gateOk !== false : true,
+    gateName: (det && det.gateName) || '',
+    tooFastCount: Number(state.tooFastCount) || 0,
+    nudges: Array.isArray(state.recentNudges) ? state.recentNudges.slice(-5) : [],
+    recentCommands: Array.isArray(state.voice?.recentCommands) ? state.voice.recentCommands.slice() : [],
+    history,
+    bestScore,
   };
 }
 
@@ -6024,6 +6208,17 @@ function handleEvents(events, now = performance.now()) {
     } else if (ev.type === 'cue') {
       state.lastCueAt = performance.now();
       state.lastCueLevel = ev.level === 'info' ? 'warn' : ev.level;
+      // P3.3 Agent context：记下「刚刚提醒过什么」给 LLM（最多留 5 句，不落盘）
+      if (ev.key) {
+        const nudge = t(ev.key, ev.params);
+        if (nudge) {
+          if (!Array.isArray(state.recentNudges)) state.recentNudges = [];
+          state.recentNudges.push(String(nudge).slice(0, 60));
+          while (state.recentNudges.length > 5) state.recentNudges.shift();
+        }
+      }
+      // 「太快了」提示单独计数（LLM 回答「哪里没做好」时能说「你有一拍太快」）
+      if (ev.code === 'tooFast') state.tooFastCount = (state.tooFastCount || 0) + 1;
       // 姿势纠正：**适度即可**。统一走教练的大间隔 + 同一句话长去重，
       // 而且动作已经做起来之后（组内有效次数 ≥ 3）进一步降低纠正频率，
       // 把话语权留给报数与激励。
@@ -7202,6 +7397,15 @@ function bindUI() {
         setCoachEnabled(v);   // 打开 = 请求麦克风；关闭 = 停 TTS + 释放轨道
       });
     }
+    // P3.3 自由对话：开 / 关（默认开）。关掉之后**完全不发 /llm 请求**，只走命令快车道
+    const freeBtn = $('btnFreeChat');
+    if (freeBtn) {
+      freeBtn.setAttribute('aria-pressed', String(!!state.settings.freeChat));
+      freeBtn.addEventListener('click', () => {
+        const v = !(freeBtn.getAttribute('aria-pressed') === 'true');
+        applyFreeChat(v);
+      });
+    }
     // 「语音命令一览」：设置里那一行入口 + 弹窗自己的关闭方式（× / 点遮罩 / Esc）
     $('btnVoiceHelp')?.addEventListener('click', () => openVoiceHelp());
     $('btnCloseVoiceHelp')?.addEventListener('click', () => closeVoiceHelp());
@@ -7750,10 +7954,18 @@ window.__mfg = {
   //   COMMANDS      : 唯一来源（intent + 中英说法 + run）
   //   voiceCommandCtx: 注入给 session 的「现有函数」表（测试可以直接替换某一项做拦截）
   //   openVoiceHelp / closeVoiceHelp / renderVoiceHelp: 「我能说什么」面板
-  //   getStateSnapshot: 命令只读 state 的唯一入口
+  //   getStateSnapshot: 命令只读 state 的唯一入口（P3.3 起也是 LLM context 的原始事实来源）
   COMMANDS, commandHelpRows, voiceCommandCtx,
   setCoachMuted, getStateSnapshot, pickMenuItem,
   voiceHelpOpen, openVoiceHelp, closeVoiceHelp, renderVoiceHelp,
+  // P3.3 自由对话：/llm 客户端 + context 组装 + 设置开关
+  //   llmClient        : createLlmClient()（测试用 setFetch 换掉，不联网）
+  //   voiceLlm         : 会话层实际用的适配器（reply → { text, actions }）
+  //   getLlmContext    : 一句话 + 当前状态 → 结构化 Agent context（P3.3 补充要求）
+  //   buildAgentContext: 纯函数（src/voice/llm.js 导出，测试直接喂快照）
+  //   applyFreeChat    : 设置里「自由对话」开关的唯一入口（关掉就完全不发 /llm）
+  llmClient: coachLlmClient, voiceLlm, llmMock: coachLlmMock,
+  getLlmContext, buildAgentContext, applyFreeChat, refreshLlmStatus, syncFreeChatToggle,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
   // 姿态模型加载（用户反馈「点开始就姿态模型加载失败」的修复点）：

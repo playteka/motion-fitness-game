@@ -216,7 +216,7 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
     if (mounted || !d) return api;
     for (const id of ['coachDock', 'coachRing', 'coachRingSvg', 'coachRingFill', 'coachRingIcon',
       'coachPanel', 'coachAvatar', 'coachStatus', 'coachSubtitles', 'coachYouText', 'coachCoachText',
-      'coachNotice', 'coachRoute', 'coachHint', 'coachDiagBtn', 'coachDiag', 'coachDiagClose',
+      'coachNotice', 'coachRoute', 'coachHint', 'coachThinking', 'coachDiagBtn', 'coachDiag', 'coachDiagClose',
       'coachDiagRoute', 'coachDiagWs', 'coachDiagFrames', 'coachDiagRate', 'coachDiagResults',
       'coachDiagError', 'coachDiagMic', 'coachDiagWorklet', 'btnVoiceSelfTestPanel', 'coachSelfTestMic',
       'coachSelfTestWs', 'coachSelfTestSend', 'coachSelfTestResult', 'coachSelfTestVolume',
@@ -531,6 +531,12 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
       el.coachNotice.textContent = noticeText;
     }
     if (el.coachHint) el.coachHint.textContent = t('coach.hint');
+    // P3.3：「教练在想…」——请求超过 1.5s 还没回来时，在状态环右边补一行小字
+    if (el.coachThinking) {
+      const shown = !!snap.thinkingSlow && state === 'thinking' && enabled;
+      el.coachThinking.hidden = !shown;
+      el.coachThinking.textContent = shown ? t('coach.thinkingSlow') : '';
+    }
     if (el.coachSubtitles) {
       el.coachSubtitles.setAttribute('aria-live', 'polite');
       el.coachSubtitles.setAttribute('aria-atomic', 'true');

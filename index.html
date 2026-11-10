@@ -207,6 +207,9 @@
               </svg>
               <span class="coach-ring-icon" id="coachRingIcon" aria-hidden="true"></span>
             </div>
+            <!-- P3.3：请求发出去 1.5s 还没回来 → 环旁边一行小字「教练在想…」
+                 （状态环本身已经切到 thinking，这行字负责解释「为什么还没回话」） -->
+            <p class="coach-thinking" id="coachThinking" role="status" hidden></p>
           </div>
           <div class="coach-panel" id="coachPanel" role="region" data-i18n-aria="coach.title" hidden>
             <div class="coach-head">
@@ -618,7 +621,13 @@
           <div class="toggle-grid">
             <button class="toggle" id="btnCoach" type="button" aria-pressed="false"
                     data-i18n="settings.coachToggle"></button>
+            <!-- P3.3 自由对话：默认开；关掉就只走命令快车道（完全不发 /llm 请求） -->
+            <button class="toggle" id="btnFreeChat" type="button" aria-pressed="true"
+                    data-i18n="settings.freeChatToggle"></button>
           </div>
+          <p class="modal-hint" data-i18n="settings.freeChatHint"></p>
+          <!-- 当前 provider / model（GET /llm/health；**不显示 key**），打开设置时刷新 -->
+          <p class="modal-hint" id="llmStatus" hidden></p>
           <!-- P3.2：语音命令一览（表格从 src/voice/commands.js 的命令表生成，一处定义） -->
           <div class="btn-row">
             <button class="ghost-btn" id="btnVoiceHelp" type="button"

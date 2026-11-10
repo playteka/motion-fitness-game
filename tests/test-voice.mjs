@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 
-import { createVoiceSession, VOICE_STATES, VOICE_NOTICE_KEYS, VOICE_ERROR_KEYS } from '../src/voice/session.js';
+import { createVoiceSession, VOICE_STATES, VOICE_NOTICE_KEYS, VOICE_ERROR_KEYS, THINK_SLOW_MS } from '../src/voice/session.js';
 import {
   parseCommand, cnToInt, normalizeText, isConfirmText, isCancelText,
 } from '../src/voice/parse.js';
@@ -64,6 +64,24 @@ import {
   sanitizeDetail,
 } from '../server/volc-protocol.mjs';
 import { createVolcSession, encodeClientMessage } from '../server/volc-asr.mjs';
+// P3.3 自由对话：服务端 LLM 适配 / 工具表 + 前端客户端 / Agent context（纯函数）
+import {
+  createLlmClient, buildAgentContext, trimAgentContext, scoreTrend, timeOfDayHint,
+  normalizeActions as normalizeLlmActions,
+  LLM_PATH as LLM_CLIENT_PATH, LLM_CLIENT_TIMEOUT_MS, LLM_HISTORY_TURNS,
+  AGENT_CONTEXT_MAX_CHARS,
+} from '../src/voice/llm.js';
+import {
+  LLM_PATH, LLM_HEALTH_PATH, LLM_TIMEOUT_MS, LLM_MAX_TOKENS, LLM_RATE_LIMIT,
+  LLM_RATE_WINDOW_MS, LLM_MAX_HISTORY_TURNS,
+  loadLlmConfig, createLlmGuard, createLlmProvider, createMockLlmProvider,
+  createLlmRoutes, buildLlmMessages, historyMessages, normalizeProviderName, llmHttpCode,
+} from '../server/llm-provider.mjs';
+import {
+  LLM_TOOLS, LLM_TOOL_DEFS, TOOL_INTENT_MAP, TOOLED_INTENTS, UNCOVERED_INTENTS,
+  UNKNOWN_TOOLED_INTENTS, MAX_TOOL_CALLS, CONFIRM_PROMPT, EXERCISE_IDS,
+  actionsFromToolCalls, toolHelpRows, resolveExerciseId,
+} from '../server/llm-tools.mjs';
 import { LOCALES, setLang, t } from '../src/i18n.js';
 
 let passed = 0;
@@ -3583,6 +3601,721 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
     ok('预览服务器接线：/tts 与 /tts/health 走 createTtsRoutes（启动日志只报“配没配”）',
       /createTtsRoutes/.test(previewSrc) && /ttsRoute\(req, res\)/.test(previewSrc)
       && /TTS_HEALTH_PATH/.test(previewSrc));
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * [29] P3.3 自由对话：LLM provider / 工具表 / `/llm` 路由 / Agent context
+ *
+ * 全程**不联网、不用真 key**：provider 注入假 fetch，路由用 mock provider；
+ * 唯一的「真 key」路径也只用假字符串，并且断言日志 / health 里不出现它。
+ * ------------------------------------------------------------------ */
+{
+  console.log('\n[29] P3.3 自由对话：工具表 ↔ 命令表 / provider / 护栏 / Agent context');
+
+  const httpMod = await import('node:http');
+
+  /* ---------------- 29.1 工具表与命令表一一对应 ---------------- */
+  {
+    ok('工具表覆盖命令表的每一条 intent（UNCOVERED_INTENTS 为空）',
+      UNCOVERED_INTENTS.length === 0, UNCOVERED_INTENTS.join(','));
+    ok('工具里写的 intent 都真的存在（UNKNOWN_TOOLED_INTENTS 为空）',
+      UNKNOWN_TOOLED_INTENTS.length === 0, UNKNOWN_TOOLED_INTENTS.join(','));
+    ok('TOOLED_INTENTS 的数量 = COMMANDS 的数量（25 条 intent 全部可达）',
+      TOOLED_INTENTS.length === COMMANDS.length,
+      `${TOOLED_INTENTS.length} / ${COMMANDS.length}`);
+    ok('工具数 ≥ 15，且每个工具都有 name / 中英描述 / JSON Schema 参数',
+      LLM_TOOL_DEFS.length >= 15 && LLM_TOOL_DEFS.every((t) => t.name && t.zh && t.en
+        && t.parameters && t.parameters.type === 'object' && Array.isArray(t.parameters.properties || {}) === false),
+      `${LLM_TOOL_DEFS.length} 个工具`);
+    // 逐条抽查几个「一对多」的映射（改命令表 / 工具表任意一边都会在这里红）
+    const expectMap = {
+      start_workout: ['startWorkout'], pause: ['pause'], resume: ['resume'], exit_workout: ['exit'],
+      retry_set: ['retrySet'], next_exercise: ['nextExercise'], set_target: ['setTarget'],
+      adjust_target: ['adjustTarget'],
+      navigate: ['home', 'menu', 'back', 'next', 'prev'],
+      open_panel: ['openSettings', 'openRecords', 'openBest', 'openExerciseSettings'],
+      set_voice: ['mute', 'unmute'], switch_language: ['switchLang'],
+      report_progress: ['reportProgress'], help: ['help'],
+      pick_category: ['category'], pick_index: ['pick'], stop_listening: ['stopListening'],
+    };
+    const mapOk = Object.entries(expectMap).every(([name, intents]) => {
+      const got = TOOL_INTENT_MAP[name];
+      return Array.isArray(got) && got.length === intents.length
+        && intents.every((i) => got.includes(i));
+    });
+    ok('17 个工具 → 25 条 intent 的映射与命令表一致（含 navigate / open_panel / set_voice 三对多）',
+      mapOk && Object.keys(TOOL_INTENT_MAP).length === Object.keys(expectMap).length,
+      JSON.stringify(TOOL_INTENT_MAP));
+    // OpenAI 风格的 function calling：tools 是 [{type:'function', function:{name,description,parameters}}]
+    ok('LLM_TOOLS 是 OpenAI function calling 形状（type=function + name/description/parameters）',
+      Array.isArray(LLM_TOOLS) && LLM_TOOLS.every((t) => t.type === 'function'
+        && t.function && typeof t.function.name === 'string'
+        && typeof t.function.description === 'string'
+        && t.function.parameters && t.function.parameters.type === 'object'));
+    ok('每个工具的描述里都有中文和英文两种写法（给模型看，也给「我能做什么」用）',
+      toolHelpRows().every((r) => /[\u4e00-\u9fa5]/.test(r.zh) && /[a-z]{3,}/i.test(r.en)));
+    ok('start_workout 的 exerciseId 枚举来自动作库（catalog.js），不是另抄一份',
+      EXERCISE_IDS.length === COMMANDS.length * 0 + EXERCISE_IDS.length
+      && EXERCISE_IDS.includes('plank') && EXERCISE_IDS.includes('squat')
+      && JSON.stringify(LLM_TOOL_DEFS.find((t) => t.name === 'start_workout').parameters.properties.exerciseId.enum)
+        === JSON.stringify(EXERCISE_IDS));
+  }
+
+  /* ---------------- 29.2 tool_calls → 命令表的 { intent, args } ---------------- */
+  {
+    const call = (name, args) => actionsFromToolCalls([{ name, args }], { locale: 'zh' });
+    const start = call('start_workout', { exerciseId: 'plank', target: 30 });
+    ok('start_workout(plank, 30) → startWorkout{exerciseId:plank, value:30}',
+      start.actions.length === 1 && start.actions[0].intent === 'startWorkout'
+      && start.actions[0].args.exerciseId === 'plank' && start.actions[0].args.value === 30,
+      JSON.stringify(start));
+    const setT = call('set_target', { value: 30 });
+    ok('set_target(30) → setTarget{value:30}', setT.actions[0]?.intent === 'setTarget'
+      && setT.actions[0]?.args.value === 30, JSON.stringify(setT));
+    const adj = call('adjust_target', { delta: -10 });
+    ok('adjust_target(-10) → adjustTarget{delta:-10}', adj.actions[0]?.args.delta === -10);
+    const nav = call('navigate', { dest: 'home' });
+    ok('navigate(home) → home', nav.actions[0]?.intent === 'home');
+    const panel = call('open_panel', { which: 'best' });
+    ok('open_panel(best) → openBest', panel.actions[0]?.intent === 'openBest');
+    ok('set_voice(mute:true) → mute；mute:false → unmute',
+      call('set_voice', { mute: true }).actions[0]?.intent === 'mute'
+      && call('set_voice', { mute: false }).actions[0]?.intent === 'unmute');
+    ok('switch_language(en) → switchLang{lang:en}',
+      call('switch_language', { lang: 'en' }).actions[0]?.args.lang === 'en');
+    ok('pick_index(3) → pick{index:2}（工具用 1 基，命令表用 0 基）',
+      call('pick_index', { position: 3 }).actions[0]?.args.index === 2);
+    ok('pick_category(core) → category{category:core}',
+      call('pick_category', { category: 'core' }).actions[0]?.args.category === 'core');
+    ok('中文动作名也能归一化（「平板支撑」→ plank），认不出的 id 拒绝执行',
+      resolveExerciseId('平板支撑') === null && resolveExerciseId('plank') === 'plank'
+      && call('start_workout', { exerciseId: 'no-such' }).actions.length === 0);
+
+    // 安全：exit_workout 没带 confirm → 不产生退出动作，只回一句确认话
+    const noConfirm = actionsFromToolCalls([{ name: 'exit_workout', args: {} }], { locale: 'zh' });
+    ok('安全：exit_workout 不带 confirm → **不执行**，只提示「要退出的话说确认退出」',
+      noConfirm.actions.length === 0 && noConfirm.refusals[0]?.reason === 'confirm'
+      && noConfirm.prompts[0] === CONFIRM_PROMPT.zh,
+      JSON.stringify(noConfirm));
+    const enPrompt = actionsFromToolCalls([{ name: 'exit_workout', args: {} }], { locale: 'en' });
+    ok('英文界面同一句提示用英文（英文界面下也不擅自退出）',
+      enPrompt.actions.length === 0 && enPrompt.prompts[0] === CONFIRM_PROMPT.en);
+    const confirmed = call('exit_workout', { confirm: true });
+    ok('exit_workout 带 confirm:true → exit{confirm:true}',
+      confirmed.actions[0]?.intent === 'exit' && confirmed.actions[0]?.args.confirm === true);
+
+    // 异常输入：未知工具 / 参数不合法 / 超过上限
+    const junk = actionsFromToolCalls([{ name: 'rm_rf', args: {} }, { name: 'set_target', args: { value: 0 } }]);
+    ok('未知工具 / 非法参数只记 refusal，不产生 action、不抛错',
+      junk.actions.length === 0 && junk.refusals.length === 2
+      && junk.refusals[0].reason === 'unknown-tool' && junk.refusals[1].reason === 'bad-args',
+      JSON.stringify(junk));
+    const many = actionsFromToolCalls(Array.from({ length: 5 }, () => ({ name: 'pause', args: {} })));
+    ok(`一次最多执行 ${MAX_TOOL_CALLS} 个工具（多出来的丢掉，防模型拆界面）`,
+      many.actions.length === MAX_TOOL_CALLS);
+  }
+
+  /* ---------------- 29.3 配置读取（coach.env 的键名与回退） ---------------- */
+  {
+    const fakeKey = 'sk-fake-test-key-not-real-0000';
+    const ds = loadLlmConfig({
+      envPath: '/definitely/not/here.env',
+      env: { LLM_PROVIDER: 'deepseek', LLM_MODEL: 'deepseek-chat', LLM_API_KEY: fakeKey },
+    });
+    ok('DeepSeek：provider / model / endpoint / Bearer key 全对，configured=true',
+      ds.config.configured === true && ds.config.provider === 'deepseek'
+      && ds.config.model === 'deepseek-chat'
+      && ds.config.endpoint === 'https://api.deepseek.com/v1/chat/completions'
+      && ds.config.apiKey === fakeKey);
+    const viaEnv = loadLlmConfig({
+      envPath: '/definitely/not/here.env',
+      env: { LLM_PROVIDER: 'deepseek', DEEPSEEK_API_KEY: fakeKey },
+    });
+    ok('LLM_API_KEY 没写时回退 DEEPSEEK_API_KEY（model 用默认 deepseek-chat）',
+      viaEnv.config.configured === true && viaEnv.config.apiKey === fakeKey
+      && viaEnv.config.model === 'deepseek-chat');
+    const inferred = loadLlmConfig({ envPath: '/definitely/not/here.env', env: { DEEPSEEK_API_KEY: fakeKey } });
+    ok('没写 LLM_PROVIDER 时按「哪家配了 key」推断 provider',
+      inferred.config.provider === 'deepseek', inferred.config.provider);
+    const volc = loadLlmConfig({
+      envPath: '/definitely/not/here.env',
+      env: { LLM_PROVIDER: 'volc', VOLC_ARK_API_KEY: fakeKey },
+    });
+    ok('火山方舟：缺 LLM_MODEL → configured:false，missing 里只有字段名（不出现 key 值）',
+      volc.config.configured === false && volc.config.missing.includes('LLM_MODEL')
+      && !JSON.stringify(volc.config.missing).includes(fakeKey)
+      && volc.config.endpoint === 'https://ark.cn-beijing.volces.com/api/v3/chat/completions');
+    const volc2 = loadLlmConfig({
+      envPath: '/definitely/not/here.env',
+      env: { LLM_PROVIDER: 'volc', LLM_MODEL: 'ep-2026', VOLC_ARK_API_KEY: fakeKey },
+    });
+    ok('火山方舟：LLM_MODEL + VOLC_ARK_API_KEY 齐了就算 configured',
+      volc2.config.configured === true && volc2.config.model === 'ep-2026');
+    const oa = loadLlmConfig({
+      envPath: '/definitely/not/here.env',
+      env: { LLM_PROVIDER: 'openai', OPENAI_API_KEY: fakeKey },
+    });
+    ok('OpenAI：回退 OPENAI_API_KEY / 默认 gpt-4o-mini / 官方地址',
+      oa.config.configured === true && oa.config.model === 'gpt-4o-mini'
+      && oa.config.endpoint === 'https://api.openai.com/v1/chat/completions');
+    const none = loadLlmConfig({ envPath: '/definitely/not/here.env', env: {} });
+    ok('什么都没配 → configured:false（页面回到命令快车道，不报错）',
+      none.config.configured === false && none.config.missing.includes('LLM_API_KEY'));
+    const mockCfg = loadLlmConfig({ envPath: '/definitely/not/here.env', env: { LLM_PROVIDER: 'mock' } });
+    ok('LLM_PROVIDER=mock → 不需要 key，configured:true（测试 / 演示用）',
+      mockCfg.config.configured === true && mockCfg.config.provider === 'mock');
+    ok('provider 别名归一化（ark / doubao / volcengine → volc，大小写不敏感）',
+      normalizeProviderName('ARK') === 'volc' && normalizeProviderName('doubao') === 'volc'
+      && normalizeProviderName('VOLCENGINE') === 'volc' && normalizeProviderName('deepseek') === 'deepseek'
+      && normalizeProviderName('whatever') === '');
+    ok('护栏默认值：超时 8s / max_tokens 400 / 每分钟 20 次 / 最近 6 轮',
+      LLM_TIMEOUT_MS === 8000 && LLM_MAX_TOKENS === 400 && LLM_RATE_LIMIT === 20
+      && LLM_MAX_HISTORY_TURNS === 6 && LLM_RATE_WINDOW_MS === 60000);
+    ok('llmHttpCode：401 → llm-http-401（错误码归一化，不回传上游原文）',
+      llmHttpCode(401) === 'llm-http-401' && llmHttpCode(402) === 'llm-http-402'
+      && llmHttpCode(0) === 'llm-http-error');
+  }
+
+  /* ---------------- 29.4 真 provider（假 fetch）：请求形状 / tool_calls / 错误归一化 ---------------- */
+  {
+    const fakeKey = 'sk-fake-test-key-not-real-0000';
+    const cfg = { provider: 'deepseek', model: 'deepseek-chat', endpoint: 'https://api.deepseek.com/v1/chat/completions', apiKey: fakeKey, configured: true, missing: [] };
+    const seen = [];
+    const logs = [];
+    let nextResponse = () => ({
+      ok: true, status: 200,
+      json: async () => ({
+        choices: [{
+          message: {
+            content: '你做了 12 个，蹲得比上一组深。',
+            tool_calls: [{ function: { name: 'set_target', arguments: '{"value":20}' } }],
+          },
+        }],
+        usage: { prompt_tokens: 120, completion_tokens: 40, total_tokens: 160 },
+      }),
+    });
+    const provider = createLlmProvider({
+      config: cfg,
+      fetchImpl: async (url, init) => { seen.push({ url, init }); return nextResponse(); },
+      logger: (f) => logs.push(f),
+    });
+    const out = await provider.chat({ messages: [{ role: 'user', content: '我做了几个' }], tools: LLM_TOOLS });
+    const req = seen[0];
+    const body = JSON.parse(req.init.body);
+    ok('DeepSeek 请求：URL / Authorization: Bearer / model / max_tokens=400 / tool_choice=auto',
+      req.url === 'https://api.deepseek.com/v1/chat/completions'
+      && req.init.headers.Authorization === `Bearer ${fakeKey}`
+      && body.model === 'deepseek-chat' && body.max_tokens === 400
+      && body.tool_choice === 'auto' && Array.isArray(body.tools) && body.tools.length === LLM_TOOLS.length,
+      JSON.stringify(Object.keys(body)));
+    ok('OpenAI 风格 function calling 的返回值被解析成 { text, toolCalls:[{name,args}] }',
+      out.text.startsWith('你做了 12 个') && out.toolCalls.length === 1
+      && out.toolCalls[0].name === 'set_target' && out.toolCalls[0].args.value === 20,
+      JSON.stringify(out));
+    ok('usage 里的 prompt / completion / total 原样带出来',
+      out.usage.prompt === 120 && out.usage.completion === 40 && out.usage.total === 160);
+    ok('日志只打 provider/model/tokens/tool-calls/耗时（不含 key）',
+      logs.length > 0 && logs.every((f) => !JSON.stringify(f).includes(fakeKey))
+      && logs.some((f) => f.provider === 'deepseek' && f.tools === 1 && typeof f.ms === 'number'),
+      JSON.stringify(logs));
+
+    // 401 / 402 / 坏 JSON / 超时
+    nextResponse = () => ({ ok: false, status: 401, text: async () => `{"error":"bad key ${fakeKey}"}`, json: async () => ({}) });
+    let code = '';
+    try { await provider.chat({ messages: [] }); } catch (err) { code = err.code; }
+    ok('上游 401 → 归一化 llm-http-401（错误正文里的 key 也被脱敏）', code === 'llm-http-401', code);
+    nextResponse = () => ({ ok: false, status: 402, text: async () => '{"error":"insufficient balance"}', json: async () => ({}) });
+    try { await provider.chat({ messages: [] }); } catch (err) { code = err.code; }
+    ok('上游 402（余额不足）→ llm-http-402，不崩、不打印 key', code === 'llm-http-402', code);
+    nextResponse = () => ({ ok: true, status: 200, json: async () => { throw new Error('not json'); } });
+    try { await provider.chat({ messages: [] }); } catch (err) { code = err.code; }
+    ok('响应不是 JSON → llm-bad-json', code === 'llm-bad-json', code);
+    const slow = createLlmProvider({ config: cfg, fetchImpl: () => new Promise(() => {}), timeoutMs: 20, logger: () => {} });
+    try { await slow.chat({ messages: [] }); } catch (err) { code = err.code; }
+    ok('8s 超时（测试里调成 20ms）→ llm-timeout', code === 'llm-timeout', code);
+    const noKey = createLlmProvider({ config: { ...cfg, apiKey: '', configured: false }, fetchImpl: () => { throw new Error('should not call'); } });
+    try { await noKey.chat({ messages: [] }); } catch (err) { code = err.code; }
+    ok('没 key 的 provider 根本不发请求（llm-config）', code === 'llm-config', code);
+  }
+
+  /* ---------------- 29.5 `/llm` + `/llm/health` 路由（真 http，假 provider） ---------------- */
+  {
+    const fakeKey = 'sk-fake-test-key-not-real-0000';
+    const cfg = { provider: 'deepseek', model: 'deepseek-chat', endpoint: 'https://api.deepseek.com/v1/chat/completions', apiKey: fakeKey, configured: true, missing: [] };
+    const okProvider = createMockLlmProvider({
+      script: [{
+        text: '好，平板支撑 30 秒，先做慢一点。',
+        toolCalls: [
+          { name: 'start_workout', args: { exerciseId: 'plank', target: 30 } },
+          { name: 'set_target', args: { value: 30 } },
+        ],
+        usage: { prompt: 100, completion: 20, total: 120 },
+      }],
+    });
+    const guard = createLlmGuard({ limit: 20, windowMs: 60000 });
+    const route = createLlmRoutes({ provider: okProvider, config: cfg, guard, logger: () => {} });
+    const srv = httpMod.createServer(route);
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+
+    const request = (method, path, body) => new Promise((resolve, reject) => {
+      const req = httpMod.request({
+        host: '127.0.0.1', port, path, method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+      }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => resolve({ status: r.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      });
+      req.on('error', reject);
+      req.end(body ? JSON.stringify(body) : undefined);
+    });
+
+    // health：只有 configured / provider / model / 护栏 / 用量，**没有 key**
+    const healthRes = await request('GET', LLM_HEALTH_PATH);
+    const health = JSON.parse(healthRes.body);
+    ok('GET /llm/health → {configured:true, provider, model, limits}',
+      healthRes.status === 200 && health.configured === true && health.provider === 'deepseek'
+      && health.model === 'deepseek-chat' && health.limits.perMinute === 20 && health.limits.maxTokens === 400,
+      healthRes.body);
+    ok('/llm/health 的响应里**没有 key**（不出现 sk- / apiKey / 假 key 的任何片段）',
+      !/sk-/.test(healthRes.body) && !/apiKey/i.test(healthRes.body) && !healthRes.body.includes(fakeKey),
+      healthRes.body);
+
+    // 正常：一句话 → reply + actions（映射成命令表的 intent）
+    const normal = await request('POST', LLM_PATH, {
+      text: '帮我换成平板支撑 30 秒',
+      locale: 'zh',
+      context: { session: { exerciseId: 'squat', reps: 3 }, utterance: '帮我换成平板支撑 30 秒' },
+    });
+    const nJson = JSON.parse(normal.body);
+    ok('POST /llm → 200 + reply + actions（start_workout(plank) + set_target(30) 映射成 intent）',
+      normal.status === 200 && nJson.reply === '好，平板支撑 30 秒，先做慢一点。'
+      && nJson.actions.length === 2
+      && nJson.actions[0].intent === 'startWorkout' && nJson.actions[0].args.exerciseId === 'plank'
+      && nJson.actions[0].args.value === 30
+      && nJson.actions[1].intent === 'setTarget' && nJson.actions[1].args.value === 30,
+      normal.body);
+    ok('POST /llm 的响应里有 usage，并且服务端把它累计进 health',
+      nJson.usage.total === 120 && JSON.parse((await request('GET', LLM_HEALTH_PATH)).body).usage.tokens.total === 120);
+    const sent = okProvider.calls.at(-1);
+    const sys = sent.messages[0];
+    ok('发给模型的 messages：system 里有 Agent 行为准则（中英）+ 客户端的事实（state JSON）',
+      sys.role === 'system' && /Agent 行为准则/.test(sys.content) && /Agent rules/.test(sys.content)
+      && /state \(JSON\)/.test(sys.content) && sys.content.includes('plank') === false
+      && sys.content.includes('squat')
+      && sent.messages.at(-1).role === 'user' && sent.messages.at(-1).content === '帮我换成平板支撑 30 秒');
+    ok('system 提示里明确写了「数字由客户端算好，不许自己编」',
+      /不许自己编/.test(sys.content) && /Never invent numbers/.test(sys.content));
+
+    // exit_workout 没带 confirm：不产生退出动作，reply 换成确认话
+    const exitNoConfirm = createMockLlmProvider({ script: [{ toolCalls: [{ name: 'exit_workout', args: {} }] }] });
+    const routeExit = createLlmRoutes({ provider: exitNoConfirm, config: cfg, guard: createLlmGuard(), logger: () => {} });
+    const srv2 = httpMod.createServer(routeExit);
+    await new Promise((r) => srv2.listen(0, '127.0.0.1', r));
+    const expr = await new Promise((resolve, reject) => {
+      const req = httpMod.request({
+        host: '127.0.0.1', port: srv2.address().port, path: LLM_PATH, method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => resolve({ status: r.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      });
+      req.on('error', reject);
+      req.end(JSON.stringify({ text: '退出吧', locale: 'zh' }));
+    });
+    const exitJson = JSON.parse(expr.body);
+    ok('安全：模型只说 exit_workout（没 confirm）→ actions 里**没有 exit**，回复是「要退出就说确认退出」',
+      expr.status === 200 && exitJson.actions.length === 0
+      && exitJson.reply === CONFIRM_PROMPT.zh,
+      expr.body);
+    await new Promise((r) => srv2.close(r));
+
+    // 不传 context（或 context 是垃圾）也不能 500
+    const noCtx = await request('POST', LLM_PATH, { text: '随便说一句', locale: 'zh', context: 'not-an-object' });
+    ok('context 缺失 / 类型不对也不 500（服务端容错）', noCtx.status === 200 && JSON.parse(noCtx.body).ok === true);
+
+    // 坏 JSON / 空文本 / GET 方法
+    const badJson = await new Promise((resolve, reject) => {
+      const req = httpMod.request({
+        host: '127.0.0.1', port, path: LLM_PATH, method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => resolve({ status: r.statusCode }));
+      });
+      req.on('error', reject);
+      req.end('{not json');
+    });
+    ok('请求体不是 JSON → 400（不 500）', badJson.status === 400);
+    ok('空文本 → 400', (await request('POST', LLM_PATH, { text: '   ' })).status === 400);
+    ok('GET /llm → 405（只接受 POST）', (await request('GET', LLM_PATH)).status === 405);
+
+    /* 超时 → 503（客户端据此回退罐头回复） */
+    const timeoutProvider = { provider: 'deepseek', model: 'deepseek-chat', configured: true, chat: async () => { const e = new Error('timeout'); e.code = 'llm-timeout'; throw e; } };
+    const routeTimeout = createLlmRoutes({ provider: timeoutProvider, config: cfg, guard: createLlmGuard(), logger: () => {} });
+    const srv3 = httpMod.createServer(routeTimeout);
+    await new Promise((r) => srv3.listen(0, '127.0.0.1', r));
+    const tres = await new Promise((resolve, reject) => {
+      const req = httpMod.request({
+        host: '127.0.0.1', port: srv3.address().port, path: LLM_PATH, method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => resolve({ status: r.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      });
+      req.on('error', reject);
+      req.end(JSON.stringify({ text: '超时测试', locale: 'zh' }));
+    });
+    ok('provider 超时 → 503 + {error:llm-timeout}（前端回退罐头回复，不崩）',
+      tres.status === 503 && JSON.parse(tres.body).error === 'llm-timeout', tres.body);
+    await new Promise((r) => srv3.close(r));
+
+    /* 没配置 → 503 not-configured（客户端只用快车道） */
+    const unconfiguredCfg = { ...cfg, configured: false, apiKey: '' };
+    const routeNoKey = createLlmRoutes({ provider: okProvider, config: unconfiguredCfg, guard: createLlmGuard(), logger: () => {} });
+    const srv4 = httpMod.createServer(routeNoKey);
+    await new Promise((r) => srv4.listen(0, '127.0.0.1', r));
+    const nres = await new Promise((resolve, reject) => {
+      const req = httpMod.request({
+        host: '127.0.0.1', port: srv4.address().port, path: LLM_PATH, method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => resolve({ status: r.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      });
+      req.on('error', reject);
+      req.end(JSON.stringify({ text: 'hello', locale: 'en' }));
+    });
+    ok('没配 key → POST /llm 503 not-configured（页面自动只用命令快车道）',
+      nres.status === 503 && JSON.parse(nres.body).error === 'not-configured', nres.body);
+    await new Promise((r) => srv4.close(r));
+
+    /* 护栏：每分钟最多 20 次 —— 第 21 次 429 */
+    {
+      const guardLimit = createLlmGuard({ limit: 20, windowMs: 60000, now: (() => { let t = 0; return () => (t += 1000); })() });
+      const routeGuard = createLlmRoutes({
+        provider: createMockLlmProvider({ script: [{ text: 'ok' }] }),
+        config: cfg, guard: guardLimit, logger: () => {},
+      });
+      const srv5 = httpMod.createServer(routeGuard);
+      await new Promise((r) => srv5.listen(0, '127.0.0.1', r));
+      const gport = srv5.address().port;
+      const hit = () => new Promise((resolve, reject) => {
+        const req = httpMod.request({
+          host: '127.0.0.1', port: gport, path: LLM_PATH, method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }, (r) => {
+          const chunks = [];
+          r.on('data', (c) => chunks.push(c));
+          r.on('end', () => resolve({ status: r.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+        });
+        req.on('error', reject);
+        req.end(JSON.stringify({ text: 'hi', locale: 'zh' }));
+      });
+      const statuses = [];
+      for (let i = 0; i < 21; i += 1) statuses.push((await hit()).status);
+      ok('护栏：每分钟 20 次正常，第 21 次 429 rate-limit',
+        statuses.slice(0, 20).every((s) => s === 200) && statuses[20] === 429,
+        statuses.join(','));
+      const healthAfter = guardLimit.usage();
+      ok('累计请求数只统计放行的请求（20 次，被 429 挡下的不计）',
+        healthAfter.requests === 20, JSON.stringify(healthAfter));
+      await new Promise((r) => srv5.close(r));
+    }
+
+    // history：服务端只夹最近 6 轮（12 条）
+    const history = Array.from({ length: 20 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `第 ${i} 句` }));
+    const many = historyMessages(history, { maxTurns: 6 });
+    ok('historyMessages：20 条历史只留最近 6 轮（12 条），顺序不变',
+      many.length === 12 && many[0].content === '第 8 句' && many.at(-1).content === '第 19 句',
+      `${many.length} 条`);
+    const built = buildLlmMessages({ text: '你好', locale: 'zh', context: { a: 1 }, history });
+    ok('buildLlmMessages：system + 最近 12 条历史 + 这一句（最后一条是 user 的输入）',
+      built.length === 14 && built[0].role === 'system' && built.at(-1).content === '你好');
+    await new Promise((r) => srv.close(r));
+
+    const previewSrc = fs.readFileSync(new URL('../preview-server.js', import.meta.url), 'utf8');
+    ok('预览服务器接线：/llm 与 /llm/health 走 createLlmRoutes（启动日志只报 provider / model）',
+      /createLlmRoutes/.test(previewSrc) && /llmRoute\(req, res\)/.test(previewSrc)
+      && /LLM_HEALTH_PATH/.test(previewSrc) && /llmGuard/.test(previewSrc));
+  }
+
+  /* ---------------- 29.6 Agent context：字段 / 计算 / 截断（纯函数） ---------------- */
+  {
+    // 桩：3 组历史（一组今天的、两组昨天的）+ 5 个关键帧里第 3 帧没达标
+    const nowMs = new Date('2026-06-01T15:30:00').getTime();
+    const todayMs = new Date('2026-06-01T09:00:00').getTime();
+    const yesterdayMs = new Date('2026-05-31T20:00:00').getTime();
+    const snapshot = {
+      now: nowMs, locale: 'zh', view: 'workout', fullscreen: true, coachOn: true,
+      dialogue: true, ttsSource: 'auto',
+      exerciseId: 'squat', exerciseName: '自重深蹲', kind: 'rep', session: 'running',
+      target: 20, reps: 12, holdMs: 0, elapsedMs: 84000, score: 61,
+      criteria: [
+        { name: '站好', hit: true, pts: 5, max: 5 },
+        { name: '下蹲到位', hit: true, pts: 7, max: 7 },
+        { name: '蹲到底', hit: false, pts: 0, max: 8 },
+        { name: '回正', hit: true, pts: 4, max: 4 },
+        { name: '膝盖不过脚尖', hit: true, pts: 3, max: 3 },
+      ],
+      gateOk: false, gateName: 'stand', tooFastCount: 1,
+      nudges: ['肘再弯一点', '蹲低一点', '慢一点'],
+      recentCommands: ['pause', 'setTarget'],
+      bestScore: 86,
+      history: [
+        { exerciseId: 'squat', name: '自重深蹲', kind: 'rep', at: todayMs, value: 20, target: 20, score: 72, seconds: 0 },
+        { exerciseId: 'pushup', name: '俯卧撑', kind: 'rep', at: yesterdayMs, value: 12, target: 15, score: 52, seconds: 0 },
+        { exerciseId: 'plank', name: '平板支撑', kind: 'hold', at: yesterdayMs, value: 45, target: 45, score: 60, seconds: 0 },
+      ],
+      utterance: '我这组做得怎么样？',
+    };
+    const ctx = buildAgentContext(snapshot);
+    ok('Agent context 顶层字段齐全：now / session / performance / history / signals / utterance',
+      ['now', 'session', 'performance', 'history', 'signals', 'utterance'].every((k) => k in ctx));
+    ok('now：下午 + locale + view + 全屏 + 教练开 + 字幕模式 + TTS 来源',
+      ctx.now.tsHint === '下午' && ctx.now.locale === 'zh' && ctx.now.view === 'workout'
+      && ctx.now.fullscreen === true && ctx.now.coachOn === true
+      && ctx.now.dialogueMode === true && ctx.now.tts === 'volc', JSON.stringify(ctx.now));
+    ok('session：动作 / 名称 / 次数类 / 相位 / 目标 / 次数 / 用时',
+      ctx.session.exerciseId === 'squat' && ctx.session.name === '自重深蹲'
+      && ctx.session.kind === 'reps' && ctx.session.phase === 'running'
+      && ctx.session.target === 20 && ctx.session.reps === 12 && ctx.session.elapsedSec === 84,
+      JSON.stringify(ctx.session));
+    ok('performance：分数 / 质量分 / 节奏 / 太快次数 / 关键帧（名称+是否达标+得分）',
+      ctx.performance.score === 61 && ctx.performance.quality === 0.7
+      && ctx.performance.tempoPerMin === 9 && ctx.performance.tooFastCount === 1
+      && ctx.performance.keyframes.length === 5
+      && ctx.performance.keyframes[2].hit === false
+      && ctx.performance.keyframes[1].pts === 7,
+      JSON.stringify(ctx.performance));
+    ok('performance.gateOk=false 时带上是哪个门控（gateOk / lastGateFail）',
+      ctx.performance.gateOk === false && ctx.performance.lastGateFail === 'stand');
+    ok('signals.keyframeHitRate = 4/5 = 0.8（客户端算好，不让模型算）',
+      ctx.signals.keyframeHitRate === 0.8, String(ctx.signals.keyframeHitRate));
+    ok('signals.lastNudges / recentCommands 只留最近 3 条',
+      ctx.signals.lastNudges.length === 3 && ctx.signals.lastNudges.at(-1) === '慢一点'
+      && ctx.signals.recentCommands.length === 2);
+    ok('history.lastExercises 最多 5 条、带 agoSec / reps / target / score',
+      ctx.history.lastExercises.length === 3
+      && ctx.history.lastExercises[0].id === 'squat'
+      && ctx.history.lastExercises[0].score === 72
+      && ctx.history.lastExercises[1].id === 'pushup'
+      && ctx.history.lastExercises[1].reps === 12
+      && ctx.history.lastExercises[1].agoSec === Math.round((nowMs - yesterdayMs) / 1000),
+      JSON.stringify(ctx.history.lastExercises[0]));
+    ok('history.today：只汇总今天那一组（sets 1 / reps 20 / avgScore 72）',
+      ctx.history.today.sets === 1 && ctx.history.today.reps === 20
+      && ctx.history.today.avgScore === 72, JSON.stringify(ctx.history.today));
+    ok('history.trend：和上一组比（72 > 52 → improved）；bestScore 带出来',
+      ctx.history.trend === 'improved' && ctx.history.bestScore === 86);
+    ok('utterance 原样带上（用户话语 + 运动状态一起给模型）',
+      ctx.utterance === '我这组做得怎么样？');
+    ok('整份 context 的 JSON ≤ 6000 字符（≈800 tokens 的预算）',
+      JSON.stringify(ctx).length <= AGENT_CONTEXT_MAX_CHARS, String(JSON.stringify(ctx).length));
+
+    // 趋势的三条规则
+    ok('trend 规则：少于 2 组 → first；高于上一组 improved；低 declined；相同 flat',
+      scoreTrend([]) === 'first' && scoreTrend([{ score: 9 }]) === 'first'
+      && scoreTrend([{ score: 9 }, { score: 5 }]) === 'improved'
+      && scoreTrend([{ score: 5 }, { score: 9 }]) === 'declined'
+      && scoreTrend([{ score: 5 }, { score: 5 }]) === 'flat');
+
+    // 空状态（还没练过）不崩
+    const empty = buildAgentContext({});
+    ok('空快照（第一次打开、还没练过）不崩，字段仍然齐全',
+      empty.session.exerciseId === '' && empty.history.lastExercises.length === 0
+      && empty.history.today.sets === 0 && empty.history.trend === 'first'
+      && empty.performance.keyframes.length === 0 && empty.signals.keyframeHitRate === 0);
+    ok('空快照：没有 utterance 时是空串，view 默认 workout',
+      empty.utterance === '' && empty.now.view === 'workout');
+    ok('view 映射：homeMode → home / menuMode → menu',
+      buildAgentContext({ view: 'home' }).now.view === 'home'
+      && buildAgentContext({ view: 'menu' }).now.view === 'menu');
+    ok('dialogueMode 是布尔（关掉对话显示时为 false）',
+      buildAgentContext({ dialogue: false }).now.dialogueMode === false);
+    ok('ttsSource=system → tts:"system"（火山默认 "volc"）',
+      buildAgentContext({ ttsSource: 'system' }).now.tts === 'system'
+      && buildAgentContext({ ttsSource: 'volc' }).now.tts === 'volc');
+    ok('计时类（hold）：remainingSec = 目标秒数 - 已保持秒数',
+      (() => {
+        const hold = buildAgentContext({ kind: 'hold', target: 45, holdMs: 12500, session: 'running' });
+        return hold.session.kind === 'hold' && hold.session.remainingSec === 33;
+      })());
+    ok('计时类在闲置时（holdMs=0）不是负数',
+      buildAgentContext({ kind: 'hold', target: 30, holdMs: 999000 }).session.remainingSec === 0);
+
+    // history 截断到 5 条
+    const manyHistory = Array.from({ length: 8 }, (_, i) => ({
+      exerciseId: 'squat', name: `第 ${i} 组`, kind: 'rep', at: nowMs - i * 60000,
+      value: 10 + i, target: 20, score: 50 + i, seconds: 0,
+    }));
+    const cut = buildAgentContext({ now: nowMs, history: manyHistory });
+    ok('history.lastExercises：给 8 条只留 5 条（用户要求最多 5 条）',
+      cut.history.lastExercises.length === 5 && cut.history.lastExercises[0].id === 'squat',
+      String(cut.history.lastExercises.length));
+
+    // 关键帧超过 5 个 → 只留 5 个，且优先保留「第一个没达标的」
+    const manyFrames = Array.from({ length: 9 }, (_, i) => ({ name: `帧${i}`, hit: i !== 4, pts: i === 4 ? 0 : 1, max: 1 }));
+    const picked = buildAgentContext({ criteria: manyFrames });
+    ok('performance.keyframes：9 帧只留 5 帧，且包含第一个没达标的帧（「哪里没做好」要答得出来）',
+      picked.performance.keyframes.length === 5
+      && picked.performance.keyframes.some((k) => k.name === '帧4' && k.hit === false),
+      JSON.stringify(picked.performance.keyframes));
+
+    // 体积兜底：超长字段也要被压回 6000 字符以内
+    const big = buildAgentContext({
+      criteria: Array.from({ length: 30 }, (_, i) => ({ name: '很长很长的关键帧名字'.repeat(6) + i, hit: i % 2 === 0, pts: i, max: 10 })),
+      history: Array.from({ length: 20 }, (_, i) => ({ exerciseId: 'x', name: '很长的动作名字'.repeat(8), kind: 'rep', at: nowMs - i * 1000, value: 10, target: 20, score: 50, seconds: 0 })),
+      nudges: Array.from({ length: 10 }, () => '一句很长很长的提示'.repeat(8)),
+      utterance: '很长的一句话'.repeat(200),
+    });
+    ok('体积上限：即使快照很大，JSON 也被裁到 ≤ 6000 字符',
+      JSON.stringify(big).length <= AGENT_CONTEXT_MAX_CHARS, String(JSON.stringify(big).length));
+    ok('trimAgentContext 单独调用也能把体积压到更小的上限（不抛错）',
+      JSON.stringify(trimAgentContext(big, { maxChars: 1200 })).length <= 1200);
+
+    // 时间提示（可注入 Date，测试不依赖真实钟）
+    ok('timeOfDayHint：早上 / 下午 / 晚上 + 英文',
+      timeOfDayHint(new Date('2026-06-01T07:00:00'), 'zh') === '早上'
+      && timeOfDayHint(new Date('2026-06-01T15:00:00'), 'zh') === '下午'
+      && timeOfDayHint(new Date('2026-06-01T21:00:00'), 'zh') === '晚上'
+      && timeOfDayHint(new Date('2026-06-01T15:00:00'), 'en') === 'afternoon');
+  }
+
+  /* ---------------- 29.7 前端客户端：请求体 / 6 轮记忆 / 失败归一化 ---------------- */
+  {
+    const seen = [];
+    const client = createLlmClient({
+      fetchImpl: async (url, init) => {
+        seen.push({ url, init });
+        return {
+          ok: true, status: 200,
+          json: async () => ({ ok: true, reply: '不错，再做两个。', actions: [{ intent: 'setTarget', args: { value: 20 } }], usage: { total: 9 } }),
+        };
+      },
+      timeoutMs: 50,
+    });
+    const res = await client.respond('我做了几个', { locale: 'zh', context: { session: { reps: 3 } } });
+    const body = JSON.parse(seen[0].init.body);
+    ok('客户端 POST /llm：body 带 text / locale / context / history',
+      seen[0].url === LLM_CLIENT_PATH && body.text === '我做了几个' && body.locale === 'zh'
+      && body.context.session.reps === 3 && Array.isArray(body.history));
+    ok('客户端返回 {reply, actions}，action 的 intent 原样保留（由会话层执行）',
+      res.reply === '不错，再做两个。' && res.actions[0].intent === 'setTarget'
+      && res.actions[0].args.value === 20);
+    for (let i = 0; i < 8; i += 1) await client.respond(`第 ${i} 句`, { locale: 'zh' });
+    ok('对话记忆只在内存里，最多 6 轮（12 条），刷新即清',
+      client.history.length === LLM_HISTORY_TURNS * 2, String(client.history.length));
+    client.reset();
+    ok('reset() 清空对话记忆', client.history.length === 0);
+
+    const failing = createLlmClient({
+      fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({ ok: false, error: 'not-configured' }) }),
+    });
+    let code = '';
+    try { await failing.respond('hi', { locale: 'en' }); } catch (err) { code = err.code; }
+    ok('服务端 503 → 客户端抛 {code:not-configured}（app 据此回退罐头回复）', code === 'not-configured', code);
+
+    const rate = createLlmClient({
+      fetchImpl: async () => ({ ok: false, status: 429, json: async () => ({ ok: false, error: 'rate-limit' }) }),
+    });
+    try { await rate.respond('hi'); } catch (err) { code = err.code; }
+    ok('429 → {code:rate-limit}', code === 'rate-limit', code);
+
+    const slow = createLlmClient({ fetchImpl: () => new Promise(() => {}), timeoutMs: 20 });
+    try { await slow.respond('hi'); } catch (err) { code = err.code; }
+    ok('客户端超时（测试调成 20ms）→ {code:llm-timeout}', code === 'llm-timeout', code);
+
+    ok('客户端不会把 key 带进请求头（前端根本不知道 key）',
+      seen.every((s) => !/authorization/i.test(JSON.stringify(s.init.headers || {}))));
+    ok('normalizeActions 丢掉形状不对的 action（只留 {intent, args}）',
+      normalizeLlmActions([{ intent: 'pause', args: {} }, null, 'x', { args: {} }, { intent: 'home' }])
+        .map((a) => a.intent).join(',') === 'pause,home');
+    ok('客户端默认超时 9s（服务端 8s 先超时，这里只是兜底）', LLM_CLIENT_TIMEOUT_MS === 9000);
+  }
+
+  /* ---------------- 29.8 会话层：actions 真的走命令表 handler ---------------- */
+  {
+    const calls = [];
+    const ctx = new Proxy({}, {
+      get(_t, key) {
+        return (...args) => { calls.push({ key: String(key), args }); return undefined; };
+      },
+    });
+    const s = createVoiceSession({
+      mic: fakeMic(), asr: fakeAsr(), tts: fakeTts(),
+      llm: {
+        reply: () => ({
+          text: '好，平板支撑 30 秒。',
+          actions: [
+            { intent: 'startWorkout', args: { exerciseId: 'plank', value: 30 } },
+            { intent: 'setTarget', args: { value: 30 } },
+          ],
+        }),
+      },
+      commandCtx: ctx,
+      thinkDelay: 0,
+      thinkSlowMs: 20,
+    });
+    await s.start();
+    // 这句话**故意不含动作名 / 数字**：命令快车道不命中，才会走到 LLM
+    s.onUserText('教练我有点累，帮我安排个轻松的');
+    await tick(8);
+    ok('LLM 返回 actions → 会话层按顺序调用命令表的 run（startGestureMode/selectExercise/setTarget 这些**现有函数**）',
+      calls.some((c) => c.key === 'startGestureMode')
+      && calls.some((c) => c.key === 'selectExercise' && c.args[0] === 'plank')
+      && calls.some((c) => c.key === 'setTarget' && c.args[0] === 30),
+      JSON.stringify(calls));
+    ok('执行完 actions 后，把模型那句 reply 当教练说的话（字幕 + TTS）',
+      s.snapshot().coachText === '好，平板支撑 30 秒。'
+      && s.snapshot().state === 'speaking');
+    ok('recentCommands 记下刚执行过的 intent（给下一轮 context 的 signals 用）',
+      s.snapshot().recentCommands.includes('startWorkout')
+      && s.snapshot().recentCommands.includes('setTarget'),
+      JSON.stringify(s.snapshot().recentCommands));
+
+    // exit 没 confirm：只问不执行
+    const calls2 = [];
+    const ctx2 = new Proxy({}, { get: () => (...a) => { calls2.push(a); } });
+    const s2 = createVoiceSession({
+      mic: fakeMic(), asr: fakeAsr(), tts: fakeTts(),
+      llm: { reply: () => ({ text: '好，退出。', actions: [{ intent: 'exit', args: {} }] }) },
+      commandCtx: ctx2, thinkDelay: 0,
+    });
+    await s2.start();
+    s2.onUserText('退出吧');
+    await tick(8);
+    ok('安全网：LLM 给的 exit 没带 confirm → 不执行 exit，改成问一句确认',
+      s2.pendingConfirm && s2.pendingConfirm.intent === 'exit'
+      && s2.snapshot().coachText === t('coach.confirm.ask'),
+      JSON.stringify({ pending: s2.pendingConfirm, coach: s2.snapshot().coachText }));
+    s2.stop();
+
+    // 「教练在想…」：1.5s 没回来才出现（测试把 thinkSlowMs 调成 20ms）
+    let release = null;
+    const s3 = createVoiceSession({
+      mic: fakeMic(), asr: fakeAsr(), tts: fakeTts(),
+      llm: { reply: () => new Promise((r) => { release = r; }) },
+      commandCtx: {}, thinkDelay: 0, thinkSlowMs: 20,
+    });
+    await s3.start();
+    s3.onUserText('慢慢想');
+    await new Promise((r) => setTimeout(r, 10));
+    ok('「教练在想…」不会立刻出现（1.5s 内算正常思考）', s3.snapshot().thinkingSlow === false);
+    await new Promise((r) => setTimeout(r, 30));
+    ok('超过 thinkSlowMs 还没回来 → thinkingSlow=true（界面据此显示「教练在想…」）',
+      s3.snapshot().thinkingSlow === true && s3.snapshot().state === 'thinking');
+    release({ text: '想好了。' });
+    await tick(8);
+    ok('回答回来 → thinkingSlow 立刻收掉', s3.snapshot().thinkingSlow === false);
+    s3.stop();
+    ok('THINK_SLOW_MS 默认就是 1.5 秒（用户口径）', THINK_SLOW_MS === 1500);
   }
 }
 

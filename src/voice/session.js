@@ -17,6 +17,11 @@
  *
  * 依赖全部注入：`mic` / `asr` / `tts` 来自 providers.js（P3.1 / P3.3 / P3.4 换实现即可），
  * `llm` 的 `reply()` 同步或 Promise 都支持。
+ *
+ * P3.3 自由对话的接缝（**只有这一层**）：
+ *   `llm.reply(text)` 可以返回 `{ text, actions: [{ intent, args }] }`；
+ *   会话层拿 `intent` 去**命令表**里找同一条命令的 `run()` 执行（复用 P3.2 的 handler，
+ *   不另写一套），执行完再把 `text` 当教练说的话念出来。`exit` 仍然要 confirm。
  */
 
 import { t, getLang } from '../i18n.js';
@@ -64,6 +69,18 @@ export const VOICE_NOTICE_KEYS = Object.freeze({
 /** 进入 listening 后多久没听到任何 interim / final 就提示「没听到声音」 */
 export const VOICE_SILENCE_MS = 8000;
 
+/**
+ * 一次 LLM 回答最多执行几个动作（护栏；服务端 llm-tools.mjs 的 MAX_TOOL_CALLS 同值）。
+ * 模型偶尔会一口气调一堆工具 —— 只认前几个，剩下的丢掉。
+ */
+export const VOICE_LLM_MAX_ACTIONS = 3;
+
+/**
+ * 发出去超过这么久还没回来 → 在底下显示一行小字「教练在想…」（用户要求 1.5 秒）。
+ * 状态环本身在进入 thinking 的那一刻就变了；这行字只是给「真的在等网络」一个解释。
+ */
+export const THINK_SLOW_MS = 1500;
+
 export function voiceErrorKey(code) {
   return VOICE_ERROR_KEYS[code] || VOICE_ERROR_KEYS.generic;
 }
@@ -98,6 +115,8 @@ export function createVoiceSession({
   silenceMs = VOICE_SILENCE_MS,
   /** 「退出」这类命令等待确认的最长时间（默认 8 秒；测试可以调小） */
   confirmMs = COMMAND_CONFIRM_MS,
+  /** 发出去多久还没回来就显示「教练在想…」（默认 1.5s；测试可以调小） */
+  thinkSlowMs = THINK_SLOW_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 } = {}) {
@@ -131,6 +150,12 @@ export function createVoiceSession({
   let epoch = 0;
   let thinkTimer = null;
   let speakTimer = null;
+  /** 「教练在想…」：发出去 `thinkSlowMs`（默认 1.5s）还没回来就置 true（P3.3） */
+  let thinkSlowTimer = null;
+  let thinkingSlow = false;
+  let thinkSlowMsValue = Number.isFinite(Number(thinkSlowMs))
+    ? Math.max(0, Number(thinkSlowMs))
+    : THINK_SLOW_MS;
   const listeners = new Set();
 
   function snapshot() {
@@ -146,6 +171,8 @@ export function createVoiceSession({
       route,
       lastError,
       muted,
+      thinkingSlow,
+      recentCommands: recentIntents.slice(),
       pendingConfirm: pendingConfirm
         ? { intent: pendingConfirm.intent, at: pendingConfirm.at }
         : null,
@@ -220,16 +247,60 @@ export function createVoiceSession({
     return onCoachText(text);
   }
 
+  /** 最近执行过的 intent（P3.3 Agent context 的 signals.recentCommands；只在内存里，最多 5 条） */
+  const recentIntents = [];
+
   /** 只调用注入进来的 ctx（app.js 组装的那份只读函数表）；命令自己绝不改 state */
   function runCommand(cmd, args) {
     try {
       const result = cmd && typeof cmd.run === 'function'
         ? cmd.run(commandContext || {}, args || {})
         : null;
+      // 记一笔「刚刚执行过哪条命令」（LLM context 的 signals.recentCommands 用）
+      const intent = cmd && cmd.intent ? String(cmd.intent) : '';
+      if (intent) {
+        recentIntents.push(intent);
+        while (recentIntents.length > 5) recentIntents.shift();
+      }
       return result || { key: 'coach.cmdAck.done' };
     } catch {
       return { key: 'coach.cmdAck.failed' };
     }
+  }
+
+  /**
+   * P3.3：执行 LLM 返回的 actions。
+   *
+   * **每一条 intent 都去命令表里找同一条命令的 `run()`**（P3.2 的 handler），
+   * 这里只负责「按顺序跑、失败不炸、退出要确认」，绝不自己改 state。
+   *
+   * @param {Array<{intent:string,args:object}>} actions
+   * @returns {{ done: string[], askedConfirm: boolean }}
+   */
+  function runActions(actions) {
+    const list = Array.isArray(actions) ? actions.slice(0, VOICE_LLM_MAX_ACTIONS) : [];
+    const done = [];
+    let askedConfirm = false;
+    for (const action of list) {
+      if (!action || typeof action !== 'object') continue;
+      const intent = String(action.intent || '');
+      if (!intent) continue;
+      const cmd = commandTable.find((c) => c.intent === intent);
+      if (!cmd) continue;
+      const args = action.args && typeof action.args === 'object' && !Array.isArray(action.args)
+        ? { ...action.args }
+        : {};
+      // 安全网：`exit` 必须带 confirm。模型漏了 → 只问一句，绝不真的退出。
+      if (cmd.confirm && args.confirm !== true) {
+        armPending(cmd, {});
+        askedConfirm = true;
+        continue;
+      }
+      delete args.confirm;
+      runCommand(cmd, args);
+      done.push(intent);
+    }
+    return { done, askedConfirm };
   }
 
   /**
@@ -286,6 +357,37 @@ export function createVoiceSession({
   function clearTimers() {
     if (thinkTimer !== null) { try { clearTimer(thinkTimer); } catch { /* ignore */ } thinkTimer = null; }
     if (speakTimer !== null) { try { clearTimer(speakTimer); } catch { /* ignore */ } speakTimer = null; }
+    // 静默收掉「教练在想…」（不 emit：调用方紧接着一定会 emit 一次新状态）
+    if (thinkSlowTimer !== null) { try { clearTimer(thinkSlowTimer); } catch { /* ignore */ } thinkSlowTimer = null; }
+    thinkingSlow = false;
+  }
+
+  /** 开始计时：请求发出去 1.5s 还没回来 → 底下显示「教练在想…」（只置一次，不重复 emit） */
+  function armThinkSlow() {
+    if (thinkSlowTimer !== null) {
+      try { clearTimer(thinkSlowTimer); } catch { /* ignore */ }
+      thinkSlowTimer = null;
+    }
+    if (!(thinkSlowMsValue > 0)) return;
+    thinkSlowTimer = setTimer(() => {
+      thinkSlowTimer = null;
+      if (!enabled || paused || state !== 'thinking') return;
+      if (thinkingSlow) return;
+      thinkingSlow = true;
+      emit();
+    }, thinkSlowMsValue);
+  }
+
+  /** 收掉「教练在想…」；真的从 true 变 false 时才 emit（避免无意义的一堆通知） */
+  function clearThinkSlow() {
+    if (thinkSlowTimer !== null) {
+      try { clearTimer(thinkSlowTimer); } catch { /* ignore */ }
+      thinkSlowTimer = null;
+    }
+    if (!thinkingSlow) return false;
+    thinkingSlow = false;
+    emit();
+    return true;
   }
 
   /** 取消「没听到声音」的静音计时（离开聆听 / 已经听到声音时） */
@@ -362,6 +464,7 @@ export function createVoiceSession({
     interimText = '';
     notice = null;
     clearSilence();
+    clearThinkSlow();   // 已经有回答了：底下那行「教练在想…」立刻收掉
     // 打断上一句 TTS（P3.4 的打断也走这里）；**不要停 ASR** —— 说完还要继续听
     try { tts?.cancel?.(); } catch { /* ignore */ }
     const myEpoch = ++epoch;
@@ -436,16 +539,30 @@ export function createVoiceSession({
     const ask = () => {
       thinkTimer = null;
       if (myEpoch !== epoch || !enabled || paused) return;
+      // 发出去之后开始计时：1.5s 还没回来 → 底下显示「教练在想…」（网络慢时用户不会以为卡死）
+      armThinkSlow();
       let reply;
       try {
         reply = llm ? llm.reply(body) : null;
       } catch (err) {
+        clearThinkSlow();
         fail('llm', err);
         return;
       }
       Promise.resolve(reply).then((res) => {
+        clearThinkSlow();
         if (myEpoch !== epoch || !enabled || paused) return;
         let answer = res && typeof res === 'object' ? res.text : res;
+        /**
+         * P3.3：模型返回了 `actions` → 用**命令表原有的 handler** 真执行
+         * （`startWorkout` / `setTarget` … 一条都不另写）。执行结果不念，念的是模型那句话。
+         * `exit` 没带 confirm 时只问一次（`askedConfirm`），绝不擅自退出。
+         */
+        let askedConfirm = false;
+        if (res && typeof res === 'object' && Array.isArray(res.actions) && res.actions.length) {
+          const ran = runActions(res.actions);
+          askedConfirm = ran.askedConfirm;
+        }
         /**
          * 没匹配上命令、LLM 也只回了「通用鼓励」时，换成一句**能照着说**的提示：
          * 「没听清。可以说『开始深蹲』『暂停』，也可以问『我能说什么』。」
@@ -455,12 +572,16 @@ export function createVoiceSession({
         if (unknownCommand && res && typeof res === 'object' && res.key === 'coach.encourage') {
           answer = t('coach.reply.fallback');
         }
+        if (askedConfirm) answer = t('coach.confirm.ask');
         if (!answer || !String(answer).trim()) {
           fail('llm');
           return;
         }
         onCoachText(String(answer));
-      }).catch((err) => fail('llm', err));
+      }).catch((err) => {
+        clearThinkSlow();
+        fail('llm', err);
+      });
     };
 
     if (thinkDelay > 0) thinkTimer = setTimer(ask, thinkDelay);
@@ -614,6 +735,14 @@ export function createVoiceSession({
     get route() { return route; },
     get lastError() { return lastError; },
     get muted() { return muted; },
+    /** 「教练在想…」那行小字是不是该显示（超过 thinkSlowMs 还没回来） */
+    get thinkingSlow() { return thinkingSlow; },
+    get thinkSlowMs() { return thinkSlowMsValue; },
+    set thinkSlowMs(ms) {
+      const v = Number(ms);
+      if (!Number.isFinite(v) || v < 0) return;
+      thinkSlowMsValue = v;
+    },
     get pendingConfirm() { return pendingConfirm ? { ...pendingConfirm } : null; },
     /** 测试可以调小（甚至设 0）；运行时重新调会按新值重开「等待确认」的计时 */
     get confirmMs() { return confirmMsValue; },

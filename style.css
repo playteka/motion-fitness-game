@@ -1576,6 +1576,21 @@ kbd {
 .coach-dock[data-state="off"] { opacity: 0.55; }
 .coach-dock[data-state="off"] .coach-ring-fill { stroke: rgba(148, 163, 184, 0.55); }
 
+/* P3.3：请求发出去 1.5 秒还没回来 → 环右边一行小字「教练在想…」。
+   不占版面、不拦点击（dock 本身 pointer-events: none）；有回复就立刻收掉。 */
+.coach-thinking {
+  position: absolute;
+  left: 62px;
+  bottom: 6px;
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: var(--warn);
+  white-space: nowrap;
+  opacity: 0.9;
+}
+.coach-thinking[hidden] { display: none; }
+
 .coach-panel {
   position: absolute;
   left: 50%;
@@ -1746,6 +1761,7 @@ kbd {
   .coach-dock { left: 10px; bottom: 10px; }
   .coach-ring { width: 48px; height: 48px; }
   .coach-ring-icon .ui-icon { width: 19px; height: 19px; }
+  .coach-thinking { left: 54px; bottom: 4px; font-size: 10px; }
   .coach-panel {
     bottom: 12px;
     width: calc(100% - 2 * var(--bar-side-space));

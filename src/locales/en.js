@@ -987,6 +987,18 @@ export default {
     dialogueGroup: 'Dialogue & voice',
     dialogueLead: 'How coach replies are shown: one danmaku line per sentence (you in cyan, the coach in mint), or the original two-line subtitles.',
     ttsHint: 'Coach speech uses Volcengine TTS by default (through the local /tts proxy; each sentence is synthesized once and cached). If it fails or takes over 3 seconds, it falls back to the system TTS automatically, so it never goes silent.',
+    // P3.3 free chat: on by default; turning it off keeps everything on the offline command fast-lane
+    freeChatToggle: 'Free chat',
+    freeChatHint: 'While this is on, anything that is not a known command is sent to an LLM (DeepSeek / Volcengine Ark / OpenAI). '
+      + 'It can see which exercise you are doing, how well each keyframe of this set is going, and what you did in recent sets, '
+      + 'so it answers like a real coach and can genuinely change the target / switch exercises / pause for you. '
+      + 'The conversation memory stays in memory only (last 6 turns) and is cleared on refresh; nothing is written to disk. '
+      + 'Turn it off and only the offline command fast-lane is used (no network, no cost, but only the commands in that table). '
+      + 'The API key lives in the local coach.env only and never reaches the browser.',
+    freeChatStatus: 'Current model: {provider} / {model}',
+    freeChatNotConfigured: 'Current model: {provider} (no key yet — put LLM_API_KEY in coach.env and restart the preview server)',
+    freeChatNoServer: 'Cannot reach the preview server: run `node preview-server.js` to use free chat',
+    freeChatOff: 'Free chat is off: command fast-lane only',
   },
 
   /* ---------------- What each exercise is scored by ---------------- */
@@ -1458,6 +1470,21 @@ export default {
     intro: 'I am here — just talk to me.',
     listeningHint: 'Speak into the microphone; your words and my answer will appear here.',
     hint: 'Press Ctrl+I to turn it off',
+    // P3.3: the small line next to the ring when a request takes longer than 1.5s
+    thinkingSlow: 'Coach is thinking…',
+    /**
+     * "Roughly what time is it now" for the LLM context (now.tsHint).
+     * Defined here only; src/voice/llm.js just looks the key up.
+     */
+    timeOfDay: {
+      earlyMorning: 'early-morning',
+      morning: 'morning',
+      lateMorning: 'late-morning',
+      noon: 'noon',
+      afternoon: 'afternoon',
+      evening: 'evening',
+      lateNight: 'late-night',
+    },
     error: {
       mic: 'The microphone will not open: allow microphone access in the browser, then press Ctrl+I to retry.',
       micBusy: 'The microphone is busy or missing: close other pages / apps that are recording, then press Ctrl+I to retry.',

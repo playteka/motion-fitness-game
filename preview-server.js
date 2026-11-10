@@ -31,6 +31,16 @@ import {
   createVolcTts,
   loadTtsConfig,
 } from './server/volc-tts.mjs';
+// 自由对话（P3.3）：/llm 调大模型 + 工具调用，/llm/health 只报「配没配 / 谁 / 哪个模型」
+// 凭证同样只在本进程里读 coach.env；前端只知道同源的 /llm（和 /asr、/tts 一个思路）。
+import {
+  LLM_HEALTH_PATH,
+  LLM_PATH,
+  createLlmGuard,
+  createLlmProvider,
+  createLlmRoutes,
+  loadLlmConfig,
+} from './server/llm-provider.mjs';
 
 const PORT = Number(process.env.PORT || 4174);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -116,6 +126,31 @@ const ttsService = createVolcTts({
 const ttsRoute = createTtsRoutes({ service: ttsService });
 
 /**
+ * 自由对话（P3.3）：同样**只在启动时读一次** `coach.env`（缺文件 / 缺字段都不抛错）。
+ * 没有 key → `configured:false`，`POST /llm` 直接 503，页面自动只用命令快车道。
+ * 日志只打 provider / model / tokens / tool-calls / 耗时，绝不打印 key。
+ */
+const llmConfig = loadLlmConfig();
+const llmProvider = createLlmProvider({
+  config: llmConfig.config,
+  logger: (fields) => {
+    // 白名单字段（provider/model/ms/prompt/completion/tools/status/code），没有 key
+    const parts = Object.entries(fields || {}).map(([k, v]) => `${k}=${v}`);
+    console.log(`[llm] ${parts.join(' ')}`);
+  },
+});
+const llmGuard = createLlmGuard();
+const llmRoute = createLlmRoutes({
+  provider: llmProvider,
+  config: llmConfig.config,
+  guard: llmGuard,
+  logger: (message, fields) => {
+    const parts = Object.entries(fields || {}).map(([k, v]) => `${k}=${v}`);
+    console.log(`[llm] ${message} ${parts.join(' ')}`);
+  },
+});
+
+/**
  * 能 gzip 的后缀（文本类）。
  *
  * ⚠️ **不要把 `.wasm` 放进来**：本地 127.0.0.1 的原始吞吐已经 200MB/s 级别（实测 9.3MB/41ms），
@@ -188,6 +223,8 @@ function serveStatic(req, res, file) {
 export const previewHandler = (req, res) => {
   // 语音合成（P3.6）：POST /tts（音频）与 GET /tts/health（配没配），先于静态资源处理
   if (ttsRoute(req, res)) return;
+  // 自由对话（P3.3）：POST /llm 与 GET /llm/health（不碰任何静态文件）
+  if (llmRoute(req, res)) return;
 
   // 调试数据记录（页面「运动设定」里的「记录调试数据」开关）：
   // 页面把每一批采样（JSONL 文本）POST 到这里，服务端**追加**写进 logs/ 下的文件 ——
@@ -427,6 +464,10 @@ export const previewHandler = (req, res) => {
           asrConfigured: !!(asr && asr.config && asr.config.configured),
           asrMissing: (asr && asr.config && asr.config.missing) || [],
           ttsConfigured: !!(ttsService && ttsService.configured),
+          // P3.3 自由对话：只报「配没配 / 哪家 / 哪个模型」，**不含 key**
+          llmConfigured: !!(llmConfig && llmConfig.config && llmConfig.config.configured),
+          llmProvider: (llmConfig && llmConfig.config && llmConfig.config.provider) || '',
+          llmModel: (llmConfig && llmConfig.config && llmConfig.config.model) || '',
           node: process.version,
         },
         // 「有没有在干活」：有未提交改动，或最近 150 秒内有文件被写过 ✓
@@ -570,6 +611,14 @@ function startServer() {
       + `  [${TTS_PATH}]`);
     if (!ttsService.configured) {
       console.warn(`  ⚠️ TTS 缺字段：${ttsService.missing.join(', ')}（在 ${path.basename(ttsConfig.envPath)} 里填；不填也能用，只是回退系统 TTS）`);
+    }
+    // 自由对话：只报 provider / model / 配没配，**不报 key**
+    console.log(`自由对话（LLM）： ${llmConfig.config.configured ? `已配置，${llmConfig.config.provider} / ${llmConfig.config.model}` : '未配置 → 只走命令快车道'}  [${LLM_PATH}]`);
+    console.log(`Free chat (LLM): ${llmConfig.config.configured ? `configured, ${llmConfig.config.provider} / ${llmConfig.config.model}` : 'not configured → command fast-lane only'}  [${LLM_HEALTH_PATH}]`);
+    if (!llmConfig.config.configured) {
+      console.warn(`  ⚠️ LLM 缺字段：${llmConfig.config.missing.join(', ')}（在 ${path.basename(llmConfig.envPath)} 里填；不填也能练，只是没有自由对话）`);
+      console.warn('  ⚠️ Missing: ' + llmConfig.config.missing.join(', ')
+        + ` in ${path.basename(llmConfig.envPath)} — the game still works, free chat is off.`);
     }
     if (!asr.config.configured) {
       console.warn(`  ⚠️ 没读到完整凭证：${asr.config.missing.join(', ')}（在 ${path.basename(asr.envPath)} 里填；不填也能练，只是语音识别会回退）`);

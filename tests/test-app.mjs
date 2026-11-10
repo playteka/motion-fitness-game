@@ -9070,6 +9070,225 @@ console.log('\n[19] P3.2 命令快车道：喂一句话 → 界面真的变了')
   api.showHome();
 }
 
+console.log('\n[20] P3.3 自由对话：/llm → 工具调用真的改界面（走现有 handler）');
+{
+  const api = windowStub.__mfg;
+  const { t: tL } = await import('../src/i18n.js');
+  const flush = async (n = 14) => {
+    for (let i = 0; i < n; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  /** 喂一句话；app 的 thinkDelay 是 360ms，等够了再看结果 */
+  const feed = async (text, ms = 520) => {
+    api.voice.onUserText(text);
+    await wait(ms);
+    await flush();
+  };
+  const finishSpeech = async () => {
+    const u = coachStubs.utterances.at(-1);
+    if (u && typeof u.onend === 'function') u.onend();
+    await flush();
+  };
+
+  api.showHome();
+  await api.setCoachEnabled(true);
+  await flush();
+
+  /* ---------------- 假 LLM：正常 / 失败 / 慢 ---------------- */
+  const requests = [];
+  let mode = 'ok';
+  let slowRelease = null;
+  const llmReply = '好，平板支撑 30 秒，慢一点做。';
+  const healthPayload = {
+    ok: true, configured: true, provider: 'deepseek', model: 'deepseek-chat',
+    limits: { perMinute: 20, maxTokens: 400 }, usage: { requests: 1, tokens: { prompt: 1, completion: 1, total: 2 } },
+  };
+  api.llmClient.setFetch(async (url, init = {}) => {
+    requests.push({ url, init });
+    if (init.method === 'GET') {
+      return { ok: true, status: 200, json: async () => healthPayload };
+    }
+    if (mode === 'fail') {
+      return { ok: false, status: 503, json: async () => ({ ok: false, error: 'not-configured' }) };
+    }
+    if (mode === 'slow') {
+      return new Promise((resolve) => {
+        slowRelease = () => resolve({
+          ok: true, status: 200,
+          json: async () => ({ ok: true, reply: '想好了。', actions: [], usage: {}, provider: 'deepseek', model: 'deepseek-chat' }),
+        });
+      });
+    }
+    return {
+      ok: true, status: 200,
+      json: async () => ({
+        ok: true,
+        reply: llmReply,
+        actions: [
+          { intent: 'startWorkout', args: { exerciseId: 'plank', value: 30 } },
+          { intent: 'setTarget', args: { value: 30 } },
+        ],
+        usage: { prompt: 10, completion: 5, total: 15 },
+        provider: 'deepseek', model: 'deepseek-chat',
+      }),
+    };
+  });
+  ok('自由对话默认开启，且 /llm 客户端准备好（测试注入假 fetch，不联网）',
+    api.state.settings.freeChat === true && typeof api.llmClient.respond === 'function');
+
+  /* ---------------- ① 快车道优先：命中命令表就不发 /llm ---------------- */
+  {
+    api.openExercise('squat');
+    api.state.session = 'running';
+    const before = requests.length;
+    await feed('帮我换成平板支撑 30 秒');
+    ok('「帮我换成平板支撑 30 秒」命中命令快车道：**不发 /llm**，直接改动作 + 目标',
+      requests.length === before && api.state.exerciseId === 'plank' && api.state.target === 30,
+      JSON.stringify({ requests: requests.length - before, ex: api.state.exerciseId, target: api.state.target }));
+    await finishSpeech();
+  }
+
+  /* ---------------- ② 没命中 → POST /llm → 用现有 handler 执行 actions ---------------- */
+  {
+    api.showHome();
+    api.openExercise('squat');
+    api.state.session = 'running';
+    api.state.target = 15;
+    const calls = { start: 0, select: [], target: [] };
+    const orig = {
+      start: api.voiceCommandCtx.startGestureMode,
+      select: api.voiceCommandCtx.selectExercise,
+      target: api.voiceCommandCtx.setTarget,
+    };
+    api.voiceCommandCtx.startGestureMode = (...a) => { calls.start += 1; return orig.start?.(...a); };
+    api.voiceCommandCtx.selectExercise = (...a) => { calls.select.push(a[0]); return orig.select?.(...a); };
+    api.voiceCommandCtx.setTarget = (...a) => { calls.target.push(a[0]); return orig.target?.(...a); };
+
+    const before = requests.length;
+    await feed('教练我有点累，帮我安排个轻松的');
+    const posted = requests.slice(before).find((r) => r.init && r.init.method === 'POST');
+    ok('没命中命令 → 真的发了 POST /llm（带 locale / context / history）',
+      !!posted && String(posted.url).endsWith('/llm')
+      && JSON.parse(posted.init.body).locale === 'zh'
+      && Array.isArray(JSON.parse(posted.init.body).history),
+      posted ? String(posted.url) : '（没发请求）');
+    const body = posted ? JSON.parse(posted.init.body) : {};
+    ok('context 是结构化 Agent 快照（now / session / performance / history / signals + utterance）',
+      !!body.context && ['now', 'session', 'performance', 'history', 'signals', 'utterance'].every((k) => k in body.context)
+      && body.context.utterance === '教练我有点累，帮我安排个轻松的'
+      && body.context.session.exerciseId === 'squat',
+      JSON.stringify(Object.keys(body.context || {})));
+    ok('context 的 JSON ≤ 6000 字符（≈800 tokens 预算）',
+      JSON.stringify(body.context || {}).length <= 6000, String(JSON.stringify(body.context || {}).length));
+
+    ok('模型返回的 start_workout(plank) + set_target(30) → 真的调用了**现有 handler**',
+      calls.start === 1 && calls.select.includes('plank') && calls.target.includes(30),
+      JSON.stringify(calls));
+    ok('界面真的变了：动作 = 平板支撑、目标 = 30 秒、HUD 写「30 秒」',
+      api.state.exerciseId === 'plank' && api.state.target === 30
+      && elements.get('hudTarget').textContent === `30 ${tL('ui.secondsUnit')}`,
+      JSON.stringify({ ex: api.state.exerciseId, target: api.state.target, hud: elements.get('hudTarget').textContent }));
+    ok('模型那句 reply 当教练说的话（字幕）',
+      api.state.voice.coachText === llmReply, api.state.voice.coachText);
+    ok('reply 也进了弹幕（教练那一行）',
+      String(elements.get('danmakuLast').textContent).includes(llmReply),
+      String(elements.get('danmakuLast').textContent));
+    ok('reply 被 TTS 念出来（coachTts → 系统 TTS 桩）',
+      coachStubs.utterances.some((u) => u.text === llmReply),
+      coachStubs.utterances.map((u) => u.text).join(' / '));
+    await finishSpeech();
+
+    api.voiceCommandCtx.startGestureMode = orig.start;
+    api.voiceCommandCtx.selectExercise = orig.select;
+    api.voiceCommandCtx.setTarget = orig.target;
+  }
+
+  /* ---------------- ③ LLM 503 → 回退罐头回复，不崩 ---------------- */
+  {
+    api.showHome();
+    mode = 'fail';
+    await feed('烤面包');
+    ok('LLM 503 → 回退原来的罐头回复（「没听清…能说什么」），界面状态不变、不崩',
+      api.state.voice.coachText === tL('coach.reply.fallback')
+      && api.state.voice.state !== 'error' && api.state.homeMode === true,
+      JSON.stringify({ coach: api.state.voice.coachText, state: api.state.voice.state }));
+    await finishSpeech();
+    mode = 'ok';
+  }
+
+  /* ---------------- ④ 自由对话关掉 → 只走快车道（完全不发请求） ---------------- */
+  {
+    api.showHome();
+    await api.applyFreeChat(false);
+    await flush();
+    ok('设置里关掉「自由对话」→ settings.freeChat=false，按钮 aria-pressed=false',
+      api.state.settings.freeChat === false
+      && elements.get('btnFreeChat').getAttribute('aria-pressed') === 'false');
+    const before = requests.length;
+    await feed('烤面包');
+    ok('关掉之后**完全不发 /llm 请求**（只用命令快车道 + 罐头回复）',
+      requests.length === before && api.state.voice.coachText === tL('coach.reply.fallback'),
+      JSON.stringify({ sent: requests.length - before, coach: api.state.voice.coachText }));
+    await finishSpeech();
+    await api.applyFreeChat(true);
+    await flush();
+    ok('重新打开「自由对话」→ 恢复（默认开）', api.state.settings.freeChat === true);
+  }
+
+  /* ---------------- ⑤ 1.5s 没回来 → 底下那行小字「教练在想…」 ---------------- */
+  {
+    api.showHome();
+    api.voice.thinkSlowMs = 40;   // 测试调小；默认 1500ms（THINK_SLOW_MS）
+    mode = 'slow';
+    api.voice.onUserText('你随便说两句');
+    // app 的 thinkDelay 是 360ms：请求发出去之后才开始算「在想…」的 1.5 秒
+    await wait(650);
+    await flush();
+    ok('请求超过 1.5s（测试 40ms）没回来 → 状态环旁显示「教练在想…」',
+      elements.get('coachThinking').hidden === false
+      && elements.get('coachThinking').textContent === tL('coach.thinkingSlow'),
+      JSON.stringify({ hidden: elements.get('coachThinking').hidden,
+        text: elements.get('coachThinking').textContent, state: api.state.voice.state }));
+    ok('这时候状态环已经切到 thinking（已有状态机，不另造）',
+      api.state.voice.state === 'thinking');
+    slowRelease?.();
+    await wait(40);
+    await flush();
+    ok('回答回来 → 「教练在想…」立刻收掉', elements.get('coachThinking').hidden === true);
+    await finishSpeech();
+    api.voice.thinkSlowMs = 1500;
+    mode = 'ok';
+  }
+
+  /* ---------------- ⑥ 设置里显示 provider / model（health，不含 key） ---------------- */
+  {
+    api.openSettings();
+    await wait(20);
+    await flush();
+    const status = elements.get('llmStatus');
+    ok('设置里显示当前 provider / model（GET /llm/health，不显示 key）',
+      status.hidden === false && status.textContent.includes('deepseek')
+      && status.textContent.includes('deepseek-chat')
+      && !/sk-/.test(status.textContent),
+      status.textContent);
+    api.closeSettings();
+    // 手动点开关也能切（和 state / 持久化同步）
+    elements.get('btnFreeChat').dispatch('click');
+    await flush();
+    ok('点「自由对话」开关 → 立刻生效（关掉）', api.state.settings.freeChat === false);
+    elements.get('btnFreeChat').dispatch('click');
+    await flush();
+    ok('再点一下 → 打开', api.state.settings.freeChat === true);
+  }
+
+  api.llmClient.setFetch(null);   // 还原：后续用例不再走假 fetch
+  api.showHome();
+  api.state.settings.freeChat = true;
+  await api.setCoachEnabled(false);
+  await flush();
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {
   console.log('失败项：');
   for (const f of failures) console.log('  - ' + f);

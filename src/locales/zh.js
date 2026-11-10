@@ -980,6 +980,17 @@ export default {
     dialogueGroup: '对话显示与语音',
     dialogueLead: '教练的回答怎么显示：一句一条的弹幕（用户青色、教练薄荷绿），或者原来的两行字幕。',
     ttsHint: '教练说话默认走火山 TTS（本机 /tts 代理，同一句只合成一次并缓存）；超过 3 秒或失败会自动改用系统 TTS，不会哑掉。',
+    // P3.3 自由对话：默认开；关掉就只走命令快车道（不联网、不花钱）
+    freeChatToggle: '自由对话',
+    freeChatHint: '开着的时候，没命中命令的话会发给大模型（DeepSeek / 豆包方舟 / OpenAI）——它能看到你正在做哪个动作、'
+      + '这一组每帧做得怎么样、最近练了几组，回答更像真人教练，也能真的帮你改目标 / 换动作 / 暂停。'
+      + '对话记忆只留在内存里（最近 6 轮），刷新页面就清空，不会存到硬盘。'
+      + '关掉就只走离线命令快车道（不联网、不花钱，能力也只剩那张命令表）。'
+      + '密钥只放在本机 coach.env，不会进前端。',
+    freeChatStatus: '当前模型：{provider} / {model}',
+    freeChatNotConfigured: '当前模型：{provider}（还没配 key —— 在 coach.env 里填 LLM_API_KEY 后重启预览服务器）',
+    freeChatNoServer: '连不上预览服务器：先 node preview-server.js，自由对话才能用',
+    freeChatOff: '自由对话已关闭：只走命令快车道',
   },
 
   judge: {
@@ -1465,6 +1476,21 @@ export default {
     intro: '我在，说话就行。',
     listeningHint: '对着麦克风说话，这里会出现你的话和我的回答。',
     hint: '按 Ctrl+I 关闭',
+    // P3.3：请求发出去 1.5 秒还没回来时，状态环旁边那行小字
+    thinkingSlow: '教练在想…',
+    /**
+     * 给 LLM 的「现在大概什么时候」（只到小时级，作为 context 的 now.tsHint）。
+     * 文案在这里一处定义，src/voice/llm.js 只按键取。
+     */
+    timeOfDay: {
+      earlyMorning: '凌晨',
+      morning: '早上',
+      lateMorning: '上午',
+      noon: '中午',
+      afternoon: '下午',
+      evening: '晚上',
+      lateNight: '深夜',
+    },
     error: {
       mic: '麦克风打不开：请在浏览器里允许麦克风权限，然后按 Ctrl+I 重试。',
       micBusy: '麦克风被占用或找不到麦克风：关掉其它正在录音的页面 / 应用，再按 Ctrl+I 重试。',
