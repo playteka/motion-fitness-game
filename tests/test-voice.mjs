@@ -4283,6 +4283,20 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
 
     ok('客户端不会把 key 带进请求头（前端根本不知道 key）',
       seen.every((s) => !/authorization/i.test(JSON.stringify(s.init.headers || {}))));
+
+    // 只调工具、没有文字的回合：也要记进记忆（否则历史里会出现连续两条 user）
+    const toolClient = createLlmClient({
+      fetchImpl: async () => ({
+        ok: true, status: 200,
+        json: async () => ({ ok: true, reply: '', actions: [{ intent: 'pause', args: {} }], usage: {} }),
+      }),
+    });
+    const toolRes = await toolClient.respond('停一下', { locale: 'zh' });
+    ok('只调工具、reply 为空 → 客户端照常返回 actions，并把这一轮记进记忆（user + 工具名）',
+      toolRes.actions.length === 1 && toolClient.history.length === 2
+      && toolClient.history[0].role === 'user' && toolClient.history[1].role === 'assistant'
+      && toolClient.history[1].content === 'pause',
+      JSON.stringify(toolClient.history));
     ok('normalizeActions 丢掉形状不对的 action（只留 {intent, args}）',
       normalizeLlmActions([{ intent: 'pause', args: {} }, null, 'x', { args: {} }, { intent: 'home' }])
         .map((a) => a.intent).join(',') === 'pause,home');

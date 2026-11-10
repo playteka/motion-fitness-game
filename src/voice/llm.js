@@ -396,7 +396,10 @@ export function createLlmClient({
       const reply = String(data.reply || '').trim();
       const actions = normalizeActions(data.actions);
       if (!reply && !actions.length) throw llmClientError('llm-bad-json', 'empty reply');
-      remember(payload.text, reply || '');
+      // 只调了工具、没有文字的回合也要记进记忆（否则历史里会出现连续两条 user）：
+      // assistant 那一格记成工具名，下一轮模型才知道「上一句我已经执行过什么」
+      const memoryReply = reply || (actions.length ? actions.map((a) => a.intent).join(',') : '');
+      remember(payload.text, memoryReply);
       const ms = Math.max(0, Number(now()) - Number(started));
       last = { ms, actions: actions.length, provider: data.provider || '', model: data.model || '' };
       record('llm:reply', { ms, actions: actions.length });
