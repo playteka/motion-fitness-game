@@ -7961,6 +7961,102 @@ console.log('\n[17e] 姿态模型加载进度条 + 每阶段超时（不再「�
 }
 
 /* ------------------------------------------------------------------ *
+ * [17e2] 加载偏慢提示：单块 < 1MB/s 且已用 > 8 秒 → 一行黄色提示 + pose:slow-load
+ *
+ * 用户反馈「刚开始加载运行库总是有问题 —— 公司网络加载很快，家里网络加载很慢」。
+ * 运行库与模型都是**本机 4174 提供的本地文件**（直连 10MB/s 以上，实测 9.3MB 走 86~1655ms），
+ * 慢成这样基本只有一种原因：**代理 / VPN 把 127.0.0.1 也代理了**（Chrome 默认把 localhost
+ * 交给系统代理，除非显式绕过）。所以界面只**提示**「把 127.0.0.1、localhost 加进直连再刷新」——
+ * **绝不自动改系统代理** ✗；诊断日志只留两个数字（bps / elapsedMs），方便对比「家里 vs 公司」。
+ *
+ * 阈值**一处定义**在 pose-engine.js（SLOW_LOAD_BPS / SLOW_LOAD_AFTER_MS），界面与测试都读它。
+ * ------------------------------------------------------------------ */
+console.log('\n[17e2] 加载偏慢提示：< 1MB/s 且 > 8s 才出现，只提示不改系统设置');
+{
+  const api = windowStub.__mfg;
+  const { t: tSlow } = await import('../src/i18n.js');
+  const enDict = (await import('../src/locales/en.js')).default;
+  const hintEl = elements.get('mpSlowHint');
+
+  ok('门槛一处定义：1MB/s + 8 秒（界面与测试读同一份常量，不是另抄一份）',
+    api.SLOW_LOAD_BPS === 1024 * 1024 && api.SLOW_LOAD_AFTER_MS === 8000,
+    JSON.stringify({ bps: api.SLOW_LOAD_BPS, ms: api.SLOW_LOAD_AFTER_MS }));
+
+  ok('isSlowLoad：慢（300KB/s · 9s）→ true；快（20MB/s）→ false；还不够 8 秒 → false',
+    api.isSlowLoad({ bps: 300 * 1024, elapsedMs: 9000 }) === true
+    && api.isSlowLoad({ bps: 20 * 1024 * 1024, elapsedMs: 9000 }) === false
+    && api.isSlowLoad({ bps: 300 * 1024, elapsedMs: 7999 }) === false);
+  ok('isSlowLoad 的边界：8s 整就算慢、正好 1MB/s 不算慢、bps=0（一个字节没来）归「卡住」那一档去报',
+    api.isSlowLoad({ bps: 1, elapsedMs: 8000 }) === true
+    && api.isSlowLoad({ bps: api.SLOW_LOAD_BPS, elapsedMs: 60000 }) === false
+    && api.isSlowLoad({ bps: 0, elapsedMs: 60000 }) === false
+    && api.isSlowLoad({}) === false);
+
+  ok('词条中英都有，且都指向「把 127.0.0.1 / localhost 加进代理直连」',
+    tSlow('ui.modelSlowLoad').includes('127.0.0.1') && tSlow('ui.modelSlowLoad').includes('localhost')
+    && tSlow('ui.modelSlowLoad').includes('刷新')
+    && enDict.ui.modelSlowLoad.includes('127.0.0.1') && enDict.ui.modelSlowLoad.includes('localhost')
+    && /refresh/i.test(enDict.ui.modelSlowLoad),
+    enDict.ui.modelSlowLoad);
+  ok('那一行挂在进度条下面（index.html 的 #mpSlowHint，走 data-i18n，不写死文案）',
+    !!hintEl && hintEl.getAttribute('data-i18n') === 'ui.modelSlowLoad',
+    hintEl && hintEl.getAttribute('data-i18n'));
+
+  /* ---- 慢：提示出现 + 只记一条诊断（bps / elapsedMs，没有文件内容）---- */
+  const records = [];
+  const savedRecord = api.coachDiag.record;
+  api.coachDiag.record = (type, data) => {
+    records.push({ type, data });
+    return savedRecord.call(api.coachDiag, type, data);
+  };
+  let slow = null;
+  let fast = null;
+  let slowHidden = null;
+  let fastHidden = null;
+  try {
+    api.resetModelProgress();
+    api.modelProgressState.loadStartedAt = Date.now() - 9000;
+    api.modelProgressState.model = {
+      loaded: 300 * 1024, total: 2 * 1024 * 1024, bps: 300 * 1024, done: false,
+    };
+    slow = api.updateSlowLoadHint();
+    slowHidden = hintEl.hidden;   // 那一刻的状态（后面「变快」还会改它）
+    // 进度条每 0.5 秒重画一次：再画两次也只能有一条诊断
+    api.updateSlowLoadHint();
+    api.updateSlowLoadHint();
+
+    api.modelProgressState.model = {
+      loaded: 8 * 1024 * 1024, total: 10 * 1024 * 1024, bps: 20 * 1024 * 1024, done: false,
+    };
+    fast = api.updateSlowLoadHint();
+    fastHidden = hintEl.hidden;
+  } finally {
+    api.coachDiag.record = savedRecord;
+  }
+  ok('慢链路：黄色提示出现（hidden=false）', slow === true && slowHidden === false,
+    JSON.stringify({ slow, hidden: slowHidden }));
+  ok('慢链路写一条 pose:slow-load {bps, elapsedMs} —— 只有两个数字，没有文件名 / 文件内容',
+    records.length === 1 && records[0].type === 'pose:slow-load'
+    && records[0].data.bps === 300 * 1024
+    && records[0].data.elapsedMs >= 9000
+    && Object.keys(records[0].data).sort().join(',') === 'bps,elapsedMs',
+    JSON.stringify(records));
+  ok('同一次加载只记一条（进度条每 0.5 秒重画，诊断日志不会被刷爆）', records.length === 1);
+  ok('速率跟上来（20MB/s）→ 提示自己收起', fast === false && fastHidden === true,
+    JSON.stringify({ fast, hidden: fastHidden }));
+
+  api.resetModelProgress();
+  ok('重新开始加载（含重试）：提示收起、slowLogged 清零（下一次还能再提示一次）',
+    api.modelProgressState.slowLogged === false && api.modelProgressState.loadStartedAt > 0,
+    JSON.stringify({
+      slowLogged: api.modelProgressState.slowLogged, startedAt: api.modelProgressState.loadStartedAt,
+    }));
+  ok('「慢」不写进诊断面板的 lastError（慢不是错误；面板照旧显示真正的错误）',
+    !String(api.coachDiag.snapshot().lastError).includes('slow'),
+    api.coachDiag.snapshot().lastError);
+}
+
+/* ------------------------------------------------------------------ *
  * [17f] 初始化识别器：**卡住（不 reject）也要兜底** + CPU 优先 + 诊断留痕
  *
  * 用户实测的错误原文：「姿态模型加载失败 / 推理器创建失败（超时 20s）」。

@@ -173,6 +173,9 @@ export default {
     modelProgressIndeterminate: '进行中…',
     modelProgressByEngine: '识别器内部加载',
     modelInitElapsed: '已用 {sec}s',
+    // 「加载偏慢」提示（用户口径：单块 < 1MB/s 且已用 > 8 秒）：
+    // 本机文件不该慢，慢多半是代理 / VPN 把 127.0.0.1 也代理了 —— 只提示，不自动改系统设置
+    modelSlowLoad: '本地文件加载偏慢 —— 若开着 VPN/代理，请把 127.0.0.1、localhost 加入直连（绕过）列表，然后刷新',
     // 下载类失败自动重试时遮罩上那一句（首次 + 3 次，退避 400 / 900 / 1800ms）
     poseRetry: '正在重试（{n}/{max}）',
     poseRetryBtn: '重试加载模型',

@@ -387,6 +387,11 @@ export function createDiag({
       case 'pose:delegate':
         // GPU 建不起来 → 已自动切 CPU（不是错误，只是排障线索，不写 lastError）
         break;
+      case 'pose:slow-load':
+        // 「加载偏慢」：单块速率 < 1MB/s 且已用 > 8 秒（阈值见 pose-engine.js 的 SLOW_LOAD_*）。
+        // 只有 bps / elapsedMs 两个数字，**不含任何文件内容**。
+        // 故意不写 lastError：慢不是错误（界面已经有一条黄色提示），写进去会让诊断面板看起来像挂了。
+        break;
       default:
         break;
     }

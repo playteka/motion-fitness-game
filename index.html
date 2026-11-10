@@ -134,6 +134,11 @@
                   <span class="mp-track"><i class="mp-fill" id="mpFillInit"></i></span>
                   <span class="mp-meta" id="mpMetaInit"></span>
                 </div>
+                <!-- 慢链路提示（用户反馈「公司快、家里慢」）：运行库与模型都是本机 4174 的本地文件，
+                     正常 10MB/s 以上；单块速率 < 1MB/s 且已用 > 8 秒时才出现（阈值见 pose-engine.js
+                     的 SLOW_LOAD_BPS / SLOW_LOAD_AFTER_MS，一处定义）。只提示「把 127.0.0.1、localhost
+                     加进代理直连然后刷新」，**不改任何系统设置**；内容由 app.js 的 updateSlowLoadHint 开关。 -->
+                <p class="mp-slow-hint" id="mpSlowHint" data-i18n="ui.modelSlowLoad" role="status" hidden></p>
               </div>
               <button class="primary-btn" id="btnStartCam" type="button" data-i18n="ui.startCam"></button>
               <p class="mask-hint" data-i18n="ui.maskHint"></p>

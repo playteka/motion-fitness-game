@@ -652,6 +652,25 @@ kbd {
   .mp-fill { transition: none; }
 }
 
+/* 慢链路提示（黄色一行，在进度条下方）
+   用户反馈「公司网络加载很快、家里很慢」：本地文件本该 10MB/s 以上，慢到 < 1MB/s 且已用 > 8 秒
+   才出现（阈值一处定义在 pose-engine.js：SLOW_LOAD_BPS / SLOW_LOAD_AFTER_MS）。
+   只提示「把 127.0.0.1、localhost 加进代理直连然后刷新」，**不自动改系统设置**。
+   选择器写成 `.model-progress .mp-slow-hint`：`.mask-inner p` 那条规则优先级更高，
+   否则这里的黄色会被它盖掉（`.mask-hint` 当年就是为这个加 !important 的）。 */
+.model-progress .mp-slow-hint {
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  color: #fcd34d;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+}
+.model-progress .mp-slow-hint[hidden] { display: none; }
+
 /* ---------- 摄像头诊断面板（打不开时列出客观事实，可折叠） ----------
    手机上打不开摄像头时，用户最需要的是「一眼看出卡在哪」：isSecureContext / 协议 /
    mediaDevices / getUserMedia 报错 / 画面尺寸 / video 属性，最后一句处置建议。

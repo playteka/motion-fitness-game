@@ -152,18 +152,91 @@ const llmRoute = createLlmRoutes({
 });
 
 /**
- * 能 gzip 的后缀（文本类）。
+ * 能 gzip 的后缀（文本类 **+ 运行库 `.wasm` + 模型 `.task`**）。
  *
- * ⚠️ **不要把 `.wasm` 放进来**：本地 127.0.0.1 的原始吞吐已经 200MB/s 级别（实测 9.3MB/41ms），
- * 而 gzip 9.3MB 要花 0.3~1.7 秒 ✗ —— 在本机上「压缩」比「直接发」还慢（实测 curl --compressed
- * 1741ms vs 不压缩 86ms ✗）。只有跨网络（手机 / 隧道）才值得压，那种场景我们另有 HTTPS 隧道方案。
- * 模型 `.task` 本身就是压缩包，也不压。
+ * 上一轮曾经把 `.wasm` 从这份名单里去掉（`c0eaa16`）：本机回环直连 9.3MB 只要 41~86ms，
+ * 而 gzip 9.3MB 要 0.3~1.7 秒 —— 在**直连**的本机上压缩确实是净亏 ✗。
+ *
+ * 但用户后来报了「公司网络快、家里网络慢」：那种情况下 127.0.0.1 也被代理 / VPN 接管了
+ * （Chrome 默认会把 localhost 交给系统代理，除非显式绕过），链路只有几百 KB/s~1MB/s，
+ * **压缩就是净赚** ✓：9.5MB → ~2.9MB（实测 9502124 → 2909084 字节，省 69%），
+ * 模型 `.task` 也能省 ~14%（5777746 → 4971496）。
+ * 压缩结果按「路径 + mtime + 大小」缓存，同一个文件只压一次（见下面的 gzipEntryFor），
+ * 所以再慢的链路也不会反复付那 0.5 秒的 CPU；压不动的文件按 `GZIP_MIN_SAVING` 自动放弃。
  */
 export const GZIP_EXTS = new Set(['.html', '.css', '.js', '.mjs', '.json', '.webmanifest',
-  '.svg', '.md', '.txt']);
+  '.svg', '.md', '.txt', '.wasm', '.task']);
 
-/** gzip 结果的内存缓存：绝对路径 → { key: `mtime:size`, gz }。同一个文件只压一次，文件改了就重压。 */
+/**
+ * 「压缩还是原始」的分界线：压缩后**至少要省下 5%**，否则发原始字节。
+ *
+ * 模型 `.task` 是 zip 容器（里面已经是压缩过的 tflite），实测还能再省 11%~14%，
+ * 所以默认会压；但换成更新过的 / 已经打包过 gzip 的模型时可能一点也压不动 ——
+ * 那时 `gzBytes >= rawBytes * 0.95`，**放弃压缩直接发原始**，别让用户多付一次解压时间。
+ */
+export const GZIP_MIN_SAVING = 0.95;
+
+/** 这一对字节数「值不值得压」（纯函数；测试直接断言边界） */
+export function gzipWorthIt(rawBytes, gzBytes) {
+  const raw = Number(rawBytes) || 0;
+  const gz = Number(gzBytes) || 0;
+  return raw > 0 && gz > 0 && gz < raw * GZIP_MIN_SAVING;
+}
+
+/**
+ * gzip 结果的内存缓存：绝对路径 → { key: `mtime:size`, gz, rawBytes, gzBytes }。
+ * - 同一个文件（mtime + size 没变）只压一次；
+ * - `gz === null` 表示「压过但不值得发」（已缓存这个判断，不会每次请求都白压一遍）；
+ * - `gzipInflight` 让并发请求共享同一次压缩（9.3MB 别同时压两遍）。
+ */
 const gzipCache = new Map();
+const gzipInflight = new Map();
+
+/** 异步 gzip（不阻塞事件循环：9.3MB 压 0.5 秒，同步压会让其它请求一起卡住） */
+function gzipAsync(buffer) {
+  return new Promise((resolve, reject) => {
+    zlib.gzip(buffer, (err, out) => (err ? reject(err) : resolve(out)));
+  });
+}
+
+/**
+ * 拿到某个文件的压缩结果（带缓存 + 并发去重）。
+ * @returns {Promise<{key:string,gz:Buffer|null,rawBytes:number,gzBytes:number}>}
+ *   `gz === null` → 压不动 / 不值得压，调用方直接发原始字节。
+ */
+export function gzipEntryFor(file, key) {
+  const hit = gzipCache.get(file);
+  if (hit && hit.key === key) return Promise.resolve(hit);
+  const flying = gzipInflight.get(file);
+  if (flying && flying.key === key) return flying.promise;
+  const promise = fs.promises.readFile(file)
+    .then(async (raw) => {
+      const gz = await gzipAsync(raw);
+      const entry = {
+        key,
+        gz: gzipWorthIt(raw.length, gz.length) ? gz : null,
+        rawBytes: raw.length,
+        gzBytes: gz.length,
+      };
+      gzipCache.set(file, entry);
+      return entry;
+    })
+    .finally(() => {
+      const current = gzipInflight.get(file);
+      if (current && current.promise === promise) gzipInflight.delete(file);
+    });
+  gzipInflight.set(file, { key, promise });
+  return promise;
+}
+
+/** `/pose-check`：一眼看出「服务器能给多大 / 压缩后多大」（只报字节数，不含路径） */
+export const POSE_CHECK_PATH = '/pose-check';
+
+/** 这个路径下「用户实际要下载的大文件」（默认轻量模型，可在设置里换 full） */
+export const POSE_CHECK_FILES = {
+  wasm: 'vendor/tasks-vision/wasm/vision_wasm_internal.wasm',
+  model: 'vendor/models/pose_landmarker_lite.task',
+};
 
 /** 静态资源的响应头（`/vendor/**` 也一视同仁：本地开发**完全不缓存**，见下面的注释） */
 function staticHeaders(ext) {
@@ -204,16 +277,15 @@ function serveStatic(req, res, file) {
       fs.readFile(file, (readErr, data) => (readErr ? notFound() : send(data)));
       return;
     }
-    // 同一个文件（mtime + size 没变）只压一次：别每次请求都 gzip 9.3MB
+    // 同一个文件（mtime + size 没变）只压一次：别每次请求都 gzip 9.3MB。
+    // 压缩是**异步**的（不阻塞事件循环），并发请求共享同一次压缩；
+    // 压不动（.task 本来就压过 / 随机数据）→ gz 为 null → 发原始字节，客户端照样能跑。
     const key = `${Math.round(stat.mtimeMs)}:${stat.size}`;
-    const hit = gzipCache.get(file);
-    if (hit && hit.key === key) { send(hit.gz, 'gzip'); return; }
-    fs.readFile(file, (readErr, data) => {
-      if (readErr) { notFound(); return; }
-      const gz = zlib.gzipSync(data);
-      gzipCache.set(file, { key, gz });
-      send(gz, 'gzip');
-    });
+    const sendRaw = () => fs.readFile(file, (readErr, data) => (readErr ? notFound() : send(data)));
+    gzipEntryFor(file, key).then((entry) => {
+      if (entry && entry.gz) send(entry.gz, 'gzip');
+      else sendRaw();
+    }, sendRaw);   // 压失败（读失败 / zlib 出错）也退回原始字节，绝不把请求挂住
   });
 }
 
@@ -311,6 +383,40 @@ export const previewHandler = (req, res) => {
       configured: asr.config.configured,
       missing: asr.config.missing,
     }));
+    return;
+  }
+
+  /**
+   * 离线自检：`GET /pose-check`
+   *
+   * 用户反馈「刚开始加载运行库总是有问题 —— 公司网络加载很快，家里网络很慢」。
+   * 这个端点把**服务器能提供多大 / gzip 后多大**直接摆出来，只报字节数（**不含任何路径 / 凭证**）：
+   *
+   *   { "wasm": { "bytes": 9502124, "gzBytes": 2909084 },
+   *     "model": { "bytes": 5777746, "gzBytes": 4971496 }, "gzip": true }
+   *
+   * 在家里打开它，一眼就能分清是「服务器只给这么点」还是「3MB 的东西走了 30 秒」——
+   * 后者就是链路（代理 / VPN 把 127.0.0.1 也代理了，见 README 的「加载慢怎么办」）。
+   */
+  if (req.method === 'GET' && (req.url || '').split('?')[0] === POSE_CHECK_PATH) {
+    const sizeOf = async (rel) => {
+      const file = path.join(ROOT, rel);
+      let stat = null;
+      try { stat = fs.statSync(file); } catch { /* 缺文件就报 0，不报错也不泄露路径 */ }
+      if (!stat || !stat.isFile()) return { bytes: 0, gzBytes: 0 };
+      try {
+        // 复用同一个压缩缓存：这里量到的 gz 大小就是浏览器真正会收到的字节数
+        const entry = await gzipEntryFor(file, `${Math.round(stat.mtimeMs)}:${stat.size}`);
+        return { bytes: stat.size, gzBytes: entry.gzBytes || 0 };
+      } catch {
+        return { bytes: stat.size, gzBytes: 0 };
+      }
+    };
+    Promise.all([sizeOf(POSE_CHECK_FILES.wasm), sizeOf(POSE_CHECK_FILES.model)])
+      .then(([wasm, model]) => {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ wasm, model, gzip: true }));
+      });
     return;
   }
 

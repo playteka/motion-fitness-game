@@ -174,6 +174,9 @@ export default {
     modelProgressIndeterminate: 'In progress…',
     modelProgressByEngine: 'downloaded by the recognizer',
     modelInitElapsed: '{sec}s elapsed',
+    // "Loading looks slow" hint (slower than 1MB/s after 8s): local files should be fast —
+    // a proxy / VPN that also proxies 127.0.0.1 is the usual cause. Hint only, never touch the system settings
+    modelSlowLoad: 'Local files are loading slowly — if a VPN or proxy is on, add 127.0.0.1 and localhost to its direct (bypass) list, then refresh',
     // Shown on the mask while a download-class failure is being retried (first try + 3 retries)
     poseRetry: 'Retrying ({n}/{max})',
     poseRetryBtn: 'Retry loading the model',

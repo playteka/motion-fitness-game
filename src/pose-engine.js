@@ -168,6 +168,35 @@ export const DOWNLOAD_STALL_TIMEOUT_MS = 60000;
 /** 总进度条的权重：运行库 40% + 模型 40% + 初始化 20% */
 export const PROGRESS_WEIGHTS = { wasm: 0.4, model: 0.4, init: 0.2 };
 
+/**
+ * 「加载偏慢」的门槛（用户口径：**单块速率 < 1MB/s 且已用超过 8 秒**）。
+ *
+ * 为什么需要这个：运行库与模型都是**本机 4174 提供的本地文件**，直连应该 10MB/s 以上
+ * （实测 9.3MB 走 86~1655ms）。用户报「公司网络快、家里网络慢」—— 最常见的原因是家里开着
+ * 代理 / VPN 把 `127.0.0.1` 也代理了（Chrome 默认把 localhost 交给系统代理，除非显式绕过）。
+ * 所以慢到一定程度就在进度条下面提示「把 127.0.0.1、localhost 加进直连」——
+ * **只提示，绝不自己去改系统代理** ✗（那是用户的机器设置）。
+ *
+ * 阈值放在这里**一处定义**：界面（app.js）与测试都读这两个常量，不另抄一份。
+ */
+export const SLOW_LOAD_BPS = 1024 * 1024;
+export const SLOW_LOAD_AFTER_MS = 8000;
+
+/**
+ * 这一次进度算不算「加载偏慢」（纯函数）。
+ *
+ * @param {{bps?:number, elapsedMs?:number}} o  bps = 当前这一段的速率（字节/秒），elapsedMs = 已用毫秒
+ * @returns {boolean} 已用超过 8 秒、且**测到的**速率低于 1MB/s
+ *
+ * 注意 `bps = 0`（一个字节都没来）**不算「慢」**：那是「卡住」，归下载卡住超时（60s 没新字节）
+ * 去报，提示更准（会说「已收 0B / 5.6MB」）。这里只判「有速度但太慢」。
+ */
+export function isSlowLoad({ bps = 0, elapsedMs = 0 } = {}) {
+  const speed = Math.max(0, Number(bps) || 0);
+  const elapsed = Math.max(0, Number(elapsedMs) || 0);
+  return speed > 0 && speed < SLOW_LOAD_BPS && elapsed >= SLOW_LOAD_AFTER_MS;
+}
+
 /** 字节数 → '2.9MB'（纯函数；进度条与失败原因共用同一份写法） */
 export function formatMB(bytes) {
   const n = Math.max(0, Number(bytes) || 0);

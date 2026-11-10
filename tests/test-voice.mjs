@@ -2891,16 +2891,27 @@ console.log('\n[24] 语音诊断：事件收集 / 批量落盘 / snapshot / 脱�
  * 用户反馈「下载运行库很慢」「初始化识别器失败」之后定的三条：
  *   ① COOP + COEP 必须**同时**在（crossOriginIsolated 才能为 true，wasm 才拿得到该有的能力）；
  *   ② 静态资源**一律不缓存**（`no-store`）—— 坏文件不会被一直用下去；
- *   ③ 文本走 gzip（解压后与磁盘文件逐字节一致）；**wasm 不压** —— c0eaa16 实测
- *      9.3MB 在本机 gzip 要 0.3~1.7s，直接发只要 86ms（本地回环带宽远大于压缩速度）。
+ *   ③ 文本 + **运行库 `.wasm` + 模型 `.task` 都走 gzip**（解压后与磁盘文件逐字节一致）。
+ *
+ * ③ 的来龙去脉：上一轮（c0eaa16）把 `.wasm` 移出了 gzip 名单 —— 本机直连 9.3MB 只要 41~86ms，
+ * 而 gzip 要 0.3~1.7s，直连时压缩是净亏。但用户后来报「**公司网络快、家里网络慢**」：
+ * 那种情况下 127.0.0.1 也被代理 / VPN 接管了（Chrome 默认把 localhost 交给系统代理），
+ * 链路只有几百 KB/s，**压缩就是净赚** —— 实测 9502124 → 2909084 字节（省 69%），
+ * 模型 5777746 → 4971496（省 14%）。压不动的文件（随机数据 / 已经压过的模型）按
+ * `GZIP_MIN_SAVING` 放弃压缩、原样发原始字节（`gzipWorthIt` 纯函数钉住这条边界）。
+ * 压缩结果按「路径 + mtime + 大小」缓存，同一个文件只压一次。
+ *
+ * 另外钉住 `GET /pose-check`（用户在家一眼看出「服务器能给多大 / 压完多大」，不含任何路径）。
  * 这里起的是**真的 http server**（复用 preview-server.js 导出的 previewHandler），不是字符串断言。
  * ================================================================== */
-console.log('\n[25] 预览服务器：COOP+COEP / no-store / 文本 gzip（wasm 不压）');
+console.log('\n[25] 预览服务器：COOP+COEP / no-store / gzip（wasm + 模型都压，压不动发原始）/ /pose-check');
 {
   const http = await import('node:http');
   const path = await import('node:path');
   const { fileURLToPath } = await import('node:url');
-  const { previewHandler } = await import('../preview-server.js');
+  const {
+    previewHandler, GZIP_EXTS, GZIP_MIN_SAVING, gzipWorthIt, POSE_CHECK_PATH,
+  } = await import('../preview-server.js');
   const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const srv = http.createServer(previewHandler);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -2914,14 +2925,33 @@ console.log('\n[25] 预览服务器：COOP+COEP / no-store / 文本 gzip（wasm 
     req.on('error', reject);
   });
 
+  /* ---- 名单与「压不动就不压」的边界（纯函数）---- */
+  ok('gzip 名单里有 .wasm 与 .task（慢链路下压缩是净赚：9.3MB → ~2.9MB）',
+    GZIP_EXTS.has('.wasm') && GZIP_EXTS.has('.task') && GZIP_EXTS.has('.js'),
+    [...GZIP_EXTS].join(','));
+  ok('GZIP_MIN_SAVING = 0.95：压完没省下 5% 就放弃（gz >= 95% 原始大小 → 不压）',
+    GZIP_MIN_SAVING === 0.95
+    && gzipWorthIt(1000, 949) === true
+    && gzipWorthIt(1000, 950) === false
+    && gzipWorthIt(1000, 1200) === false
+    && gzipWorthIt(0, 0) === false,
+    JSON.stringify([949, 950, 1200].map((gz) => [gz, gzipWorthIt(1000, gz)])));
+
   const wasmPath = '/vendor/tasks-vision/wasm/vision_wasm_internal.wasm';
   const wasmRaw = fs.readFileSync(path.join(ROOT, wasmPath.slice(1)));
   const wasm = await get(wasmPath, { 'Accept-Encoding': 'gzip' });
-  ok('wasm **不** gzip（本机压缩比直接发还慢）：即使请求 gzip 也原样发、字节数 = 文件大小',
-    wasm.status === 200 && wasm.headers['content-encoding'] === undefined
-    && wasm.body.length === wasmRaw.length
-    && Number(wasm.headers['content-length']) === wasmRaw.length,
-    JSON.stringify({ ce: wasm.headers['content-encoding'], len: wasm.body.length, raw: wasmRaw.length }));
+  ok('wasm 带 Accept-Encoding: gzip 时**会**压缩：Content-Encoding + Vary（不再原样发 9.3MB）',
+    wasm.status === 200 && wasm.headers['content-encoding'] === 'gzip'
+    && /accept-encoding/i.test(String(wasm.headers.vary)),
+    JSON.stringify({ ce: wasm.headers['content-encoding'], vary: wasm.headers.vary }));
+  ok('wasm 压缩后字节数从 9.5MB 降到 ~2.9MB（实测省 69%），Content-Length 就是压缩后的长度',
+    wasm.body.length < wasmRaw.length * 0.5
+    && wasm.body.length > 1024 * 1024
+    && Number(wasm.headers['content-length']) === wasm.body.length,
+    JSON.stringify({ gz: wasm.body.length, raw: wasmRaw.length, ratio: +(wasm.body.length / wasmRaw.length).toFixed(3) }));
+  ok('wasm gunzip 解压后与磁盘文件**逐字节一致**（压缩不能改坏运行库）',
+    zlib.gunzipSync(wasm.body).equals(wasmRaw),
+    JSON.stringify({ gz: wasm.body.length, raw: wasmRaw.length }));
   ok('运行库 / 模型都不缓存：Cache-Control 是 no-store（不是 max-age / immutable）',
     wasm.headers['cache-control'] === 'no-store'
     && !/max-age|immutable/i.test(String(wasm.headers['cache-control'])),
@@ -2935,6 +2965,12 @@ console.log('\n[25] 预览服务器：COOP+COEP / no-store / 文本 gzip（wasm 
   ok('wasm 的 Content-Type 是 application/wasm（instantiateStreaming 认这个 MIME）',
     /application\/wasm/.test(String(wasm.headers['content-type'])),
     String(wasm.headers['content-type']));
+  const wasmPlain = await get(wasmPath);
+  ok('wasm 请求头不带 Accept-Encoding 时**不压**（原样发，Content-Length = 文件大小，逐字节一致）',
+    wasmPlain.status === 200 && wasmPlain.headers['content-encoding'] === undefined
+    && Number(wasmPlain.headers['content-length']) === wasmRaw.length
+    && wasmPlain.body.equals(wasmRaw),
+    JSON.stringify({ ce: wasmPlain.headers['content-encoding'], len: wasmPlain.headers['content-length'] }));
 
   /* ---- 文本走 gzip：解压后必须与磁盘逐字节一致 ---- */
   const textPath = '/src/voice/pcm.js';
@@ -2961,17 +2997,62 @@ console.log('\n[25] 预览服务器：COOP+COEP / no-store / 文本 gzip（wasm 
     && html.headers['cross-origin-opener-policy'] === 'same-origin'
     && html.headers['cross-origin-embedder-policy'] === 'credentialless');
 
+  /* ---- 模型 .task：能省 ~14% 所以也压；压缩结果解压后必须与磁盘一致 ---- */
   const modelPath = '/vendor/models/pose_landmarker_lite.task';
+  const modelRaw = fs.readFileSync(path.join(ROOT, modelPath.slice(1)));
   const model = await get(modelPath, { 'Accept-Encoding': 'gzip' });
-  ok('模型 .task 不 gzip（本身是压缩包）但同样 no-store',
-    model.status === 200 && model.headers['content-encoding'] === undefined
-    && model.headers['cache-control'] === 'no-store');
+  ok('模型 .task 也走 gzip（省 ~14%，慢链路上也值），解压后与磁盘逐字节一致',
+    model.status === 200 && model.headers['content-encoding'] === 'gzip'
+    && model.body.length < modelRaw.length
+    && zlib.gunzipSync(model.body).equals(modelRaw),
+    JSON.stringify({ gz: model.body.length, raw: modelRaw.length }));
+  ok('模型 .task 同样 no-store（用户拍板：本地开发不缓存）',
+    model.headers['cache-control'] === 'no-store', String(model.headers['cache-control']));
+
+  /* ---- 「压不动就不压」分支：随机字节（gzip 后更大）→ 必须原样发 ---- */
+  const junkName = '_gzip_probe_incompressible.task';
+  const junkPath = path.join(ROOT, junkName);
+  try {
+    const junk = Buffer.alloc(128 * 1024);
+    for (let i = 0; i < junk.length; i += 1) junk[i] = Math.floor(Math.random() * 256);
+    fs.writeFileSync(junkPath, junk);
+    const junkRes = await get(`/${junkName}`, { 'Accept-Encoding': 'gzip' });
+    ok('压不动的 .task（压完反而更大）→ 放弃压缩、原样发原始字节（不是 500，也不是空响应）',
+      junkRes.status === 200 && junkRes.headers['content-encoding'] === undefined
+      && Number(junkRes.headers['content-length']) === junk.length
+      && junkRes.body.equals(junk),
+      JSON.stringify({
+        status: junkRes.status, ce: junkRes.headers['content-encoding'], len: junkRes.headers['content-length'],
+      }));
+  } finally {
+    try { fs.unlinkSync(junkPath); } catch { /* 已经删了 */ }
+  }
 
   const modelSize = fs.statSync(path.join(ROOT, modelPath.slice(1))).size;
   const versioned = await get(`${modelPath}?v=${modelSize}`);
   ok('模型 URL 带 ?v= 指纹照常返回（缓存击穿参数不影响静态服务，字节数一致）',
     versioned.status === 200 && versioned.body.length === modelSize,
     JSON.stringify({ status: versioned.status, len: versioned.body.length, size: modelSize }));
+
+  /* ---- /pose-check：一眼看出「服务器能给多大 / 压完多大」（不含路径 / 凭证）---- */
+  const check = await get(POSE_CHECK_PATH);
+  let payload = null;
+  try { payload = JSON.parse(check.body.toString('utf8')); } catch { payload = null; }
+  ok(`${POSE_CHECK_PATH} 返回 { wasm:{bytes,gzBytes}, model:{bytes,gzBytes}, gzip:true }`,
+    check.status === 200 && check.headers['cache-control'] === 'no-store'
+    && payload && payload.gzip === true
+    && Number(payload.wasm.bytes) === wasmRaw.length
+    && Number(payload.model.bytes) === modelRaw.length,
+    check.body.toString('utf8').slice(0, 200));
+  ok('/pose-check 的 gzBytes 是压缩后的真实字节数（wasm 9.5MB → ~2.9MB），能直接看出省了多少',
+    payload && payload.wasm.gzBytes < payload.wasm.bytes * 0.5
+    && payload.wasm.gzBytes > payload.wasm.bytes * 0.2
+    && payload.model.gzBytes < payload.model.bytes,
+    JSON.stringify(payload));
+  ok('/pose-check 只报字节数：不泄露绝对路径 / 文件名 / 目录（内容里没有 vendor / .wasm / 盘符）',
+    !/vendor/i.test(check.body.toString('utf8')) && !/\.wasm|\.task/i.test(check.body.toString('utf8'))
+    && !/[A-Za-z]:\\/.test(check.body.toString('utf8')),
+    check.body.toString('utf8').slice(0, 200));
 
   const engineSrc = fs.readFileSync(path.join(ROOT, 'src/pose-engine.js'), 'utf8');
   ok('不再有预热 fetch（/vendor 不缓存时预热会把 9.3MB 下两遍）：pose-engine 里没有 prewarm / wasmFileUrls',

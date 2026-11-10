@@ -9,11 +9,14 @@ import {
 } from './exercises.js';
 import { LandmarkSmoother, toMetric, clamp, LM } from './geometry.js';
 import { computeFrame } from './metrics.js';
+// 「加载偏慢」提示的门槛也来自 pose-engine（用户口径：单块 < 1MB/s 且已用 > 8 秒）——
+// 一处定义：界面与测试读同一份常量，不另抄一份。
 import {
   PoseEngine, Camera,
   PoseLoadError, RETRY_DELAYS, LOAD_ATTEMPTS, FIRST_DETECT_TIMEOUT_MS, LOAD_TIMEOUT_MS,
   DOWNLOAD_STALL_TIMEOUT_MS, INIT_TIMEOUT_MS, GPU_INIT_TIMEOUT_MS, DEFAULT_DELEGATE,
   composeProgress, formatMB, isTimeoutLoadError,
+  isSlowLoad, SLOW_LOAD_BPS, SLOW_LOAD_AFTER_MS,
 } from './pose-engine.js';
 import { PoseRenderer } from './render.js';
 import { AudioKit, TRACKS, getTrack, DEFAULT_TRACK } from './audio.js';
@@ -6674,6 +6677,10 @@ const modelProgressState = {
   model: { loaded: 0, total: 0, bps: 0, done: false },
   init: 0,
   initStartedAt: 0,
+  /** 这一次加载是什么时候开始的（「加载偏慢」提示要看已用多久） */
+  loadStartedAt: 0,
+  /** 「加载偏慢」的黄色提示这一次加载只记一条诊断（pose:slow-load），不刷屏 */
+  slowLogged: false,
   shownPercent: 0,
   timer: null,
 };
@@ -6687,6 +6694,8 @@ function resetModelProgress() {
   modelProgressState.model = { loaded: 0, total: 0, bps: 0, done: false };
   modelProgressState.init = 0;
   modelProgressState.initStartedAt = 0;
+  modelProgressState.loadStartedAt = Date.now();
+  modelProgressState.slowLogged = false;
   modelProgressState.shownPercent = 0;
 }
 
@@ -6711,6 +6720,33 @@ function notePoseProgress(p = {}) {
     bps: Math.max(0, Math.round(Number(p.bps) || 0)),
   });
   return true;
+}
+
+/**
+ * 「加载偏慢」提示（用户口径：单块速率 < 1MB/s 且已用超过 8 秒）。
+ *
+ * 为什么是「提示」而不是「自动处理」：用户家里慢的根因大概率是**代理 / VPN 把 127.0.0.1
+ * 也代理了**（Chrome 默认会把 localhost 交给系统代理，除非显式绕过）。改系统代理是**用户的
+ * 机器设置**，我们不碰 ✗ —— 只把「把 127.0.0.1 / localhost 加进直连，然后刷新」说清楚 ✓。
+ *
+ * 同时记一条 `pose:slow-load { bps, elapsedMs }`（**只有数字**，不含任何文件内容），
+ * 下次把「家里 / 公司」两条记录放一起就能确认。
+ *
+ * @returns {boolean} 这一次是不是「偏慢」（测试直接断言）
+ */
+function updateSlowLoadHint() {
+  const hint = $('mpSlowHint');
+  const s = modelProgressState;
+  const elapsedMs = s.loadStartedAt ? Math.max(0, Date.now() - s.loadStartedAt) : 0;
+  const bps = Math.max(0, Number(s.model && s.model.bps) || 0);
+  const slow = isSlowLoad({ bps, elapsedMs });
+  if (hint) hint.hidden = !slow;
+  // 一次加载只记一条：进度条每 0.5 秒重画一次，别把诊断日志刷爆
+  if (slow && !s.slowLogged) {
+    s.slowLogged = true;
+    coachDiag.record('pose:slow-load', { bps: Math.round(bps), elapsedMs: Math.round(elapsedMs) });
+  }
+  return slow;
 }
 
 /** 画进度条（返回 composeProgress 的结果，测试直接断言） */
@@ -6773,6 +6809,9 @@ function renderModelProgress() {
       meta.textContent = `${formatMB(raw && raw.loaded)}${raw && raw.total ? ` / ${formatMB(raw.total)}` : ''}${bps}`;
     }
   }
+  // 每一帧都重算「加载偏慢」提示：进度条 0.5 秒重画一次，所以即使某段时间一个新字节都没来，
+  // 到 8 秒那一刻提示也会自己冒出来（不必等下一块数据）。
+  updateSlowLoadHint();
   return sum;
 }
 
@@ -8043,6 +8082,9 @@ window.__mfg = {
   //   renderModelProgress() 画一次并把 composeProgress 的结果返回（测试直接断言百分比）
   //   modelProgressState    三段各自的 loaded/total/bps/done（测试可直接喂）
   //   composeProgress       纯函数（pose-engine.js）：总百分比 / 不确定态
+  //   updateSlowLoadHint    慢链路提示（< 1MB/s 且 > 8s → 黄色提示 + pose:slow-load 诊断）
+  //   isSlowLoad / SLOW_LOAD_BPS / SLOW_LOAD_AFTER_MS 一处定义的门槛（pose-engine.js）
   modelProgressState, renderModelProgress, resetModelProgress, handlePoseProgress, notePoseProgress,
+  updateSlowLoadHint, isSlowLoad, SLOW_LOAD_BPS, SLOW_LOAD_AFTER_MS,
   poseProgressLog, composeProgress, formatMB,
 };
