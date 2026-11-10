@@ -1191,9 +1191,18 @@ export function createVolcTts({
         diag?.record?.('tts:stream-fail', { code: 'empty', where: 'stream', chars: body.length });
         return false;
       }
-      if (!streamStarted) {
-        // 收到了字节、但没有一块能播：别假装说完了，交给整段
-        diag?.record?.('tts:stream-fail', { code: 'undecodable', where: 'stream', chars: body.length });
+      /**
+       * 收到了字节、但没有一块能播（解码 / append 失败，或 play() 被自动播放策略拒了）：
+       * 别假装说完了，把流式这一级收拾干净再交给整段 / 系统 TTS。
+       * `playError` 存在时即使前面有块排队过也按「没出过声」处理 —— play() 被拒等于一直静音。
+       */
+      if (!streamStarted || player.playError) {
+        diag?.record?.('tts:stream-fail', {
+          code: player.playError ? 'mse-play' : 'undecodable',
+          where: 'stream',
+          chars: body.length,
+          ...(player.playError ? errInfo(player.playError) : {}),
+        });
         try { player.stop(); } catch { /* ignore */ }
         token.player = null;
         return false;
