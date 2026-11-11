@@ -60,12 +60,21 @@ export const TTS_STREAM_LEAD_SEC = 0.06;
 /** 音色来源：自动（火山优先）/ 火山 / 系统 */
 export const TTS_SOURCES = Object.freeze(['auto', 'volc', 'system']);
 export const TTS_DEFAULT_SOURCE = 'auto';
+/** 教练声音性别（**前端只传 female / male**；音色 ID 只在服务端，见 server/volc-tts.mjs） */
+export const TTS_GENDERS = Object.freeze(['female', 'male']);
+export const TTS_DEFAULT_GENDER = 'female';
 export const TTS_RATE_MIN = 0.5;
 export const TTS_RATE_MAX = 2;
 export const TTS_MAX_CHARS = 300;
 
 export function normalizeTtsSource(source) {
   return TTS_SOURCES.includes(source) ? source : TTS_DEFAULT_SOURCE;
+}
+
+/** 性别归一化：非法值回到默认 female（请求体里只出现这两个词） */
+export function normalizeTtsGender(gender) {
+  const g = String(gender == null ? '' : gender).trim().toLowerCase();
+  return TTS_GENDERS.includes(g) ? g : TTS_DEFAULT_GENDER;
 }
 
 /** 语速收在 0.5~2（和系统 TTS 的 setRate 同一档），非法值回到 1 */
@@ -838,6 +847,7 @@ export function createVolcTts({
   diag = null,
   source = TTS_DEFAULT_SOURCE,
   rate = 1,
+  gender = TTS_DEFAULT_GENDER,
   timeoutMs = TTS_TIMEOUT_MS,
   endpoint = TTS_PATH,
   streamEndpoint = TTS_STREAM_PATH,
@@ -855,6 +865,8 @@ export function createVolcTts({
   const guardFixed = Number.isFinite(Number(guardMs)) && Number(guardMs) > 0 ? Number(guardMs) : 0;
   let currentSource = normalizeTtsSource(source);
   let currentRate = normalizeTtsRate(rate);
+  /** 教练声音性别（female 默认 / male）；服务端据此挑音色 ID 并分开缓存 */
+  let currentGender = normalizeTtsGender(gender);
   let current = null;          // 正在播 / 正在取的那一句
   let seq = 0;
   let closed = false;
@@ -1077,7 +1089,7 @@ export function createVolcTts({
       const res = await send(streamEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: body, rate: currentRate, stream: true }),
+        body: JSON.stringify({ text: body, rate: currentRate, gender: currentGender, stream: true }),
         signal: controller ? controller.signal : undefined,
       });
       if (closed || token !== current || token.stopped) return true;
@@ -1262,7 +1274,7 @@ export function createVolcTts({
       const res = await send(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: body, rate: currentRate }),
+        body: JSON.stringify({ text: body, rate: currentRate, gender: currentGender }),
         signal: controller ? controller.signal : undefined,
       });
       if (closed || token !== current || token.stopped) return;
@@ -1395,6 +1407,12 @@ export function createVolcTts({
     return currentRate;
   }
 
+  /** 切教练声音性别：下一句就用新音色（服务端用白名单解析成音色 ID） */
+  function setGender(g) {
+    currentGender = normalizeTtsGender(g);
+    return currentGender;
+  }
+
   function setSource(v) {
     currentSource = normalizeTtsSource(v);
     return currentSource;
@@ -1408,6 +1426,7 @@ export function createVolcTts({
     },
     get speaking() { return speaking; },
     get rate() { return currentRate; },
+    get gender() { return currentGender; },
     get source() { return currentSource; },
     get timeoutMs() { return timeout; },
     get mode() { return current ? current.mode : ''; },
@@ -1416,6 +1435,7 @@ export function createVolcTts({
     cancel: stop,
     close,
     setRate,
+    setGender,
     setSource,
   };
   return api;
@@ -1459,6 +1479,9 @@ export default {
   MSE_MIME,
   TTS_SOURCES,
   TTS_DEFAULT_SOURCE,
+  TTS_GENDERS,
+  TTS_DEFAULT_GENDER,
+  normalizeTtsGender,
   TTS_PATH,
   TTS_STREAM_PATH,
   TTS_HEALTH_PATH,

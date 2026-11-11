@@ -2148,13 +2148,13 @@ console.log('\n[9] 主页 / 动作页 / 弹窗面板共用同一套渐变（视�
     && !/body\.in-workout[^{]*\{[^}]*filter:/.test(code));
 
   // --- 弹窗（用户要求「还有弹窗的 theme，也要调成一样的色调」） ---
-  // 真实选择器：五个弹窗 #settingsModal / #exerciseModal / #bestModal / #historyModal /
-  // #voiceHelpModal（P3.2 语音命令一览）里的面板都是 `.modal-card`（遮罩是 `.modal-backdrop`）；
-  // 所以第三个作用域就是 `.modal-card`。
+  // 真实选择器：六个弹窗 #settingsModal / #exerciseModal / #bestModal / #historyModal /
+  // #voiceHelpModal（P3.2 语音命令一览）/ #memoryModal（三层记忆「教练记得什么」）里的面板都是
+  // `.modal-card`（遮罩是 `.modal-backdrop`）；所以第三个作用域就是 `.modal-card`。
   const panels = [...html.matchAll(/<div class="modal-card[^"]*" role="dialog"/g)];
-  ok('五个弹窗的面板都是 .modal-card（第三个作用域指向真实存在的面板选择器，不是编的）',
-    panels.length === 5
-    && ['settingsModal', 'exerciseModal', 'bestModal', 'historyModal', 'voiceHelpModal']
+  ok('六个弹窗的面板都是 .modal-card（第三个作用域指向真实存在的面板选择器，不是编的）',
+    panels.length === 6
+    && ['settingsModal', 'exerciseModal', 'bestModal', 'historyModal', 'voiceHelpModal', 'memoryModal']
       .every((id) => new RegExp(`id="${id}"[\\s\\S]{0,240}?class="modal-card`).test(html)));
 
   // 注意：顶部共用块的选择器列表也以 `.modal-card {` 结尾，所以这里按「面板自己的那条规则」
@@ -2341,6 +2341,56 @@ console.log('\n[10] 对话弹幕：#danmakuLayer 在舞台内 / 不挡点击 / z
   ok('app.js 接线 createBargeIn：会话层 onInterim 旁路 → 打断 → 回 listening',
     /createBargeIn\(\{/.test(app) && /onInterim:\s*\(text\)\s*=>\s*bargeIn\.onPartial/.test(app)
     && /onInterrupt:\s*\(\)\s*=>\s*voice\.interrupt\(/.test(app));
+}
+
+/* ================================================================== *
+ * 三层记忆 UI / 教练声音性别（index.html 接线 + 中英词条）
+ * ================================================================== */
+console.log('\n[记忆] 三层记忆面板 / 教练声音性别 / userId');
+{
+  const page = read('index.html');
+  const app = read('src/app.js');
+  ok('设置里有「教练记忆」入口（#btnMemory 在 settingsModal 内，文案走 settings.memory* 词条）',
+    /id="btnMemory"/.test(page)
+    && page.indexOf('id="settingsModal"') < page.indexOf('id="btnMemory"')
+    && page.indexOf('id="btnMemory"') < page.indexOf('id="exerciseModal"')
+    && /data-i18n="settings\.memoryOpen"/.test(page)
+    && typeof LOCALES.zh.settings.memoryOpen === 'string'
+    && typeof LOCALES.en.settings.memoryOpen === 'string');
+  ok('「教练记得什么」弹窗元素齐全：列表 / 来源 / 逐条删除 / 全部清除 / userId 输入 + 重置',
+    /id="memoryModal"/.test(page) && /id="memoryList"/.test(page)
+    && /id="memoryUserId"/.test(page) && /id="btnMemoryUserSave"/.test(page)
+    && /id="btnMemoryUserReset"/.test(page) && /id="btnMemoryClear"/.test(page)
+    && /id="memoryStatus"/.test(page)
+    && /data-i18n="memory\.title"/.test(page)
+    && /data-i18n="memory\.userId"/.test(page)
+    && typeof LOCALES.zh.memory.source === 'string'
+    && typeof LOCALES.en.memory.source === 'string'
+    && typeof LOCALES.zh.memory.field.voiceGender === 'string'
+    && typeof LOCALES.en.memory.field.voiceGender === 'string');
+  ok('教练声音性别：设置里两颗 toggle（女声 / 男声），默认女声 aria-pressed=true',
+    /id="btnVoiceFemale"[^>]*aria-pressed="true"/.test(page)
+    && /id="btnVoiceMale"[^>]*aria-pressed="false"/.test(page)
+    && /data-i18n="settings\.voiceFemale"/.test(page)
+    && /data-i18n="settings\.voiceMale"/.test(page)
+    && typeof LOCALES.zh.settings.voiceFemale === 'string'
+    && typeof LOCALES.en.settings.voiceFemale === 'string'
+    && typeof LOCALES.zh.settings.voiceMale === 'string'
+    && typeof LOCALES.en.settings.voiceMale === 'string');
+  ok('app.js 接线：/memory 路由 / lastSession 键 / 声音性别入口 / 记忆面板渲染',
+    /'\/memory'/.test(app) && /'\/memory\/forget'/.test(app)
+    && /lastSession: 'mfg\.lastSession\.v1'/.test(app)
+    && /function setVoiceGender/.test(app)
+    && /function renderMemoryPanel/.test(app)
+    && /function getLastSession/.test(app)
+    && /continueLastSession/.test(app)
+    && /voice:gender/.test(app));
+  ok('中英词条：memory.* 与 settings.voice* / coach.commands.setVoiceGender 都存在且对称',
+    typeof LOCALES.zh.memory.lead === 'string' && typeof LOCALES.en.memory.lead === 'string'
+    && Array.isArray(LOCALES.zh.coach.commands.setVoiceGender)
+    && LOCALES.zh.coach.commands.setVoiceGender.length === LOCALES.en.coach.commands.setVoiceGender.length
+    && typeof LOCALES.zh.coach.cmdAck.voiceGender === 'string'
+    && typeof LOCALES.en.coach.cmdAck.voiceGender === 'string');
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

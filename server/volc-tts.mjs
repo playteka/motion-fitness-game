@@ -59,6 +59,47 @@ export function ttsBody(text) {
   return body.length > TTS_MAX_TEXT ? body.slice(0, TTS_MAX_TEXT) : body;
 }
 
+/* ------------------------------------------------------------------ *
+ * 教练音色（**一处定义**；音色 ID 只在服务端出现，前端只传 female / male）
+ *
+ * 用户要求：教练可选男声 / 女声；选男生时音色 ID 用
+ * `zh_male_taocheng_uranus_bigtts`，默认女声（现有音色）。
+ *   - `/tts` 与 `/tts/stream` 都接受可选 `gender: 'female'|'male'`（也接受 `voice`）；
+ *   - 白名单解析：非法值直接 400（**不接受任意字符串**，避免别人拿代理乱调音色）；
+ *   - 缓存 key 带 `voice`，所以男 / 女同一句话不会互相命中对方缓存。
+ * ------------------------------------------------------------------ */
+export const COACH_VOICES = Object.freeze({
+  female: 'zh_female_vv_uranus_bigtts',
+  male: 'zh_male_taocheng_uranus_bigtts',
+});
+export const VOICE_GENDERS = Object.freeze(['female', 'male']);
+export const DEFAULT_VOICE_GENDER = 'female';
+
+/** 归一化性别：空 → 默认 female；非法 → ''（路由据此回 400） */
+export function normalizeVoiceGender(value) {
+  const v = String(value == null ? '' : value).trim().toLowerCase();
+  if (!v) return DEFAULT_VOICE_GENDER;
+  return VOICE_GENDERS.includes(v) ? v : '';
+}
+
+/**
+ * 请求参数 → 音色 ID（白名单）。
+ * 接受 `gender` / `voice`，值可以是 `female` / `male`，也可以**恰好是两个音色 ID 之一**；
+ * 其它值返回 ''（调用方回 400）。
+ */
+export function resolveCoachVoice({ gender, voice } = {}) {
+  const raw = gender === undefined || gender === null || gender === ''
+    ? voice
+    : gender;
+  if (raw === undefined || raw === null || raw === '') return COACH_VOICES[DEFAULT_VOICE_GENDER];
+  const value = String(raw).trim();
+  if (VOICE_GENDERS.includes(value.toLowerCase())) {
+    return COACH_VOICES[value.toLowerCase()];
+  }
+  const exact = Object.values(COACH_VOICES).find((id) => id === value);
+  return exact || '';
+}
+
 /**
  * 从 `coach.env` 读 TTS 配置。
  *
@@ -402,10 +443,10 @@ export function createVolcTts({
    * 组一次上游请求（整段 / 流式共用同一份协议，照 `server/tts-probe.mjs`）。
    * 只有语速 ≠ 1 时才多带一个 speech_rate。
    */
-  function buildRequest(body, rateValue) {
+  function buildRequest(body, rateValue, voiceId = cfg.voice) {
     const reqParams = {
       text: body,
-      speaker: cfg.voice,
+      speaker: voiceId,
       audio_params: { format: 'mp3', sample_rate: 24000 },
     };
     if (Math.abs(rateValue - 1) > 0.001) {
@@ -433,6 +474,9 @@ export function createVolcTts({
       service: 'motion-fitness volc tts (in preview-server)',
       configured: !!cfg.configured,
       missing: [...(cfg.missing || [])],
+      // 音色 ID 不是密钥；给测试 / 排障看「男声 / 女声」各自对应哪个 speaker
+      voices: { ...COACH_VOICES },
+      defaultGender: DEFAULT_VOICE_GENDER,
     };
   }
 
@@ -440,9 +484,11 @@ export function createVolcTts({
    * 合成一句（命中缓存直接返回）。
    * @returns {Promise<{ok:boolean, buffer?:Buffer, bytes?:number, cached:boolean, code?:string, status?:number}>}
    */
-  async function synthesize(text, rate = 1) {
+  async function synthesize(text, rate = 1, { gender = DEFAULT_VOICE_GENDER } = {}) {
     const body = ttsBody(text);
     const rateValue = normalizeRate(rate);
+    // 白名单解析（非法 gender 由路由先拦；这里兜底回默认女声，绝不把任意字符串发上游）
+    const voiceId = resolveCoachVoice({ gender }) || COACH_VOICES[DEFAULT_VOICE_GENDER];
     if (!body) return { ok: false, code: 'empty', status: 400, cached: false };
     if (!cfg.configured) {
       log({ chars: 0, cache: 'skip', status: 502 });
@@ -453,7 +499,8 @@ export function createVolcTts({
       return { ok: false, code: 'no-fetch', status: 502, cached: false };
     }
 
-    const key = ttsCacheKey({ voice: cfg.voice, rate: rateValue, text: body });
+    // 缓存 key 带**真正的音色 ID**：男 / 女同一句话不共享缓存
+    const key = ttsCacheKey({ voice: voiceId, rate: rateValue, text: body });
     const hit = store.get(key);
     if (hit) {
       log({ chars: body.length, cache: 'hit', status: 200 });
@@ -475,7 +522,7 @@ export function createVolcTts({
     });
 
     // 协议保持与 server/tts-probe.mjs 一致；只有语速 ≠ 1 时才多带一个 speech_rate
-    const req = buildRequest(body, rateValue);
+    const req = buildRequest(body, rateValue, voiceId);
 
     try {
       const res = await Promise.race([
@@ -547,9 +594,11 @@ export function createVolcTts({
     signal = null,
     firstChunkMs = TTS_STREAM_FIRST_MS,
     maxMs = TTS_STREAM_MAX_MS,
+    gender = DEFAULT_VOICE_GENDER,
   } = {}) {
     const body = ttsBody(text);
     const rateValue = normalizeRate(rate);
+    const voiceId = resolveCoachVoice({ gender }) || COACH_VOICES[DEFAULT_VOICE_GENDER];
     const empty = (code, status) => ({ ok: false, code, status, bytes: 0, chunks: 0, firstChunkMs: 0, aborted: false });
     if (!body) return empty('empty', 400);
     if (!cfg.configured) return empty('not-configured', 502);
@@ -585,7 +634,7 @@ export function createVolcTts({
     maxTimer = arm(maxMs, () => { timedOut = true; abortUpstream(); });
     const clear = (timer) => { if (timer) { try { clearTimeout(timer); } catch { /* ignore */ } } };
 
-    const req = buildRequest(body, rateValue);
+    const req = buildRequest(body, rateValue, voiceId);
     const result = (extra) => ({
       bytes, chunks, firstChunkMs: firstAt ? Math.max(0, firstAt - startedAt) : 0, aborted,
       ...extra,
@@ -793,6 +842,13 @@ export function createTtsRoutes({ service, logger = null } = {}) {
           sendJson(res, 400, { ok: false, error: 'empty-text' });
           return;
         }
+        // 音色白名单：非法 gender / voice 直接 400（客户端会回退系统 TTS，不会哑）
+        const voiceId = resolveCoachVoice({ gender: parsed.data.gender, voice: parsed.data.voice });
+        if (!voiceId) {
+          sendJson(res, 400, { ok: false, error: 'bad-gender' });
+          return;
+        }
+        const gender = voiceId === COACH_VOICES.male ? 'male' : 'female';
         const rate = normalizeRate(parsed.data.rate);
         const controller = typeof AbortController === 'function' ? new AbortController() : null;
         let clientGone = false;
@@ -826,6 +882,7 @@ export function createTtsRoutes({ service, logger = null } = {}) {
         try {
           result = await service.stream(text, rate, {
             signal: controller ? controller.signal : null,
+            gender,
             onFirstChunk: sendStart,
             onChunk: (chunk) => {
               if (clientGone) return;
@@ -884,7 +941,13 @@ export function createTtsRoutes({ service, logger = null } = {}) {
         return;
       }
       const rate = normalizeRate(data.rate);
-      const result = await service.synthesize(text, rate);
+      const voiceId = resolveCoachVoice({ gender: data.gender, voice: data.voice });
+      if (!voiceId) {
+        sendJson(res, 400, { ok: false, error: 'bad-gender' });
+        return;
+      }
+      const gender = voiceId === COACH_VOICES.male ? 'male' : 'female';
+      const result = await service.synthesize(text, rate, { gender });
       if (!result || !result.ok || !result.buffer) {
         sendJson(res, 502, {
           ok: false,
@@ -915,6 +978,11 @@ export default {
   TTS_PATH,
   TTS_STREAM_PATH,
   TTS_HEALTH_PATH,
+  COACH_VOICES,
+  VOICE_GENDERS,
+  DEFAULT_VOICE_GENDER,
+  normalizeVoiceGender,
+  resolveCoachVoice,
   VOLC_TTS_CODE_AUDIO,
   VOLC_TTS_CODE_DONE,
   loadTtsConfig,

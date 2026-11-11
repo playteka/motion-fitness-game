@@ -990,6 +990,13 @@ export default {
     dialogueGroup: 'Dialogue & voice',
     dialogueLead: 'How coach replies are shown: one danmaku line per sentence (you in cyan, the coach in mint), or the original two-line subtitles.',
     ttsHint: 'Coach speech uses Volcengine TTS by default (through the local /tts/stream proxy, played as it arrives; the whole-sentence endpoint synthesizes each sentence once and caches it). If it fails or takes over 3 seconds, it degrades to the whole-sentence request and then to system TTS, so it never goes silent.',
+    // Coach voice gender: a long-term preference (prefs.voiceGender in the server MD), affects the spoken voice only
+    voiceGender: 'Coach voice',
+    voiceFemale: 'Female',
+    voiceMale: 'Male',
+    voiceGenderHint: 'Male / female only changes the spoken voice (female by default); the choice is stored in the coach memory and comes back next time. '
+      + 'You can also just say “use a male voice” or “switch to a female coach”.',
+    voiceGenderSaveFailed: 'The voice changed, but it could not be written to the coach memory (is the preview server running?) — it may fall back to female next time.',
     // P3.4 interruption (on by default; off keeps the coach from being cut off, still listening)
     bargeInToggle: 'Allow interruption',
     bargeInHint: 'While the coach is talking you can cut in just by speaking (only the audio stops; the subtitle / danmaku stays). '
@@ -1000,13 +1007,54 @@ export default {
     freeChatHint: 'While this is on, anything that is not a known command is sent to an LLM (DeepSeek / Volcengine Ark / OpenAI). '
       + 'It can see which exercise you are doing, how well each keyframe of this set is going, and what you did in recent sets, '
       + 'so it answers like a real coach and can genuinely change the target / switch exercises / pause for you. '
-      + 'The conversation memory stays in memory only (last 6 turns) and is cleared on refresh; nothing is written to disk. '
+      + 'The conversation memory stays in memory only (last 10 turns) and is cleared on refresh; nothing is written to disk. '
       + 'Turn it off and only the offline command fast-lane is used (no network, no cost, but only the commands in that table). '
       + 'The API key lives in the local coach.env only and never reaches the browser.',
     freeChatStatus: 'Current model: {provider} / {model}',
     freeChatNotConfigured: 'Current model: {provider} (no key yet — put LLM_API_KEY in coach.env and restart the preview server)',
     freeChatNoServer: 'Cannot reach the preview server: run `node preview-server.js` to use free chat',
     freeChatOff: 'Free chat is off: command fast-lane only',
+    // Three-layer memory, long-term layer (server/memory/<userId>.md)
+    memoryGroup: '🧠 Coach memory',
+    memoryHint: 'The coach remembers your preferences and the facts **you stated yourself** (goal / injuries / weekly sessions), and they are still there next time. '
+      + 'They live in server/memory/<userId>.md on this computer — one file per user, **never committed and never uploaded**; '
+      + 'you can delete entries one by one or clear everything.',
+    memoryOpen: 'What the coach remembers',
+  },
+
+  /* Three-layer memory, long-term layer: the “What the coach remembers” panel (prefs / facts + source, delete one / clear all) */
+  memory: {
+    title: 'What the coach remembers',
+    lead: 'These are the preferences and facts the coach remembers. Every fact shows its “source” — only things you said explicitly are stored; delete any line you disagree with. '
+      + 'Memory is stored per userId, so switching the ID switches to another memory (the old one is still on the server and comes back when you switch back).',
+    userId: 'User ID',
+    userSave: 'Save ID',
+    userReset: 'New ID',
+    userInvalid: 'A user ID may only contain letters, digits, underscores and dashes, 1–32 characters.',
+    userSaved: 'Okay, switched to that user ID.',
+    userReset: 'Okay, generated a new user ID.',
+    empty: 'Nothing remembered yet. Say “remember I like a gentle tone” or “my knee is not great” and it will be stored.',
+    delete: 'Delete',
+    source: 'Source: {text}',
+    clearAll: 'Clear everything',
+    clearConfirm: 'Clear everything the coach remembers for this user ID?',
+    cleared: 'Okay, the memory is cleared.',
+    clearFailed: 'Could not clear it — check that the preview server is running.',
+    loadFailed: 'Cannot read the memory ({code}) — make sure the preview server is running, then reopen this panel.',
+    loading: 'Reading memory…',
+    continueLine: 'Continuing where you left off: {name}, set {set} ({reps} done / target {target})',
+    field: {
+      tone: 'Tone',
+      difficulty: 'Difficulty',
+      sessionMinutes: 'Session length (minutes)',
+      restSec: 'Rest between sets (seconds)',
+      voiceSource: 'Voice source',
+      voiceGender: 'Coach voice',
+      rate: 'Speech rate',
+      goal: 'Training goal',
+      injuries: 'Injuries',
+      weeklyGoal: 'Sessions per week',
+    },
   },
 
   /* ---------------- What each exercise is scored by ---------------- */
@@ -1643,6 +1691,8 @@ export default {
       exit: ['exit workout', 'end workout', 'end set', 'quit', 'exit'],
       retrySet: ['one more set', 'another set', 'try again', 'retry', 'again', 'one more round'],
       nextExercise: ['next exercise', 'switch exercise', 'change exercise', 'next move'],
+    // Medium-term memory: return to the exercise / target / set you left unfinished
+    continueLast: ['continue last', 'continue where I left off', 'where did I leave off', 'resume last workout', 'pick up where I left off', 'carry on from last time'],
       setTarget: ['set the target to', 'set target to', 'set target', 'set to', 'target to', 'target', 'set it to', 'make it'],
       adjustTarget: ['increase', 'decrease', 'add', 'minus', 'reduce', 'plus', 'less'],
       mute: ['be quiet', 'mute', 'silence', 'quiet', 'stay quiet', 'shush'],
@@ -1652,6 +1702,10 @@ export default {
       switchLang: ['speak english', 'switch to english', 'english mode', 'speak chinese',
         'switch to chinese', 'chinese mode', 'english', 'chinese',
         'change to english', 'use english', 'change to chinese', 'use chinese'],
+      setVoiceGender: ['switch to a female voice', 'use the female voice', 'use a female voice', 'female voice',
+        'female coach', 'switch to a female coach', 'switch to a male voice', 'use the male voice',
+        'use a male voice', 'male voice', 'male coach', 'switch to a male coach',
+        'i want a female voice', 'i want a male voice'],
       reportProgress: ['how many did i do', 'how many reps', 'what is my score', 'whats my score',
         'what is the score', 'my score', 'how am i doing', 'how many'],
     },
@@ -1675,6 +1729,7 @@ export default {
       exit: 'Exit this set (**immediately, no second confirmation**)',
       retrySet: 'Do another set (reset the count and restart the countdown)',
       nextExercise: 'Switch to the next exercise in the library',
+      continueLast: 'Return to the exercise / target / set you left unfinished (“continue last”)',
       setTarget: 'Set the target to N reps / seconds ("set target to 20 reps", "target one minute")',
       adjustTarget: 'Add or subtract N from the target ("add 5", "minus 10")',
       mute: 'Subtitles only — stop the coach from speaking',
@@ -1682,6 +1737,7 @@ export default {
       stopListening: 'Turn the AI coach off (same as Ctrl+I)',
       help: 'Open this voice command list',
       switchLang: 'Switch the language ("speak English", "speak Chinese")',
+      setVoiceGender: 'Switch the coach voice: male / female (spoken voice only)',
       reportProgress: 'Read out the reps and score of this set',
     },
 
@@ -1712,6 +1768,8 @@ export default {
       retryNotTraining: 'You are not in a workout — say "start" first.',
       nextExercise: 'Okay, switching to {name}.',
       nextExerciseFail: 'Cannot switch — the exercise library is empty.',
+      continueLast: 'Okay, continuing {name}, set {set}, target {target} {unit}.',
+      continueNothing: 'No workout recorded yet — say “start” and do one set first.',
       setTarget: 'Okay, target set to {value} {unit}.',
       adjustUp: 'Okay, target plus {delta} — now {value} {unit}.',
       adjustDown: 'Okay, target minus {delta} — now {value} {unit}.',
@@ -1721,6 +1779,8 @@ export default {
       stopListening: 'Okay, I will rest. Press Ctrl+I to call me back.',
       help: 'Everything I understand is on the screen now.',
       switchLang: 'Okay, speaking English.',
+      voiceGender: 'Okay, switching to a {gender} voice.',
+      unknownGender: 'I did not catch male or female — say “use a male voice” or “use a female voice”.',
       progress: 'You did {reps} reps, and you are on {score} points.',
       progressHold: 'You have held it for {seconds} seconds, and you are on {score} points.',
       progressIdle: 'No workout yet: the target is {target} {unit}, with {reps} reps and {score} points so far.',

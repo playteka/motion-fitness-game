@@ -41,6 +41,7 @@ import {
 } from './voice/danmaku.js';
 import {
   createVolcTts, TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH, TTS_STREAM_PATH,
+  TTS_GENDERS, TTS_DEFAULT_GENDER,
 } from './voice/tts-volc.js';
 // P3.4：插话打断（教练说话时也一直听；连续 2 个够响的 partial 才停）
 import { createBargeIn, BARGE_IN_MAX_LATENCY_MS } from './voice/bargein.js';
@@ -61,6 +62,18 @@ const STORE = {
   settings: 'mfg.settings.v1',
   history: 'mfg.history.v1',
   records: 'mfg.records.v1',
+  /**
+   * 长期记忆的 userId（三层记忆：服务端 `server/memory/<userId>.md`）。
+   * **第一次打开自动生成随机 id**；设置里「教练记得什么」可以改 / 重置。
+   * 只存 id 本身，记忆内容全在服务端（浏览器清缓存 = 换一份空记忆，不会丢别人的）。
+   */
+  memoryUser: 'mfg.memory.user.v1',
+  /**
+   * 中时记忆 · 上次练到哪了（**浏览器 localStorage**，不搬服务端）：
+   * `{exerciseId, target, reps, setIndex, at, finished}`。
+   * 每次开始一组 / 一组结束 / 退出时更新；「继续上次」读它；清空训练记录时一起清。
+   */
+  lastSession: 'mfg.lastSession.v1',
 };
 
 /**
@@ -266,6 +279,28 @@ const state = {
   /* P3.3 Agent context：最近被提醒过的几句话 / 「太快了」出现过几次（只在内存里） */
   recentNudges: [],
   tooFastCount: 0,
+  /**
+   * 三层记忆 · 长时层（服务端 MD）的本地缓存：`{user, prefs, facts, sources, summaries,
+   * lastUnfinished, updatedAt}`。启动时静默拉一次 `/memory`；设置里「教练记得什么」可增删。
+   * **失败也不阻塞页面**（state.memory.loaded 保持 false，等用户打开面板再重试）。
+   */
+  memory: {
+    user: 'default',
+    prefs: {},
+    facts: {},
+    sources: {},
+    summaries: [],
+    lastUnfinished: null,
+    updatedAt: null,
+    loaded: false,
+    error: '',
+  },
+  /** 上一帧的「门控是否通过」（用来记 keyframe / gate-fail 短时事件） */
+  lastGateOk: true,
+  /** 这一组是今天这个动作的第几组（中时记忆 lastSession.setIndex 用；0 = 还没算） */
+  currentSetIndex: 0,
+  /** currentSetIndex 属于哪个动作（换动作要重算） */
+  currentSetExerciseId: '',
   // ---- 限时计数（开合跳）----
   timeUp: false,            // 时间到：这一组停止计次，等庆祝动画走完再结算
   timeCallsSaid: null,      // 已经报过哪几档剩余时间（45/30/15/5 秒各报一次）
@@ -328,6 +363,8 @@ const coachTts = createVolcTts({
   diag: coachDiag,
   source: state.settings.ttsSource,
   rate: state.settings.ttsRate,
+  // 教练声音性别（长期偏好；启动拉到记忆后会再应用一次，默认女声）
+  gender: (state.memory.prefs && state.memory.prefs.voiceGender) || 'female',
 });
 /** 独立的「语音自检」：自己的麦 / 自己的 WS，不经过会话状态机（教练关着也能用） */
 const coachSelfTest = createSelfTest({
@@ -385,8 +422,12 @@ const voiceCommandCtx = {
   openExerciseSettings, closeExerciseSettings, openVoiceHelp, closeVoiceHelp,
   // 训练
   startGestureMode, selectExercise, pauseSession, resumeSession, retrySet, setTarget,
+  // 「继续上次」：回到上次没练完的动作 + 目标 + 第几组（中时记忆）
+  continueLastSession,
   // 语音 / 查询
   setCoachMuted, setCoachEnabled, changeLang, getStateSnapshot,
+  // 教练声音性别（设置按钮 / 语音命令 / 工具共用一个入口）
+  setVoiceGender,
 };
 /**
  * ---------------- P3.3 自由对话（LLM + 工具调用） ----------------
@@ -403,6 +444,8 @@ const voiceCommandCtx = {
 const coachLlmMock = createLlm();
 const coachLlmClient = createLlmClient({
   diag: coachDiag,
+  // 长期记忆按 userId 分文件（函数形式：设置里改完 id 立刻生效，不用重建 client）
+  userId: () => getMemoryUserId(),
   // 浏览器里走 window.fetch（同源 /llm）；Node 集成测试用 __mfg.llmClient.setFetch() 换掉
   fetchImpl: (...args) => {
     const f = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch : null;
@@ -426,7 +469,22 @@ function getLlmContext(text = '') {
   } catch {
     snap = {};
   }
-  return buildAgentContext({ ...snap, utterance: String(text || ''), now: Date.now() });
+  /**
+   * 三层记忆一起给模型：
+   *   短时：`recentEvents`（最近 60 秒）+ `lastCoachLines`（教练最近 5 句，防复读）
+   *   中时：`trendWeek` / `lastSession`（buildAgentContext 自己算 / 归一化）
+   *   长时：`memory` 的 prefs + facts（服务端 MD；启动时静默拉过一份缓存）
+   */
+  return buildAgentContext({
+    ...snap,
+    recentEvents: voice.recentEvents(),
+    lastCoachLines: voice.lastCoachLines(),
+    memory: { prefs: state.memory.prefs, facts: state.memory.facts },
+    lastSession: getLastSession(),
+    trainingSummary: getTrainingSummary(20),
+    utterance: String(text || ''),
+    now: Date.now(),
+  });
 }
 
 /** 会话层用的 llm 适配器（自由对话关掉时就退回原来的 mock 罐头回复） */
@@ -435,7 +493,11 @@ const voiceLlm = {
     if (!state.settings.freeChat) return coachLlmMock.reply(text);
     return coachLlmClient
       .respond(text, { locale: getLang(), context: getLlmContext(text) })
-      .then((res) => ({ text: res.reply, actions: res.actions }))
+      .then((res) => {
+        // 模型刚写了 / 删了记忆：服务端会回一份最新快照，本地缓存立刻跟上
+        if (res.memory && typeof res.memory === 'object') applyMemoryData(res.memory);
+        return { text: res.reply, actions: res.actions };
+      })
       .catch((err) => {
         coachDiag?.record?.('llm:fallback', { code: (err && err.code) || 'llm-error' });
         return coachLlmMock.reply(text);
@@ -638,6 +700,55 @@ function applyTtsSettings() {
   return { source: coachTts.source, rate: coachTts.rate };
 }
 
+/* ------------------------------------------------------------------ *
+ * 教练声音性别（长期偏好 prefs.voiceGender，**唯一权威在服务端 MD**）
+ *
+ *   - 前端只记 `female` / `male`，音色 ID 只在服务端（server/volc-tts.mjs）；
+ *   - 设置里的「女声 / 男声」和语音命令「用男声 / 换个女教练」走**同一个入口**
+ *     `setVoiceGender()`，所以两边不会出现两份状态；
+ *   - 切换后立刻用新音色说确认句（命令快车道本来就会念 ack）；
+ *   - 诊断里记 `voice:gender {to}`（面板 / 日志一眼看出现在用哪个声音）。
+ * ------------------------------------------------------------------ */
+
+/** 当前性别（没设置过 = female，和现有女声一致） */
+function currentVoiceGender() {
+  const g = state.memory && state.memory.prefs && state.memory.prefs.voiceGender;
+  return g === 'male' ? 'male' : 'female';
+}
+
+/** 把设置里那两颗按钮的选中态对齐（命令改了之后也要跟着变） */
+function syncVoiceGenderUi() {
+  const gender = currentVoiceGender();
+  const female = $('btnVoiceFemale');
+  const male = $('btnVoiceMale');
+  if (female) female.setAttribute('aria-pressed', String(gender === 'female'));
+  if (male) male.setAttribute('aria-pressed', String(gender === 'male'));
+  return gender;
+}
+
+/** 只应用（不写服务端）：内存里的 prefs 变了 / 启动拉到记忆时调用 */
+function applyVoiceGenderPreference(raw) {
+  const gender = raw === 'male' ? 'male' : 'female';
+  try { coachTts.setGender?.(gender); } catch { /* 系统 TTS 不看性别 */ }
+  syncVoiceGenderUi();
+  return gender;
+}
+
+/**
+ * 切换教练声音性别（设置按钮 / 语音命令 / 工具共用）。
+ * **同步返回**（下一句声明就能用新音色），写服务端 MD 是后台动作；失败只提示，不回滚正在用的声音。
+ */
+function setVoiceGender(raw) {
+  const gender = raw === 'male' ? 'male' : 'female';
+  state.memory.prefs = { ...state.memory.prefs, voiceGender: gender };
+  applyVoiceGenderPreference(gender);
+  try { coachDiag?.record?.('voice:gender', { to: gender }); } catch { /* ignore */ }
+  writeMemory({ prefs: { voiceGender: gender } }).then((saved) => {
+    if (!saved) setCueLine(t('settings.voiceGenderSaveFailed'), 'warn');
+  }).catch(() => {});
+  return gender;
+}
+
 /**
  * 「允许插话打断」开关（P3.4）：默认开，随设置持久化。
  * 关掉后教练说话时**不会**被用户插话打断（仍在聆听，只是不自动切回 listening）。
@@ -713,6 +824,461 @@ function loadList(key) {
 }
 function saveList(key, list) {
   try { localStorage.setItem(key, JSON.stringify(list)); } catch { /* ignore */ }
+}
+
+/* ------------------------------------------------------------------ *
+ * 三层记忆 · 长时层（服务端 `server/memory/<userId>.md`）
+ *
+ * 前端只做三件事：
+ *   ① 生成 / 保存 userId（`mfg.memory.user.v1`，默认随机；设置里可改 / 重置）；
+ *   ② 启动时**静默**拉一次 `GET /memory`（失败不阻塞页面，也不弹错）；
+ *   ③ 「教练记得什么」面板：列出 prefs / facts（含来源）、每条可删、全部清除。
+ *
+ * 记忆内容的写操作有两个入口，都在服务端：
+ *   - 模型工具 `remember` / `remember_fact` / `forget`（`/llm` 里直接写）；
+ *   - 这个面板里的删除 / 清空（`POST /memory/forget`）。
+ * 训练摘要 / 上次未完成由客户端算好后同步（`summaries` / `lastUnfinished`）。
+ * ------------------------------------------------------------------ */
+
+/** 记忆路由（和 preview-server.js 的 MEMORY_API_PATH / MEMORY_FORGET_PATH 一致） */
+const MEMORY_PATH = '/memory';
+const MEMORY_FORGET_PATH = '/memory/forget';
+const MEMORY_USER_RE = /^[a-zA-Z0-9_-]{1,32}$/;
+/** 这些字段要显示 / 进 context（**和 server/memory-store.mjs 的白名单一致**，测试会比对） */
+const MEMORY_PREF_FIELDS = Object.freeze(['tone', 'difficulty', 'sessionMinutes', 'restSec', 'voiceSource', 'voiceGender', 'rate']);
+const MEMORY_FACT_FIELDS = Object.freeze(['goal', 'injuries', 'weeklyGoal']);
+
+/** 生成一个合法、够随机的 userId（不能有 `.` / `/`，所以不可能穿越路径） */
+function generateMemoryUserId() {
+  const rand = Math.random().toString(36).slice(2, 8) || 'x';
+  return `u${Date.now().toString(36)}${rand}`.slice(0, 32);
+}
+
+/** 读 localStorage 里的 userId；没有 / 非法就生成一个新的（并写回去） */
+function loadMemoryUserId() {
+  try {
+    const saved = String(localStorage.getItem(STORE.memoryUser) || '').trim();
+    if (MEMORY_USER_RE.test(saved)) return saved;
+  } catch { /* localStorage 不可用 */ }
+  const id = generateMemoryUserId();
+  try { localStorage.setItem(STORE.memoryUser, id); } catch { /* ignore */ }
+  return id;
+}
+
+/** 当前 userId（永远合法） */
+function getMemoryUserId() {
+  const id = String(state.memory && state.memory.user ? state.memory.user : '');
+  if (MEMORY_USER_RE.test(id)) return id;
+  state.memory.user = loadMemoryUserId();
+  return state.memory.user;
+}
+
+/** 设置里改 userId：非法就返回 false（界面显示一行原因，不写 localStorage） */
+function setMemoryUserId(raw) {
+  const next = String(raw == null ? '' : raw).trim();
+  if (!MEMORY_USER_RE.test(next)) return false;
+  try { localStorage.setItem(STORE.memoryUser, next); } catch { /* ignore */ }
+  state.memory = {
+    ...state.memory,
+    user: next,
+    prefs: {},
+    facts: {},
+    sources: {},
+    summaries: [],
+    lastUnfinished: null,
+    updatedAt: null,
+    loaded: false,
+    error: '',
+  };
+  renderMemoryPanel();
+  refreshMemory();
+  return true;
+}
+
+/** 重置成一个新的随机 userId（旧的记忆还在服务端，换回来还能看到） */
+function resetMemoryUserId() {
+  const id = generateMemoryUserId();
+  setMemoryUserId(id);
+  return id;
+}
+
+/** 服务端返回的记忆 → state.memory（只留白名单字段，脏数据不进模型） */
+function applyMemoryData(data) {
+  if (!data || typeof data !== 'object') return null;
+  const srcPrefs = data.prefs && typeof data.prefs === 'object' ? data.prefs : {};
+  const srcFacts = data.facts && typeof data.facts === 'object' ? data.facts : {};
+  const srcSources = data.sources && typeof data.sources === 'object' ? data.sources : {};
+  const prefs = {};
+  for (const field of MEMORY_PREF_FIELDS) {
+    const value = srcPrefs[field];
+    if (typeof value === 'string' || typeof value === 'number') prefs[field] = value;
+  }
+  const facts = {};
+  const sources = {};
+  for (const field of MEMORY_FACT_FIELDS) {
+    const value = srcFacts[field];
+    if (Array.isArray(value)) {
+      const list = value.filter((x) => typeof x === 'string' && x.trim()).slice(0, 5);
+      if (list.length) facts[field] = list;
+    } else if (typeof value === 'string' || typeof value === 'number') {
+      facts[field] = value;
+    }
+    if (typeof srcSources[field] === 'string' && srcSources[field].trim()) {
+      sources[field] = srcSources[field].trim().slice(0, 200);
+    }
+  }
+  state.memory = {
+    user: MEMORY_USER_RE.test(String(data.user || '')) ? String(data.user) : getMemoryUserId(),
+    prefs,
+    facts,
+    sources,
+    summaries: Array.isArray(data.summaries)
+      ? data.summaries.filter((x) => x && typeof x === 'object').slice(0, 20)
+      : [],
+    lastUnfinished: data.lastUnfinished && typeof data.lastUnfinished === 'object'
+      ? { ...data.lastUnfinished }
+      : null,
+    updatedAt: Number(data.updatedAt) || null,
+    loaded: true,
+    error: '',
+  };
+  // 记忆里的「教练声音性别」立刻应用到 TTS 与设置面板（md 是唯一权威）
+  applyVoiceGenderPreference(state.memory.prefs.voiceGender);
+  if (memoryModalOpen()) renderMemoryPanel();
+  return state.memory;
+}
+
+/** 一次记忆请求：失败返回 `{ok:false,error}`，**绝不抛**（页面不允许因为记忆崩掉） */
+async function memoryRequest(url, { method = 'GET', body = null, timeoutMs = 4000 } = {}) {
+  const f = typeof window !== 'undefined' && typeof window.fetch === 'function'
+    ? window.fetch.bind(window)
+    : null;
+  if (!f) return { ok: false, error: 'no-server' };
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = setTimeout(() => {
+    try { controller?.abort(); } catch { /* ignore */ }
+  }, Math.max(100, Number(timeoutMs) || 4000));
+  try {
+    const res = await f(url, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller ? controller.signal : undefined,
+    });
+    if (!res || res.ok === false || Number(res.status) >= 400) {
+      return { ok: false, error: `http-${Number(res && res.status) || 0}` };
+    }
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (!data || typeof data !== 'object' || data.ok === false) {
+      return { ok: false, error: (data && data.error) || 'bad-json' };
+    }
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: err && err.name === 'AbortError' ? 'timeout' : 'network' };
+  } finally {
+    try { clearTimeout(timer); } catch { /* ignore */ }
+  }
+}
+
+/** 启动时 / 打开面板时拉一次；失败静默（state.memory.error 里留原因，面板上才显示） */
+async function refreshMemory() {
+  const user = getMemoryUserId();
+  const res = await memoryRequest(`${MEMORY_PATH}?user=${encodeURIComponent(user)}`);
+  if (!res.ok) {
+    state.memory.error = res.error;
+    state.memory.loaded = false;
+    if (memoryModalOpen()) renderMemoryPanel();
+    return null;
+  }
+  return applyMemoryData(res.data);
+}
+
+/** 写记忆（只给「训练摘要 / 上次未完成」同步用；prefs / facts 由模型工具写） */
+async function writeMemory(patch, path = MEMORY_PATH) {
+  const res = await memoryRequest(path, {
+    method: 'POST',
+    body: { user: getMemoryUserId(), ...(patch || {}) },
+  });
+  if (!res.ok) {
+    state.memory.error = res.error;
+    if (memoryModalOpen()) renderMemoryPanel();
+    return null;
+  }
+  return applyMemoryData(res.data);
+}
+
+/** 删除一条记忆（面板里每一行的「删除」） */
+async function forgetMemoryField(field) {
+  return writeMemory({ field }, MEMORY_FORGET_PATH);
+}
+
+/** 全部清除（用户主动点的；服务端直接删掉这个用户的 MD 文件） */
+async function clearAllMemory() {
+  return writeMemory({ all: true }, MEMORY_FORGET_PATH);
+}
+
+/** 记忆值 → 一行可读文本（伤病史是数组；语速带上 ×） */
+function memoryValueText(field, value) {
+  if (Array.isArray(value)) return value.join(', ');
+  if (field === 'rate') return `${value}×`;
+  return String(value);
+}
+
+/**
+ * 「教练记得什么」面板：列出 prefs / facts（facts 带来源），每条一个删除按钮。
+ * 返回渲染了多少行（测试直接断言这个数）。
+ */
+function renderMemoryPanel() {
+  const box = $('memoryList');
+  if (!box) return 0;
+  box.innerHTML = '';
+  const rows = [];
+  for (const field of MEMORY_PREF_FIELDS) {
+    if (state.memory.prefs[field] === undefined) continue;
+    rows.push({
+      field: `prefs.${field}`,
+      label: t(`memory.field.${field}`),
+      value: memoryValueText(field, state.memory.prefs[field]),
+      source: '',
+    });
+  }
+  for (const field of MEMORY_FACT_FIELDS) {
+    if (state.memory.facts[field] === undefined) continue;
+    rows.push({
+      field: `facts.${field}`,
+      label: t(`memory.field.${field}`),
+      value: memoryValueText(field, state.memory.facts[field]),
+      source: state.memory.sources[field] || '',
+    });
+  }
+  if (!rows.length) {
+    box.innerHTML = `<li class="empty">${esc(t('memory.empty'))}</li>`;
+  } else {
+    for (const row of rows) {
+      const li = document.createElement('li');
+      li.className = 'memory-row';
+      li.dataset.field = row.field;
+      const label = document.createElement('span');
+      label.className = 'm-label';
+      label.textContent = row.label;
+      const value = document.createElement('span');
+      value.className = 'm-value';
+      value.textContent = row.value;
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'ghost-btn m-del';
+      del.dataset.field = row.field;
+      del.textContent = t('memory.delete');
+      del.addEventListener('click', () => { forgetMemoryField(row.field); });
+      li.appendChild(label);
+      li.appendChild(value);
+      li.appendChild(del);
+      if (row.source) {
+        const src = document.createElement('span');
+        src.className = 'm-source';
+        src.textContent = t('memory.source', { text: row.source });
+        li.appendChild(src);
+      }
+      box.appendChild(li);
+    }
+  }
+  const input = $('memoryUserId');
+  // 用户正在输入时不要抢着改（只有值真的不同、且不是当前焦点才回写）
+  if (input && input !== document.activeElement && input.value !== state.memory.user) {
+    input.value = state.memory.user;
+  }
+  const status = $('memoryStatus');
+  if (status) {
+    status.hidden = !!(state.memory.loaded && !state.memory.error);
+    status.textContent = state.memory.error
+      ? t('memory.loadFailed', { code: state.memory.error })
+      : t('memory.loading');
+  }
+  return rows.length;
+}
+
+/** 「教练记得什么」弹窗（从设置里打开；右上角 × / 遮罩 / Esc 都能关） */
+function memoryModalOpen() {
+  const modal = $('memoryModal');
+  return !!modal && modal.hidden === false;
+}
+
+function openMemoryModal() {
+  const modal = $('memoryModal');
+  if (!modal) return 0;
+  const title = $('memoryTitle');
+  if (title) title.textContent = t('memory.title');
+  const lead = $('memoryLead');
+  if (lead) lead.textContent = t('memory.lead');
+  modal.hidden = false;
+  const count = renderMemoryPanel();
+  // 打开面板总是再拉一次：模型刚写进去的东西要能立刻看到
+  refreshMemory().then(() => {
+    if (memoryModalOpen()) renderMemoryPanel();
+  });
+  return count;
+}
+
+function closeMemoryModal() {
+  const modal = $('memoryModal');
+  if (modal) modal.hidden = true;
+}
+
+/* ------------------------------------------------------------------ *
+ * 中时记忆 · 上次练到哪了（**浏览器 localStorage**，`mfg.lastSession.v1`）
+ *
+ * 用户口径：中时记忆留在浏览器里，**不搬服务端**。
+ *   `{exerciseId, target, reps, setIndex, at, finished}`
+ *   - 每次开始一组 / 一组结束 / 退出时更新（finished:true = 这一组做完了）；
+ *   - 「继续上次」读它 → 回到那个动作 + 目标 + 第几组；
+ *   - 清空训练记录时一起清（不再残留一条「上次练到哪」）。
+ * ------------------------------------------------------------------ */
+
+/** 读 / 校验 localStorage 里的 lastSession（坏数据当作没有，绝不抛） */
+function readLastSession() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORE.lastSession) || 'null');
+    if (!raw || typeof raw !== 'object' || !EXERCISE_MAP[raw.exerciseId]) return null;
+    return {
+      exerciseId: String(raw.exerciseId),
+      target: Math.max(0, Math.round(Number(raw.target) || 0)),
+      reps: Math.max(0, Math.round(Number(raw.reps) || 0)),
+      setIndex: Math.max(1, Math.round(Number(raw.setIndex) || 1)),
+      at: Number(raw.at) || 0,
+      finished: raw.finished === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 写 lastSession（合并式：只传变化的那几项；非法动作 id 直接不写） */
+function saveLastSession(patch = {}) {
+  const prev = readLastSession() || {};
+  const exerciseId = String(patch.exerciseId || prev.exerciseId || state.exerciseId || '');
+  if (!EXERCISE_MAP[exerciseId]) return null;
+  const next = {
+    exerciseId,
+    target: Math.max(0, Math.round(Number(patch.target ?? prev.target ?? state.target) || 0)),
+    reps: Math.max(0, Math.round(Number(patch.reps ?? prev.reps ?? 0) || 0)),
+    setIndex: Math.max(1, Math.round(Number(patch.setIndex ?? prev.setIndex ?? state.currentSetIndex ?? 1) || 1)),
+    at: Number(patch.at) || Date.now(),
+    finished: patch.finished === true,
+  };
+  try { localStorage.setItem(STORE.lastSession, JSON.stringify(next)); } catch { /* ignore */ }
+  return next;
+}
+
+function clearLastSession() {
+  try { localStorage.removeItem(STORE.lastSession); } catch { /* ignore */ }
+}
+
+/**
+ * 这一组是今天这个动作的第几组：
+ * - 「继续上次」刚恢复过 → 沿用 localStorage 里的 setIndex；
+ * - 否则按今天的训练记录数 + 1 现算。
+ */
+function setIndexFor(exerciseId) {
+  if (state.currentSetExerciseId === exerciseId && state.currentSetIndex > 0) {
+    return state.currentSetIndex;
+  }
+  let n = 1;
+  try {
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    n = loadList(STORE.history)
+      .filter((h) => h && h.exerciseId === exerciseId && (Number(h.at) || 0) >= dayStart.getTime())
+      .length + 1;
+  } catch { n = 1; }
+  state.currentSetIndex = n;
+  state.currentSetExerciseId = exerciseId;
+  return n;
+}
+
+/**
+ * 中时记忆 · 训练摘要（**浏览器 localStorage 的 mfg.history.v1**，取前 20 条、最新在前）。
+ * 动作名按当前语言取；只给模型 / 面板用，不写服务端（长时 MD 只放 prefs / facts）。
+ */
+function getTrainingSummary(max = 20) {
+  return loadList(STORE.history).slice(0, Math.max(0, Number(max) || 20)).map((h) => {
+    const ex = localizedExercise(h.exerciseId);
+    return {
+      at: Number(h.at) || 0,
+      name: ex ? ex.name : String(h.exerciseId || ''),
+      target: Number(h.target) || 0,
+      reps: Number(h.value) || 0,
+      score: Number(h.score) || 0,
+    };
+  });
+}
+
+/**
+ * 上次练到哪了（中时记忆）：优先 localStorage 的 `mfg.lastSession.v1`；
+ * 老用户还没写过这个键 → 退回最近一组训练记录（迁移用）。
+ * 返回 `{exerciseId,name,target,reps,score,set,at,finished,unit}` 或 null。
+ */
+function getLastSession() {
+  const saved = readLastSession();
+  if (saved) {
+    const ex = localizedExercise(saved.exerciseId);
+    if (ex) {
+      const target = saved.target || targetForExercise(saved.exerciseId) || ex.defaultTarget || 0;
+      return {
+        exerciseId: saved.exerciseId,
+        name: ex.name,
+        target,
+        reps: saved.reps,
+        score: 0,
+        set: saved.setIndex,
+        at: saved.at,
+        finished: saved.finished,
+        unit: ex.targetUnit || ex.unit,
+      };
+    }
+  }
+  const history = loadList(STORE.history);
+  const last = history.find((h) => h && EXERCISE_MAP[h.exerciseId]);
+  if (!last) return null;
+  const ex = localizedExercise(last.exerciseId);
+  if (!ex) return null;
+  return {
+    exerciseId: last.exerciseId,
+    name: ex.name,
+    target: Number(last.target) || targetForExercise(last.exerciseId),
+    reps: Number(last.value) || 0,
+    score: Number(last.score) || 0,
+    set: 1,
+    at: Number(last.at) || 0,
+    finished: last.reached === true,
+    unit: ex.targetUnit || ex.unit,
+  };
+}
+
+/**
+ * 「继续上次」：真的回到上次的动作 + 目标，并告知是第几组。
+ * 只调用已有的入口（startGestureMode / selectExercise / setTarget），不另造状态。
+ */
+function continueLastSession() {
+  const last = getLastSession();
+  if (!last || !EXERCISE_MAP[last.exerciseId]) return null;
+  startGestureMode();
+  closeMenu();
+  selectExercise(last.exerciseId);
+  if (Number.isFinite(Number(last.target)) && Number(last.target) > 0) {
+    setTarget(Number(last.target), last.exerciseId);
+  }
+  // 恢复「第几组」：下一组开始时会沿用这个序号（beginCountdown → setIndexFor）
+  state.currentSetExerciseId = last.exerciseId;
+  state.currentSetIndex = Math.max(1, Number(last.set) || 1);
+  // 训练页 HUD / 字幕上留一句「接着上次」，让用户知道恢复的是哪一组
+  setCueLine(t('memory.continueLine', {
+    name: last.name,
+    set: last.set,
+    reps: last.reps,
+    target: Number(last.target) || 0,
+  }), 'info');
+  return { ...last, target: Number(last.target) || state.target };
 }
 
 /** 分数 + 单位（分 / points / puntos / points） */
@@ -1031,7 +1597,8 @@ function settingsOpen() { return !$('settingsModal').hidden; }
 
 /** 有没有任何一个弹窗开着（快捷键要先让给弹窗里的交互） */
 function anyModalOpen() {
-  return settingsOpen() || exerciseSettingsOpen() || recordsModalOpen() || voiceHelpOpen();
+  return settingsOpen() || exerciseSettingsOpen() || recordsModalOpen() || voiceHelpOpen()
+    || memoryModalOpen();
 }
 
 /**
@@ -4938,6 +5505,11 @@ function selectExercise(id) {
   closeSetPicker();     // 换动作：中间那一层「每组次数 / 秒数」的选项属于上一个动作，收掉
   state.exerciseId = id;
   state.settings.exerciseId = id;
+  // 换动作 → 下一组的「第几组」重新按今天的记录算（「继续上次」会在之后显式覆盖它）
+  if (state.currentSetExerciseId !== id) {
+    state.currentSetIndex = 0;
+    state.currentSetExerciseId = '';
+  }
   // 运动设定第二步的「编辑指针」跟着当前动作走：刚练过的动作就是选择页里高亮的那一个
   state.settingsExerciseId = id;
   const ex = localizedExercise(id);
@@ -5302,6 +5874,11 @@ function getStateSnapshot() {
     tooFastCount: Number(state.tooFastCount) || 0,
     nudges: Array.isArray(state.recentNudges) ? state.recentNudges.slice(-5) : [],
     recentCommands: Array.isArray(state.voice?.recentCommands) ? state.voice.recentCommands.slice() : [],
+    /* ---------------- 三层记忆（短时 / 中时 / 长时） ---------------- */
+    recentEvents: (() => { try { return voice.recentEvents(); } catch { return []; } })(),
+    lastCoachLines: (() => { try { return voice.lastCoachLines(); } catch { return []; } })(),
+    memory: { prefs: state.memory.prefs, facts: state.memory.facts },
+    lastSession: getLastSession(),
     history,
     bestScore,
   };
@@ -5616,6 +6193,20 @@ function beginCountdown() {
   state.lastScoreMilestone = 0;
   state.stepSig = '';
   state.lastTick = performance.now();
+  // 新的一组：门控事件从「通过」重新算（否则上一组结尾的 false 会吞掉这一组的第一次失败）
+  state.lastGateOk = true;
+  /**
+   * 中时记忆 · 每次进训练就更新一次 lastSession（localStorage）：
+   * 哪怕这一组最后没做完，下次「继续上次」也知道是在哪个动作 / 第几组。
+   */
+  saveLastSession({
+    exerciseId: state.exerciseId,
+    target: state.target,
+    reps: det ? (Number(det.validReps) || 0) : 0,
+    setIndex: setIndexFor(state.exerciseId),
+    at: Date.now(),
+    finished: false,
+  });
   $('summaryCard').hidden = true;
   $('celebrate').hidden = true;
   setCueLine(`📹 ${localizedExercise(state.exerciseId).cameraHint}`);
@@ -5740,7 +6331,26 @@ function stopSession(reason = 'user') {
     });
     poseLogger.flush({ force: true });
   }
-  if (hasWork) saveSession({ ex, value, partial: det.partialReps, reason, score });
+  if (hasWork) {
+    // 「第几组」= 今天这个动作已经练过的组数 + 1（这一组还没写进 history，所以先算）
+    const setNo = setIndexFor(ex.id);
+    saveSession({ ex, value, partial: det.partialReps, reason, score });
+    /**
+     * 中时记忆 · 上次练到哪了（**localStorage `mfg.lastSession.v1`**，不搬服务端）：
+     * 一组结束 / 中途退出都在这里更新；finished = 达标（这一组做完了）。
+     */
+    saveLastSession({
+      exerciseId: ex.id,
+      target: state.target,
+      reps: value,
+      setIndex: setNo,
+      at: Date.now(),
+      finished: reason === 'goal',
+    });
+    // 下一组是同动作的下一个序号（除非用户换动作 / 说「继续上次」覆盖）
+    state.currentSetExerciseId = ex.id;
+    state.currentSetIndex = setNo + 1;
+  }
   // 本组结果也念出来（以语音为主：用户不必转头看小结卡）。
   // **只念次数 / 时长 + 一句夸奖，不念分数**（用户要求：语音一律不报分数）——
   // 分数照旧显示在结算面板与记录里。
@@ -6193,6 +6803,8 @@ function handleEvents(events, now = performance.now()) {
       });
     }
     if (ev.type === 'step') {
+      // 三步记忆 · 短时事件：关键帧命中（只记分值 + 短 key，**不带原始关键点**）
+      try { voice.recordEvent('keyframe-hit', { p: Number(ev.points) || 0, k: ev.id }); } catch { /* ignore */ }
       // 每一步要领达标：立刻响铃 + 加分飘字，第一次完成时还用语音念出要领
       audio.step(ev.index, ev.total);
       showScorePop(`+${ev.points}`);
@@ -6217,6 +6829,26 @@ function handleEvents(events, now = performance.now()) {
       pulseScore();
       checkScoreMilestone(ev.score);
     } else if (ev.type === 'rep') {
+      /**
+       * 短时事件：计次 + 这一轮漏了哪几个关键帧（≤60 秒窗口，session.js 里做环形缓冲）。
+       * data 只给标量：次数 / 是否有效 / 原因 / 漏了几个 / 第一个漏掉的 key，**绝不含关键点**。
+       */
+      try {
+        voice.recordEvent('rep', {
+          n: ev.valid ? det.validReps : det.partialReps,
+          v: !!ev.valid,
+          r: ev.reason || '',
+        });
+        const steps = typeof det.stepStatus === 'function' ? det.stepStatus() : [];
+        const missed = steps.filter((s) => !s.done);
+        if (missed.length) {
+          voice.recordEvent('keyframe-miss', {
+            n: missed.length,
+            t: steps.length,
+            f: missed[0].labelKey || '',
+          });
+        }
+      } catch { /* 短时记忆失败不该影响计次 */ }
       // 一次动作结束（有效或半程）→ 进度条**点亮最后一格**并保持 0.65 秒（让用户看到「这一轮走完了」），
       // 之后自动收回起点，下一轮重新一格一格走。
       // 注意：识别器真正计上的那一次，这里会把整条链补满 —— 保证「做完了就一定显示做完」。
@@ -6415,6 +7047,18 @@ function loop() {
     // ---- 训练中：正常识别与计数 ----
     if (counting) {
       const events = feedDetector(frame, now);
+      /**
+       * 短时事件：门控失败（姿势不对、不计次的那一下）。
+       * 只在「通过 → 不通过」的那一帧记一条，避免每帧刷屏；60 秒窗口由 session.js 兜住。
+       */
+      try {
+        const detNow = state.detector;
+        const gateNow = !detNow || detNow.gateOk !== false;
+        if (!gateNow && state.lastGateOk !== false) {
+          voice.recordEvent('gate-fail', { g: (detNow && detNow.gateName) || '' });
+        }
+        state.lastGateOk = gateNow;
+      } catch { /* ignore */ }
       // 计时类先读秒：这样同一帧里「保持 10 秒」的要领语音会让位给「10 秒」，不会两句叠在一起
       announceHoldCount(state.detector, localizedExercise(state.exerciseId), now);
       // 限时计数：每隔一段报一次「还剩 N 秒」，最后 5 秒单独喊一句
@@ -7509,6 +8153,12 @@ function bindUI() {
     $('btnVoiceHelp')?.addEventListener('click', () => openVoiceHelp());
     $('btnCloseVoiceHelp')?.addEventListener('click', () => closeVoiceHelp());
     $('voiceHelpBackdrop')?.addEventListener('click', () => closeVoiceHelp());
+    // 教练声音性别：女声 / 男声（默认女声）—— 和语音命令「用男声」走同一个 setVoiceGender()
+    const femaleBtn = $('btnVoiceFemale');
+    const maleBtn = $('btnVoiceMale');
+    if (femaleBtn) femaleBtn.addEventListener('click', () => setVoiceGender('female'));
+    if (maleBtn) maleBtn.addEventListener('click', () => setVoiceGender('male'));
+    syncVoiceGenderUi();
     // 页面被关掉 / 进 bfcache 时也把麦克风与 TTS 收掉，绝不留后台录音
     // （by:'pagehide' 会一起记进 coach-diag.jsonl：以后能区分「用户按了 Ctrl+I」和「页面被关」）
     window.addEventListener('pagehide', () => voice.stop('pagehide'));
@@ -7657,10 +8307,63 @@ function bindUI() {
     if (!confirm(t('ui.clearConfirm'))) return;
     saveList(STORE.history, []);
     saveList(STORE.records, {});
+    // 中时记忆「上次练到哪了」也要一起清（用户要求：清空记录不留残余）
+    clearLastSession();
+    state.currentSetIndex = 0;
+    state.currentSetExerciseId = '';
     renderHistory();
     renderRecords();
     setCueLine(t('records.cleared'));
   });
+
+  /* ---------------- 三层记忆：「教练记得什么」面板 ---------------- */
+  const btnMemory = $('btnMemory');
+  if (btnMemory) btnMemory.addEventListener('click', () => openMemoryModal());
+  const btnCloseMemory = $('btnCloseMemory');
+  if (btnCloseMemory) btnCloseMemory.addEventListener('click', () => closeMemoryModal());
+  const memoryBackdrop = $('memoryBackdrop');
+  if (memoryBackdrop) memoryBackdrop.addEventListener('click', () => closeMemoryModal());
+
+  const memoryUserHint = (ok, message = '') => {
+    const hint = $('memoryUserHint');
+    if (!hint) return;
+    hint.hidden = !!ok;
+    hint.textContent = ok ? '' : message;
+  };
+  const btnMemoryUserSave = $('btnMemoryUserSave');
+  if (btnMemoryUserSave) {
+    btnMemoryUserSave.addEventListener('click', () => {
+      const ok = setMemoryUserId($('memoryUserId') && $('memoryUserId').value);
+      memoryUserHint(ok, t('memory.userInvalid'));
+      if (ok) setCueLine(t('memory.userSaved'), 'info');
+    });
+  }
+  const memoryUserIdInput = $('memoryUserId');
+  if (memoryUserIdInput) {
+    memoryUserIdInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const ok = setMemoryUserId(e.target.value);
+      memoryUserHint(ok, t('memory.userInvalid'));
+      if (ok) setCueLine(t('memory.userSaved'), 'info');
+    });
+  }
+  const btnMemoryUserReset = $('btnMemoryUserReset');
+  if (btnMemoryUserReset) {
+    btnMemoryUserReset.addEventListener('click', () => {
+      resetMemoryUserId();
+      memoryUserHint(true);
+      setCueLine(t('memory.userReset'), 'info');
+    });
+  }
+  const btnMemoryClear = $('btnMemoryClear');
+  if (btnMemoryClear) {
+    btnMemoryClear.addEventListener('click', async () => {
+      if (!confirm(t('memory.clearConfirm'))) return;
+      const got = await clearAllMemory();
+      setCueLine(t(got ? 'memory.cleared' : 'memory.clearFailed'), got ? 'info' : 'warn');
+    });
+  }
 
   document.addEventListener('keydown', (e) => {
     /**
@@ -7754,6 +8457,7 @@ function bindUI() {
       // 弹窗优先关闭；手势菜单里按 Esc = 回网页首页（和右上角圆环同一个动作）；
       // iPhone 的 CSS 伪全屏里 Esc = 先退出全屏（再按一次才是结束这一组）；最后是结束本组
       if (voiceHelpOpen()) { closeVoiceHelp(); return; }
+      if (memoryModalOpen()) { closeMemoryModal(); return; }
       if (recordsModalOpen()) { closeRecordsModal(); return; }
       if (exerciseSettingsOpen()) { closeExerciseSettings(); return; }
       if (settingsOpen()) { closeSettings(); return; }
@@ -7899,6 +8603,14 @@ function boot() {
   }
   setLang(detectLang(), { persist: false });
   applyI18n(document);
+  // 长期记忆：先定下 userId（localStorage 里没有就生成一个随机的），再**静默**拉一次记忆。
+  // 拉不到（服务器没起 / 断网）也绝不阻塞页面：面板打开时会重试并显示原因。
+  state.memory.user = loadMemoryUserId();
+  refreshMemory().catch(() => {});
+  // 弹窗的初始状态跟 HTML 的 `hidden` 属性对齐（自动化桩里的元素默认 not hidden，
+  // 不显式关一次会让 Esc / anyModalOpen 误判成「有个弹窗开着」）
+  const memoryModalEl = $('memoryModal');
+  if (memoryModalEl) memoryModalEl.hidden = true;
   buildLanguageSelect();
   buildMusicTracks();
   // 手机 / 低配机器：没被用户改过就用轻量模型（必须在 bindUI 之前，不然下拉框读的是旧值）
@@ -8046,6 +8758,9 @@ window.__mfg = {
   danmaku, applyDialogueMode, coachTts, coachSystemTts, applyTtsSettings,
   DANMAKU_MODES, DANMAKU_DEFAULT_MODE, DANMAKU_COLORS,
   TTS_SOURCES, TTS_DEFAULT_SOURCE, TTS_PATH, TTS_STREAM_PATH,
+  // 教练声音性别（长期偏好 prefs.voiceGender；设置按钮 / 命令 / 工具共用一个入口）
+  setVoiceGender, currentVoiceGender, applyVoiceGenderPreference, syncVoiceGenderUi,
+  TTS_GENDERS, TTS_DEFAULT_GENDER,
   // P3.4 插话打断：控制器（onPartial / reset / 常量）+ 设置入口 + 的「允许插话打断」开关
   bargeIn, applyBargeIn, BARGE_IN_MAX_LATENCY_MS,
   // P3.5 语音排障：诊断收集器（snapshot / record / flush）+ 独立自检控制器
@@ -8069,6 +8784,18 @@ window.__mfg = {
   //   applyFreeChat    : 设置里「自由对话」开关的唯一入口（关掉就完全不发 /llm）
   llmClient: coachLlmClient, voiceLlm, llmMock: coachLlmMock,
   getLlmContext, buildAgentContext, applyFreeChat, refreshLlmStatus, syncFreeChatToggle,
+  // 三层记忆（长时层在服务端 MD；中时层的「上次未完成 / 训练摘要」由这里同步）
+  //   MEMORY_PATH / MEMORY_FORGET_PATH : 路由常量（和 preview-server.js 一致）
+  //   getMemoryUserId / setMemoryUserId / resetMemoryUserId : userId 显示 / 修改 / 重置
+  //   refreshMemory / applyMemoryData  : 拉取与归一化（失败静默）
+  //   openMemoryModal / renderMemoryPanel / forgetMemoryField / clearAllMemory : 「教练记得什么」面板
+  //   getLastSession / continueLastSession : 「继续上次」（命令与工具共用）
+  MEMORY_PATH, MEMORY_FORGET_PATH, MEMORY_PREF_FIELDS, MEMORY_FACT_FIELDS, STORE,
+  loadMemoryUserId, getMemoryUserId, setMemoryUserId, resetMemoryUserId,
+  refreshMemory, applyMemoryData, memoryRequest, writeMemory,
+  forgetMemoryField, clearAllMemory, openMemoryModal, closeMemoryModal, memoryModalOpen,
+  renderMemoryPanel, getLastSession, continueLastSession, getTrainingSummary,
+  readLastSession, saveLastSession, clearLastSession, setIndexFor,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,
   // 姿态模型加载（用户反馈「点开始就姿态模型加载失败」的修复点）：

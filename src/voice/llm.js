@@ -9,7 +9,7 @@
  *   - `actions` 的每一项都是命令表里的 `{ intent, args }`，由会话层用**现有 handler** 执行；
  *   - 失败 / 超时 / 503 / 429 一律抛 `{ code }`，由 app.js 回退到原来的罐头回复，
  *     并记一条 `llm:fallback` 诊断 —— **绝不把错误弹到界面上**；
- *   - 对话记忆只存在内存里（最近 6 轮），刷新页面即清，**不落盘**。
+ *   - 对话记忆只存在内存里（最近 10 轮），刷新页面即清，**不落盘**。
  *
  * 纯逻辑 + 注入 fetch，所以 Node 里能直接测（见 tests/test-voice.mjs）。
  */
@@ -26,8 +26,8 @@ export const LLM_HEALTH_PATH = '/llm/health';
  */
 export const LLM_CLIENT_TIMEOUT_MS = 9000;
 
-/** 只带最近 6 轮（一轮 = 用户一句 + 教练一句）；刷新即清，不落盘 */
-export const LLM_HISTORY_TURNS = 6;
+/** 只带最近 10 轮（一轮 = 用户一句 + 教练一句）；刷新即清，不落盘（用户拍板：6 → 10） */
+export const LLM_HISTORY_TURNS = 10;
 
 /** 单句上限（和服务端 LLM_MAX_TEXT 同值） */
 export const LLM_CLIENT_MAX_TEXT = 500;
@@ -44,6 +44,8 @@ export const LLM_CLIENT_MAX_TEXT = 500;
  * 纯函数（`buildAgentContext(snapshot)`）：Node 里直接测，不碰 DOM，也不读全局。
  * ------------------------------------------------------------------ */
 
+/** 训练摘要最多给几条（用户口径：最近 20 次，最新在前；存在浏览器 localStorage） */
+export const AGENT_SUMMARY_MAX = 20;
 /** 整份 context 的 JSON 上限（字符数；≈ 800 tokens 的预算，超了就按下面的顺序瘦身） */
 export const AGENT_CONTEXT_MAX_CHARS = 6000;
 /** `history.lastExercises` 最多给几条（用户要求 5 条） */
@@ -52,6 +54,35 @@ export const AGENT_HISTORY_MAX = 5;
 export const AGENT_KEYFRAMES_MAX = 5;
 /** `signals.lastNudges` / `recentCommands` 最多各留几条 */
 export const AGENT_SIGNALS_MAX = 3;
+
+/* ------------------------------------------------------------------ *
+ * 三层记忆的「短时 / 中时」参数（用户拍板，改之前先看清楚）
+ *
+ *   短时（内存，不落盘）：最近 10 轮对话 / 教练最近 5 句（防复读）/ 最近 60 秒事件（≤60 条）
+ *   中时（跨会话，客户端算）：最近 20 次训练摘要 / 本周 vs 上周趋势 / 上次练到哪了
+ *   长时（服务端 MD）：prefs / facts（见 server/memory-store.mjs）
+ * ------------------------------------------------------------------ */
+
+/** 发给模型的「教练最近说过什么」最多几句（防复读；用户要求 5 句） */
+export const AGENT_COACH_LINES_MAX = 5;
+/** 最近事件最多几条（用户拍板：60 条，环形缓冲） */
+export const AGENT_EVENTS_MAX = 60;
+/** 最近事件只看多久以内（用户拍板：60 秒） */
+export const AGENT_EVENTS_WINDOW_MS = 60 * 1000;
+/** 单条事件序列化上限（字符；超过就丢 data 字段，保持短） */
+export const AGENT_EVENT_MAX_CHARS = 60;
+/** 事件类型白名单（和 src/voice/session.js 的 EVENT_KINDS 同一份口径） */
+export const AGENT_EVENT_KINDS = Object.freeze(['rep', 'gate-fail', 'keyframe-hit', 'keyframe-miss']);
+/** 周趋势的判定阈值：本周平均分比上周高 / 低这么多才算 improved / declined，否则 flat */
+export const TREND_WEEK_SCORE_DELTA = 3;
+/**
+ * 中时记忆里能进 context 的字段（**和 server/memory-store.mjs 的白名单一一对应**；
+ * tests/test-voice.mjs 会直接比对两份数组，漂了就会红）。
+ */
+export const AGENT_MEMORY_PREF_FIELDS = Object.freeze([
+  'tone', 'difficulty', 'sessionMinutes', 'restSec', 'voiceSource', 'voiceGender', 'rate',
+]);
+export const AGENT_MEMORY_FACT_FIELDS = Object.freeze(['goal', 'injuries', 'weeklyGoal']);
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -74,6 +105,174 @@ function startOfLocalDay(ms) {
   const d = new Date(Number(ms) || Date.now());
   d.setHours(0, 0, 0, 0);
   return d.getTime();
+}
+
+/** 本地「本周一 00:00」的时间戳（周一为一周起点；用日历加减，跨夏令时也不飘） */
+export function startOfLocalWeek(ms) {
+  const d = new Date(Number(ms) || Date.now());
+  d.setHours(0, 0, 0, 0);
+  const offset = (d.getDay() + 6) % 7;   // 周一 = 0 … 周日 = 6
+  d.setDate(d.getDate() - offset);
+  return d.getTime();
+}
+
+/** 一组历史 → {sets,reps,secs,avgScore}（纯函数；趋势和周汇总共用） */
+function weekTotals(entries) {
+  let sets = 0;
+  let reps = 0;
+  let secs = 0;
+  let score = 0;
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (!e || typeof e !== 'object') continue;
+    sets += 1;
+    if (e.kind === 'hold') secs += Number(e.value) || 0;
+    else {
+      reps += Number(e.value) || 0;
+      secs += Number(e.seconds) || 0;
+    }
+    score += Number(e.score) || 0;
+  }
+  return { sets, reps, secs, avgScore: sets ? Math.round(score / sets) : 0 };
+}
+
+/**
+ * 本周 vs 上周（**客户端算好**，模型只引用）。
+ *
+ * 判定规则（写死在这里，测试用假日期钉住）：
+ *   - 两周都没练 → flat；只有本周练了 → improved；只有上周练了 → declined；
+ *   - 都有 → 本周平均分 − 上周平均分 ≥ +3 → improved，≤ −3 → declined，其余 flat。
+ *
+ * @param {Array<{at:number,value:number,score:number,kind?:string,seconds?:number}>} entries
+ * @param {number} [nowMs]
+ * @returns {{thisWeek:{sets:number,reps:number,secs:number,avgScore:number},
+ *            lastWeek:{sets:number,reps:number,secs:number,avgScore:number},
+ *            delta:{sets:number,reps:number,secs:number,avgScore:number},
+ *            verdict:'improved'|'declined'|'flat'}}
+ */
+export function weekTrend(entries, nowMs = Date.now()) {
+  const now = Number(nowMs) || Date.now();
+  const thisStart = startOfLocalWeek(now);
+  const lastStart = startOfLocalWeek(thisStart - 24 * 60 * 60 * 1000);
+  const list = (Array.isArray(entries) ? entries : []).filter((e) => e && typeof e === 'object');
+  const thisEntries = list.filter((e) => (Number(e.at) || 0) >= thisStart);
+  const lastEntries = list.filter((e) => {
+    const at = Number(e.at) || 0;
+    return at >= lastStart && at < thisStart;
+  });
+  const thisWeek = weekTotals(thisEntries);
+  const lastWeek = weekTotals(lastEntries);
+  const delta = {
+    sets: thisWeek.sets - lastWeek.sets,
+    reps: thisWeek.reps - lastWeek.reps,
+    secs: thisWeek.secs - lastWeek.secs,
+    avgScore: thisWeek.avgScore - lastWeek.avgScore,
+  };
+  let verdict = 'flat';
+  if (!thisWeek.sets && !lastWeek.sets) verdict = 'flat';
+  else if (!thisWeek.sets) verdict = 'declined';
+  else if (!lastWeek.sets) verdict = 'improved';
+  else if (delta.avgScore >= TREND_WEEK_SCORE_DELTA) verdict = 'improved';
+  else if (delta.avgScore <= -TREND_WEEK_SCORE_DELTA) verdict = 'declined';
+  return { thisWeek, lastWeek, delta, verdict };
+}
+
+/** `MM-DD HH:mm`（local；给模型看的紧凑时间，不塞完整 ISO） */
+export function shortStamp(value) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(value)) {
+    return value.slice(5, 16);
+  }
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  const d = new Date(ms);
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+/** 长期记忆 → 只留白名单里的 prefs / facts（值也做基础归一化，防止手改的脏值进模型） */
+export function memoryForContext(memory) {
+  const mem = memory && typeof memory === 'object' ? memory : {};
+  const srcPrefs = mem.prefs && typeof mem.prefs === 'object' ? mem.prefs : {};
+  const srcFacts = mem.facts && typeof mem.facts === 'object' ? mem.facts : {};
+  const prefs = {};
+  for (const field of AGENT_MEMORY_PREF_FIELDS) {
+    const v = srcPrefs[field];
+    if (typeof v === 'string' || typeof v === 'number') prefs[field] = v;
+  }
+  const facts = {};
+  for (const field of AGENT_MEMORY_FACT_FIELDS) {
+    const v = srcFacts[field];
+    if (Array.isArray(v)) {
+      const list = v.filter((x) => typeof x === 'string' && x.trim()).slice(0, 5).map((x) => x.slice(0, 20));
+      if (list.length) facts[field] = list;
+    } else if (typeof v === 'string' || typeof v === 'number') facts[field] = v;
+  }
+  return { prefs, facts };
+}
+
+/** 最近事件：只留白名单类型 / 60 秒以内 / 最多 60 条；data 只留标量（**绝不含原始关键点**） */
+export function normalizeRecentEvents(events, { max = AGENT_EVENTS_MAX, windowMs = AGENT_EVENTS_WINDOW_MS } = {}) {
+  const list = Array.isArray(events) ? events : [];
+  const out = [];
+  for (const ev of list) {
+    if (!ev || typeof ev !== 'object') continue;
+    const type = String(ev.type || '');
+    if (!AGENT_EVENT_KINDS.includes(type)) continue;
+    const t = Number(ev.t);
+    if (!Number.isFinite(t) || t < 0 || t * 1000 > windowMs) continue;
+    const data = {};
+    const raw = ev.data && typeof ev.data === 'object' && !Array.isArray(ev.data) ? ev.data : {};
+    let n = 0;
+    for (const [k, v] of Object.entries(raw)) {
+      if (n >= 4) break;
+      if (typeof v === 'string') { data[k] = v.slice(0, 20); n += 1; }
+      else if (typeof v === 'number' || typeof v === 'boolean') { data[k] = v; n += 1; }
+      // 数组 / 对象（关键点就在这里面）一律丢掉
+    }
+    const item = { t: Math.round(t * 10) / 10, type, data };
+    // 单条保持短：超了从后往前丢 data 字段（空 data 一定在 60 字符内）
+    while (Object.keys(item.data).length
+      && JSON.stringify(item).length > AGENT_EVENT_MAX_CHARS) {
+      delete item.data[Object.keys(item.data).pop()];
+    }
+    out.push(item);
+  }
+  // **按时间正序**（最旧的在前）：t 是「多少秒前」，所以 t 大的在前
+  out.sort((a, b) => b.t - a.t);
+  return out.slice(-max);
+}
+
+/** 最近 20 次训练摘要（**浏览器 localStorage** 的 mfg.history.v1，最新在前）→ context 用的紧凑行 */
+export function trainingSummaryForContext(rows, max = AGENT_SUMMARY_MAX) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.slice(0, Math.max(0, Number(max) || AGENT_SUMMARY_MAX)).map((row) => {
+    const r = row && typeof row === 'object' ? row : {};
+    return {
+      date: shortStamp(r.at || r.date || ''),
+      name: String(r.name || r.exerciseName || r.exerciseId || '').slice(0, 20),
+      target: Math.max(0, Math.round(Number(r.target) || 0)),
+      reps: Math.max(0, Math.round(Number(r.reps ?? r.value) || 0)),
+      score: Math.max(0, Math.round(Number(r.score) || 0)),
+    };
+  }).filter((row) => row.name);
+}
+
+/** 上次练到哪了 → context 里的紧凑形状；没有就 null */
+export function lastSessionForContext(value) {
+  const s = value && typeof value === 'object' ? value : null;
+  if (!s) return null;
+  const exerciseId = String(s.exerciseId || '').trim();
+  const name = String(s.name || exerciseId).trim();
+  if (!exerciseId && !name) return null;
+  return {
+    exerciseId: exerciseId.slice(0, 32),
+    name: name.slice(0, 30),
+    target: Math.max(0, Math.round(Number(s.target) || 0)),
+    reps: Math.max(0, Math.round(Number(s.reps ?? s.value) || 0)),
+    score: Math.max(0, Math.round(Number(s.score) || 0)),
+    set: Math.max(1, Math.round(Number(s.setIndex ?? s.set) || 1)),
+    at: shortStamp(s.at || s.stamp || s.date || ''),
+    finished: s.finished === true,
+  };
 }
 
 /**
@@ -228,6 +427,22 @@ export function buildAgentContext(snapshot = {}) {
       recentCommands: (Array.isArray(s.recentCommands) ? s.recentCommands : []).filter(Boolean)
         .slice(-AGENT_SIGNALS_MAX).map(String),
     },
+    /**
+     * ---- 三层记忆 ----
+     * 短时：recentEvents（最近 60 秒，≤60 条）+ lastCoachLines（最近 5 句，防复读）
+     * 中时：trendWeek（本周 vs 上周）+ lastSession（上次练到哪了）
+     * 长时：memory（服务端 MD 里的 prefs + facts；facts 是用户主动说的）
+     */
+    recentEvents: normalizeRecentEvents(s.recentEvents),
+    lastCoachLines: (Array.isArray(s.lastCoachLines) ? s.lastCoachLines : [])
+      .filter((x) => typeof x === 'string' && x.trim())
+      .map((x) => x.trim().slice(0, 80))
+      .slice(-AGENT_COACH_LINES_MAX),
+    memory: memoryForContext(s.memory),
+    trendWeek: weekTrend(entries, nowMs),
+    lastSession: lastSessionForContext(s.lastSession),
+    /** 中时记忆的「最近 20 次」摘要（来自浏览器 localStorage；最新在前） */
+    trainingSummary: trainingSummaryForContext(s.trainingSummary),
     utterance: String(s.utterance || ''),
   };
   return trimAgentContext(context);
@@ -246,11 +461,22 @@ export function trimAgentContext(context, { maxChars = AGENT_CONTEXT_MAX_CHARS }
   const perf = ctx.performance || null;
   const signals = ctx.signals || null;
   /**
-   * 瘦身顺序（从「最不影响回答」到「最后才丢」）：
-   *   历史条数 → 关键帧个数 → 提示/命令条数 → utterance → 整块历史 → 整块 signals → 关键帧清空
+   * 瘦身顺序（从「最不影响回答」到「最后才丢」，用户拍板：**先丢 recentEvents**）：
+   *   最近事件 → 教练最近 5 句 → 上次练到哪 → 历史条数 → 关键帧个数 → 提示/命令条数 →
+   *   utterance → 整块历史 → 整块 signals → 关键帧清空 → 周趋势 / 记忆 / 事件清空
    * 每一步之后都重新量一次，够小就停 —— 6000 字符的预算下基本第 1~2 步就够了。
    */
   const steps = [
+    // 先丢最旧的一半事件（按时间正序，新的在数组末尾 —— 先丢开头）
+    () => {
+      if (Array.isArray(ctx.recentEvents) && ctx.recentEvents.length > 1) {
+        ctx.recentEvents = ctx.recentEvents.slice(Math.ceil(ctx.recentEvents.length / 2));
+      }
+    },
+    () => { ctx.recentEvents = []; },
+    () => { if (Array.isArray(ctx.lastCoachLines) && ctx.lastCoachLines.length > 2) ctx.lastCoachLines = ctx.lastCoachLines.slice(-2); },
+    () => { ctx.lastSession = null; },
+    () => { if (Array.isArray(ctx.trainingSummary) && ctx.trainingSummary.length > 8) ctx.trainingSummary = ctx.trainingSummary.slice(0, 8); },
     () => { if (history && Array.isArray(history.lastExercises) && history.lastExercises.length > 3) history.lastExercises = history.lastExercises.slice(0, 3); },
     () => { if (perf && Array.isArray(perf.keyframes) && perf.keyframes.length > 3) perf.keyframes = perf.keyframes.slice(0, 3); },
     () => { if (signals) { signals.lastNudges = (signals.lastNudges || []).slice(-1); signals.recentCommands = (signals.recentCommands || []).slice(-1); } },
@@ -261,6 +487,18 @@ export function trimAgentContext(context, { maxChars = AGENT_CONTEXT_MAX_CHARS }
     () => { ctx.utterance = ''; },
     () => { ctx.signals = { keyframeHitRate: (signals && signals.keyframeHitRate) || 0 }; },
     () => { if (perf) perf.keyframes = []; },
+    () => { if (history) { history.lastExercises = []; history.today = { sets: 0, reps: 0, secs: 0, avgScore: 0 }; } },
+    () => { ctx.lastCoachLines = []; },
+    () => { ctx.trainingSummary = []; },
+    () => { ctx.memory = { prefs: {}, facts: {} }; },
+    () => {
+      ctx.trendWeek = {
+        thisWeek: { sets: 0, reps: 0, secs: 0, avgScore: 0 },
+        lastWeek: { sets: 0, reps: 0, secs: 0, avgScore: 0 },
+        delta: { sets: 0, reps: 0, secs: 0, avgScore: 0 },
+        verdict: 'flat',
+      };
+    },
     () => { if (history) { history.lastExercises = []; history.today = { sets: 0, reps: 0, secs: 0, avgScore: 0 }; } },
   ];
   for (const step of steps) {
@@ -312,6 +550,7 @@ export function normalizeActions(actions) {
  * @param {string} [opts.endpoint]    默认 '/llm'
  * @param {string} [opts.healthEndpoint]
  * @param {Function} [opts.now]       注入时钟（测试断言耗时用）
+ * @param {string|Function} [opts.userId] 长期记忆的 userId（默认 'default'；函数形式可动态取）
  */
 export function createLlmClient({
   fetchImpl = null,
@@ -321,6 +560,7 @@ export function createLlmClient({
   endpoint = LLM_PATH,
   healthEndpoint = LLM_HEALTH_PATH,
   now = () => Date.now(),
+  userId = 'default',
 } = {}) {
   let call = fetchImpl;
   let pathUrl = endpoint;
@@ -374,7 +614,9 @@ export function createLlmClient({
       text: body.slice(0, LLM_CLIENT_MAX_TEXT),
       locale: locale === 'en' ? 'en' : 'zh',
       context: context && typeof context === 'object' ? context : null,
-      // 只带最近 6 轮（服务端会再夹一次）；**不落盘**
+      // 长期记忆按 userId 分文件（服务端还会再校验一次 `^[a-zA-Z0-9_-]{1,32}$`）
+      user: String(typeof userId === 'function' ? userId() : userId || 'default').slice(0, 32) || 'default',
+      // 只带最近 10 轮（服务端会再夹一次）；**不落盘**
       history: Array.isArray(extra) ? extra.slice(-(turns * 2)) : history.slice(),
     };
     try {
@@ -406,6 +648,9 @@ export function createLlmClient({
       return {
         reply,
         actions,
+        // 模型刚写/删了记忆时，服务端会回一份最新快照（前端据此刷新「教练记得什么」）
+        memory: data.memory && typeof data.memory === 'object' ? data.memory : null,
+        memoryOps: Array.isArray(data.memoryOps) ? data.memoryOps : [],
         usage: data.usage && typeof data.usage === 'object' ? data.usage : { prompt: 0, completion: 0, total: 0 },
         provider: String(data.provider || ''),
         model: String(data.model || ''),
@@ -482,9 +727,25 @@ export default {
   AGENT_CONTEXT_MAX_CHARS,
   AGENT_HISTORY_MAX,
   AGENT_KEYFRAMES_MAX,
+  AGENT_COACH_LINES_MAX,
+  AGENT_EVENTS_MAX,
+  AGENT_EVENTS_WINDOW_MS,
+  AGENT_EVENT_MAX_CHARS,
+  AGENT_EVENT_KINDS,
+  AGENT_MEMORY_PREF_FIELDS,
+  AGENT_MEMORY_FACT_FIELDS,
+  TREND_WEEK_SCORE_DELTA,
   buildAgentContext,
   trimAgentContext,
   scoreTrend,
+  weekTrend,
+  startOfLocalWeek,
+  shortStamp,
+  memoryForContext,
+  normalizeRecentEvents,
+  lastSessionForContext,
+  trainingSummaryForContext,
+  AGENT_SUMMARY_MAX,
   timeOfDayHint,
   createLlmClient,
   llmClientError,

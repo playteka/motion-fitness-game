@@ -983,6 +983,13 @@ export default {
     dialogueGroup: '对话显示与语音',
     dialogueLead: '教练的回答怎么显示：一句一条的弹幕（用户青色、教练薄荷绿），或者原来的两行字幕。',
     ttsHint: '教练说话默认走火山 TTS（本机 /tts/stream 流式代理，边收边播；同一句整段接口只合成一次并缓存）；超过 3 秒或失败会依次降级到整段 / 系统 TTS，不会哑掉。',
+    // 教练声音性别：长期偏好（服务端 MD 的 prefs.voiceGender），只影响朗读音色
+    voiceGender: '教练声音',
+    voiceFemale: '女声',
+    voiceMale: '男声',
+    voiceGenderHint: '男声 / 女声只影响教练朗读的音色（默认女声）；这个选择会记进「教练记忆」，下次打开还在。'
+      + '也可以直接说「用男声」「换成女教练」。',
+    voiceGenderSaveFailed: '声音已经换了，但没写进教练记忆（预览服务器没起来？）—— 下次打开可能回到女声。',
     // P3.4：允许插话打断（默认开；关掉后教练说话时不会被打断，但仍在聆听）
     bargeInToggle: '允许插话打断',
     bargeInHint: '教练说话时你直接开口就能把它打断（只停语音，字幕 / 弹幕照常留着）。'
@@ -992,13 +999,54 @@ export default {
     freeChatToggle: '自由对话',
     freeChatHint: '开着的时候，没命中命令的话会发给大模型（DeepSeek / 豆包方舟 / OpenAI）——它能看到你正在做哪个动作、'
       + '这一组每帧做得怎么样、最近练了几组，回答更像真人教练，也能真的帮你改目标 / 换动作 / 暂停。'
-      + '对话记忆只留在内存里（最近 6 轮），刷新页面就清空，不会存到硬盘。'
+      + '对话记忆只留在内存里（最近 10 轮），刷新页面就清空，不会存到硬盘。'
       + '关掉就只走离线命令快车道（不联网、不花钱，能力也只剩那张命令表）。'
       + '密钥只放在本机 coach.env，不会进前端。',
     freeChatStatus: '当前模型：{provider} / {model}',
     freeChatNotConfigured: '当前模型：{provider}（还没配 key —— 在 coach.env 里填 LLM_API_KEY 后重启预览服务器）',
     freeChatNoServer: '连不上预览服务器：先 node preview-server.js，自由对话才能用',
     freeChatOff: '自由对话已关闭：只走命令快车道',
+    // 三层记忆 · 长时层（服务端 server/memory/<userId>.md）
+    memoryGroup: '🧠 教练记忆',
+    memoryHint: '教练记得你的偏好和「你主动说过」的事实（目标 / 伤病 / 每周练几次），下次打开还在。'
+      + '内容存在这台电脑的 server/memory/<userId>.md 里，一个用户一个文件，**不会进仓库、不会上传**；'
+      + '可以逐条删除或全部清除。',
+    memoryOpen: '教练记得什么',
+  },
+
+  /* 三层记忆 · 长时层：「教练记得什么」面板（prefs / facts + 来源，可逐条删 / 全部清除） */
+  memory: {
+    title: '教练记得什么',
+    lead: '下面是教练记住的偏好和事实。事实那一栏会标明「来源」—— 只有你明确说过的话才会被记下来；'
+      + '嫌哪条不对就删掉。记忆按 userId 分开存，换一个 ID 就是另一份记忆（旧的还在服务端，换回来还能看到）。',
+    userId: '用户 ID',
+    userSave: '保存 ID',
+    userReset: '换个 ID',
+    userInvalid: '用户 ID 只能用字母、数字、下划线、短横线，长度 1~32。',
+    userSaved: '好的，已经换成这个用户 ID。',
+    userReset: '好的，已经换了一个新的用户 ID。',
+    empty: '还没有记住任何东西。对教练说「记住我喜欢温柔一点」或者「我膝盖不太好」就会记下来。',
+    delete: '删除',
+    source: '来源：{text}',
+    clearAll: '全部清除',
+    clearConfirm: '确定把教练记住的东西全部清除吗？只清这个用户 ID 的记忆。',
+    cleared: '好的，记忆已经清空了。',
+    clearFailed: '没清掉，检查预览服务器是否在跑。',
+    loadFailed: '读不到记忆（{code}）—— 确认预览服务器在跑，再重新打开这个面板。',
+    loading: '正在读取记忆…',
+    continueLine: '接着上次：{name} 第 {set} 组（做了 {reps} / 目标 {target}）',
+    field: {
+      tone: '语气',
+      difficulty: '难度',
+      sessionMinutes: '每次时长（分钟）',
+      restSec: '组间休息（秒）',
+      voiceSource: '音色来源',
+      voiceGender: '教练声音',
+      rate: '语速',
+      goal: '训练目标',
+      injuries: '伤病史',
+      weeklyGoal: '每周练几次',
+    },
   },
 
   judge: {
@@ -1645,6 +1693,8 @@ export default {
       exit: ['退出训练', '退出练习', '退出', '结束本组', '结束'],
       retrySet: ['再来一组', '再做一组', '再练一组', '再来一次', '重来', '重试'],
       nextExercise: ['换一个动作', '下一个动作', '换动作', '下一个'],
+      // 中时记忆：回到上次没练完的动作 + 目标 + 第几组
+      continueLast: ['继续上次', '接着上次', '上次练到哪了', '上次练到哪', '继续上次的训练', '接着练上次的'],
       setTarget: ['设置目标为', '目标设为', '目标改成', '设置目标', '设成', '设为', '改成', '目标'],
       adjustTarget: ['增加', '减少', '多加', '少做', '加', '减', '降'],
       mute: ['别说话', '别出声', '安静一下', '安静', '静音', '闭嘴'],
@@ -1652,6 +1702,8 @@ export default {
       stopListening: ['关闭教练', '关掉教练', '停止聆听', '关掉语音', '别听了', '退出教练'],
       help: ['我能说什么', '能说什么', '语音命令', '命令一览', '你会什么', '帮助'],
       switchLang: ['说英文', '讲英文', '用英文', '切换英文', '英文模式', '说中文', '讲中文', '用中文', '切换中文', '中文模式', '英文', '中文'],
+      setVoiceGender: ['换个女声', '换女声', '用女声', '女声吧', '换个男声', '换男声', '用男声', '男声吧',
+        '换个女教练', '换女教练', '女教练吧', '换个男教练', '换男教练', '男教练吧'],
       reportProgress: ['我做了几个', '做了几个', '我做了多少次', '做了多少次', '现在多少分', '多少分', '成绩怎么样', '多少个'],
     },
 
@@ -1674,6 +1726,7 @@ export default {
       exit: '退出这一组（**说退出就退出，不再二次确认**）',
       retrySet: '再来一组（计数清零并重新倒计时）',
       nextExercise: '换到动作库里的下一个动作',
+      continueLast: '回到上次没练完的动作 / 目标 / 第几组（「继续上次」）',
       setTarget: '把目标设成 N 次 / 秒（「设成 20 次」「目标一分钟」）',
       adjustTarget: '把目标加 / 减 N（「加 5 个」「减 10」）',
       mute: '让教练只出字幕、不出声',
@@ -1681,6 +1734,7 @@ export default {
       stopListening: '关闭 AI 教练（等于按 Ctrl+I 关）',
       help: '打开这张语音命令一览',
       switchLang: '切换语言（「说英文」「说中文」）',
+      setVoiceGender: '换教练声音：男声 / 女声（只影响朗读音色）',
       reportProgress: '读出当前这一组的次数与分数',
     },
 
@@ -1711,6 +1765,8 @@ export default {
       retryNotTraining: '现在不在训练里，先说「开始」。',
       nextExercise: '好的，换成{name}。',
       nextExerciseFail: '换不了动作，动作库是空的。',
+      continueLast: '好的，接着上次的{name}，第 {set} 组，目标 {target} {unit}。',
+      continueNothing: '还没有练过的记录，先说「开始」练一组吧。',
       setTarget: '好的，目标改成 {value} {unit}。',
       adjustUp: '好的，目标加 {delta}，现在 {value} {unit}。',
       adjustDown: '好的，目标减 {delta}，现在 {value} {unit}。',
@@ -1720,6 +1776,8 @@ export default {
       stopListening: '好的，我先休息。按 Ctrl+I 再叫我。',
       help: '能说的话都在屏幕上了。',
       switchLang: '好的，说中文。',
+      voiceGender: '好的，换成{gender}。',
+      unknownGender: '没听清要男声还是女声，说「用男声」或「用女声」。',
       progress: '你做了 {reps} 个，现在 {score} 分。',
       progressHold: '已经保持 {seconds} 秒，现在 {score} 分。',
       progressIdle: '现在还没在训练：目标是 {target} {unit}，已有 {reps} 个、{score} 分。',

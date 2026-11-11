@@ -283,6 +283,24 @@ export const COMMANDS = Object.freeze([
       return ack('coach.cmdAck.nextExercise', { name: exerciseName(next.id) });
     },
   }),
+  /**
+   * 「继续上次」：回到上次没练完的那个动作 + 目标 + 第几组。
+   *
+   * 数据来源是**中时记忆**（localStorage 的最近一组 / 服务端 MD 的「上次未完成」），
+   * 由 `ctx.continueLastSession()` 负责恢复（这里只把结果翻成一句确认，不碰 state）。
+   */
+  command('continueLast', {
+    run(ctx) {
+      const info = ctx.continueLastSession?.();
+      if (!info) return ack('coach.cmdAck.continueNothing');
+      return ack('coach.cmdAck.continueLast', {
+        name: info.name,
+        target: info.target,
+        set: info.set,
+        unit: info.unit || t('ui.repsUnit'),
+      });
+    },
+  }),
 
   /* ---------------- 目标 ---------------- */
   command('setTarget', {
@@ -348,6 +366,22 @@ export const COMMANDS = Object.freeze([
     run(ctx, args) {
       if (args && args.lang) ctx.changeLang?.(args.lang);
       return ack('coach.cmdAck.switchLang');
+    },
+  }),
+  /**
+   * 教练声音性别（长期偏好 voiceGender，存在服务端 MD 的 prefs 里）。
+   * 命令只把 `female` / `male` 交给 app，音色 ID **只在服务端**（server/volc-tts.mjs）。
+   */
+  command('setVoiceGender', {
+    args: 'gender',
+    run(ctx, args) {
+      const gender = args && args.gender === 'male' ? 'male' : (args && args.gender === 'female' ? 'female' : '');
+      if (!gender) return ack('coach.cmdAck.unknownGender');
+      const applied = ctx.setVoiceGender?.(gender);
+      const next = applied === 'male' ? 'male' : 'female';
+      return ack('coach.cmdAck.voiceGender', {
+        gender: t(next === 'male' ? 'settings.voiceMale' : 'settings.voiceFemale'),
+      });
     },
   }),
 

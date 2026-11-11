@@ -22,3 +22,7 @@ _gitout.tmp
 coach.env
 coach.env.local
 .progress-task.json
+
+# 教练长期记忆（server/memory/<userId>.md）：里面是个人信息（偏好 / 伤病 / 训练摘要），
+# **绝不进仓库**。一个用户一个文件；测试用 MFG_MEMORY_DIR 指到临时目录。
+server/memory/

@@ -42,6 +42,19 @@ import {
   createLlmRoutes,
   loadLlmConfig,
 } from './server/llm-provider.mjs';
+// 长期记忆（三层记忆的服务端层）：/memory（读）/ POST /memory（写）/ POST /memory/forget /
+// /memory/health（只报 users 数量，不泄露内容）。一个用户一个 MD 文件，**已 gitignore**。
+import {
+  DEFAULT_USER_ID,
+  MEMORY_DIR,
+  MEMORY_MAX_BYTES,
+  MemoryError,
+  forgetMemory,
+  memoryHealth,
+  normalizeUserId,
+  readMemory,
+  updateMemory,
+} from './server/memory-store.mjs';
 
 const PORT = Number(process.env.PORT || 4174);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -145,11 +158,171 @@ const llmRoute = createLlmRoutes({
   provider: llmProvider,
   config: llmConfig.config,
   guard: llmGuard,
+  memoryStore: { readMemory, updateMemory, forgetMemory },
   logger: (message, fields) => {
     const parts = Object.entries(fields || {}).map(([k, v]) => `${k}=${v}`);
     console.log(`[llm] ${message} ${parts.join(' ')}`);
   },
 });
+
+/* ------------------------------------------------------------------ *
+ * 长期记忆的路由（三层记忆的第 ③ 层）
+ *
+ *   GET  /memory?user=<id>          → 读这个用户的记忆（prefs / facts / 摘要 / 上次未完成）
+ *   POST /memory                    → 合并式更新（prefs / facts / summaries / lastUnfinished）
+ *   POST /memory/forget             → {user, field} 删一条，或 {user, all:true} 全清
+ *   GET  /memory/health             → {ok, users:N}（**只报数量，不泄露内容 / id**）
+ *
+ * 安全：userId 必须是 `^[a-zA-Z0-9_-]{1,32}$`，别的直接 400（防路径穿越）；
+ * MD 上限 64KB；字段与取值全在 memory-store 里过白名单。日志一行只记「哪个用户 / 成功没成功」。
+ * ------------------------------------------------------------------ */
+export const MEMORY_API_PATH = '/memory';
+export const MEMORY_FORGET_PATH = '/memory/forget';
+export const MEMORY_HEALTH_PATH = '/memory/health';
+
+/** 记忆目录：允许用 `MFG_MEMORY_DIR` 覆盖（测试用临时目录，绝不写进仓库） */
+function memoryDir() {
+  return String(process.env.MFG_MEMORY_DIR || '') || MEMORY_DIR;
+}
+
+/** 读 JSON body（和 /llm 同一套写法；超过上限直接 413） */
+function readMemoryBody(req, maxBytes = MEMORY_MAX_BYTES) {
+  return new Promise((resolve) => {
+    let body = '';
+    let tooBig = false;
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > maxBytes) {
+        tooBig = true;
+        try { req.destroy(); } catch { /* ignore */ }
+      }
+    });
+    req.on('end', () => {
+      if (tooBig) { resolve({ ok: false, code: 'too-big' }); return; }
+      if (!body) { resolve({ ok: false, code: 'empty-body' }); return; }
+      try {
+        const data = JSON.parse(body);
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+          resolve({ ok: false, code: 'bad-body' });
+          return;
+        }
+        resolve({ ok: true, data });
+      } catch {
+        resolve({ ok: false, code: 'bad-json' });
+      }
+    });
+    req.on('error', () => resolve({ ok: false, code: 'read-error' }));
+  });
+}
+
+function sendMemoryJson(res, status, obj) {
+  try {
+    res.writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(JSON.stringify(obj));
+  } catch { /* 响应已断 */ }
+}
+
+/** 统一的错误响应：稳定 code + 字段 + 原因（**不回显用户文本**） */
+function memoryErrorResponse(res, err) {
+  const code = (err && err.code) || 'memory-error';
+  const status = code === 'too-big' ? 413 : 400;
+  sendMemoryJson(res, status, {
+    ok: false,
+    error: code,
+    field: (err && err.field) || '',
+    reason: (err && err.reason) || '',
+  });
+}
+
+/** 处理记忆路由；返回 true = 这个请求已经处理完 */
+export function handleMemoryRoute(req, res) {
+  const pathOnly = String((req && req.url) || '').split('?')[0];
+  if (pathOnly !== MEMORY_API_PATH
+    && pathOnly !== MEMORY_FORGET_PATH
+    && pathOnly !== MEMORY_HEALTH_PATH) {
+    return false;
+  }
+  const dir = memoryDir();
+
+  if (pathOnly === MEMORY_HEALTH_PATH) {
+    if (req.method !== 'GET') {
+      sendMemoryJson(res, 405, { ok: false, error: 'method-not-allowed' });
+      return true;
+    }
+    sendMemoryJson(res, 200, memoryHealth({ dir }));
+    return true;
+  }
+
+  if (pathOnly === MEMORY_API_PATH && req.method === 'GET') {
+    let userId = DEFAULT_USER_ID;
+    try {
+      userId = normalizeUserId(new URL(req.url, 'http://127.0.0.1').searchParams.get('user')
+        || DEFAULT_USER_ID);
+    } catch {
+      sendMemoryJson(res, 400, { ok: false, error: 'bad-user' });
+      return true;
+    }
+    try {
+      const memory = readMemory(userId, { dir });
+      sendMemoryJson(res, 200, { ok: true, ...memory });
+    } catch (err) {
+      memoryErrorResponse(res, err);
+    }
+    return true;
+  }
+
+  if (req.method !== 'POST') {
+    sendMemoryJson(res, 405, { ok: false, error: 'method-not-allowed' });
+    return true;
+  }
+
+  readMemoryBody(req).then((parsed) => {
+    if (!parsed.ok) {
+      sendMemoryJson(res, parsed.code === 'too-big' ? 413 : 400, {
+        ok: false,
+        error: parsed.code,
+      });
+      return;
+    }
+    const body = parsed.data;
+    let userId = DEFAULT_USER_ID;
+    try {
+      userId = normalizeUserId(body.user == null || body.user === '' ? DEFAULT_USER_ID : body.user);
+    } catch {
+      sendMemoryJson(res, 400, { ok: false, error: 'bad-user' });
+      return;
+    }
+    try {
+      if (pathOnly === MEMORY_FORGET_PATH) {
+        const memory = forgetMemory(userId, {
+          all: body.all === true,
+          field: body.field,
+        }, { dir });
+        sendMemoryJson(res, 200, { ok: true, ...memory });
+        return;
+      }
+      const patch = {};
+      if (body.prefs !== undefined) patch.prefs = body.prefs;
+      if (body.facts !== undefined) patch.facts = body.facts;
+      if (body.summaries !== undefined) patch.summaries = body.summaries;
+      if (body.lastUnfinished !== undefined) patch.lastUnfinished = body.lastUnfinished;
+      if (!Object.keys(patch).length) {
+        sendMemoryJson(res, 400, { ok: false, error: 'empty-patch' });
+        return;
+      }
+      const memory = updateMemory(userId, patch, { dir });
+      sendMemoryJson(res, 200, { ok: true, ...memory });
+    } catch (err) {
+      memoryErrorResponse(res, err);
+    }
+  }).catch(() => {
+    sendMemoryJson(res, 400, { ok: false, error: 'bad-request' });
+  });
+  return true;
+}
 
 /**
  * 能 gzip 的后缀（文本类 **+ 运行库 `.wasm` + 模型 `.task`**）。
@@ -294,6 +467,8 @@ function serveStatic(req, res, file) {
  * 只有作为主模块启动时才会真的 listen，被测试 import 时不会占端口。
  */
 export const previewHandler = (req, res) => {
+  // 长期记忆（三层记忆的第 ③ 层）：/memory、/memory/forget、/memory/health
+  if (handleMemoryRoute(req, res)) return;
   // 语音合成（P3.6）：POST /tts（音频）与 GET /tts/health（配没配），先于静态资源处理
   if (ttsRoute(req, res)) return;
   // 自由对话（P3.3）：POST /llm 与 GET /llm/health（不碰任何静态文件）

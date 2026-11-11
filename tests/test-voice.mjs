@@ -18,6 +18,8 @@ import zlib from 'node:zlib';
 import {
   createVoiceSession, VOICE_STATES, VOICE_NOTICE_KEYS, VOICE_ERROR_KEYS, THINK_SLOW_MS,
   speakHoldMs, VOICE_SPEAK_MIN_MS, VOICE_SPEAK_MAX_MS,
+  DIALOGUE_MAX_TURNS, COACH_LINES_MAX, RECENT_EVENTS_MAX, RECENT_EVENTS_WINDOW_MS,
+  EVENT_KINDS, RECENT_EVENT_MAX_CHARS,
 } from '../src/voice/session.js';
 import {
   parseCommand, cnToInt, normalizeText, isConfirmText, isCancelText,
@@ -81,7 +83,10 @@ import {
   createLlmClient, buildAgentContext, trimAgentContext, scoreTrend, timeOfDayHint,
   normalizeActions as normalizeLlmActions,
   LLM_PATH as LLM_CLIENT_PATH, LLM_CLIENT_TIMEOUT_MS, LLM_HISTORY_TURNS,
-  AGENT_CONTEXT_MAX_CHARS,
+  AGENT_CONTEXT_MAX_CHARS, AGENT_EVENTS_MAX, AGENT_EVENTS_WINDOW_MS, AGENT_EVENT_MAX_CHARS,
+  AGENT_MEMORY_PREF_FIELDS, AGENT_MEMORY_FACT_FIELDS,
+  weekTrend, startOfLocalWeek, normalizeRecentEvents, lastSessionForContext, memoryForContext,
+  trainingSummaryForContext, AGENT_SUMMARY_MAX, AGENT_EVENT_KINDS,
 } from '../src/voice/llm.js';
 import {
   LLM_PATH, LLM_HEALTH_PATH, LLM_TIMEOUT_MS, LLM_MAX_TOKENS, LLM_RATE_LIMIT,
@@ -92,8 +97,20 @@ import {
 import {
   LLM_TOOLS, LLM_TOOL_DEFS, TOOL_INTENT_MAP, TOOLED_INTENTS, UNCOVERED_INTENTS,
   UNKNOWN_TOOLED_INTENTS, MAX_TOOL_CALLS, EMPTY_REPLY, EXERCISE_IDS,
-  actionsFromToolCalls, toolHelpRows, resolveExerciseId,
+  actionsFromToolCalls, toolHelpRows, resolveExerciseId, buildSystemPrompt,
 } from '../server/llm-tools.mjs';
+import {
+  MEMORY_DIR, MEMORY_MAX_BYTES, DEFAULT_USER_ID, MEMORY_SUMMARY_MAX,
+  PREFS_FIELDS, FACTS_FIELDS, PREFS_SPEC, FACTS_SPEC,
+  MemoryError, normalizeUserId, formatMemoryStamp, emptyMemory, memoryFilePath,
+  normalizeFieldValue, normalizeEvidence, serializeMemory, parseMemoryMarkdown,
+  readMemory, updateMemory, forgetMemory, memoryHealth,
+} from '../server/memory-store.mjs';
+import {
+  COACH_VOICES, VOICE_GENDERS, DEFAULT_VOICE_GENDER,
+  normalizeVoiceGender, resolveCoachVoice,
+} from '../server/volc-tts.mjs';
+import { applyMemoryOps } from '../server/llm-provider.mjs';
 import { LOCALES, setLang, t } from '../src/i18n.js';
 
 let passed = 0;
@@ -2264,6 +2281,7 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
     exit: ['退出', 'exit'],
     retrySet: ['再来一组', 'one more set'],
     nextExercise: ['换动作', 'next exercise'],
+    continueLast: ['继续上次', 'continue last'],
     setTarget: ['设成 20 次', 'set target to 20 reps'],
     adjustTarget: ['加 5 个', 'add 5 reps'],
     mute: ['别说话', 'be quiet'],
@@ -2271,6 +2289,7 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
     stopListening: ['关闭教练', 'stop listening'],
     help: ['我能说什么', 'what can i say'],
     switchLang: ['说英文', 'speak english'],
+    setVoiceGender: ['用男声', 'use a male voice'],
     reportProgress: ['我做了几个', 'how many did i do'],
   };
 
@@ -3831,7 +3850,7 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
       UNCOVERED_INTENTS.length === 0, UNCOVERED_INTENTS.join(','));
     ok('工具里写的 intent 都真的存在（UNKNOWN_TOOLED_INTENTS 为空）',
       UNKNOWN_TOOLED_INTENTS.length === 0, UNKNOWN_TOOLED_INTENTS.join(','));
-    ok('TOOLED_INTENTS 的数量 = COMMANDS 的数量（25 条 intent 全部可达）',
+    ok('TOOLED_INTENTS 的数量 = COMMANDS 的数量（27 条 intent 全部可达；记忆工具没有 client intent）',
       TOOLED_INTENTS.length === COMMANDS.length,
       `${TOOLED_INTENTS.length} / ${COMMANDS.length}`);
     ok('工具数 ≥ 15，且每个工具都有 name / 中英描述 / JSON Schema 参数',
@@ -3841,20 +3860,24 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
     // 逐条抽查几个「一对多」的映射（改命令表 / 工具表任意一边都会在这里红）
     const expectMap = {
       start_workout: ['startWorkout'], pause: ['pause'], resume: ['resume'], exit_workout: ['exit'],
-      retry_set: ['retrySet'], next_exercise: ['nextExercise'], set_target: ['setTarget'],
+      retry_set: ['retrySet'], next_exercise: ['nextExercise'], continue_last: ['continueLast'],
+      set_target: ['setTarget'],
       adjust_target: ['adjustTarget'],
       navigate: ['home', 'menu', 'back', 'next', 'prev'],
       open_panel: ['openSettings', 'openRecords', 'openBest', 'openExerciseSettings'],
       set_voice: ['mute', 'unmute'], switch_language: ['switchLang'],
+      set_voice_gender: ['setVoiceGender'],
       report_progress: ['reportProgress'], help: ['help'],
       pick_category: ['category'], pick_index: ['pick'], stop_listening: ['stopListening'],
+      // 长期记忆：服务端副作用，没有 client intent
+      remember: [], remember_fact: [], forget: [],
     };
     const mapOk = Object.entries(expectMap).every(([name, intents]) => {
       const got = TOOL_INTENT_MAP[name];
       return Array.isArray(got) && got.length === intents.length
         && intents.every((i) => got.includes(i));
     });
-    ok('17 个工具 → 25 条 intent 的映射与命令表一致（含 navigate / open_panel / set_voice 三对多）',
+    ok('22 个工具 → 27 条 intent 的映射与命令表一致（含 navigate / open_panel / set_voice 三对多 + 3 个记忆工具）',
       mapOk && Object.keys(TOOL_INTENT_MAP).length === Object.keys(expectMap).length,
       JSON.stringify(TOOL_INTENT_MAP));
     // OpenAI 风格的 function calling：tools 是 [{type:'function', function:{name,description,parameters}}]
@@ -4469,9 +4492,10 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
     ok('客户端返回 {reply, actions}，action 的 intent 原样保留（由会话层执行）',
       res.reply === '不错，再做两个。' && res.actions[0].intent === 'setTarget'
       && res.actions[0].args.value === 20);
-    for (let i = 0; i < 8; i += 1) await client.respond(`第 ${i} 句`, { locale: 'zh' });
-    ok('对话记忆只在内存里，最多 6 轮（12 条），刷新即清',
-      client.history.length === LLM_HISTORY_TURNS * 2, String(client.history.length));
+    for (let i = 0; i < 15; i += 1) await client.respond(`第 ${i} 句`, { locale: 'zh' });
+    ok('对话记忆只在内存里，最多 10 轮（20 条），刷新即清',
+      LLM_HISTORY_TURNS === 10 && client.history.length === LLM_HISTORY_TURNS * 2,
+      String(client.history.length));
     client.reset();
     ok('reset() 清空对话记忆', client.history.length === 0);
 
@@ -6041,6 +6065,710 @@ console.log('\n[37] final 之后继续聆听 / TTS 卡住也不吞掉下一句 /
       && diag.events.some((e) => e.type === 'session:resume'),
       JSON.stringify({ paused: session.paused, state: session.snapshot().state }));
     session.stop('user');
+  }
+}
+
+/* ================================================================== *
+ * [30] 三层记忆 · 长时层：服务端 MD（读写 / 白名单 / 路径穿越 / 坏文件 / 原子写）
+ * ================================================================== */
+console.log('\n[30] 三层记忆 · 长时层：server/memory/<userId>.md（白名单 / 安全 / 容错）');
+{
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const fsp = fs;
+  let dir;
+  try {
+    dir = fsp.mkdtempSync(path.join(os.tmpdir(), 'mfg-memory-'));
+  } catch {
+    dir = fsp.mkdtempSync(path.join(process.cwd(), '.memory-test-'));
+  }
+  const throwsCode = (fn, code) => {
+    try { fn(); return false; } catch (err) { return !!err && err.code === code; }
+  };
+  try {
+    ok('记忆文件上限 64KB、摘要最多 20 条，默认 userId 是 default',
+      MEMORY_MAX_BYTES === 64 * 1024 && MEMORY_SUMMARY_MAX === 20 && DEFAULT_USER_ID === 'default');
+
+    const saved = updateMemory('alice', {
+      prefs: { tone: 'warm', sessionMinutes: 20, rate: 1.1, voiceGender: 'male' },
+      facts: {
+        goal: { value: '减脂', evidence: '2026-11-11 我说想减脂' },
+        injuries: { value: ['膝盖', '腰'], evidence: '我膝盖和腰都不太好' },
+      },
+      summaries: [
+        { at: new Date('2026-11-11T17:30:00').getTime(), name: '自重深蹲', target: 20, reps: 20, score: 61 },
+      ],
+      lastUnfinished: { at: new Date('2026-11-11T17:30:00').getTime(), exerciseId: 'squat', name: '自重深蹲', set: 2, reps: 12, target: 20 },
+    }, { dir });
+    const back = readMemory('alice', { dir });
+    ok('MD 读写往返：prefs / facts / 来源 / 摘要 / 上次未完成都对',
+      back.prefs.tone === 'warm' && back.prefs.sessionMinutes === 20 && back.prefs.rate === 1.1
+      && back.prefs.voiceGender === 'male'
+      && back.facts.goal === '减脂' && JSON.stringify(back.facts.injuries) === JSON.stringify(['膝盖', '腰'])
+      && back.sources.goal === '2026-11-11 我说想减脂'
+      && back.summaries.length === 1 && back.summaries[0].name === '自重深蹲' && back.summaries[0].score === 61
+      && back.summaries[0].stamp === formatMemoryStamp(new Date('2026-11-11T17:30:00').getTime())
+      && back.lastUnfinished && back.lastUnfinished.set === 2 && back.lastUnfinished.reps === 12,
+      JSON.stringify(back));
+
+    const md = fsp.readFileSync(path.join(dir, 'alice.md'), 'utf8');
+    ok('MD 是人能读的格式：二级标题分节 + 「- 字段: 值」+ 「> 来源：…」+ 表格',
+      /^# 教练记忆 — alice/m.test(md)
+      && /## 偏好 \(prefs\)/.test(md) && /- tone: warm/.test(md)
+      && /## 事实 \(facts\)/.test(md) && /- goal: 减脂/.test(md)
+      && /  > 来源：2026-11-11 我说想减脂/.test(md)
+      && /## 训练摘要（最近 20 次，最新在前）/.test(md)
+      && /\| 日期 \| 动作 \| 目标 \| 实际 \| 分数 \|/.test(md)
+      && /## 上次未完成/.test(md) && /第 2 组（12\/20）/.test(md),
+      md.slice(0, 500));
+
+    ok('白名单接受 voiceGender（female|male），MD 里能看到这一行',
+      /- voiceGender: male/.test(md));
+
+    // 白名单 / 取值范围：全部拒绝，且**不留下半份文件**
+    const before = fsp.readFileSync(path.join(dir, 'alice.md'), 'utf8');
+    ok('非法 prefs 字段被拒（not-in-whitelist）',
+      throwsCode(() => updateMemory('alice', { prefs: { nickname: 'x' } }, { dir }), 'bad-field'));
+    ok('非法枚举值被拒（tone=angry / voiceGender=robot / goal=变壮）',
+      throwsCode(() => updateMemory('alice', { prefs: { tone: 'angry' } }, { dir }), 'bad-value')
+      && throwsCode(() => updateMemory('alice', { prefs: { voiceGender: 'robot' } }, { dir }), 'bad-value')
+      && throwsCode(() => updateMemory('alice', { facts: { goal: { value: '变壮', evidence: '我想变壮' } } }, { dir }), 'bad-value'));
+    ok('数值范围被拒：sessionMinutes 4/61、restSec -1/181、rate 1.4、weeklyGoal 8',
+      throwsCode(() => updateMemory('alice', { prefs: { sessionMinutes: 4 } }, { dir }), 'bad-value')
+      && throwsCode(() => updateMemory('alice', { prefs: { sessionMinutes: 61 } }, { dir }), 'bad-value')
+      && throwsCode(() => updateMemory('alice', { prefs: { restSec: -1 } }, { dir }), 'bad-value')
+      && throwsCode(() => updateMemory('alice', { prefs: { restSec: 181 } }, { dir }), 'bad-value')
+      && throwsCode(() => updateMemory('alice', { prefs: { rate: 1.4 } }, { dir }), 'bad-value')
+      && throwsCode(() => updateMemory('alice', { facts: { weeklyGoal: { value: 8, evidence: '每周八次' } } }, { dir }), 'bad-value'));
+    ok('injuries 最多 5 项 / 每项最多 20 字（超了被拒）',
+      throwsCode(() => updateMemory('alice', { facts: { injuries: { value: ['a', 'b', 'c', 'd', 'e', 'f'], evidence: 'x' } } }, { dir }), 'bad-value')
+      && throwsCode(() => updateMemory('alice', { facts: { injuries: { value: ['字'.repeat(21)], evidence: 'x' } } }, { dir }), 'bad-value'));
+    ok('未知 patch 顶层键被拒（unknown-field）',
+      throwsCode(() => updateMemory('alice', { nickname: 'x' }, { dir }), 'unknown-field'));
+    ok('facts 没有 evidence 被拒（evidence-required）——模型不能凭推测写事实',
+      throwsCode(() => updateMemory('alice', { facts: { goal: '增肌' } }, { dir }), 'evidence-required'));
+    ok('被拒之后原 MD 一个字节都没变（不做半截写入 / 不留 .tmp）',
+      fsp.readFileSync(path.join(dir, 'alice.md'), 'utf8') === before
+      && fsp.readdirSync(dir).every((name) => !name.includes('.tmp-')));
+
+    // 路径穿越：userId 必须是 ^[a-zA-Z0-9_-]{1,32}$
+    const badUsers = ['../x', 'a/b', 'a\\b', '', 'x'.repeat(33), 'a.b', '..'];
+    ok('路径穿越 / 非法 userId 一律 bad-user（../x、a/b、a\\b、空串、超长、带点）',
+      badUsers.every((u) => throwsCode(() => normalizeUserId(u), 'bad-user')
+        && throwsCode(() => readMemory(u, { dir }), 'bad-user')
+        && throwsCode(() => updateMemory(u, { prefs: { tone: 'warm' } }, { dir }), 'bad-user')
+        && throwsCode(() => forgetMemory(u, { all: true }, { dir }), 'bad-user')));
+    ok('记忆文件永远落在 memory 目录里（userId → <dir>/<id>.md）',
+      memoryFilePath('alice', dir) === path.join(path.resolve(dir), 'alice.md'));
+
+    // 手改容忍：合法手写 MD 照样解析；垃圾文件备份 .bad 后按空记忆处理
+    fsp.writeFileSync(path.join(dir, 'manual.md'), [
+      '# 教练记忆 — manual',
+      '',
+      '## 偏好 (prefs)',
+      '- difficulty: hard',
+      '- tone: 这是手改的非法值',
+      '',
+      '## 事实 (facts)',
+      '- weeklyGoal: 3',
+      '  > 来源：每周练三次',
+      '',
+      '## 训练摘要（最近 20 次，最新在前）',
+      '| 日期 | 动作 | 目标 | 实际 | 分数 |',
+      '|---|---|---|---|---|',
+      '| 2026-11-10 09:00 | 平板支撑 | 45 | 45 | 70 |',
+      '',
+      '## 上次未完成',
+      '- 2026-11-10 09:00 平板支撑 第 1 组（30/45）',
+    ].join('\n'), 'utf8');
+    const manual = readMemory('manual', { dir });
+    ok('手改的 MD 容忍：合法字段读出来 / 非法值忽略 / 表格与上次数照读',
+      manual.prefs.difficulty === 'hard' && manual.prefs.tone === undefined
+      && manual.facts.weeklyGoal === 3 && manual.sources.weeklyGoal === '每周练三次'
+      && manual.summaries.length === 1 && manual.summaries[0].reps === 45
+      && manual.lastUnfinished && manual.lastUnfinished.set === 1);
+
+    fsp.writeFileSync(path.join(dir, 'broken.md'), '这不是一份记忆文件，只是随便写的东西。\n', 'utf8');
+    const broken = readMemory('broken', { dir });
+    ok('坏 MD（完全不像记忆）→ 空记忆 + 备份 .bad，不崩',
+      broken.prefs.tone === undefined && broken.facts.goal === undefined
+      && fsp.existsSync(path.join(dir, 'broken.md.bad')));
+
+    fsp.writeFileSync(path.join(dir, 'huge.md'), `# 教练记忆 — huge\n${'x'.repeat(MEMORY_MAX_BYTES + 100)}`, 'utf8');
+    const huge = readMemory('huge', { dir });
+    ok('超过 64KB 的 MD → 空记忆 + 备份 .bad（不读进内存 / 不崩）',
+      Object.keys(huge.prefs).length === 0 && fsp.existsSync(path.join(dir, 'huge.md.bad')));
+
+    ok('forget 单条：只删指定字段（来源一起删）',
+      (() => {
+        const m = forgetMemory('alice', { field: 'tone' }, { dir });
+        return m.prefs.tone === undefined && m.prefs.sessionMinutes === 20;
+      })());
+    ok('forget 也接受 prefs.xxx / facts.xxx 前缀',
+      (() => {
+        const m = forgetMemory('alice', { field: 'facts.goal' }, { dir });
+        return m.facts.goal === undefined && m.sources.goal === undefined;
+      })());
+    ok('forget all：文件直接删掉，读回来是空记忆',
+      (() => {
+        const m = forgetMemory('alice', { all: true }, { dir });
+        return !fsp.existsSync(path.join(dir, 'alice.md')) && Object.keys(m.prefs).length === 0;
+      })());
+
+    updateMemory('bob', { prefs: { tone: 'funny' } }, { dir });
+    const health = memoryHealth({ dir });
+    ok('/memory/health 只报 users 数量（不读内容 / 不泄露 id）',
+      health.ok === true && health.users === 2 && !JSON.stringify(health).includes('bob'),
+      JSON.stringify(health));
+  } finally {
+    try { fsp.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+/* ================================================================== *
+ * [31] 记忆工具：remember（只能 prefs）/ remember_fact（必须 evidence）/ forget
+ * ================================================================== */
+console.log('\n[31] 记忆工具：remember 只能记偏好 / remember_fact 必须有用户原话 / forget');
+{
+  const text = (call) => actionsFromToolCalls([call], { locale: 'zh' });
+  const rem = text({ name: 'remember', args: { field: 'tone', value: 'warm' } });
+  ok('remember(tone=warm) → 一条服务端记忆操作（没有 client action）',
+    rem.memoryOps.length === 1 && rem.memoryOps[0].op === 'remember'
+    && rem.memoryOps[0].field === 'tone' && rem.memoryOps[0].value === 'warm'
+    && rem.actions.length === 0);
+  ok('remember 不能写 facts（goal → not-a-preference）',
+    (() => {
+      const r = text({ name: 'remember', args: { field: 'goal', value: '减脂' } });
+      return r.memoryOps.length === 0 && r.refusals[0]?.reason === 'not-a-preference';
+    })());
+  ok('remember_fact 没有 evidence → 拒绝（evidence-required），不产生任何写入',
+    (() => {
+      const r = text({ name: 'remember_fact', args: { field: 'goal', value: '减脂' } });
+      return r.memoryOps.length === 0 && r.refusals[0]?.reason === 'evidence-required';
+    })());
+  ok('remember_fact 带 evidence → 操作里原样带上用户原话',
+    (() => {
+      const r = text({ name: 'remember_fact', args: {
+        field: 'goal', value: '减脂', evidence: '我想减脂',
+      } });
+      return r.memoryOps.length === 1 && r.memoryOps[0].op === 'remember-fact'
+        && r.memoryOps[0].evidence === '我想减脂';
+    })());
+  ok('forget(tone) → forget 操作；未知字段 → bad-field',
+    text({ name: 'forget', args: { field: 'tone' } }).memoryOps[0]?.op === 'forget'
+    && text({ name: 'forget', args: { field: 'nickname' } }).refusals[0]?.reason === 'bad-field');
+  ok('记忆操作也受「一次最多 3 个工具」限制',
+    actionsFromToolCalls(Array.from({ length: 6 }, () => ({ name: 'remember', args: { field: 'tone', value: 'warm' } })))
+      .memoryOps.length === MAX_TOOL_CALLS);
+
+  // 服务端 /llm 真的写：mock provider 调 remember + remember_fact
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const http = await import('node:http');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-memory-llm-'));
+  const store = {
+    readMemory: (u) => readMemory(u, { dir }),
+    updateMemory: (u, p) => updateMemory(u, p, { dir }),
+    forgetMemory: (u, t) => forgetMemory(u, t, { dir }),
+  };
+  try {
+    const provider = createMockLlmProvider({
+      script: [{
+        text: '好，我记下了。',
+        toolCalls: [
+          { name: 'remember', args: { field: 'tone', value: 'warm' } },
+          { name: 'remember_fact', args: { field: 'goal', value: '减脂', evidence: '我想减脂' } },
+        ],
+      }],
+    });
+    const routes = createLlmRoutes({
+      provider,
+      config: { configured: true, provider: 'mock', model: 'mock' },
+      memoryStore: store,
+    });
+    const srv = http.createServer(routes);
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+    const post = (p, body) => new Promise((resolve, reject) => {
+      const data = JSON.stringify(body);
+      const req = http.request({
+        host: '127.0.0.1', port, path: p, method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+      });
+      req.on('error', reject);
+      req.end(data);
+    });
+    const out = await post('/llm', { user: 'routeuser', text: '记住我喜欢温柔一点，我想减脂', locale: 'zh' });
+    const saved = readMemory('routeuser', { dir });
+    const md = fs.readFileSync(path.join(dir, 'routeuser.md'), 'utf8');
+    ok('POST /llm：remember → prefs 写进 MD、remember_fact → facts + 来源，响应带回最新 memory',
+      out.status === 200 && saved.prefs.tone === 'warm' && saved.facts.goal === '减脂'
+      && saved.sources.goal === '我想减脂' && out.body.memory?.prefs?.tone === 'warm'
+      && /- tone: warm/.test(md) && /  > 来源：我想减脂/.test(md),
+      JSON.stringify({ out: out.body, md }));
+    ok('POST /llm 的记忆工具只回「成功/失败」理由，不把用户原话写进日志字段',
+      Array.isArray(out.body.memoryOps) && out.body.memoryOps.every((r) => r.ok === true));
+
+    // 非法 userId → 400（绝不落盘）
+    const bad = await post('/llm', { user: '../x', text: 'hi' });
+    ok('POST /llm：非法 userId → 400 bad-user，不写任何文件',
+      bad.status === 400 && bad.body.error === 'bad-user'
+      && !fs.existsSync(path.join(dir, '..', 'x.md')));
+    await new Promise((r) => srv.close(r));
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+/* ================================================================== *
+ * [32] 短时记忆：最近 60 秒事件（≤60 条、正序、单条 ≤60 字符）/ 10 轮对话 / 教练最近 5 句
+ * ================================================================== */
+console.log('\n[32] 短时记忆：60 秒事件环形缓冲 / 10 轮对话 / 教练最近 5 句（防复读）');
+{
+  ok('常量：60 秒窗口 / 60 条上限 / 单条 ≤60 字符 / 事件类型白名单',
+    RECENT_EVENTS_WINDOW_MS === 60000 && RECENT_EVENTS_MAX === 60
+    && RECENT_EVENT_MAX_CHARS === 60
+    && EVENT_KINDS.join(',') === 'rep,gate-fail,keyframe-hit,keyframe-miss'
+    && JSON.stringify(EVENT_KINDS) === JSON.stringify(AGENT_EVENT_KINDS));
+
+  const clock = { t: 0 };
+  const session = createVoiceSession({
+    mic: fakeMic(), asr: fakeAsr(), tts: fakeTts(),
+    llm: { reply: () => ({ text: '好' }) }, thinkDelay: 0,
+    now: () => clock.t,
+  });
+  await session.start();
+  for (let i = 0; i < 70; i += 1) {
+    clock.t += 1000;
+    session.recordEvent('rep', { n: i, v: true });
+  }
+  const events = session.recentEvents();
+  ok('70 条事件只留最近 60 条（环形缓冲），最旧的在 60 秒窗口内',
+    events.length === 60 && events[0].t <= 60 && events.at(-1).t <= 1,
+    JSON.stringify({ n: events.length, first: events[0], last: events.at(-1) }));
+  ok('事件按时间正序（最旧在前，t 从大到小）',
+    events.every((ev, i) => i === 0 || ev.t <= events[i - 1].t + 1e-9));
+  ok('每条事件的 JSON ≤60 字符（prompt 里保持短）',
+    events.every((ev) => JSON.stringify(ev).length <= RECENT_EVENT_MAX_CHARS),
+    String(Math.max(...events.map((ev) => JSON.stringify(ev).length))));
+  clock.t += 61000;
+  ok('超过 60 秒的事件自动过期（只剩 60 秒内）', session.recentEvents().length === 0);
+
+  session.recordEvent('rep', { n: 3, points: [[1, 2], [3, 4]], pose: { x: 1 } });
+  const lastEv = session.recentEvents().at(-1);
+  ok('事件 data 只留标量：关键点 / 嵌套对象一律被丢掉',
+    lastEv && lastEv.data.n === 3 && !('points' in lastEv.data) && !('pose' in lastEv.data),
+    JSON.stringify(lastEv));
+  ok('非法事件类型被忽略', session.recordEvent('landmarks', {}) === false);
+  session.stop('user');
+
+  // 10 轮对话 + 教练最近 5 句
+  const s2 = createVoiceSession({
+    mic: fakeMic(), asr: fakeAsr(), tts: fakeTts(),
+    llm: { reply: (t) => ({ text: `答：${t}` }) }, thinkDelay: 0,
+  });
+  await s2.start();
+  for (let i = 0; i < 12; i += 1) {
+    s2.onUserText(`聊天内容 ${i}`);
+    await tick(6);
+  }
+  ok('对话记忆最多 10 轮（20 条），更早的自动丢掉',
+    s2.snapshot().recentTurns.length === DIALOGUE_MAX_TURNS * 2
+    && s2.snapshot().recentTurns[0].role === 'user',
+    String(s2.snapshot().recentTurns.length));
+  ok('教练最近 5 句：只留最近 5 条，重复的一句挪到末尾（不占两个名额）',
+    s2.lastCoachLines().length === COACH_LINES_MAX
+    && (() => {
+      const before = s2.lastCoachLines();
+      s2.onCoachText(before[1]);
+      const after = s2.lastCoachLines();
+      return after.length === COACH_LINES_MAX && after.at(-1) === before[1]
+        && after.filter((x) => x === before[1]).length === 1;
+    })(),
+    JSON.stringify(s2.lastCoachLines()));
+  s2.stop('user');
+}
+
+/* ================================================================== *
+ * [33] 中时记忆：本周 vs 上周（客户端算）+ lastSession + context 装配 / 瘦身
+ * ================================================================== */
+console.log('\n[33] 中时记忆：本周 vs 上周 / lastSession / context 里的 memory + 事件 + 防复读');
+{
+  const nowMs = new Date('2026-06-03T15:00:00').getTime();   // 周三
+  const weekStart = startOfLocalWeek(nowMs);
+  const at = (daysAgo, hour = 10) => {
+    const d = new Date(nowMs);
+    d.setDate(d.getDate() - daysAgo);
+    d.setHours(hour, 0, 0, 0);
+    return d.getTime();
+  };
+  const thisWeek = [
+    { at: at(0), kind: 'rep', value: 20, target: 20, score: 65, seconds: 0 },
+    { at: at(2), kind: 'rep', value: 15, target: 15, score: 75, seconds: 0 },
+  ];
+  const lastWeek = [
+    { at: weekStart - 3 * 86400000, kind: 'rep', value: 15, target: 15, score: 55, seconds: 0 },
+    { at: weekStart - 1 * 86400000, kind: 'hold', value: 40, target: 45, score: 65, seconds: 0 },
+  ];
+  const trend = weekTrend([...thisWeek, ...lastWeek], nowMs);
+  ok('weekTrend：本周 / 上周各 2 组，reps / secs / avgScore 与 delta 都对',
+    trend.thisWeek.sets === 2 && trend.thisWeek.reps === 35 && trend.thisWeek.avgScore === 70
+    && trend.lastWeek.sets === 2 && trend.lastWeek.reps === 15 && trend.lastWeek.secs === 40
+    && trend.lastWeek.avgScore === 60
+    && trend.delta.sets === 0 && trend.delta.avgScore === 10,
+    JSON.stringify(trend));
+  ok('weekTrend verdict：平均分高 ≥3 → improved / 低 ≥3 → declined / 差不多 → flat',
+    trend.verdict === 'improved'
+    && weekTrend([...lastWeek, { ...thisWeek[0], score: 50 }], nowMs).verdict === 'declined'
+    && weekTrend([...lastWeek, { ...thisWeek[0], score: 61 }], nowMs).verdict === 'flat');
+  ok('weekTrend：只有本周练了 → improved；只有上周 → declined；都没练 → flat',
+    weekTrend([thisWeek[0]], nowMs).verdict === 'improved'
+    && weekTrend([lastWeek[0]], nowMs).verdict === 'declined'
+    && weekTrend([], nowMs).verdict === 'flat');
+
+  const last = lastSessionForContext({
+    exerciseId: 'squat', name: '自重深蹲', target: 20, reps: 12,
+    setIndex: 2, at: at(0, 17), finished: false,
+  });
+  ok('lastSession（localStorage 形状，setIndex）→ context 的紧凑形状（set / MM-DD HH:mm）',
+    last.exerciseId === 'squat' && last.set === 2 && last.reps === 12
+    && last.target === 20 && /^\d{2}-\d{2} \d{2}:\d{2}$/.test(last.at)
+    && last.finished === false,
+    JSON.stringify(last));
+  ok('lastSession 缺 exerciseId 但有名字也保留；完全没有 → null',
+    lastSessionForContext({ name: '平板支撑' })?.name === '平板支撑'
+    && lastSessionForContext(null) === null);
+
+  const ctx = buildAgentContext({
+    now: nowMs,
+    history: [...thisWeek, ...lastWeek],
+    recentEvents: normalizeRecentEvents([
+      { t: 2, type: 'rep', data: { n: 5 } },
+      { t: 1, type: 'keyframe-hit', data: { p: 7, k: 'down' } },
+      { t: 99, type: 'rep', data: { n: 1 } },          // 超过 60 秒：丢掉
+      { t: 3, type: 'landmarks', data: { x: 1 } },     // 类型不在白名单：丢掉
+    ]),
+    lastCoachLines: ['一', '二', '三', '四', '五', '六'],
+    memory: {
+      prefs: { tone: 'warm', voiceGender: 'male', nickname: '不该出现' },
+      facts: { goal: '减脂', injuries: ['膝盖', '腰'], unknown: 'x' },
+    },
+    lastSession: { exerciseId: 'squat', name: '自重深蹲', target: 20, reps: 12, setIndex: 2, at: at(0, 17) },
+    trainingSummary: Array.from({ length: 22 }, (_, i) => ({
+      at: at(0, 17), name: `动作 ${i}`, target: 20, reps: 12, score: 60 + i,
+    })),
+  });
+  ok('context 带上 memory（白名单 prefs + facts）/ trendWeek / lastSession / recentEvents / lastCoachLines',
+    ctx.memory.prefs.tone === 'warm' && ctx.memory.prefs.voiceGender === 'male'
+    && ctx.memory.prefs.nickname === undefined
+    && ctx.memory.facts.goal === '减脂' && ctx.memory.facts.injuries.length === 2
+    && ctx.memory.facts.unknown === undefined
+    && ctx.trendWeek.verdict === 'improved'
+    && ctx.lastSession.set === 2
+    && ctx.trainingSummary.length === AGENT_SUMMARY_MAX
+    && ctx.trainingSummary[0].name === '动作 0'
+    && ctx.trainingSummary[0].score === 60
+    && /^\d{2}-\d{2} \d{2}:\d{2}$/.test(ctx.trainingSummary[0].date)
+    && ctx.recentEvents.length === 2 && ctx.recentEvents[0].type === 'rep'
+    && ctx.lastCoachLines.length === 5 && ctx.lastCoachLines[0] === '二',
+    JSON.stringify({ memory: ctx.memory, trend: ctx.trendWeek, last: ctx.lastSession }));
+  ok('整体仍然 ≤6000 字符（记忆 / 事件也在预算里）',
+    JSON.stringify(ctx).length <= AGENT_CONTEXT_MAX_CHARS, String(JSON.stringify(ctx).length));
+  ok('前端白名单字段和 server/memory-store.mjs 一一对应（不会漂）',
+    JSON.stringify([...AGENT_MEMORY_PREF_FIELDS]) === JSON.stringify([...PREFS_FIELDS])
+    && JSON.stringify([...AGENT_MEMORY_FACT_FIELDS]) === JSON.stringify([...FACTS_FIELDS]));
+
+  // 超预算：先丢最旧的 recentEvents
+  const manyEvents = Array.from({ length: 60 }, (_, i) => ({
+    t: 60 - i, type: 'rep', data: { n: i },
+  }));
+  const big = buildAgentContext({
+    now: nowMs,
+    history: Array.from({ length: 30 }, (_, i) => ({
+      exerciseId: 'x', name: '很长的动作名字'.repeat(8), kind: 'rep',
+      at: nowMs - i * 1000, value: 10, target: 20, score: 50, seconds: 0,
+    })),
+    recentEvents: manyEvents,
+    lastCoachLines: Array.from({ length: 5 }, (_, i) => `第 ${i} 句很长的教练台词`.repeat(6)),
+    memory: { prefs: { tone: 'warm' }, facts: { injuries: ['膝盖'] } },
+    lastSession: { exerciseId: 'squat', name: '自重深蹲', target: 20, reps: 12, setIndex: 2 },
+    trainingSummary: Array.from({ length: 20 }, (_, i) => ({
+      at: nowMs - i * 60000, name: `动作 ${i}`, target: 20, reps: 12, score: 60,
+    })),
+    utterance: '很长的一句话'.repeat(800),
+  });
+  ok('瘦身：超预算时 recentEvents 会变少（先丢最旧的），整体仍 ≤6000',
+    big.recentEvents.length < manyEvents.length
+    && JSON.stringify(big).length <= AGENT_CONTEXT_MAX_CHARS,
+    JSON.stringify({ events: big.recentEvents.length, chars: JSON.stringify(big).length }));
+  ok('强瘦身到 1200 字符也不抛错，事件 / 教练台词先被丢',
+    (() => {
+      const tight = buildAgentContext({
+        now: nowMs,
+        recentEvents: manyEvents,
+        lastCoachLines: ['一', '二', '三', '四', '五'],
+        history: [{ exerciseId: 'x', name: 'y', kind: 'rep', at: nowMs, value: 1, target: 1, score: 1 }],
+        memory: { prefs: { tone: 'warm' }, facts: { goal: '减脂' } },
+      });
+      const trimmed = trimAgentContext(JSON.parse(JSON.stringify(tight)), { maxChars: 1200 });
+      return JSON.stringify(trimmed).length <= 1200;
+    })());
+}
+
+/* ================================================================== *
+ * [34] 教练声音性别：白名单音色映射 / TTS 请求 / 命令 / 人设 / 诊断
+ * ================================================================== */
+console.log('\n[34] 教练声音：女声默认 / 男声 zh_male_taocheng_uranus_bigtts / 命令与设置同一条路');
+{
+  ok('音色映射一处定义：女声 zh_female_vv_uranus_bigtts / 男声 zh_male_taocheng_uranus_bigtts',
+    COACH_VOICES.female === 'zh_female_vv_uranus_bigtts'
+    && COACH_VOICES.male === 'zh_male_taocheng_uranus_bigtts'
+    && DEFAULT_VOICE_GENDER === 'female'
+    && JSON.stringify([...VOICE_GENDERS]) === JSON.stringify(['female', 'male']));
+  ok('非法 gender / voice 解析成空（路由据此 400），空值回默认女声',
+    normalizeVoiceGender('robot') === '' && normalizeVoiceGender('') === 'female'
+    && resolveCoachVoice({ gender: 'robot' }) === ''
+    && resolveCoachVoice({ gender: '' }) === COACH_VOICES.female
+    && resolveCoachVoice({ gender: 'male' }) === COACH_VOICES.male
+    && resolveCoachVoice({ voice: 'female' }) === COACH_VOICES.female
+    && resolveCoachVoice({ voice: '随便一个音色' }) === '');
+
+  // 4 句中文 + 4 句英文（用户拍板的准确说法）+ 常见变体
+  const zhCases = [
+    ['换个女声', 'female'], ['换女声', 'female'], ['用女声', 'female'], ['女声吧', 'female'],
+    ['换个男声', 'male'], ['换男声', 'male'], ['用男声', 'male'], ['男声吧', 'male'],
+    ['换个女教练', 'female'], ['换女教练', 'female'], ['女教练吧', 'female'],
+    ['换个男教练', 'male'], ['换男教练', 'male'], ['男教练吧', 'male'],
+  ];
+  ok('中文 4 句 + 变体全部命中 setVoiceGender，且 args.gender 正确',
+    zhCases.every(([phrase, gender]) => {
+      const r = parseCommand(phrase, 'zh');
+      return r.intent === 'setVoiceGender' && r.args.gender === gender;
+    }),
+    JSON.stringify(zhCases.map(([p]) => [p, parseCommand(p, 'zh')])));
+  const enCases = [
+    ['switch to a female voice', 'female'], ['female voice', 'female'],
+    ['use the female voice', 'female'], ['switch to a male voice', 'male'],
+    ['male voice', 'male'], ['use the male voice', 'male'],
+    ['female coach', 'female'], ['male coach', 'male'],
+  ];
+  ok('英文 8 句全部命中 setVoiceGender，且 args.gender 正确',
+    enCases.every(([phrase, gender]) => {
+      const r = parseCommand(phrase, 'en');
+      return r.intent === 'setVoiceGender' && r.args.gender === gender;
+    }),
+    JSON.stringify(enCases.map(([p]) => [p, parseCommand(p, 'en')])));
+
+  const toolGender = actionsFromToolCalls([{ name: 'set_voice_gender', args: { gender: 'male' } }], { locale: 'zh' });
+  ok('工具 set_voice_gender(male) → setVoiceGender{male}；非法值拒绝',
+    toolGender.actions[0]?.intent === 'setVoiceGender' && toolGender.actions[0]?.args.gender === 'male'
+    && actionsFromToolCalls([{ name: 'set_voice_gender', args: { gender: 'robot' } }]).actions.length === 0);
+
+  // 服务端 TTS：男 / 女请求体里的 speaker + 缓存不串味
+  const config = {
+    configured: true, missing: [], appId: 'test-app-id', apiKey: 'test-api-key',
+    voice: COACH_VOICES.female, resource: 'volc.seedtts.default',
+    endpoint: 'https://example.invalid/tts',
+  };
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push(JSON.parse(init.body));
+    return { ok: true, status: 200, arrayBuffer: async () => Uint8Array.from([1, 2, 3]).buffer };
+  };
+  const service = createVolcTtsServer({ config, fetchImpl, timeoutMs: 100 });
+  const male = await service.synthesize('同一句话', 1, { gender: 'male' });
+  const female = await service.synthesize('同一句话', 1, { gender: 'female' });
+  const maleAgain = await service.synthesize('同一句话', 1, { gender: 'male' });
+  ok('/tts 带 gender:male → 上游 req_params.speaker 是男声音色 ID',
+    male.ok && calls[0].req_params.speaker === COACH_VOICES.male,
+    JSON.stringify(calls[0]));
+  ok('同一句话 female / male **不共享缓存**：男声第二次才命中（上游只调 2 次）',
+    calls.length === 2 && female.ok && female.cached === false
+    && maleAgain.ok && maleAgain.cached === true
+    && calls[1].req_params.speaker === COACH_VOICES.female,
+    JSON.stringify({ calls: calls.length, female, maleAgain }));
+
+  // 路由：非法 gender → 400；合法 gender 真的传给 service
+  const http = await import('node:http');
+  const seen = [];
+  const stubService = {
+    configured: true,
+    health: () => ({ ok: true, configured: true, voices: COACH_VOICES }),
+    async synthesize(text, rate, opts = {}) {
+      seen.push({ text, rate, gender: opts.gender });
+      return { ok: true, buffer: Buffer.from([1, 2]), bytes: 2, cached: false };
+    },
+    async stream(text, rate, opts = {}) {
+      seen.push({ text, rate, gender: opts.gender, stream: true });
+      opts.onFirstChunk?.();
+      opts.onChunk?.(Buffer.from([1]));
+      return { ok: true, bytes: 1, chunks: 1, firstChunkMs: 0, aborted: false };
+    },
+  };
+  const srv = http.createServer(createTtsRoutes({ service: stubService }));
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const port = srv.address().port;
+  const postJson = (p, body) => new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = http.request({
+      host: '127.0.0.1', port, path: p, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.end(data);
+  });
+  try {
+    const bad = await postJson('/tts', { text: 'hi', gender: 'robot' });
+    ok('POST /tts 非法 gender → 400 bad-gender（**选严格拒绝**，不偷偷回退）',
+      bad.status === 400 && JSON.parse(bad.body.toString('utf8')).error === 'bad-gender'
+      && seen.length === 0);
+    await postJson('/tts', { text: 'hi', gender: 'male' });
+    await postJson('/tts/stream', { text: 'hi', gender: 'female' });
+    ok('/tts 与 /tts/stream 把白名单 gender 传给 service（男声 / 女声各一次）',
+      seen.length === 2 && seen[0].gender === 'male' && seen[1].gender === 'female'
+      && seen[1].stream === true,
+      JSON.stringify(seen));
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
+
+  // 人设联动：system prompt 里的教练性别
+  const pMale = buildSystemPrompt({ context: { memory: { prefs: { voiceGender: 'male' } } } });
+  const pFemale = buildSystemPrompt({ context: { memory: { prefs: { voiceGender: 'female' } } } });
+  ok('system prompt 里写「教练性别：男 / 女」，并提醒人称与自称要克制、不要写死「她」',
+    /教练性别：男/.test(pMale) && /Coach gender: male/.test(pMale)
+    && /教练性别：女/.test(pFemale)
+    && /不要刻意/.test(pMale) && /never hard-code/.test(pMale));
+
+  // 诊断事件 voice:gender
+  const diag = createDiag({ fetch: async () => ({ ok: true }) });
+  diag.record('voice:gender', { to: 'male' });
+  ok('诊断字典认识 voice:gender {to}（快照里能读到当前性别）',
+    diag.snapshot().tts.gender === 'male');
+  diag.close?.();
+
+  // 白名单：voiceGender 写进 MD
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-voice-gender-'));
+  try {
+    updateMemory('g1', { prefs: { voiceGender: 'male' } }, { dir });
+    const saved = readMemory('g1', { dir });
+    const md = fs.readFileSync(path.join(dir, 'g1.md'), 'utf8');
+    ok('prefs 白名单接受 voiceGender，MD 里能看到「- voiceGender: male」',
+      saved.prefs.voiceGender === 'male' && /- voiceGender: male/.test(md));
+    ok('voiceGender 只接受 female / male（别的值 bad-value）',
+      (() => {
+        try { updateMemory('g1', { prefs: { voiceGender: 'other' } }, { dir }); return false; } catch (e) { return e.code === 'bad-value'; }
+      })());
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+/* ================================================================== *
+ * [35] /memory 路由（并入 preview-server.js）：GET / POST / forget / health + 不写进仓库
+ * ================================================================== */
+console.log('\n[35] /memory 路由：读 / 写 / 忘 / health（临时目录，绝不写进仓库）');
+{
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const http = await import('node:http');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-memory-route-'));
+  const savedEnv = process.env.MFG_MEMORY_DIR;
+  process.env.MFG_MEMORY_DIR = dir;
+  const { previewHandler } = await import('../preview-server.js');
+  const srv = http.createServer(previewHandler);
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const port = srv.address().port;
+  const request = (method, p, body = null) => new Promise((resolve, reject) => {
+    const data = body == null ? null : JSON.stringify(body);
+    const req = http.request({
+      host: '127.0.0.1', port, path: p, method,
+      headers: data
+        ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+        : {},
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        try { json = JSON.parse(text); } catch { json = null; }
+        resolve({ status: res.statusCode, body: json, text });
+      });
+    });
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+  try {
+    const health0 = await request('GET', '/memory/health');
+    ok('GET /memory/health：只回 {ok, users}，内容 / userId 一概不泄露',
+      health0.status === 200 && health0.body.ok === true && health0.body.users === 0
+      && typeof health0.body.users === 'number'
+      && !('prefs' in health0.body) && !('facts' in health0.body),
+      JSON.stringify(health0.body));
+
+    const empty = await request('GET', '/memory?user=alice');
+    ok('GET /memory?user=alice：还没记过 → 空记忆（不建文件）',
+      empty.status === 200 && Object.keys(empty.body.prefs).length === 0
+      && Object.keys(empty.body.facts).length === 0 && !fs.existsSync(path.join(dir, 'alice.md')));
+
+    const wrote = await request('POST', '/memory', {
+      user: 'alice',
+      prefs: { tone: 'warm', voiceGender: 'male', sessionMinutes: 20 },
+      facts: { goal: { value: '减脂', evidence: '我想减脂' } },
+    });
+    ok('POST /memory：prefs + facts(evidence) 写进 <dir>/alice.md，并回最新记忆',
+      wrote.status === 200 && wrote.body.ok === true
+      && wrote.body.prefs.tone === 'warm' && wrote.body.prefs.voiceGender === 'male'
+      && wrote.body.facts.goal === '减脂' && wrote.body.sources.goal === '我想减脂'
+      && fs.existsSync(path.join(dir, 'alice.md')),
+      JSON.stringify(wrote.body));
+    const health1 = await request('GET', '/memory/health');
+    ok('GET /memory/health：users 变成 1（只报数量）', health1.body.users === 1);
+
+    const badValue = await request('POST', '/memory', { user: 'alice', prefs: { sessionMinutes: 99 } });
+    ok('POST /memory 非法值 → 400 + 明确原因（code/field/reason）',
+      badValue.status === 400 && badValue.body.error === 'bad-value'
+      && badValue.body.field === 'sessionMinutes' && badValue.body.reason === 'out-of-range',
+      JSON.stringify(badValue.body));
+    const badUser = await request('POST', '/memory', { user: '../x', prefs: { tone: 'warm' } });
+    ok('POST /memory 路径穿越 userId → 400 bad-user，目录里不会多出文件',
+      badUser.status === 400 && badUser.body.error === 'bad-user'
+      && fs.readdirSync(dir).filter((n) => n.endsWith('.md')).length === 1);
+
+    const forgot = await request('POST', '/memory/forget', { user: 'alice', field: 'prefs.tone' });
+    ok('POST /memory/forget {field}：只删这一条，别的还在',
+      forgot.status === 200 && forgot.body.prefs.tone === undefined
+      && forgot.body.prefs.voiceGender === 'male');
+    const forgotAll = await request('POST', '/memory/forget', { user: 'alice', all: true });
+    ok('POST /memory/forget {all:true}：文件删掉、读回来是空记忆',
+      forgotAll.status === 200 && Object.keys(forgotAll.body.prefs).length === 0
+      && !fs.existsSync(path.join(dir, 'alice.md')));
+
+    ok('.gitignore 里有 server/memory/（个人信息绝不进仓库）',
+      /^server\/memory\/$/m.test(fs.readFileSync(path.join(process.cwd(), '.gitignore'), 'utf8')));
+    const repoMemory = path.join(process.cwd(), 'server', 'memory');
+    const repoFiles = fs.existsSync(repoMemory)
+      ? fs.readdirSync(repoMemory).filter((n) => n.endsWith('.md'))
+      : [];
+    ok('/memory 路由只写 MFG_MEMORY_DIR 指过去的临时目录，仓库里的 server/memory/ 一个 .md 都没多',
+      repoFiles.length === 0, repoFiles.join(','));
+  } finally {
+    await new Promise((r) => srv.close(r));
+    if (savedEnv === undefined) delete process.env.MFG_MEMORY_DIR;
+    else process.env.MFG_MEMORY_DIR = savedEnv;
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 }
 

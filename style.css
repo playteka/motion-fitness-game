@@ -2503,6 +2503,21 @@ kbd {
 .empty { color: var(--muted); font-size: 12.5px; padding: 6px 0; }
 .keys { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 2; }
 
+/* ---------------- 教练记得什么（三层记忆 · 长时层）---------------- */
+.memory-list li { flex-wrap: wrap; }
+.memory-list .m-label { color: var(--muted); font-size: 12px; min-width: 96px; }
+.memory-list .m-value { flex: 1; font-weight: 700; color: var(--accent); word-break: break-word; }
+.memory-list .m-source {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+  padding-left: 104px;
+}
+.memory-list .m-del { margin-left: auto; font-size: 12px; padding: 4px 10px; }
+.modal-card .memory-list .m-value { color: var(--home-accent); }
+.modal-card .memory-list .m-source { color: var(--home-muted); }
+
 /* ------------------------------------------------------------------ *
  * 主页：分类 + 动作图标网格
  * ------------------------------------------------------------------ */

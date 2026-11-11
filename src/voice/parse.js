@@ -279,6 +279,25 @@ function readLang(spaced) {
   return best;
 }
 
+/**
+ * 教练声音性别：句子最后出现的「男 / 女」说了算。
+ * 只服务于 `setVoiceGender` 这一条命令（其它命令即使句子里带「男」也不会用它）。
+ */
+function readVoiceGender(spaced) {
+  // \u7537 = 男 / \u5973 = 女（源码里不留中文字面量：i18n 自检要求文案必须走 t()）
+  const text = ` ${spaced} `;
+  const lastPos = (re) => {
+    let at = -1;
+    for (const m of text.matchAll(re)) at = m.index + m[0].length;
+    return at;
+  };
+  // 英文用 \b，避免 female 里的 male / woman 里的 man 被误判
+  const maleAt = Math.max(lastPos(/\bmale\b/g), lastPos(/\bman\b/g), lastPos(/\bboy\b/g), lastPos(/\u7537/g));
+  const femaleAt = Math.max(lastPos(/\bfemale\b/g), lastPos(/\bwoman\b/g), lastPos(/\bgirl\b/g), lastPos(/\u5973/g));
+  if (maleAt < 0 && femaleAt < 0) return '';
+  return maleAt > femaleAt ? 'male' : 'female';
+}
+
 /** 「加 / 减」的符号（减、少、降、minus、reduce、decrease、less 都是减） */
 function readSign(spaced) {
   return /(\u51cf|\u5c11|\u964d|minus|reduce|decrease|less)/i.test(spaced) ? -1 : 1;
@@ -311,6 +330,7 @@ function slotReady(intent, slots) {
   if (intent === 'pick') return !!slots.ordinal;
   if (intent === 'category') return !!slots.category;
   if (intent === 'switchLang') return !!slots.lang;
+  if (intent === 'setVoiceGender') return !!slots.gender;
   return true;
 }
 
@@ -334,6 +354,8 @@ function argsFor(intent, slots) {
     args.category = slots.category;
   } else if (intent === 'switchLang' && slots.lang) {
     args.lang = slots.lang;
+  } else if (intent === 'setVoiceGender' && slots.gender) {
+    args.gender = slots.gender;
   }
   return args;
 }
@@ -398,7 +420,8 @@ export function parseCommand(text, locale = 'zh') {
   const category = readCategory(body, compact);
   const exerciseId = readExercise(body, compact);
   const lang = readLang(body);
-  const slots = { spaced: body, compact, amount, ordinal, category, exerciseId, lang };
+  const gender = readVoiceGender(body);
+  const slots = { spaced: body, compact, amount, ordinal, category, exerciseId, lang, gender };
 
   let best = null;
   for (const cmd of COMMANDS) {

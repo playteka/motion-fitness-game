@@ -106,7 +106,7 @@ function blankSnapshot() {
      *   firstAudioMs = 最近一次流式「首字」耗时；bargeMs = 最近一次插话打断耗时
      *   mode = 流式用的播放引擎（mse / decode）；where = 失败发生在哪一级
      */
-    tts: { state: 'idle', last: '', firstAudioMs: 0, bargeMs: 0, mode: '', where: '', errName: '' },
+    tts: { state: 'idle', last: '', firstAudioMs: 0, bargeMs: 0, mode: '', where: '', errName: '', gender: '' },
     /**
      * 会话状态机（`session:*`）：
      *   state = '' | listening | thinking | speaking | paused | off | error
@@ -283,6 +283,10 @@ export function createDiag({
         break;
       case 'tts:say':
         state.tts = { ...state.tts, state: 'say', last: String(entry.chars || '') };
+        break;
+      // 教练声音性别切换（用户要求：命令 / 设置改完，面板与日志里一眼看出现在用的是男声还是女声）
+      case 'voice:gender':
+        state.tts = { ...state.tts, gender: String(entry.to || '') };
         break;
       case 'tts:first-audio':
         // 流式首字延迟（用户要求：诊断面板显示「首字 xx ms」）+ 用的是哪个播放引擎（mse / decode）

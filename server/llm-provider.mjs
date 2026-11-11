@@ -38,6 +38,13 @@ import {
   actionsFromToolCalls,
   buildSystemPrompt,
 } from './llm-tools.mjs';
+// 长期记忆（服务端 MD）：`/llm` 里工具要真的把 prefs / facts 写进去，
+// 并且把「用户记住了什么」带回前端 —— 白名单 / 路径安全全在 memory-store 里。
+import {
+  DEFAULT_USER_ID,
+  MemoryError,
+  normalizeUserId,
+} from './memory-store.mjs';
 
 const HERE = fileURLToPath(import.meta.url);
 const ROOT = path.resolve(path.dirname(HERE), '..');
@@ -502,6 +509,43 @@ const noKeyLog = (logger, message, extra) => {
 };
 
 /**
+ * 执行工具请求里的**记忆操作**（服务端副作用，不产生 client action）。
+ *
+ * 每个操作单独 try：一条写失败（非法值 / 超 64KB）不影响这一轮的回答，
+ * 失败原因只回稳定 code（`evidence-required` / `bad-value` / `too-big` …），不含用户文本。
+ *
+ * @param {{updateMemory:Function,forgetMemory:Function}} store
+ * @param {string} userId
+ * @param {Array<{op:string,field:string,value?:any,evidence?:string}>} ops
+ * @returns {Array<{ok:boolean,op:string,field:string,reason?:string}>}
+ */
+export function applyMemoryOps(store, userId, ops = []) {
+  const results = [];
+  for (const op of Array.isArray(ops) ? ops : []) {
+    try {
+      if (op.op === 'remember') {
+        store.updateMemory(userId, { prefs: { [op.field]: op.value } });
+      } else if (op.op === 'remember-fact') {
+        store.updateMemory(userId, { facts: { [op.field]: { value: op.value, evidence: op.evidence } } });
+      } else if (op.op === 'forget') {
+        store.forgetMemory(userId, { field: op.field });
+      } else {
+        throw new MemoryError('unknown-op', { field: op.field });
+      }
+      results.push({ ok: true, op: op.op, field: op.field });
+    } catch (err) {
+      results.push({
+        ok: false,
+        op: op.op,
+        field: op.field,
+        reason: (err && (err.reason || err.code)) || 'memory-error',
+      });
+    }
+  }
+  return results;
+}
+
+/**
  * `/llm` + `/llm/health` 的路由（返回 true = 这个请求已经被处理）。
  *
  * 抽成工厂函数是为了测试：`http.createServer(createLlmRoutes({ provider: fake }))`
@@ -523,6 +567,11 @@ export function createLlmRoutes({
   logger = null,
   maxTokens = LLM_MAX_TOKENS,
   maxHistoryTurns = LLM_MAX_HISTORY_TURNS,
+  /**
+   * 长期记忆的存储（`memory-store.mjs`）。不传 → 记忆工具一律拒绝（`memory-unavailable`），
+   * 其余对话照常 —— 测试 / 没接记忆的部署不受影响。
+   */
+  memoryStore = null,
 } = {}) {
   if (!provider || typeof provider.chat !== 'function') {
     throw new TypeError('createLlmRoutes requires a provider with chat()');
@@ -587,25 +636,68 @@ export function createLlmRoutes({
         return;
       }
       const locale = data.locale === 'en' ? 'en' : 'zh';
+      /**
+       * 长期记忆属于哪个用户：`user` 由前端 localStorage 生成（默认 `default`）。
+       * 这里**先校验**再往下走 —— 非法 id 直接 400，绝不进 memory-store。
+       */
+      let userId = DEFAULT_USER_ID;
+      try {
+        userId = normalizeUserId(data.user == null || data.user === '' ? DEFAULT_USER_ID : data.user);
+      } catch {
+        sendJson(res, 400, { ok: false, error: 'bad-user' });
+        return;
+      }
+      /**
+       * 服务端自己也读一遍记忆，合并进 context：前端那次 `GET /memory` 失败（服务器刚起 / 断网）
+       * 时模型仍然知道用户之前记下的偏好与事实。客户端传来的 memory 优先（它可能刚改过）。
+       */
+      let context = data.context && typeof data.context === 'object' ? data.context : null;
+      if (memoryStore) {
+        try {
+          const mem = memoryStore.readMemory(userId);
+          const hasMemory = Object.keys(mem.prefs || {}).length > 0 || Object.keys(mem.facts || {}).length > 0;
+          if (hasMemory) {
+            context = {
+              ...(context || {}),
+              memory: { prefs: mem.prefs, facts: mem.facts },
+            };
+          }
+        } catch { /* 记忆读不出来不该挡住对话 */ }
+      }
       const messages = buildLlmMessages({
         text,
         locale,
-        context: data.context,
+        context,
         history: data.history,
         maxTurns: maxHistoryTurns,
       });
       const started = Date.now();
       try {
         const out = await provider.chat({ messages, tools: LLM_TOOLS });
-        const { actions, refusals, prompts } = actionsFromToolCalls(
+        const { actions, refusals, prompts, memoryOps } = actionsFromToolCalls(
           out && out.toolCalls,
           { locale },
         );
+        /** 记忆工具是**服务端副作用**：写进 `server/memory/<userId>.md`，没有 client action */
+        let memoryResults = [];
+        if (memoryOps.length) {
+          if (memoryStore) {
+            memoryResults = applyMemoryOps(memoryStore, userId, memoryOps);
+          } else {
+            memoryResults = memoryOps.map((op) => ({
+              ok: false, op: op.op, field: op.field, reason: 'memory-unavailable',
+            }));
+          }
+        }
         const usage = limitGuard.addUsage(out && out.usage);
         let reply = String((out && out.text) || '').trim();
         // 模型只调了工具没说话 → 让前端的会话层用**命令表自己的短确认**（比编一句通用话准确）；
         // prompts 现在恒为空（没有工具需要二次确认，`exit_workout` 也直接执行）；什么都没给 → 一句「没听懂」。
         if (!reply && prompts.length) reply = prompts[0];
+        // 只写了记忆、没说话：给一句短确认（记忆工具没有 client action 可借）
+        if (!reply && !actions.length && memoryResults.some((r) => r.ok)) {
+          reply = locale === 'en' ? 'Got it, I will remember that.' : '好，我记下了。';
+        }
         if (!reply && !actions.length) reply = EMPTY_REPLY[locale];
         if (typeof logger === 'function') {
           try {
@@ -617,14 +709,24 @@ export function createLlmRoutes({
               completion: usage.completion,
               actions: actions.length,
               refused: refusals.length,
+              // 只记数量，不记字段值（记忆里是用户个人信息）
+              memory: memoryResults.length,
+              memoryFailed: memoryResults.filter((r) => !r.ok).length,
             });
           } catch { /* ignore */ }
+        }
+        /** 写完记忆回一份最新的快照，前端「教练记得什么」立刻能对上 */
+        let memory = null;
+        if (memoryStore && memoryOps.length) {
+          try { memory = memoryStore.readMemory(userId); } catch { memory = null; }
         }
         sendJson(res, 200, {
           ok: true,
           reply,
           actions,
           refusals,
+          memoryOps: memoryResults,
+          memory,
           usage,
           provider: cfg.provider,
           model: cfg.model,
@@ -666,4 +768,5 @@ export default {
   createLlmRoutes,
   buildLlmMessages,
   historyMessages,
+  applyMemoryOps,
 };

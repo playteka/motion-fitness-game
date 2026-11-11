@@ -9475,6 +9475,196 @@ console.log('\n[20] P3.3 自由对话：/llm → 工具调用真的改界面（�
   await flush();
 }
 
+/* ================================================================== *
+ * [50] 三层记忆（长时 MD 缓存 / 中时 lastSession / 设置页删除 / 声音性别）
+ * ================================================================== */
+console.log('\n[50] 三层记忆：/memory 缓存 / context / 继续上次 / 设置页删除 / 教练声音性别');
+{
+  const api = windowStub.__mfg;
+  const flush = async (n = 10) => {
+    for (let i = 0; i < n; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const calls = [];
+  let memory = {
+    ok: true,
+    user: 'tester',
+    prefs: { tone: 'warm', voiceGender: 'male' },
+    facts: { goal: '减脂' },
+    sources: { goal: '我想减脂' },
+    summaries: [],
+    lastUnfinished: null,
+    updatedAt: 1700000000000,
+  };
+  const origFetch = windowStub.fetch;
+  const origConfirm = windowStub.confirm;
+  windowStub.fetch = async (url, init = {}) => {
+    const target = String(url);
+    const path = target.split('?')[0];
+    calls.push({ url: target, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+    if (path === '/memory' && (init.method || 'GET') === 'GET') {
+      // 服务端按 ?user= 返回对应记忆（真实实现就是一人一个文件）
+      let user = 'tester';
+      try { user = new URL(target, 'http://127.0.0.1').searchParams.get('user') || 'tester'; } catch { /* ignore */ }
+      return { ok: true, status: 200, json: async () => ({ ...memory, user }) };
+    }
+    if (path === '/memory' && init.method === 'POST') {
+      const body = JSON.parse(init.body);
+      memory = {
+        ...memory,
+        prefs: { ...memory.prefs, ...(body.prefs || {}) },
+        facts: { ...memory.facts, ...(body.facts || {}) },
+      };
+      return { ok: true, status: 200, json: async () => memory };
+    }
+    if (path === '/memory/forget') {
+      const body = JSON.parse(init.body);
+      if (body.all) {
+        memory = { ...memory, prefs: {}, facts: {}, sources: {} };
+      } else {
+        const [section, field] = String(body.field || '').split('.');
+        if (memory[section] && field) {
+          const next = { ...memory[section] };
+          delete next[field];
+          memory = { ...memory, [section]: next, sources: { ...memory.sources } };
+          delete memory.sources[field];
+        }
+      }
+      return { ok: true, status: 200, json: async () => memory };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+
+  try {
+    const loaded = await api.refreshMemory();
+    ok('启动时 GET /memory：prefs / facts / 来源缓存到 state.memory（失败会静默，这里成功）',
+      loaded && api.state.memory.loaded === true
+      && api.state.memory.prefs.tone === 'warm'
+      && api.state.memory.prefs.voiceGender === 'male'
+      && api.state.memory.facts.goal === '减脂'
+      && api.state.memory.sources.goal === '我想减脂',
+      JSON.stringify(api.state.memory));
+    ok('记忆里的 voiceGender=male 一拉到就应用到 TTS 与设置按钮（单一权威 = 服务端 MD）',
+      api.coachTts.gender === 'male'
+      && elements.get('btnVoiceMale').getAttribute('aria-pressed') === 'true'
+      && elements.get('btnVoiceFemale').getAttribute('aria-pressed') === 'false',
+      JSON.stringify({ tts: api.coachTts.gender, male: elements.get('btnVoiceMale').getAttribute('aria-pressed') }));
+
+    // 中时记忆：localStorage 的 history（趋势）+ lastSession（继续上次）
+    const now = Date.now();
+    const weekAgo = now - 8 * 24 * 3600 * 1000;
+    windowStub.localStorage.setItem(api.STORE.history, JSON.stringify([
+      { at: now, exerciseId: 'squat', kind: 'rep', value: 20, target: 20, score: 70, seconds: 0 },
+      { at: weekAgo, exerciseId: 'squat', kind: 'rep', value: 15, target: 15, score: 50, seconds: 0 },
+    ]));
+    windowStub.localStorage.setItem(api.STORE.lastSession, JSON.stringify({
+      exerciseId: 'plank', target: 30, reps: 20, setIndex: 2, at: now, finished: false,
+    }));
+    const ctx = api.getLlmContext('我这组怎么样');
+    ok('context 里带上 memory / trendWeek / lastSession（中时在 localStorage，长时在 MD）',
+      ctx.memory.prefs.tone === 'warm' && ctx.memory.facts.goal === '减脂'
+      && ctx.trendWeek.thisWeek.sets === 1 && ctx.trendWeek.lastWeek.sets === 1
+      && ctx.trendWeek.delta.avgScore === 20 && ctx.trendWeek.verdict === 'improved'
+      && ctx.lastSession.exerciseId === 'plank' && ctx.lastSession.set === 2
+      && ctx.lastSession.reps === 20
+      && ctx.trainingSummary.length === 2 && ctx.trainingSummary[0].reps === 20,
+      JSON.stringify({ memory: ctx.memory, trend: ctx.trendWeek, last: ctx.lastSession }));
+    ok('context 仍然 ≤6000 字符', JSON.stringify(ctx).length <= 6000,
+      String(JSON.stringify(ctx).length));
+
+    // 「继续上次」命令真的回到上次的动作 / 目标 / 第几组
+    const ack = api.COMMANDS.find((c) => c.intent === 'continueLast').run(api.voiceCommandCtx, {});
+    ok('「继续上次」→ 回到 plank + 目标 30 + 第 2 组，并念一句确认',
+      ack && ack.key === 'coach.cmdAck.continueLast'
+      && ack.params.name === '平板支撑' && ack.params.target === 30 && ack.params.set === 2
+      && api.state.exerciseId === 'plank' && api.state.target === 30
+      && api.state.currentSetIndex === 2,
+      JSON.stringify({ ack, ex: api.state.exerciseId, target: api.state.target, set: api.state.currentSetIndex }));
+
+    // 「教练记得什么」面板：列出 3 条（tone / voiceGender / goal），每条可删
+    api.openMemoryModal();
+    await flush(8);
+    const list = elements.get('memoryList');
+    ok('设置页「教练记得什么」列出 prefs + facts（含来源），条数 = 3',
+      elements.get('memoryModal').hidden === false
+      && list.children.length === 3
+      && list.children.some((li) => li.dataset.field === 'facts.goal'),
+      JSON.stringify(list.children.map((li) => li.dataset.field)));
+    const toneRow = list.children.find((li) => li.dataset.field === 'prefs.tone');
+    const delBtn = toneRow && toneRow.children.find((c) => String(c.className).includes('m-del'));
+    delBtn.dispatch('click');
+    await flush(10);
+    const forgetCall = calls.filter((c) => c.url.split('?')[0] === '/memory/forget').at(-1);
+    ok('点一行的「删除」→ POST /memory/forget {field}，删完列表少一条',
+      forgetCall && forgetCall.body.field === 'prefs.tone'
+      && api.state.memory.prefs.tone === undefined
+      && list.children.length === 2,
+      JSON.stringify({ forgetCall, fields: list.children.map((li) => li.dataset.field) }));
+
+    // 设置面板切女声：和命令走同一个 setVoiceGender（不会两份状态）
+    elements.get('btnVoiceFemale').dispatch('click');
+    await flush(10);
+    const genderCall = calls.filter((c) => c.url.split('?')[0] === '/memory' && c.method === 'POST').at(-1);
+    ok('设置里点「女声」→ prefs.voiceGender=female 写进 MD，TTS 立刻用女声，按钮选中态同步',
+      api.state.memory.prefs.voiceGender === 'female'
+      && api.coachTts.gender === 'female'
+      && elements.get('btnVoiceFemale').getAttribute('aria-pressed') === 'true'
+      && genderCall && genderCall.body.prefs.voiceGender === 'female',
+      JSON.stringify({ prefs: api.state.memory.prefs, tts: api.coachTts.gender, genderCall }));
+
+    // 命令切男声：同一个入口（命令表 → ctx.setVoiceGender → 写 MD → TTS）
+    const genderAck = api.COMMANDS.find((c) => c.intent === 'setVoiceGender')
+      .run(api.voiceCommandCtx, { gender: 'male' });
+    await flush(10);
+    const genderCall2 = calls.filter((c) => c.url.split('?')[0] === '/memory' && c.method === 'POST').at(-1);
+    ok('命令「用男声」→ prefs.voiceGender=male、TTS 男声、按钮切到男声（与设置一致）',
+      genderAck && genderAck.key === 'coach.cmdAck.voiceGender'
+      && api.state.memory.prefs.voiceGender === 'male'
+      && api.coachTts.gender === 'male'
+      && elements.get('btnVoiceMale').getAttribute('aria-pressed') === 'true'
+      && genderCall2 && genderCall2.body.prefs.voiceGender === 'male',
+      JSON.stringify({ ack: genderAck, prefs: api.state.memory.prefs, tts: api.coachTts.gender }));
+
+    // 全部清除
+    windowStub.confirm = () => true;
+    elements.get('btnMemoryClear').dispatch('click');
+    await flush(12);
+    const clearCall = calls.filter((c) => c.url.split('?')[0] === '/memory/forget').at(-1);
+    ok('「全部清除」→ POST /memory/forget {all:true}，面板回到空态',
+      clearCall && clearCall.body.all === true
+      && Object.keys(api.state.memory.prefs).length === 0
+      && Object.keys(api.state.memory.facts).length === 0
+      && /class="empty"/.test(list.innerHTML),
+      JSON.stringify({ clearCall, prefs: api.state.memory.prefs, html: list.innerHTML }));
+
+    // userId：显示 / 合法修改 / 非法拒绝 / 重置
+    elements.get('memoryUserId').value = 'alice_01';
+    elements.get('btnMemoryUserSave').dispatch('click');
+    await flush(8);
+    ok('设置里改 userId：合法值写进 localStorage 并重新拉取记忆',
+      api.getMemoryUserId() === 'alice_01'
+      && windowStub.localStorage.getItem(api.STORE.memoryUser) === 'alice_01');
+    const beforeBad = api.getMemoryUserId();
+    elements.get('memoryUserId').value = '../evil';
+    elements.get('btnMemoryUserSave').dispatch('click');
+    await flush(6);
+    ok('非法 userId（../evil）被拒绝：不写 localStorage、提示一行原因',
+      api.getMemoryUserId() === beforeBad
+      && elements.get('memoryUserHint').hidden === false);
+    elements.get('btnMemoryUserReset').dispatch('click');
+    await flush(8);
+    ok('「换个 ID」生成新的合法 userId',
+      /^[a-zA-Z0-9_-]{1,32}$/.test(api.getMemoryUserId())
+      && api.getMemoryUserId() !== beforeBad);
+
+    api.closeMemoryModal();
+  } finally {
+    windowStub.fetch = origFetch;
+    windowStub.confirm = origConfirm;
+    api.closeMemoryModal();
+  }
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {
   console.log('失败项：');
   for (const f of failures) console.log('  - ' + f);

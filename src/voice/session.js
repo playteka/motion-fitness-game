@@ -106,6 +106,28 @@ export function speakHoldMs(text, { min = VOICE_SPEAK_MIN_MS, max = VOICE_SPEAK_
  */
 export const VOICE_LLM_MAX_ACTIONS = 3;
 
+/* ------------------------------------------------------------------ *
+ * 三层记忆的「短时层」（全部只在内存里，刷新页面即清，**不落盘**）
+ *
+ *   - 对话记忆：最近 10 轮（一轮 = 用户一句 + 教练一句）；
+ *   - 教练最近 5 句：注入 prompt 时告诉模型「不要重复这 5 句」（防复读）；
+ *   - 最近 60 秒事件：计次 / 门控失败 / 关键帧命中 / 未命中（≤60 条，data 只留标量，
+ *     **绝不含原始关键点**）。
+ * ------------------------------------------------------------------ */
+
+/** 对话记忆保留几轮（用户拍板：10 轮） */
+export const DIALOGUE_MAX_TURNS = 10;
+/** 教练最近说过几句（防复读；用户拍板：5 句） */
+export const COACH_LINES_MAX = 5;
+/** 最近事件最多几条（用户拍板：60 条，环形缓冲） */
+export const RECENT_EVENTS_MAX = 60;
+/** 最近事件只保留多久以内（用户拍板：60 秒） */
+export const RECENT_EVENTS_WINDOW_MS = 60 * 1000;
+/** 单条事件的序列化上限（字符；超过就丢掉 data 里的字段，**保持短**） */
+export const RECENT_EVENT_MAX_CHARS = 60;
+/** 事件类型白名单（和 src/voice/llm.js 的 AGENT_EVENT_KINDS 同一份口径） */
+export const EVENT_KINDS = Object.freeze(['rep', 'gate-fail', 'keyframe-hit', 'keyframe-miss']);
+
 /**
  * 发出去超过这么久还没回来 → 在底下显示一行小字「教练在想…」（用户要求 1.5 秒）。
  * 状态环本身在进入 thinking 的那一刻就变了；这行字只是给「真的在等网络」一个解释。
@@ -159,6 +181,8 @@ export function createVoiceSession({
   confirmMs = COMMAND_CONFIRM_MS,
   /** 发出去多久还没回来就显示「教练在想…」（默认 1.5s；测试可以调小） */
   thinkSlowMs = THINK_SLOW_MS,
+  /** 注入时钟（短时事件的 60 秒窗口 / 相对秒；测试不依赖真实时间） */
+  now = () => Date.now(),
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 } = {}) {
@@ -206,6 +230,86 @@ export function createVoiceSession({
     Number.isFinite(Number(speakMaxMs)) ? Math.max(0, Number(speakMaxMs)) : VOICE_SPEAK_MAX_MS,
   );
   const listeners = new Set();
+  /**
+   * 短时记忆（只在内存里；页面刷新 / destroy 即清）：
+   *   dialogue  : 最近 10 轮（用户 + 教练各一条）
+   *   coachLines: 教练最近 5 句（prompt 里给「不要重复这 5 句」）
+   *   events    : 最近 60 秒事件（≤60 条；data 只留标量）
+   */
+  const dialogue = [];
+  const coachLines = [];
+  const events = [];
+  const clock = typeof now === 'function' ? now : () => Date.now();
+
+  /**
+   * 数据只留标量：数组 / 对象（关键点在里面）一律不进短时事件。
+   * 单条事件要短（≤60 字符），所以键最多 4 个、字符串值最多 20 字，超了就丢字段。
+   */
+  function scalarData(data, type = '') {
+    const out = {};
+    const src = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    let n = 0;
+    for (const [key, value] of Object.entries(src)) {
+      if (n >= 4) break;
+      if (typeof value === 'string') { out[key] = value.slice(0, 20); n += 1; }
+      else if (typeof value === 'number' && Number.isFinite(value)) { out[key] = value; n += 1; }
+      else if (typeof value === 'boolean') { out[key] = value; n += 1; }
+    }
+    // 序列化超长 → 从后往前丢 data 字段（类型本身不动；空 data 一定装得下）
+    while (Object.keys(out).length && JSON.stringify({ t: 0, type, data: out }).length > RECENT_EVENT_MAX_CHARS) {
+      delete out[Object.keys(out).pop()];
+    }
+    return out;
+  }
+
+  function pushDialogue(role, text) {
+    const body = String(text == null ? '' : text).trim();
+    if (!body) return;
+    dialogue.push({ role: role === 'assistant' ? 'assistant' : 'user', text: body.slice(0, 200) });
+    while (dialogue.length > DIALOGUE_MAX_TURNS * 2) dialogue.shift();
+  }
+
+  function pushCoachLine(text) {
+    const body = String(text == null ? '' : text).trim().slice(0, 80);
+    if (!body) return;
+    // 同一句挪到末尾（不重复占名额），仍然只留最近 5 句
+    const at = coachLines.indexOf(body);
+    if (at >= 0) coachLines.splice(at, 1);
+    coachLines.push(body);
+    while (coachLines.length > COACH_LINES_MAX) coachLines.shift();
+  }
+
+  /** 剪掉 60 秒窗外的事件（读 / 写都会剪：环形缓冲 + 时间窗两道限制） */
+  function trimEvents(at = clock()) {
+    const cutoff = Number(at) - RECENT_EVENTS_WINDOW_MS;
+    while (events.length && events[0].at < cutoff) events.shift();
+    while (events.length > RECENT_EVENTS_MAX) events.shift();
+  }
+
+  /**
+   * 记一条短时事件（app.js 在计次 / 门控失败 / 关键帧命中时调用）。
+   * @param {'rep'|'gate-fail'|'keyframe-hit'|'keyframe-miss'} type
+   * @param {object} [data] 只保留标量字段（**绝不含原始关键点**）
+   */
+  function recordEvent(type, data = {}) {
+    const kind = String(type || '');
+    if (!EVENT_KINDS.includes(kind)) return false;
+    const at = Number(clock()) || Date.now();
+    events.push({ type: kind, data: scalarData(data, kind), at });
+    trimEvents(at);
+    return true;
+  }
+
+  /** 读最近事件：`{t: 相对秒, type, data}`（最新的在后；只保留 60 秒内、最多 60 条） */
+  function recentEvents(limit = RECENT_EVENTS_MAX) {
+    const at = Number(clock()) || Date.now();
+    trimEvents(at);
+    return events.slice(-Math.max(1, Number(limit) || RECENT_EVENTS_MAX)).map((ev) => ({
+      t: Math.round(((at - ev.at) / 1000) * 10) / 10,
+      type: ev.type,
+      data: { ...ev.data },
+    }));
+  }
 
   /** 记一条诊断（诊断出问题绝不能拖垮状态机） */
   function note(type, data) {
@@ -239,6 +343,10 @@ export function createVoiceSession({
       muted,
       thinkingSlow,
       recentCommands: recentIntents.slice(),
+      /** 短时记忆（P3.3 起也是 Agent context 的一部分；全部在内存里） */
+      recentEvents: recentEvents(),
+      lastCoachLines: coachLines.slice(),
+      recentTurns: dialogue.slice(),
       pendingConfirm: pendingConfirm
         ? { intent: pendingConfirm.intent, at: pendingConfirm.at }
         : null,
@@ -558,6 +666,9 @@ export function createVoiceSession({
     const body = String(text == null ? '' : text).trim();
     if (!body || !enabled || state === 'off') return false;
     coachText = body;
+    // 短时记忆：教练最近 5 句（防复读）+ 最近 10 轮对话（内存，不落盘）
+    pushDialogue('assistant', body);
+    pushCoachLine(body);
     interimText = '';
     notice = null;
     clearSilence();
@@ -671,6 +782,7 @@ export function createVoiceSession({
       return false;
     }
     userText = body;
+    pushDialogue('user', body);
     interimText = '';
     coachText = '';
     error = null;
@@ -873,6 +985,9 @@ export function createVoiceSession({
 
   function destroy() {
     stop('destroy');
+    dialogue.length = 0;
+    coachLines.length = 0;
+    events.length = 0;
     listeners.clear();
   }
 
@@ -910,6 +1025,17 @@ export function createVoiceSession({
     interrupt,
     fail,
     setMuted,
+    /** 短时记忆：记一条事件 / 读最近事件 / 读教练最近 5 句 / 读最近 10 轮 */
+    recordEvent,
+    recentEvents,
+    lastCoachLines: () => coachLines.slice(),
+    recentTurns: () => dialogue.slice(),
+    clearShortTerm() {
+      dialogue.length = 0;
+      coachLines.length = 0;
+      events.length = 0;
+      return emit();
+    },
     setCommandCtx(ctx) {
       commandContext = ctx || null;
       return snapshot();

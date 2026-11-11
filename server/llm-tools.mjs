@@ -20,6 +20,9 @@
 
 import { COMMANDS } from '../src/voice/commands.js';
 import { EXERCISES, EXERCISE_MAP } from '../src/catalog.js';
+// 记忆白名单只在一处定义（server/memory-store.mjs）：工具能写哪些字段、字段取值范围，
+// 都由那边说了算，这里只负责把模型的参数翻译成「记忆操作」。
+import { PREFS_FIELDS, FACTS_FIELDS } from './memory-store.mjs';
 
 /** 下拉式参数的可选值（和界面上那几处一一对应，改一处记得改这里） */
 export const NAV_DESTS = Object.freeze(['home', 'menu', 'back', 'next', 'prev']);
@@ -138,6 +141,14 @@ export const LLM_TOOL_DEFS = Object.freeze([
     parameters: schema(),
     map: () => ({ intent: 'nextExercise', args: {} }),
   }),
+  Object.freeze({
+    name: 'continue_last',
+    intents: ['continueLast'],
+    zh: '继续上次没练完的那一组（回到上次的动作 / 目标 / 第几组）。',
+    en: 'Continue the unfinished set from last time (same exercise, target and set).',
+    parameters: schema(),
+    map: () => ({ intent: 'continueLast', args: {} }),
+  }),
 
   /* ---------------- 目标 ---------------- */
   Object.freeze({
@@ -217,6 +228,18 @@ export const LLM_TOOL_DEFS = Object.freeze([
     },
   }),
   Object.freeze({
+    name: 'set_voice_gender',
+    intents: ['setVoiceGender'],
+    zh: '换教练声音：female 女声（默认）/ male 男声（只影响朗读音色，会记进长期偏好）。',
+    en: 'Switch the coach voice: female (default) or male (spoken voice only; remembered as a preference).',
+    parameters: schema({ gender: oneOf('男女声 / voice gender', ['female', 'male']) }, ['gender']),
+    map(args) {
+      const gender = String(args.gender || '').toLowerCase();
+      if (gender !== 'female' && gender !== 'male') return { refused: 'bad-args' };
+      return { intent: 'setVoiceGender', args: { gender } };
+    },
+  }),
+  Object.freeze({
     name: 'stop_listening',
     intents: ['stopListening'],
     zh: '关闭 AI 教练（等于按 Ctrl+I 关，麦克风也会释放）。',
@@ -269,6 +292,90 @@ export const LLM_TOOL_DEFS = Object.freeze([
       if (position === null || position < 1) return { refused: 'bad-args' };
       // 命令表的 pick 用 0 基下标（parse.js 的「第三个」→ index 2）
       return { intent: 'pick', args: { index: position - 1 } };
+    },
+  }),
+
+  /* ---------------- 长期记忆（服务端 MD；**没有 client intent**） ---------------- *
+   *
+   * 这三个工具**不产生客户端动作**（`intents: []`）：记忆写在服务端（`/llm` 里直接调用
+   * `memory-store`），前端只需要在回复里说一句「记下了」。
+   *
+   * 安全边界（用户拍板，别放宽）：
+   *   - `remember` **只能写 prefs**（tone / difficulty / sessionMinutes / restSec /
+   *     voiceSource / rate），写 facts 会被拒绝；
+   *   - `remember_fact` 写 facts 时**必须带 evidence**（用户原话片段），否则拒绝 ——
+   *     模型不能凭推测给用户贴标签；
+   *   - `forget` 只删单条字段（全部清除只在设置界面 / `POST /memory/forget {all:true}`）。
+   */
+  Object.freeze({
+    name: 'remember',
+    intents: [],
+    memory: true,
+    zh: '记住用户的一条**偏好**（tone 语气 / difficulty 难度 / sessionMinutes 每次分钟数 / '
+      + 'restSec 组间休息秒数 / voiceSource 音色来源 / rate 语速）。只能记偏好，不能记事实。',
+    en: 'Remember one **preference** (tone, difficulty, sessionMinutes, restSec, voiceSource, rate). '
+      + 'Preferences only — never facts.',
+    parameters: schema({
+      field: oneOf('偏好字段 / preference field', PREFS_FIELDS),
+      value: {
+        type: ['string', 'number'],
+        description: '字段值 / value（tone: warm|strict|funny；difficulty: easy|normal|hard；'
+          + 'sessionMinutes: 5~60；restSec: 0~180；voiceSource: auto|volc|system；rate: 0.8~1.3）',
+      },
+    }, ['field', 'value']),
+    map(args) {
+      const field = String(args.field || '').trim();
+      if (!PREFS_FIELDS.includes(field)) return { refused: 'not-a-preference' };
+      if (args.value === undefined || args.value === null || args.value === '') {
+        return { refused: 'bad-args' };
+      }
+      return { memory: { op: 'remember', field, value: args.value } };
+    },
+  }),
+  Object.freeze({
+    name: 'remember_fact',
+    intents: [],
+    memory: true,
+    zh: '记住用户**明确说出来的**一条事实（goal 目标 / injuries 伤病史 / weeklyGoal 每周目标次数）。'
+      + '必须带 evidence = 用户原话片段；**没有 evidence 就拒绝**，不要根据推测写事实。',
+    en: 'Remember one fact the user **explicitly stated** (goal, injuries, weeklyGoal). '
+      + 'Requires evidence = the user\'s exact words; without evidence it is refused. Never infer facts.',
+    parameters: schema({
+      field: oneOf('事实字段 / fact field', FACTS_FIELDS),
+      value: {
+        type: ['string', 'number', 'array'],
+        items: { type: 'string' },
+        description: '字段值 / value（goal: 减脂|增肌|保持|增强体能；injuries: 字符串数组；weeklyGoal: 1~7）',
+      },
+      evidence: str('用户说这句话时的原话片段 / the user\'s exact words'),
+    }, ['field', 'value', 'evidence']),
+    map(args) {
+      const field = String(args.field || '').trim();
+      if (!FACTS_FIELDS.includes(field)) return { refused: 'not-a-fact' };
+      const evidence = String(args.evidence == null ? '' : args.evidence).trim();
+      // 硬门槛：没有用户原话就不写 fact（用户拍板：模型不能自己写 fact）
+      if (!evidence) return { refused: 'evidence-required' };
+      if (args.value === undefined || args.value === null || args.value === '') {
+        return { refused: 'bad-args' };
+      }
+      return { memory: { op: 'remember-fact', field, value: args.value, evidence } };
+    },
+  }),
+  Object.freeze({
+    name: 'forget',
+    intents: [],
+    memory: true,
+    zh: '忘掉一条已经记下的偏好 / 事实（只删这一条；全部清除在设置里做）。',
+    en: 'Forget one remembered preference / fact (one field only; clearing everything lives in Settings).',
+    parameters: schema({
+      field: oneOf('要忘掉的字段 / field to forget', [...PREFS_FIELDS, ...FACTS_FIELDS]),
+    }, ['field']),
+    map(args) {
+      const field = String(args.field || '').trim();
+      if (!PREFS_FIELDS.includes(field) && !FACTS_FIELDS.includes(field)) {
+        return { refused: 'bad-field' };
+      }
+      return { memory: { op: 'forget', field } };
     },
   }),
 ]);
@@ -340,20 +447,27 @@ export function resolveExerciseId(value) {
 }
 
 /**
- * tool_calls → `{ intent, args }` 动作列表。
+ * tool_calls → `{ intent, args }` 动作列表 + 服务端记忆操作列表。
+ *
+ * 记忆工具（`remember` / `remember_fact` / `forget`）**没有 client intent**：
+ * 它们的 `map()` 返回 `{ memory: {op, field, value?, evidence?} }`，由 `/llm` 在服务端
+ * 直接写 `server/memory/<userId>.md`（前端只负责把模型那句话念出来）。
  *
  * @param {Array<{name:string,args:object}>} toolCalls 模型返回的工具调用
  * @param {object} [opts]
  * @param {'zh'|'en'} [opts.locale='zh'] 保留参数（当前没有需要 locale 的拒绝话术）
  * @returns {{ actions: Array<{intent:string,args:object}>,
  *            refusals: Array<{name:string,reason:string}>,
- *            prompts: string[] }} prompts 目前恒为空（没有工具需要二次确认），字段保留给以后
+ *            prompts: string[],
+ *            memoryOps: Array<{op:string,field:string,value?:any,evidence?:string}> }}
+ *   prompts 目前恒为空（没有工具需要二次确认），字段保留给以后
  */
 export function actionsFromToolCalls(toolCalls, { locale = 'zh' } = {}) {
   void locale;   // 兼容旧调用；拒绝话术已全部走通用兜底
   const actions = [];
   const refusals = [];
   const prompts = [];
+  const memoryOps = [];
   const list = Array.isArray(toolCalls) ? toolCalls.slice(0, MAX_TOOL_CALLS) : [];
   for (const call of list) {
     const name = call && call.name ? String(call.name) : '';
@@ -368,6 +482,19 @@ export function actionsFromToolCalls(toolCalls, { locale = 'zh' } = {}) {
     } catch {
       mapped = { refused: 'bad-args' };
     }
+    // 记忆工具：没有 intent，只有一条服务端操作
+    if (mapped && mapped.memory && typeof mapped.memory === 'object') {
+      const op = String(mapped.memory.op || '');
+      const field = String(mapped.memory.field || '');
+      if (!op || !field) { refusals.push({ name, reason: 'bad-args' }); continue; }
+      memoryOps.push({
+        op,
+        field,
+        value: mapped.memory.value,
+        evidence: mapped.memory.evidence === undefined ? '' : String(mapped.memory.evidence),
+      });
+      continue;
+    }
     if (!mapped || (mapped.refused && !mapped.intent)) {
       refusals.push({ name, reason: (mapped && mapped.refused) || 'bad-args' });
       continue;
@@ -378,7 +505,7 @@ export function actionsFromToolCalls(toolCalls, { locale = 'zh' } = {}) {
     }
     actions.push({ intent: mapped.intent, args: mapped.args && typeof mapped.args === 'object' ? mapped.args : {} });
   }
-  return { actions, refusals, prompts };
+  return { actions, refusals, prompts, memoryOps };
 }
 
 /** 把当前 state 快照压成一段短 JSON（提示词用；过长就截断，绝不把整份 state 塞给模型） */
@@ -406,6 +533,10 @@ export function compactContext(context, { maxChars = 6000 } = {}) {
 export function buildSystemPrompt({ locale = 'zh', context = null, maxContextChars = 6000 } = {}) {
   const lang = locale === 'en' ? 'en' : 'zh';
   const state = compactContext(context, { maxChars: maxContextChars });
+  // 人设：教练性别来自长期偏好（prefs.voiceGender），只影响人称 / 自称，不要刻意
+  const genderRaw = context && context.memory && context.memory.prefs
+    && context.memory.prefs.voiceGender;
+  const gender = genderRaw === 'male' ? 'male' : 'female';
   return [
     '你是「体感健身游戏」里的 AI 教练。用户说的话来自语音识别，可能有口误或同音字。',
     'You are the AI coach inside a motion fitness game. User text comes from streaming speech recognition and may contain mishearings.',
@@ -426,7 +557,23 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
     '7. 用户说退出就**直接退出**（exit_workout，带 confirm:true），不要再问一遍 ✗。',
     '   When the user asks to exit, call exit_workout with confirm:true right away; do not ask again.',
     '8. 一次最多调用 3 个工具；改完目标不需要再调一次 report_progress。',
-    `9. 用用户的语言回答 / Answer in: ${lang === 'en' ? 'English' : '中文'}。`,
+    '   At most 3 tool calls per turn; do not follow a target change with report_progress.',
+    '9. 长期记忆（state.memory）里的 prefs / facts 是用户之前让你记下的，可以直接参考，不要重新问一遍。',
+    '   The prefs / facts in state.memory were remembered earlier — use them without asking again.',
+    '10. **记忆规则**：只有当用户**明确要求或明确陈述**时才写记忆 —— 偏好用 remember，事实用 remember_fact。',
+    '    **不要根据推测写 facts**；remember_fact 必须带 evidence（用户原话片段），没有 evidence 就不要调它。',
+    '    写入前如果与已有记忆冲突（例如之前记的 tone=warm，用户现在说喜欢严格），**先口头确认**再写。',
+    '    Memory rules: only write when the user explicitly asks or states it (prefs via remember, facts via remember_fact).',
+    '    Never infer facts; remember_fact requires the user\'s exact words as evidence. If a new value conflicts with what is',
+    '    already remembered, ask for confirmation before overwriting it.',
+    '11. **防复读**：state.lastCoachLines 是你最近说过的 5 句，不要重复它们；state.recentEvents 是最近 60 秒的',
+    '    计次 / 门控失败 / 关键帧命中，回答「刚才怎么样」时直接引用里面的数字，不要编。',
+    '    Do not repeat the lines in state.lastCoachLines; quote state.recentEvents instead of inventing recent numbers.',
+    `12. 教练性别：${gender === 'male' ? '男' : '女'}。用对应的人称与自称（例如「哥 / 姐」）要克制，不要刻意；`
+      + '文案里不要写死「她 / 他」。用户说「换个男声 / 换个女教练」时调用 set_voice_gender。',
+    `    Coach gender: ${gender}. Use matching person / self-reference sparingly and never force it; `
+      + 'never hard-code “she” or “he”. Call set_voice_gender when the user asks for a male / female coach voice.',
+    `13. 用用户的语言回答 / Answer in: ${lang === 'en' ? 'English' : '中文'}。`,
     '',
     `state (JSON): ${state}`,
   ].join('\n');
