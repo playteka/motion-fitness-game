@@ -37,6 +37,17 @@ export const LANGS = Object.freeze(['zh', 'en']);
 /** 动作 id 列表（工具 schema 的枚举；来自动作库，不另抄） */
 export const EXERCISE_IDS = Object.freeze(EXERCISES.map((e) => e.id));
 
+/**
+ * 会话开始事件（唯一字符串定义；`llm-provider.mjs` 从这里 re-export）。
+ *
+ * 用户原话：「进入全屏之后应该主动触发一个开始事件，发一个消息给 LLM，这样 AI 教练可以知道
+ * 用户已经开始健身了，可以主动向用户问好。」
+ *
+ * 带这个事件时 `POST /llm` 的 `text` 可以为空 —— user 消息由服务端按 context 生成一条
+ * 系统事件描述；system prompt 里另有一条事件规则（见 buildSystemPrompt 第 16 条）。
+ */
+export const LLM_EVENT_SESSION_START = 'session-start';
+
 /** 一次回答里最多执行几个工具（护栏：防止模型一口气把界面拆了） */
 export const MAX_TOOL_CALLS = 3;
 
@@ -617,7 +628,7 @@ export function compactContext(context, { maxChars = 6000 } = {}) {
  * ⚠️ 用户的硬要求（P3.3 Agent 化）：`context` 里的**数字全部由客户端算好**，
  * 模型只负责解释与决策，**不许自己编数字** ✗。
  */
-export function buildSystemPrompt({ locale = 'zh', context = null, maxContextChars = 6000 } = {}) {
+export function buildSystemPrompt({ locale = 'zh', context = null, maxContextChars = 6000, event = '' } = {}) {
   const lang = locale === 'en' ? 'en' : 'zh';
   const soul = readSoul();
 
@@ -703,12 +714,33 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
     '15. 红线：不羞辱/不身材焦虑；不越界医疗（伤病/孕期/慢病→建议就医）；不极端节食/超量训练；数据隐私；做不到就直说；性别不刻板。',
     '    Red lines: no shaming or body anxiety; no medical overreach (injury / pregnancy / chronic conditions → see a doctor); '
       + 'no extreme dieting or overtraining; data privacy; admit what you cannot do; no gender stereotypes.',
+    /**
+     * 会话开始事件（session-start）：用户点「开始体感训练」进了全屏 / 训练界面，前端替用户发一条[事件]，
+     * 让教练主动开口。和「用户说话」走同一条回复链路，但话术要短、要主动。
+     */
+    '16. **会话开始事件**：收到以 `[事件] 用户刚刚进入训练` 开头的 user 消息（`event: session-start`）时：主动打招呼 +'
+      + ' 提示今天的动作 / 目标 + 一句注意点；只说 1~2 句、≤40 字；**不要**每次都问一堆问题；'
+      + '若「当前记忆」里有目标 / 伤病，可以顺带提一句。',
+    '    **Session-start event**: when the user message starts with `[Event] The user has just entered the workout`'
+      + ' (`event: session-start`), greet the user proactively, mention today\'s exercise / target and one cue;'
+      + ' keep it to 1–2 sentences and ≤40 characters (or about 25 words in English); never ask a list of questions;'
+      + ' if Current memory has a goal / injury, you may mention it briefly.',
   ];
 
   if (!introSeen) {
     lines.push(
-      '这是首次对话，先说一次自报家门（用 SOUL 里那句原文），之后不再重复。',
-      'This is the first conversation: introduce yourself once using the exact line in SOUL, then never repeat it.',
+      /**
+       * 首次见面 + 这次是「进入训练」的主动问候：自报家门必须压成一句短的，
+       * 否则模型会把 SOUL 里整段自报念一遍、再叠一句问候，轻松超过「1~2 句、≤40 字」。
+       */
+      event === LLM_EVENT_SESSION_START
+        ? '这是首次对话，而且这次是进入训练时的主动问候：自报家门压成一句短的（例如「嗨，我是可可」），'
+          + '再提示动作 / 目标；总共 1~2 句、≤40 字。'
+        : '这是首次对话，先说一次自报家门（用 SOUL 里那句原文），之后不再重复。',
+      event === LLM_EVENT_SESSION_START
+        ? 'This is the first conversation and it is the session-start greeting: keep the self-introduction to one short '
+          + 'clause (e.g. “Hi, I’m Coach KK”), then mention the exercise / target; 1–2 sentences in total.'
+        : 'This is the first conversation: introduce yourself once using the exact line in SOUL, then never repeat it.',
     );
   }
 
@@ -726,6 +758,7 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
 export default {
   LLM_TOOL_DEFS,
   LLM_TOOLS,
+  LLM_EVENT_SESSION_START,
   TOOL_BY_NAME,
   TOOL_INTENT_MAP,
   TOOLED_INTENTS,

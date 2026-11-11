@@ -21,6 +21,12 @@ export const LLM_PATH = '/llm';
 export const LLM_HEALTH_PATH = '/llm/health';
 
 /**
+ * 会话开始事件（和服务端 `LLM_EVENT_SESSION_START` 同一个字符串）。
+ * 带这个事件时 `text` 可以为空：user 消息由服务端按 context 生成（「用户刚刚进入训练…」）。
+ */
+export const LLM_EVENT_SESSION_START = 'session-start';
+
+/**
  * 客户端等多久（服务端自己 8s 超时，这里留 1s 余量：
  * 正常一定是服务端先返回 503，客户端这个只是兜底，避免请求永远挂着）。
  */
@@ -592,10 +598,11 @@ export function createLlmClient({
     if (max === 0) history.length = 0;
   }
 
-  /** 发一次对话请求；失败一律抛 { code } */
-  async function respond(text, { locale = 'zh', context = null, history: extra = null } = {}) {
+  /** 发一次对话请求；失败一律抛 { code }。`event:'session-start'` 允许空 text（服务端生成事件描述） */
+  async function respond(text, { locale = 'zh', context = null, history: extra = null, event = '' } = {}) {
     const body = String(text == null ? '' : text).trim();
-    if (!body) throw llmClientError('llm-empty');
+    const ev = event === LLM_EVENT_SESSION_START ? LLM_EVENT_SESSION_START : '';
+    if (!body && !ev) throw llmClientError('llm-empty');
     const f = resolveFetch();
     if (!f) throw llmClientError('llm-network', 'fetch unavailable');
     const controller = new AbortController();
@@ -619,6 +626,8 @@ export function createLlmClient({
       // 只带最近 10 轮（服务端会再夹一次）；**不落盘**
       history: Array.isArray(extra) ? extra.slice(-(turns * 2)) : history.slice(),
     };
+    // 只有真正的会话开始事件才带 `event`；空 text 的合法性由服务端按这个字段判断
+    if (ev) payload.event = ev;
     try {
       const res = await Promise.race([f(pathUrl, {
         method: 'POST',
@@ -639,9 +648,13 @@ export function createLlmClient({
       const actions = normalizeActions(data.actions);
       if (!reply && !actions.length) throw llmClientError('llm-bad-json', 'empty reply');
       // 只调了工具、没有文字的回合也要记进记忆（否则历史里会出现连续两条 user）：
-      // assistant 那一格记成工具名，下一轮模型才知道「上一句我已经执行过什么」
+      // assistant 那一格记成工具名，下一轮模型才知道「上一句我已经执行过什么」；
+      // 会话开始事件没有用户话语，用词条里的 `[事件] session-start` 当 user 那一格（保持一问一答成对）。
       const memoryReply = reply || (actions.length ? actions.map((a) => a.intent).join(',') : '');
-      remember(payload.text, memoryReply);
+      const memoryUser = payload.text
+        || LOCALES[payload.locale]?.coach?.sessionStart?.eventLabel
+        || LLM_EVENT_SESSION_START;
+      remember(memoryUser, memoryReply);
       const ms = Math.max(0, Number(now()) - Number(started));
       last = { ms, actions: actions.length, provider: data.provider || '', model: data.model || '' };
       record('llm:reply', { ms, actions: actions.length });
@@ -723,6 +736,7 @@ export default {
   LLM_CLIENT_TIMEOUT_MS,
   LLM_HISTORY_TURNS,
   LLM_CLIENT_MAX_TEXT,
+  LLM_EVENT_SESSION_START,
   LLM_CLIENT_ERRORS,
   AGENT_CONTEXT_MAX_CHARS,
   AGENT_HISTORY_MAX,

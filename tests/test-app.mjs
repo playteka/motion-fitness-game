@@ -9468,6 +9468,153 @@ console.log('\n[20] P3.3 自由对话：/llm → 工具调用真的改界面（�
     ok('再点一下 → 重新打开（默认值不变）', api.state.settings.bargeIn === true);
   }
 
+  /* ---------------- ⑦ 进入训练 → session-start 主动问候（每次训练最多 1 次） ---------------- */
+  {
+    const savedEngineReady = api.state.engineReady;
+    api.state.engineReady = true;   // 这一段只验证问候，别去加载真模型
+    const greetRequests = () => requests.filter((r) => {
+      if (!(r.init && r.init.method === 'POST')) return false;
+      try { return JSON.parse(r.init.body).event === 'session-start'; } catch { return false; }
+    });
+    /** 点「开始体感训练」→ 等权限 / 全屏 / 问候 / TTS 都落定 */
+    const enterTraining = async () => {
+      api.startGestureMode();
+      await wait(80);
+      await flush();
+      await wait(220);
+      await flush();
+    };
+
+    api.showHome();
+    await api.setCoachEnabled(true);
+    await flush();
+    mode = 'ok';
+    const greetBefore = greetRequests().length;
+    const utterBefore = coachStubs.utterances.length;
+    await enterTraining();
+
+    const firstGreets = greetRequests().slice(greetBefore);
+    const firstBody = firstGreets.length ? JSON.parse(firstGreets[0].init.body) : {};
+    ok('点「开始体感训练」进入训练 → 只发 1 次 /llm，且 event === "session-start"',
+      firstGreets.length === 1 && firstBody.event === 'session-start'
+      && firstBody.text === '' && !!firstBody.context && !!firstBody.context.session,
+      JSON.stringify(firstGreets.map((r) => JSON.parse(r.init.body).event)));
+    ok('session-start 带的是同一份 Agent 快照（动作 / 目标 / 全屏 / 教练开）',
+      firstBody.context.session.exerciseId === api.state.exerciseId
+      && firstBody.context.session.target === api.state.target
+      && firstBody.context.now.fullscreen === true && firstBody.context.now.coachOn === true,
+      JSON.stringify(firstBody.context || {}).slice(0, 200));
+    ok('模型回复走**现有** coach.say 路径：字幕 + TTS（弹幕也有一条）',
+      api.state.voice.coachText === llmReply
+      && coachStubs.utterances.slice(utterBefore).some((u) => u.text === llmReply),
+      JSON.stringify({ coach: api.state.voice.coachText,
+        said: coachStubs.utterances.slice(utterBefore).map((u) => u.text).slice(0, 4) }));
+    ok('诊断：session:say {by:"intro"} + coach:greet {ok:true, fallback:false}',
+      api.coachDiag.snapshot().session.sayBy === 'intro'
+      && api.coachDiag.snapshot().greet.ok === true
+      && api.coachDiag.snapshot().greet.fallback === false,
+      JSON.stringify({ sayBy: api.coachDiag.snapshot().session.sayBy,
+        greet: api.coachDiag.snapshot().greet }));
+    await finishSpeech();
+
+    const greetAfterFirst = greetRequests().length;
+    await enterTraining();
+    ok('同一次训练里再进全屏（/再点开始）→ **不再发** session-start（会话级只 1 次）',
+      greetRequests().length === greetAfterFirst,
+      JSON.stringify({ before: greetAfterFirst, after: greetRequests().length }));
+
+    /* 退出训练回首页 → 下一次训练可以再问候一次 */
+    api.showHome();
+    await flush();
+    const greetBeforeSecond = greetRequests().length;
+    await enterTraining();
+    ok('回首页（退出训练）→ 再开始：会**再**发一次 session-start',
+      greetRequests().length === greetBeforeSecond + 1,
+      JSON.stringify({ before: greetBeforeSecond, after: greetRequests().length }));
+    await finishSpeech();
+
+    /* 教练关闭 → 完全不触发 */
+    api.showHome();
+    await api.setCoachEnabled(false);
+    await flush();
+    const greetWhenOff = greetRequests().length;
+    await enterTraining();
+    ok('AI 教练关闭时进入训练 → **不触发** session-start（一条请求都不发）',
+      greetRequests().length === greetWhenOff,
+      JSON.stringify({ off: greetWhenOff, after: greetRequests().length }));
+
+    /* 静音 → 不触发（只出字幕不走 TTS 的场合同理） */
+    await api.setCoachEnabled(true);
+    await flush();
+    api.setCoachMuted(true);
+    await flush();
+    const greetWhenMuted = greetRequests().length;
+    await enterTraining();
+    ok('静音（只出字幕）时进入训练 → **不触发** session-start',
+      greetRequests().length === greetWhenMuted,
+      JSON.stringify({ muted: greetWhenMuted, after: greetRequests().length }));
+    api.setCoachMuted(false);
+    await flush();
+
+    /* LLM 503 → 内置问候兜底，绝不静默 */
+    api.showHome();
+    await flush();
+    mode = 'fail';
+    const greetWhenFail = greetRequests().length;
+    const utterFail = coachStubs.utterances.length;
+    await enterTraining();
+    const fallbackText = api.sessionGreetFallbackText();
+    ok('LLM 503 → 用内置问候兜底（说出当前动作 + 目标），**不静默**',
+      greetRequests().length === greetWhenFail + 1
+      && api.state.voice.coachText === fallbackText
+      && coachStubs.utterances.slice(utterFail).some((u) => u.text === fallbackText),
+      JSON.stringify({ coach: api.state.voice.coachText, fallbackText }));
+    ok('诊断：coach:greet {ok:false, fallback:true}（能看出这次是兜底的）',
+      api.coachDiag.snapshot().greet.fallback === true
+      && api.coachDiag.snapshot().greet.ok === false,
+      JSON.stringify(api.coachDiag.snapshot().greet));
+    await finishSpeech();
+
+    /* 自由对话关掉（≈ LLM 未配置）→ 直接内置问候，**不调网络** */
+    api.showHome();
+    await flush();
+    await api.applyFreeChat(false);
+    await flush();
+    const greetWhenNoLlm = greetRequests().length;
+    const utterNoLlm = coachStubs.utterances.length;
+    await enterTraining();
+    ok('LLM 未配置 / 自由对话关掉 → 内置问候直接说出，**不调 /llm**（一条请求都不发）',
+      greetRequests().length === greetWhenNoLlm
+      && coachStubs.utterances.slice(utterNoLlm).some((u) => u.text === api.sessionGreetFallbackText()),
+      JSON.stringify({ noLlm: greetWhenNoLlm, after: greetRequests().length }));
+    await finishSpeech();
+    await api.applyFreeChat(true);
+    mode = 'ok';
+    await flush();
+
+    /* /llm/health 明确 configured:false → 连请求都不发，直接内置问候 */
+    healthPayload.configured = false;
+    api.showHome();
+    await flush();
+    await api.refreshLlmStatus();
+    await flush();
+    const greetNoKey = greetRequests().length;
+    const utterNoKey = coachStubs.utterances.length;
+    await enterTraining();
+    ok('LLM 未配置（health.configured=false）→ 内置问候直接说出，**一个 /llm 请求都不发**',
+      greetRequests().length === greetNoKey
+      && coachStubs.utterances.slice(utterNoKey).some((u) => u.text === api.sessionGreetFallbackText()),
+      JSON.stringify({ noKey: greetNoKey, after: greetRequests().length }));
+    healthPayload.configured = true;
+    await api.refreshLlmStatus();
+    await flush();
+    await finishSpeech();
+
+    api.showHome();
+    api.state.engineReady = savedEngineReady;
+    await flush();
+  }
+
   api.llmClient.setFetch(null);   // 还原：后续用例不再走假 fetch
   api.showHome();
   api.state.settings.freeChat = true;

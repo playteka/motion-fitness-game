@@ -1530,6 +1530,16 @@ export default {
     title: 'AI 教练',
     // 第一次打开时的自我介绍（只显示，不强制发声）
     intro: '我在，说话就行。',
+    /**
+     * 进入训练（`event:'session-start'`）时教练主动问候。
+     * `fallback` / `generic` 是 LLM 未配置 / 失败 / 超时时的内置兜底（绝不静默）；
+     * `eventLabel` 是写进对话记忆里的那条事件标记（和发给服务端的 user 消息同一语义）。
+     */
+    sessionStart: {
+      eventLabel: '[事件] session-start',
+      fallback: '开始吧，{name} {target} {unit}，我在这儿盯着你的动作。',
+      generic: '开始吧，我在这儿陪着你，动起来！',
+    },
     listeningHint: '对着麦克风说话，这里会出现你的话和我的回答。',
     hint: '按 Ctrl+I 关闭',
     // P3.3：请求发出去 1.5 秒还没回来时，状态环旁边那行小字

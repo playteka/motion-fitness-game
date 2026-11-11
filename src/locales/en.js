@@ -1524,6 +1524,16 @@ export default {
     title: 'AI coach',
     // First time the coach is switched on (shown as a subtitle, not forced to speak)
     intro: 'I am here — just talk to me.',
+    /**
+     * Proactive greeting when a workout session starts (`event:'session-start'`).
+     * `fallback` / `generic` are the built-in lines used when the LLM is not configured / fails / times out
+     * (never silent); `eventLabel` is the marker recorded in the dialogue memory for that event turn.
+     */
+    sessionStart: {
+      eventLabel: '[Event] session-start',
+      fallback: "Let's start: {name} {target} {unit}. I'm watching your form.",
+      generic: "Let's get going — I'm right here with you. Let's move!",
+    },
     listeningHint: 'Speak into the microphone; your words and my answer will appear here.',
     hint: 'Press Ctrl+I to turn it off',
     // P3.3: the small line next to the ring when a request takes longer than 1.5s

@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { loadEnvFile, redactSecrets } from './env.mjs';
 import {
   EMPTY_REPLY,
+  LLM_EVENT_SESSION_START,
   LLM_TOOLS,
   actionsFromToolCalls,
   buildSystemPrompt,
@@ -66,6 +67,11 @@ export const LLM_MAX_TEXT = 500;
 export const LLM_MAX_HISTORY_TURNS = 6;
 /** 服务端给模型的 system 提示里，state 最多占多少字符（= 客户端 `AGENT_CONTEXT_MAX_CHARS`） */
 export const LLM_MAX_CONTEXT_CHARS = 6000;
+/**
+ * 会话开始事件（`POST /llm {event:'session-start'}`）：唯一字符串定义在 `llm-tools.mjs`
+ * （system prompt 的事件规则也要用它），这里 re-export 给路由 / 测试 / 前端对照。
+ */
+export { LLM_EVENT_SESSION_START };
 
 /** provider 元信息：默认地址 / 默认模型 / key 回退变量 */
 export const LLM_PROVIDER_SPECS = Object.freeze({
@@ -486,20 +492,53 @@ export function historyMessages(history, { maxTurns = LLM_MAX_HISTORY_TURNS } = 
   return out.slice(Math.max(0, out.length - turns * 2));
 }
 
-/** 组一次请求的 messages（system + 最近历史 + 这一句） */
+/**
+ * `event: session-start` 的 user 消息（中英各一套）。
+ *
+ * 它不是「用户说的话」，而是一条**系统事件描述**：模型据此知道用户刚进入训练、
+ * 现在练什么、目标多少，该由教练主动开口。动作 / 目标 / 单位全部来自客户端算好的 context
+ * （`session.name / target / kind`），服务端不猜、不补数字。
+ *
+ * @param {{locale?:string, context?:object}} [opts]
+ * @returns {string} 直接作为 messages 里那条 user 的内容
+ */
+export function sessionStartEventMessage({ locale = 'zh', context = null } = {}) {
+  const lang = locale === 'en' ? 'en' : 'zh';
+  const session = context && typeof context === 'object' && context.session && typeof context.session === 'object'
+    ? context.session
+    : {};
+  const name = String(session.name || session.exerciseId || '').trim().slice(0, 40);
+  const target = Math.max(0, Math.round(Number(session.target) || 0));
+  const hold = session.kind === 'hold';
+  if (lang === 'en') {
+    const ex = name || 'this exercise';
+    const targetText = target > 0 ? `, target ${target} ${hold ? 'sec' : 'reps'}` : '';
+    return `[Event] The user has just entered the workout: exercise=${ex}${targetText}. `
+      + 'This is the first message of this session. Greet the user proactively.';
+  }
+  const ex = name || '这个动作';
+  const targetText = target > 0 ? `，目标=${target}${hold ? '秒' : '次'}` : '';
+  return `[事件] 用户刚刚进入训练：动作=${ex}${targetText}，这是本次训练的第一句对话。请主动打个招呼。`;
+}
+
+/** 组一次请求的 messages（system + 最近历史 + 这一句 / 一条 session-start 事件） */
 export function buildLlmMessages({
   text = '',
   locale = 'zh',
   context = null,
   history = [],
+  event = '',
   maxTurns = LLM_MAX_HISTORY_TURNS,
   maxContextChars = LLM_MAX_CONTEXT_CHARS,
 } = {}) {
   const lang = locale === 'en' ? 'en' : 'zh';
+  const userContent = event === LLM_EVENT_SESSION_START
+    ? sessionStartEventMessage({ locale: lang, context })
+    : String(text).slice(0, LLM_MAX_TEXT);
   return [
-    { role: 'system', content: buildSystemPrompt({ locale: lang, context, maxContextChars }) },
+    { role: 'system', content: buildSystemPrompt({ locale: lang, context, maxContextChars, event }) },
     ...historyMessages(history, { maxTurns }),
-    { role: 'user', content: String(text).slice(0, LLM_MAX_TEXT) },
+    { role: 'user', content: userContent },
   ];
 }
 
@@ -627,7 +666,13 @@ export function createLlmRoutes({
       }
       const data = parsed.data;
       const text = String(data.text == null ? '' : data.text).trim();
-      if (!text) {
+      /**
+       * 可选的 `event`：目前只认 `session-start`（进训练后主动问候）。
+       * 它允许 `text` 为空 —— 这条 user 消息由服务端按 context 生成；
+       * 其它任何值都当普通对话，仍然要求有 text（旧客户端行为不变）。
+       */
+      const event = data.event === LLM_EVENT_SESSION_START ? LLM_EVENT_SESSION_START : '';
+      if (!text && !event) {
         sendJson(res, 400, { ok: false, error: 'empty-text' });
         return;
       }
@@ -676,6 +721,7 @@ export function createLlmRoutes({
         locale,
         context,
         history: data.history,
+        event,
         maxTurns: maxHistoryTurns,
       });
       const started = Date.now();
@@ -731,6 +777,7 @@ export function createLlmRoutes({
               memory: memoryResults.length,
               memoryFailed: memoryResults.filter((r) => !r.ok).length,
               intro: introMarked ? 1 : 0,
+              event: event || '',
             });
           } catch { /* ignore */ }
         }
@@ -773,6 +820,7 @@ export default {
   LLM_RATE_LIMIT,
   LLM_RATE_WINDOW_MS,
   LLM_MAX_HISTORY_TURNS,
+  LLM_EVENT_SESSION_START,
   LLM_PROVIDERS,
   LLM_PROVIDER_SPECS,
   normalizeProviderName,
@@ -786,6 +834,7 @@ export default {
   createMockLlmProvider,
   createLlmRoutes,
   buildLlmMessages,
+  sessionStartEventMessage,
   historyMessages,
   applyMemoryOps,
 };

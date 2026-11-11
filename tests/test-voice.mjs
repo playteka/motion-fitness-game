@@ -83,6 +83,7 @@ import {
   createLlmClient, buildAgentContext, trimAgentContext, scoreTrend, timeOfDayHint,
   normalizeActions as normalizeLlmActions,
   LLM_PATH as LLM_CLIENT_PATH, LLM_CLIENT_TIMEOUT_MS, LLM_HISTORY_TURNS,
+  LLM_EVENT_SESSION_START as LLM_CLIENT_EVENT,
   AGENT_CONTEXT_MAX_CHARS, AGENT_EVENTS_MAX, AGENT_EVENTS_WINDOW_MS, AGENT_EVENT_MAX_CHARS,
   AGENT_MEMORY_PREF_FIELDS, AGENT_MEMORY_FACT_FIELDS,
   weekTrend, startOfLocalWeek, normalizeRecentEvents, lastSessionForContext, memoryForContext,
@@ -90,9 +91,10 @@ import {
 } from '../src/voice/llm.js';
 import {
   LLM_PATH, LLM_HEALTH_PATH, LLM_TIMEOUT_MS, LLM_MAX_TOKENS, LLM_RATE_LIMIT,
-  LLM_RATE_WINDOW_MS, LLM_MAX_HISTORY_TURNS,
+  LLM_RATE_WINDOW_MS, LLM_MAX_HISTORY_TURNS, LLM_EVENT_SESSION_START,
   loadLlmConfig, createLlmGuard, createLlmProvider, createMockLlmProvider,
-  createLlmRoutes, buildLlmMessages, historyMessages, normalizeProviderName, llmHttpCode,
+  createLlmRoutes, buildLlmMessages, sessionStartEventMessage, historyMessages,
+  normalizeProviderName, llmHttpCode,
 } from '../server/llm-provider.mjs';
 import {
   LLM_TOOLS, LLM_TOOL_DEFS, TOOL_INTENT_MAP, TOOLED_INTENTS, UNCOVERED_INTENTS,
@@ -2858,6 +2860,24 @@ console.log('\n[24] 语音诊断：事件收集 / 批量落盘 / snapshot / 脱�
         && !s.lastError.includes('sk-live');
     })());
 
+  /* ---- 进入训练时的主动问候（coach:greet）：模型说的 / 内置兜底 / 被跳过 三种都留痕 ---- */
+  {
+    const greetDiag = createDiag({ fetch: async () => ({ ok: true }), timer: false, now: () => 1700000002000 });
+    greetDiag.record('coach:greet', { ok: true, ms: 120, fallback: false });
+    const gs = greetDiag.snapshot();
+    ok('coach:greet 进 snapshot：ok / ms / fallback（模型问候）',
+      gs.greet.ok === true && gs.greet.ms === 120 && gs.greet.fallback === false
+      && gs.greet.skipped === '', JSON.stringify(gs.greet));
+    greetDiag.record('coach:greet', { ok: false, ms: 8000, fallback: true, code: 'llm-timeout' });
+    const gs2 = greetDiag.snapshot();
+    ok('coach:greet 失败：fallback=true（用了内置问候），不会静默',
+      gs2.greet.ok === false && gs2.greet.fallback === true && gs2.greet.ms === 8000,
+      JSON.stringify(gs2.greet));
+    greetDiag.record('coach:greet', { ok: false, ms: 0, fallback: false, skipped: 'speaking' });
+    ok('coach:greet 被跳过：skipped 记原因（教练正在说话 → 不叠音）',
+      greetDiag.snapshot().greet.skipped === 'speaking');
+  }
+
   /* ---- 批量落盘 ---- */
   const flushed = await diag.flush();
   ok('flush() 把积压事件按 JSONL 批量 POST 到 /__debug/log?file=coach-diag.jsonl',
@@ -4145,6 +4165,31 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
     ok('system 提示里明确写了「数字由客户端算好，不许自己编」',
       /不许自己编/.test(sys.content) && /Never invent numbers/.test(sys.content));
 
+    /* session-start 事件：空 text 也放行，user 消息由服务端按 context 生成（不是空的用户文本） */
+    const intro = await request('POST', LLM_PATH, {
+      event: 'session-start',
+      text: '',
+      locale: 'zh',
+      context: { session: { exerciseId: 'squat', name: '自重深蹲', target: 20, kind: 'reps' } },
+    });
+    const introJson = JSON.parse(intro.body);
+    ok('POST /llm {event:session-start, text:""} → 200（不因空文本 400），结构与普通对话一致（reply + actions）',
+      intro.status === 200 && introJson.ok === true
+      && typeof introJson.reply === 'string' && Array.isArray(introJson.actions),
+      intro.body);
+    const introSent = okProvider.calls.at(-1).messages.at(-1);
+    ok('发给模型的 user 是「用户刚刚进入训练」事件描述：带动作 / 目标，不是空文本',
+      introSent.role === 'user' && introSent.content.includes('刚刚进入训练')
+      && introSent.content.includes('自重深蹲') && introSent.content.includes('20')
+      && introSent.content.trim().length > 10, introSent.content);
+    ok('session-start 的 system 里有事件规则（主动打招呼 / 1~2 句 / ≤40 字 / 不问一堆问题）',
+      /session-start/.test(okProvider.calls.at(-1).messages[0].content)
+      && /主动打招呼/.test(okProvider.calls.at(-1).messages[0].content)
+      && /40/.test(okProvider.calls.at(-1).messages[0].content));
+    // 只放行 session-start：别的 event 值仍按普通对话处理 → 空文本还是 400
+    ok('未知 event 不放行空文本（仍然 400 empty-text，避免拿事件名白嫖请求）',
+      (await request('POST', LLM_PATH, { event: 'bogus', text: '   ', locale: 'zh' })).status === 400);
+
     // exit_workout 没带 confirm：照样返回 exit 动作（不再回「要退出就说确认退出」）
     const exitNoConfirm = createMockLlmProvider({ script: [{ toolCalls: [{ name: 'exit_workout', args: {} }] }] });
     const routeExit = createLlmRoutes({ provider: exitNoConfirm, config: cfg, guard: createLlmGuard(), logger: () => {} });
@@ -4323,6 +4368,57 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
     const built = buildLlmMessages({ text: '你好', locale: 'zh', context: { a: 1 }, history });
     ok('buildLlmMessages：system + 最近 12 条历史 + 这一句（最后一条是 user 的输入）',
       built.length === 14 && built[0].role === 'system' && built.at(-1).content === '你好');
+
+    /* session-start：user 消息是一条系统事件描述（中英各一套），不是空的用户文本 */
+    {
+      const zhCtx = { session: { exerciseId: 'squat', name: '自重深蹲', target: 20, kind: 'reps' } };
+      const zhBuilt = buildLlmMessages({ event: LLM_EVENT_SESSION_START, locale: 'zh', context: zhCtx });
+      const zhUser = zhBuilt.at(-1);
+      ok('session-start（zh）：最后一条 user 含「刚刚进入训练」+ 动作 + 目标，且不是空文本',
+        zhUser.role === 'user' && zhUser.content.includes('刚刚进入训练')
+        && zhUser.content.includes('自重深蹲') && zhUser.content.includes('20')
+        && zhUser.content.trim() !== '');
+      ok('session-start（zh）的 system 里有事件规则：主动打招呼 / 1~2 句 / ≤40 字 / 不要问一堆问题',
+        /session-start/.test(zhBuilt[0].content)
+        && /主动打招呼/.test(zhBuilt[0].content)
+        && /1~2 句/.test(zhBuilt[0].content)
+        && /40/.test(zhBuilt[0].content)
+        && /不要.*问一堆问题/.test(zhBuilt[0].content));
+
+      const enCtx = { session: { name: 'Bodyweight Squat', target: 30, kind: 'hold' } };
+      const enBuilt = buildLlmMessages({ event: LLM_EVENT_SESSION_START, locale: 'en', context: enCtx });
+      ok('session-start（en）：user 是英文事件描述（just entered / 动作 / 30 sec / greet）',
+        /just entered the workout/i.test(enBuilt.at(-1).content)
+        && enBuilt.at(-1).content.includes('Bodyweight Squat')
+        && enBuilt.at(-1).content.includes('30 sec')
+        && /greet the user proactively/i.test(enBuilt.at(-1).content));
+      ok('session-start（en）的 system 里有英文事件规则（greet / 1–2 sentences / 40 / never ask a list）',
+        /session-start/.test(enBuilt[0].content)
+        && /greet the user proactively/i.test(enBuilt[0].content)
+        && /1–2 sentences/.test(enBuilt[0].content)
+        && /never ask a list of questions/i.test(enBuilt[0].content));
+
+      ok('sessionStartEventMessage：动作缺失也不会编数字 / 不会写出空目标',
+        sessionStartEventMessage({ locale: 'zh', context: null }).includes('刚刚进入训练')
+        && !/目标=\d/.test(sessionStartEventMessage({ locale: 'zh', context: null }))
+        && sessionStartEventMessage({ locale: 'en', context: {} }).includes('just entered the workout'));
+      ok('不带 event 时 buildLlmMessages 行为不变（空 text 的消息内容仍是空串，交给路由 400）',
+        buildLlmMessages({ text: '' }).at(-1).content === ''
+        && buildLlmMessages({ text: '你好' }).at(-1).content === '你好');
+      ok('客户端与服务端的 session-start 事件名一致（不各写一份字符串）',
+        LLM_CLIENT_EVENT === LLM_EVENT_SESSION_START && LLM_EVENT_SESSION_START === 'session-start');
+
+      // 首次见面遇到 session-start：自报必须压成一句短的，否则模型会念完 SOUL 整段再问候（超过 1~2 句 / 40 字）
+      const introCtx = { memory: { prefs: { introSeen: false }, facts: {} } };
+      const normalFirstPrompt = buildSystemPrompt({ locale: 'zh', context: introCtx });
+      const greetFirstPrompt = buildLlmMessages({
+        event: LLM_EVENT_SESSION_START, locale: 'zh', context: introCtx,
+      })[0].content;
+      ok('session-start 首次见面：自报压成一句短的（不再要求念 SOUL 整段），保证 1~2 句 / ≤40 字',
+        /这是首次对话/.test(normalFirstPrompt) && /用 SOUL 里那句原文/.test(normalFirstPrompt)
+        && /这是首次对话/.test(greetFirstPrompt) && /自报家门压成一句短的/.test(greetFirstPrompt)
+        && !/用 SOUL 里那句原文/.test(greetFirstPrompt));
+    }
     await new Promise((r) => srv.close(r));
 
     const previewSrc = fs.readFileSync(new URL('../preview-server.js', import.meta.url), 'utf8');
@@ -4538,6 +4634,39 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
       normalizeLlmActions([{ intent: 'pause', args: {} }, null, 'x', { args: {} }, { intent: 'home' }])
         .map((a) => a.intent).join(',') === 'pause,home');
     ok('客户端默认超时 9s（服务端 8s 先超时，这里只是兜底）', LLM_CLIENT_TIMEOUT_MS === 9000);
+
+    /* session-start：空 text 也照发（服务端生成事件描述），并记进对话记忆 */
+    {
+      const eventSeen = [];
+      const introClient = createLlmClient({
+        fetchImpl: async (url, init) => {
+          eventSeen.push({ url, init });
+          return {
+            ok: true, status: 200,
+            json: async () => ({ ok: true, reply: '开始吧，深蹲 20 次。', actions: [] }),
+          };
+        },
+      });
+      let emptyCode = '';
+      try { await introClient.respond(''); } catch (err) { emptyCode = err.code; }
+      ok('空 text 且没有 event → 客户端直接抛 llm-empty（一个请求都不发）',
+        emptyCode === 'llm-empty' && eventSeen.length === 0, emptyCode);
+      const introRes = await introClient.respond('', {
+        locale: 'zh',
+        context: { session: { name: '自重深蹲', target: 20 } },
+        event: 'session-start',
+      });
+      const introBody = JSON.parse(eventSeen[0].init.body);
+      ok('session-start：空 text 也照发，body 带 event:"session-start" + context',
+        introBody.event === 'session-start' && introBody.text === ''
+        && introBody.context.session.name === '自重深蹲');
+      ok('session-start 的回复照常 {reply, actions}，并记进对话记忆（事件标记 + 回复成对）',
+        introRes.reply === '开始吧，深蹲 20 次。' && introClient.history.length === 2
+        && introClient.history[0].role === 'user'
+        && introClient.history[0].content.includes('session-start')
+        && introClient.history[1].content === '开始吧，深蹲 20 次。',
+        JSON.stringify(introClient.history));
+    }
   }
 
   /* ---------------- 29.8 会话层：actions 真的走命令表 handler ---------------- */

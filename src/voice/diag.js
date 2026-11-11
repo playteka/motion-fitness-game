@@ -116,6 +116,12 @@ function blankSnapshot() {
      * 用户反馈「听不到声音 + 之后的话都没识别」靠这三行就能定位。
      */
     session: { state: '', sayBy: '', stopBy: '', endBy: '' },
+    /**
+     * 进入训练时的主动问候（`coach:greet`）：
+     *   ok / ms / fallback（LLM 不可用或失败 → 用了内置问候）
+     *   skipped = 为什么没开口（speaking / thinking / disabled / muted / paused …）
+     */
+    greet: { ok: false, ms: 0, fallback: false, skipped: '' },
   };
 }
 
@@ -324,6 +330,17 @@ export function createDiag({
           last: String(entry.code || ''),
           where: String(entry.where || ''),
           errName: String(entry.errName || ''),
+        };
+        break;
+      /* ---------------- 会话开始问候（coach:greet） ----------------
+       * 进入训练 → `event:'session-start'` → 教练主动开口（或 LLM 失败时用内置问候）。
+       * 面板 / 日志里能一眼看出「这次真的问候了吗、是模型说的还是兜底的」。 */
+      case 'coach:greet':
+        state.greet = {
+          ok: entry.ok === true,
+          ms: Math.max(0, Number(entry.ms) || 0),
+          fallback: entry.fallback === true,
+          skipped: String(entry.skipped || ''),
         };
         break;
       /* ---------------- 会话状态机（session:*） ----------------

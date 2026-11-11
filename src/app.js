@@ -795,6 +795,12 @@ function applyFreeChat(on) {
 }
 
 /**
+ * 最近一次 `/llm/health` 的结论：`null` = 还不知道；`false` = 明确没配 key。
+ * 进入训练时的主动问候据此决定「直接内置问候、不发请求」（服务端 503 也会兜底，但这样连请求都省了）。
+ */
+let llmConfiguredCache = null;
+
+/**
  * 设置里的「当前 provider / model」那一行。
  * 走 `GET /llm/health`（服务端只回 configured / provider / model / 护栏数值，**不含 key**）；
  * 服务端没起 / 没配 key 都只显示一句说明，不报错、不弹窗。
@@ -809,10 +815,12 @@ async function refreshLlmStatus() {
   }
   const health = await coachLlmClient.health();
   if (!health) {
+    llmConfiguredCache = null;   // 服务器没起 / 断网：不知道，交给会话开始时的 503 兜底
     el.textContent = t('settings.freeChatNoServer');
     el.hidden = false;
     return null;
   }
+  llmConfiguredCache = !!health.configured;
   el.textContent = health.configured
     ? t('settings.freeChatStatus', { provider: health.provider, model: health.model })
     : t('settings.freeChatNotConfigured', { provider: health.provider, model: health.model });
@@ -1518,6 +1526,8 @@ function showHome({ syncRoute = true } = {}) {
   closeMenu();          // 回首页也一定离开手势菜单（收起覆盖层 + menu-mode 样式）
   // 回主页就一定离开「视频框全屏」：主页上全屏只会把整页放大，没有意义
   exitFullscreen();
+  // 回首页 = 这次训练结束：下一次「开始体感训练」可以重新 greeted 一次（同一次训练里切动作不重复）
+  resetSessionGreet();
   // 主页上不校准也不计数：摄像头可以留着预热，但不能在浏览动作时偷偷开始一组
   state.homeMode = true;
   state.session = 'idle';
@@ -4940,6 +4950,113 @@ function selectFromMenu(id) {
   openExercise(id);          // 视频界面已经是全屏的，这里不会再动全屏
 }
 
+/* ------------------------------------------------------------------ *
+ * 会话开始事件（session-start）：进入训练后教练主动问候
+ *
+ * 用户原话：「进入全屏之后应该主动触发一个开始事件，发一个消息给 LLM，这样 AI 教练可以知道
+ * 用户已经开始健身了，可以主动向用户问好。」
+ *
+ * 链路：首页点「开始体感训练」→ `startGestureMode()`（记下这一次要问候）
+ *      → `showWorkout()`（训练界面）→ `requestStageFullscreen()`（全屏，可能异步落定）
+ *      → `startGestureCamera()` 里等权限 / 全屏都落定 → 调 `greetSessionStart()`（**全链路最后一步**）。
+ *
+ * 只触发一次：`sessionGreetDone` 是**会话级布尔** —— 同一次训练里切动作 / 反复进出全屏都不再发；
+ * 回网页首页（`showHome()`）才清零，下一次点「开始」可以再问候一次。
+ * `?autostart` / `?exercise=` 这类无手势路径根本不会 arm，**绝不触发**（避免意外扣费）。
+ *
+ * 失败兜底：LLM 未配置 / 503 / 超时 / 空回复 → 用 `coach.sessionStart.fallback` 的内置问候，
+ * 走**现有** `voice.onCoachText()`（弹幕 + TTS + 降级）—— 绝不静默。
+ * 不打断正在进行的语音：当前状态是 `speaking`（或马上要开口的 `thinking`）就**直接跳过**，不排队、不叠音。
+ * ------------------------------------------------------------------ */
+
+/** 本次训练是否已经问候过（回首页清零） */
+let sessionGreetDone = false;
+/** 这一次「开始体感训练」是否允许问候（只有 startGestureMode 会 arm；?autostart 不会） */
+let sessionGreetArmed = false;
+
+/** 回到首页：下一次训练重新允许问候（退出训练 / 回首页后可以再次触发） */
+function resetSessionGreet() {
+  sessionGreetDone = false;
+  sessionGreetArmed = false;
+}
+
+/** 内置问候（LLM 未配置 / 失败 / 超时；按当前动作 + 目标生成，绝不静默） */
+function sessionGreetFallbackText() {
+  const ex = localizedExercise(state.exerciseId);
+  const target = Math.max(0, Math.round(Number(state.target) || 0));
+  if (!ex || target <= 0) return t('coach.sessionStart.generic');
+  return t('coach.sessionStart.fallback', { name: ex.name, target, unit: ex.targetUnit });
+}
+
+/** 现在能不能开口；不能就返回原因（诊断里会记 `skipped`） */
+function greetBlockedReason() {
+  if (!state.settings.coachEnabled || !voice.enabled) return 'disabled';
+  if (voice.paused) return 'paused';
+  if (voice.muted) return 'muted';
+  if (voice.state === 'off' || voice.state === 'error') return 'disabled';
+  // 正在说 / 马上要开口：**直接跳过**（不排队、不叠音），本次训练不再补问候，避免打断教练
+  if (voice.state === 'speaking') return 'speaking';
+  if (voice.state === 'thinking') return 'thinking';
+  return '';
+}
+
+/**
+ * 会话开始问候（全链路最后一步调用）。
+ * @returns {boolean} 是否真的发起了问候（false = 条件不满足 / 已经问候过）
+ */
+function greetSessionStart() {
+  if (!sessionGreetArmed || sessionGreetDone) return false;
+  const blocked = greetBlockedReason();
+  if (blocked) {
+    try { coachDiag?.record?.('coach:greet', { ok: false, ms: 0, fallback: false, skipped: blocked }); } catch { /* ignore */ }
+    return false;
+  }
+  sessionGreetDone = true;   // 本次训练最多 1 次（失败也不再重试，避免反复扣费）
+  const started = Date.now();
+  const fallback = () => {
+    if (!state.settings.coachEnabled || !voice.enabled || voice.paused) return;
+    try { voice.onCoachText(sessionGreetFallbackText(), { source: 'intro' }); } catch { /* ignore */ }
+  };
+  // 自由对话关掉 / 明确没配置 LLM → 直接内置问候，**不发任何请求**
+  if (!state.settings.freeChat || llmConfiguredCache === false) {
+    try { coachDiag?.record?.('coach:greet', { ok: true, ms: 0, fallback: true }); } catch { /* ignore */ }
+    fallback();
+    return true;
+  }
+  coachLlmClient
+    .respond('', { locale: getLang(), context: getLlmContext(''), event: 'session-start' })
+    .then((res) => {
+      const ms = Math.max(0, Date.now() - started);
+      // 模型刚写了记忆：服务端会回一份最新快照，本地缓存立刻跟上
+      if (res.memory && typeof res.memory === 'object') applyMemoryData(res.memory);
+      const reply = String(res.reply || '').trim();
+      if (reply) {
+        // 回复回来时教练已经在说别的（用户插话 / 命令确认语）：跳过，别打断
+        const late = greetBlockedReason();
+        if (late) {
+          try { coachDiag?.record?.('coach:greet', { ok: false, ms, fallback: false, skipped: late }); } catch { /* ignore */ }
+          return;
+        }
+        try { coachDiag?.record?.('coach:greet', { ok: true, ms, fallback: false }); } catch { /* ignore */ }
+        voice.onCoachText(reply, { source: 'intro' });
+        return;
+      }
+      // 模型只调了工具 / 空回复 → 也当失败，用内置问候，绝不静默
+      try { coachDiag?.record?.('coach:greet', { ok: false, ms, fallback: true }); } catch { /* ignore */ }
+      fallback();
+    })
+    .catch((err) => {
+      const ms = Math.max(0, Date.now() - started);
+      try {
+        coachDiag?.record?.('coach:greet', {
+          ok: false, ms, fallback: true, code: String((err && err.code) || 'llm-error'),
+        });
+      } catch { /* ignore */ }
+      fallback();
+    });
+  return true;
+}
+
 /**
  * 首页那个大「开始」按钮：**先同步进全屏** →（必要时）弹一次授权框 → 开摄像头 → 手势菜单
  *
@@ -4951,6 +5068,10 @@ function selectFromMenu(id) {
  */
 function startGestureMode() {
   if (!Camera.supported()) { setCueLine(t('menu.needCamera'), 'warn'); return; }
+  // 会话开始问候：只有这条「点开始体感训练」的路径会 arm；从首页进来才重置「这次已经问候过」。
+  // 同一次训练里反复调用（例如语音说「开始深蹲」）不会重复问候。
+  if (state.homeMode) sessionGreetDone = false;
+  sessionGreetArmed = true;
   // ⚠️ 全屏必须在**这个点击手势的同步执行栈里**申请：先切视图（#stage 得可见）→ 申请全屏
   // → 再谈权限 / 开摄像头。一旦先 await 了 getUserMedia（可能弹授权框），手势就消耗掉了。
   state.camStoppedForHome = false;   // 摄像头由下面统一开，别让 showWorkout 里再开一次
@@ -5096,6 +5217,14 @@ async function startGestureCamera() {
   } catch (err) {
     console.warn('[camera] permission flow failed:', err?.name || err);
   }
+  /**
+   * 全链路最后一步：训练界面已经进来（`showWorkout()` 在点击回调里同步做了），全屏也落定了
+   * （原生全屏被拒时 `ensureGestureFullscreen()` 已兜成 CSS 伪全屏）→ 让教练主动开口。
+   *
+   * **以「进入训练」为准，不死盯 fullscreen**：伪全屏 / 原生全屏 / 全屏 API 缺失都算开始。
+   * 摄像头被拒那一支在上面已经 `return`，不会走到这里（那时练不了，不该问好）。
+   */
+  greetSessionStart();
 }
 
 /* ------------------------------------------------------------------ *
@@ -8607,6 +8736,9 @@ function boot() {
   // 拉不到（服务器没起 / 断网）也绝不阻塞页面：面板打开时会重试并显示原因。
   state.memory.user = loadMemoryUserId();
   refreshMemory().catch(() => {});
+  // LLM 是否已配置：静默查一次 /llm/health（本地同源，不碰模型、不花钱），
+  // 进入训练时的主动问候据此决定「直接内置问候」还是「发 session-start 请求」。
+  refreshLlmStatus().catch(() => {});
   // 弹窗的初始状态跟 HTML 的 `hidden` 属性对齐（自动化桩里的元素默认 not hidden，
   // 不显式关一次会让 Esc / anyModalOpen 误判成「有个弹窗开着」）
   const memoryModalEl = $('memoryModal');
@@ -8784,6 +8916,8 @@ window.__mfg = {
   //   applyFreeChat    : 设置里「自由对话」开关的唯一入口（关掉就完全不发 /llm）
   llmClient: coachLlmClient, voiceLlm, llmMock: coachLlmMock,
   getLlmContext, buildAgentContext, applyFreeChat, refreshLlmStatus, syncFreeChatToggle,
+  // 会话开始事件（进入训练 → 主动问候）：触发 / 重置 / 内置兜底文案（测试与调试用）
+  greetSessionStart, resetSessionGreet, sessionGreetFallbackText,
   // 三层记忆（长时层在服务端 MD；中时层的「上次未完成 / 训练摘要」由这里同步）
   //   MEMORY_PATH / MEMORY_FORGET_PATH : 路由常量（和 preview-server.js 一致）
   //   getMemoryUserId / setMemoryUserId / resetMemoryUserId : userId 显示 / 修改 / 重置
