@@ -664,6 +664,13 @@ export function createLlmRoutes({
           }
         } catch { /* 记忆读不出来不该挡住对话 */ }
       }
+      /**
+       * 首次见面只自报一次：这里**先看**这轮开始时记没记过。
+       * 没记过 → 本轮 system 里会带「这是首次对话」；等模型正常回完之后，
+       * 由服务端把 `prefs.introSeen` 置 true（**不依赖模型的 remember**，模型忘了也不会复读）。
+       */
+      const introSeen = !!(context && context.memory && context.memory.prefs
+        && context.memory.prefs.introSeen === true);
       const messages = buildLlmMessages({
         text,
         locale,
@@ -689,6 +696,17 @@ export function createLlmRoutes({
             }));
           }
         }
+        /**
+         * 首次成功对话后由服务端标记 `prefs.introSeen = true`：下一轮起 system prompt 不再加
+         * 「先说一次自报家门」。标记失败（磁盘满 / 非法值）**不影响这一句回答**。
+         */
+        let introMarked = false;
+        if (memoryStore && !introSeen) {
+          try {
+            memoryStore.updateMemory(userId, { prefs: { introSeen: true } });
+            introMarked = true;
+          } catch { /* 标记失败就不标，下一轮还会提醒一次 */ }
+        }
         const usage = limitGuard.addUsage(out && out.usage);
         let reply = String((out && out.text) || '').trim();
         // 模型只调了工具没说话 → 让前端的会话层用**命令表自己的短确认**（比编一句通用话准确）；
@@ -712,12 +730,13 @@ export function createLlmRoutes({
               // 只记数量，不记字段值（记忆里是用户个人信息）
               memory: memoryResults.length,
               memoryFailed: memoryResults.filter((r) => !r.ok).length,
+              intro: introMarked ? 1 : 0,
             });
           } catch { /* ignore */ }
         }
         /** 写完记忆回一份最新的快照，前端「教练记得什么」立刻能对上 */
         let memory = null;
-        if (memoryStore && memoryOps.length) {
+        if (memoryStore && (memoryOps.length || introMarked)) {
           try { memory = memoryStore.readMemory(userId); } catch { memory = null; }
         }
         sendJson(res, 200, {

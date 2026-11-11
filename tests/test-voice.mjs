@@ -98,6 +98,8 @@ import {
   LLM_TOOLS, LLM_TOOL_DEFS, TOOL_INTENT_MAP, TOOLED_INTENTS, UNCOVERED_INTENTS,
   UNKNOWN_TOOLED_INTENTS, MAX_TOOL_CALLS, EMPTY_REPLY, EXERCISE_IDS,
   actionsFromToolCalls, toolHelpRows, resolveExerciseId, buildSystemPrompt,
+  DEFAULT_SOUL_PATH, SOUL_MAX_CHARS, FALLBACK_SOUL, soulPath,
+  loadSoulText, readSoul, resetSoulCache,
 } from '../server/llm-tools.mjs';
 import {
   MEMORY_DIR, MEMORY_MAX_BYTES, DEFAULT_USER_ID, MEMORY_SUMMARY_MAX,
@@ -2365,10 +2367,10 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
   })());
 
   // 唤醒词：有就去掉并置 usedWake；没有也照常解析
-  ok('「小迈，暂停」→ pause，usedWake=true（唤醒词被去掉）', (() => {
-    const p = parseCommand('小迈，暂停');
+  ok('「可可，暂停」→ pause，usedWake=true（唤醒词被去掉）', (() => {
+    const p = parseCommand('可可，暂停');
     return p.intent === 'pause' && p.usedWake === true;
-  })(), JSON.stringify(parseCommand('小迈，暂停')));
+  })(), JSON.stringify(parseCommand('可可，暂停')));
   ok('「教练 开始训练」→ startWorkout，usedWake=true', (() => {
     const p = parseCommand('教练 开始训练');
     return p.intent === 'startWorkout' && p.usedWake === true;
@@ -6683,6 +6685,12 @@ console.log('\n[35] /memory 路由：读 / 写 / 忘 / health（临时目录，�
   const os = await import('node:os');
   const http = await import('node:http');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-memory-route-'));
+  // 真实的 server/memory/ 里可能有用户自己的记忆（MD 是 gitignore 的本地数据）：
+  // 这里只要求「测试前后一个文件都不多不少」，**绝不允许**为了跑测试把用户记忆删掉。
+  const repoMemory = path.join(process.cwd(), 'server', 'memory');
+  const repoFilesBefore = (fs.existsSync(repoMemory)
+    ? fs.readdirSync(repoMemory).filter((n) => n.endsWith('.md'))
+    : []).sort();
   const savedEnv = process.env.MFG_MEMORY_DIR;
   process.env.MFG_MEMORY_DIR = dir;
   const { previewHandler } = await import('../preview-server.js');
@@ -6758,16 +6766,182 @@ console.log('\n[35] /memory 路由：读 / 写 / 忘 / health（临时目录，�
 
     ok('.gitignore 里有 server/memory/（个人信息绝不进仓库）',
       /^server\/memory\/$/m.test(fs.readFileSync(path.join(process.cwd(), '.gitignore'), 'utf8')));
-    const repoMemory = path.join(process.cwd(), 'server', 'memory');
-    const repoFiles = fs.existsSync(repoMemory)
+    const repoFilesAfter = (fs.existsSync(repoMemory)
       ? fs.readdirSync(repoMemory).filter((n) => n.endsWith('.md'))
-      : [];
-    ok('/memory 路由只写 MFG_MEMORY_DIR 指过去的临时目录，仓库里的 server/memory/ 一个 .md 都没多',
-      repoFiles.length === 0, repoFiles.join(','));
+      : []).sort();
+    ok('/memory 路由只写 MFG_MEMORY_DIR 指过去的临时目录，仓库里的 server/memory/ 一个 .md 都不多不少',
+      JSON.stringify(repoFilesAfter) === JSON.stringify(repoFilesBefore),
+      `before=${repoFilesBefore.join(',')} after=${repoFilesAfter.join(',')}`);
   } finally {
     await new Promise((r) => srv.close(r));
     if (savedEnv === undefined) delete process.env.MFG_MEMORY_DIR;
     else process.env.MFG_MEMORY_DIR = savedEnv;
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+/* ================================================================== *
+ * [36] 教练人设 SOUL.md：唯一来源 / 兜底 / 截断 / 名字 / introSeen / 红线
+ * ================================================================== */
+console.log('\n[36] 教练人设：SOUL.md 拼进 system prompt（顺序 / 兜底 / 截断 / 名字 / 首次自报 / 红线）');
+{
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const http = await import('node:http');
+  const savedSoulPath = process.env.SOUL_PATH;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-soul-'));
+  const realSoul = fs.readFileSync(DEFAULT_SOUL_PATH, 'utf8');
+  const restoreEnv = () => {
+    if (savedSoulPath === undefined) delete process.env.SOUL_PATH;
+    else process.env.SOUL_PATH = savedSoulPath;
+    resetSoulCache();
+  };
+
+  try {
+    // 默认路径：SOUL.md 原文必须就是 system prompt 的前半部分
+    delete process.env.SOUL_PATH;
+    resetSoulCache();
+    const prompt = buildSystemPrompt();
+    ok('SOUL.md 是 system prompt 的前半部分（从第 0 个字符开始，不是摘要/副本）',
+      prompt.startsWith(realSoul), `prompt=${prompt.length} soul=${realSoul.length}`);
+    ok('SOUL.md 的独特原话真的进了 prompt（「不吼人、不画饼」）',
+      prompt.includes('不吼人、不画饼'));
+    const iSoul = prompt.indexOf(realSoul);
+    const iRules = prompt.indexOf('以下是本产品的运行规则');
+    const iMemory = prompt.indexOf('当前记忆 / Current memory');
+    const iState = prompt.indexOf('state (JSON):');
+    ok('拼装顺序：① SOUL → ② 运行规则 → ③ 当前记忆 → ④ state',
+      iSoul === 0 && iRules > iSoul && iMemory > iRules && iState > iMemory,
+      JSON.stringify({ iSoul, iRules, iMemory, iState }));
+    ok('名字统一：prompt 含「可可」、绝不含旧名（老唤醒词）',
+      /可可/.test(prompt) && !/\u5c0f\u8fc8/.test(prompt));
+    ok('红线一行可机器断言（不羞辱 / 就医 / 不极端 / 隐私 / 直说 / 性别不刻板）',
+      ['不羞辱', '不身材焦虑', '不越界医疗', '建议就医', '不极端节食', '超量训练',
+        '数据隐私', '做不到就直说', '性别不刻板'].every((k) => prompt.includes(k)),
+      ['不羞辱', '不身材焦虑', '不越界医疗', '建议就医', '不极端节食', '超量训练',
+        '数据隐私', '做不到就直说', '性别不刻板'].filter((k) => !prompt.includes(k)).join(','));
+    ok('口头禅「动起来！」有一条，并明确「不要每句都硬加」',
+      prompt.includes('动起来！') && prompt.includes('不要每句都硬加'));
+    const pMale = buildSystemPrompt({ context: { memory: { prefs: { voiceGender: 'male' } } } });
+    ok('性别联动：女 / 男都写进 prompt，说明人格 / 专业度 / 话术一致、不要刻板',
+      /教练性别：女/.test(prompt) && /教练性别：男/.test(pMale)
+      && prompt.includes('不要强化性别刻板印象') && pMale.includes('不要强化性别刻板印象')
+      && prompt.includes('人格、专业度、话术完全一致'));
+
+    // 首次对话只自报一次：introSeen 布尔偏好
+    const first = buildSystemPrompt({ context: { memory: { prefs: {} } } });
+    const seen = buildSystemPrompt({ context: { memory: { prefs: { introSeen: true } } } });
+    ok('introSeen 未见过 → 加「这是首次对话」；见过之后不再加',
+      first.includes('这是首次对话') && !seen.includes('这是首次对话'));
+    ok('memory 单独一段（state JSON 里不重复 introSeen）',
+      seen.includes('当前记忆 / Current memory')
+      && seen.includes('"introSeen":true')
+      && !seen.slice(seen.indexOf('state (JSON):')).includes('introSeen'));
+
+    // SOUL_PATH 覆盖：读环境变量指的文件
+    const customFile = path.join(tmp, 'custom-soul.md');
+    fs.writeFileSync(customFile, '# 自定义人设\n你是可可，测试专用。\n', 'utf8');
+    process.env.SOUL_PATH = customFile;
+    resetSoulCache();
+    const custom = buildSystemPrompt();
+    ok('SOUL_PATH 覆盖：优先读环境变量指的文件',
+      custom.startsWith('# 自定义人设') && custom.includes('测试专用') && soulPath() === customFile);
+
+    // 文件缺失 → 内置兜底 + 只 warn 一条，不抛错
+    process.env.SOUL_PATH = path.join(tmp, 'missing-soul.md');
+    resetSoulCache();
+    const warns = [];
+    const origWarn = console.warn;
+    let fallbackPrompt = '';
+    try {
+      console.warn = (...args) => warns.push(args.join(' '));
+      fallbackPrompt = buildSystemPrompt();
+    } finally {
+      console.warn = origWarn;
+    }
+    ok('SOUL.md 缺失 → 内置兜底人设、不抛错、只 warn 一条',
+      fallbackPrompt.includes('内置兜底人设') && fallbackPrompt.includes('可可')
+      && !fallbackPrompt.startsWith(realSoul)
+      && warns.filter((m) => m.includes('[soul]')).length === 1,
+      JSON.stringify(warns));
+
+    // 超过 12000 字符 → 截断并 warn
+    const longFile = path.join(tmp, 'long-soul.md');
+    fs.writeFileSync(longFile, 'A'.repeat(SOUL_MAX_CHARS + 500), 'utf8');
+    process.env.SOUL_PATH = longFile;
+    resetSoulCache();
+    const longWarns = [];
+    const origWarn2 = console.warn;
+    let longText = '';
+    try {
+      console.warn = (...args) => longWarns.push(args.join(' '));
+      longText = readSoul();
+    } finally {
+      console.warn = origWarn2;
+    }
+    ok('超长 SOUL 截断到 12000 字符并 warn（不会把 token 撑爆）',
+      SOUL_MAX_CHARS === 12000 && longText.length === 12000
+      && longWarns.some((m) => m.includes('截断')),
+      `len=${longText.length} warns=${longWarns.join(' | ')}`);
+    ok('loadSoulText 直接读：缺文件返回同一份兜底人设（测试 / 诊断可用）',
+      loadSoulText(path.join(tmp, 'nope.md'), { logger: { warn: () => {} } }) === FALLBACK_SOUL);
+  } finally {
+    restoreEnv();
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+
+  // 首次成功对话后：服务端自动写 prefs.introSeen=true；下一轮 prompt 不再提醒
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-soul-intro-'));
+  const store = {
+    readMemory: (u) => readMemory(u, { dir }),
+    updateMemory: (u, p) => updateMemory(u, p, { dir }),
+    forgetMemory: (u, t) => forgetMemory(u, t, { dir }),
+  };
+  const seenPrompts = [];
+  const provider = {
+    configured: true,
+    provider: 'mock',
+    model: 'mock',
+    async chat({ messages }) {
+      seenPrompts.push(messages[0].content);
+      return { text: '嗨，我是可可，你的专属教练。不吼人、不画饼，只陪你练到赢。让我们一起动起来！', toolCalls: [] };
+    },
+  };
+  const routes = createLlmRoutes({ provider, config: { configured: true, provider: 'mock', model: 'mock' }, memoryStore: store });
+  const srv = http.createServer(routes);
+  let post = null;
+  try {
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+    post = (body) => new Promise((resolve, reject) => {
+      const data = JSON.stringify(body);
+      const req = http.request({
+        host: '127.0.0.1', port, path: '/llm', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+      });
+      req.on('error', reject);
+      req.end(data);
+    });
+    const one = await post({ user: 'souluser', text: '你是谁？', locale: 'zh' });
+    const saved = readMemory('souluser', { dir });
+    const md = fs.readFileSync(path.join(dir, 'souluser.md'), 'utf8');
+    ok('首轮 prompt 带首次自报提示，回复里是可可',
+      one.status === 200 && seenPrompts[0].includes('这是首次对话')
+      && one.body.reply.includes('可可'));
+    ok('首轮成功后服务端写 prefs.introSeen=true（不依赖模型 remember）',
+      saved.prefs.introSeen === true && /- introSeen: true/.test(md)
+      && one.body.memory?.prefs?.introSeen === true,
+      JSON.stringify({ prefs: saved.prefs, memory: one.body.memory }));
+    const two = await post({ user: 'souluser', text: '今天练什么？', locale: 'zh' });
+    ok('第二轮 prompt 不再提醒自报（introSeen 已 true，记忆里能看到）',
+      two.status === 200 && !seenPrompts[1].includes('这是首次对话')
+      && seenPrompts[1].includes('"introSeen":true'));
+  } finally {
+    await new Promise((r) => srv.close(r));
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 }

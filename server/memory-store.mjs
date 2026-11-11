@@ -66,6 +66,11 @@ export const PREFS_SPEC = Object.freeze({
   /** 教练声音性别（默认 female；male 用 `zh_male_taocheng_uranus_bigtts`，见 volc-tts.mjs） */
   voiceGender: Object.freeze({ type: 'enum', values: Object.freeze(['female', 'male']) }),
   rate: Object.freeze({ type: 'number', min: 0.8, max: 1.3 }),
+  /**
+   * 是否已经自报过家门（布尔）。**由服务端在首次成功对话后置 true**，
+   * 不依赖模型自己记得：`prefs.introSeen !== true` 时 system prompt 会加一条「首次对话」提示。
+   */
+  introSeen: Object.freeze({ type: 'boolean' }),
 });
 
 /** 事实字段白名单（只能由用户主动说；写入必须带 evidence） */
@@ -139,6 +144,12 @@ export function memoryFilePath(userId, dir = MEMORY_DIR) {
 export function normalizeFieldValue(section, field, raw) {
   const spec = (section === 'facts' ? FACTS_SPEC : PREFS_SPEC)[field];
   if (!spec) return { ok: false, reason: 'bad-field' };
+  if (spec.type === 'boolean') {
+    // MD 里是字符串（`- introSeen: true`），接口里是布尔 —— 两种都收，别的值一律 bad-value
+    if (raw === true || raw === 'true' || raw === 1 || raw === '1') return { ok: true, value: true };
+    if (raw === false || raw === 'false' || raw === 0 || raw === '0') return { ok: true, value: false };
+    return { ok: false, reason: 'bad-value' };
+  }
   if (spec.type === 'enum') {
     const s = String(raw == null ? '' : raw).trim();
     if (!spec.values.includes(s)) return { ok: false, reason: 'bad-value' };

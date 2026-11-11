@@ -80,7 +80,7 @@ export const TREND_WEEK_SCORE_DELTA = 3;
  * tests/test-voice.mjs 会直接比对两份数组，漂了就会红）。
  */
 export const AGENT_MEMORY_PREF_FIELDS = Object.freeze([
-  'tone', 'difficulty', 'sessionMinutes', 'restSec', 'voiceSource', 'voiceGender', 'rate',
+  'tone', 'difficulty', 'sessionMinutes', 'restSec', 'voiceSource', 'voiceGender', 'rate', 'introSeen',
 ]);
 export const AGENT_MEMORY_FACT_FIELDS = Object.freeze(['goal', 'injuries', 'weeklyGoal']);
 

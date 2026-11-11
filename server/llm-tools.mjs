@@ -18,6 +18,10 @@
  * 动作 id 也不在这里抄：`start_workout` 的枚举直接来自 `src/catalog.js` 的 `EXERCISES`。
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { COMMANDS } from '../src/voice/commands.js';
 import { EXERCISES, EXERCISE_MAP } from '../src/catalog.js';
 // 记忆白名单只在一处定义（server/memory-store.mjs）：工具能写哪些字段、字段取值范围，
@@ -35,6 +39,89 @@ export const EXERCISE_IDS = Object.freeze(EXERCISES.map((e) => e.id));
 
 /** 一次回答里最多执行几个工具（护栏：防止模型一口气把界面拆了） */
 export const MAX_TOOL_CALLS = 3;
+
+/* ------------------------------------------------------------------ *
+ * 教练人设：`SOUL.md` 是**唯一来源**（一处定义）
+ *
+ *   SOUL.md（仓库根目录）→ buildSystemPrompt() 的**前半部分**
+ *   → 后面才接「运行规则 / 当前记忆 / state」。
+ *
+ * 约束：
+ *   ① 模块加载时读一次并缓存（`readSoul()`）；文件缺失 / 读失败 → 内置精简兜底人设，只 warn 一条，
+ *      **绝不因为少一个 md 就崩**；
+ *   ② `SOUL_PATH` 环境变量可覆盖路径（测试用临时文件）；
+ *   ③ 超过 12000 字符就截断并 warn（防止有人误贴大文件把 token 撑爆）。
+ * ------------------------------------------------------------------ */
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+/** 默认人设文件：仓库根目录的 `SOUL.md` */
+export const DEFAULT_SOUL_PATH = path.resolve(HERE, '..', 'SOUL.md');
+
+/** 人设最多 12000 字符（超出截断；中文约 12000 token 以内，不会撑爆上下文） */
+export const SOUL_MAX_CHARS = 12000;
+
+/** 读不到 SOUL.md 时的精简兜底人设（仍然叫可可教练；不抛错、不空提示词） */
+export const FALLBACK_SOUL = [
+  '# 可可教练 / Coach KK（内置兜底人设）',
+  '你叫可可教练（Coach KK），是一名 AI 健身教练。你陪用户「动起来」，并且一直动下去。',
+  '性格：元气阳光、专业靠谱、温柔坚定、有点小幽默、有分寸感；性别中立的内核，换的是声音与形象，不换的是陪你动起来的心。',
+  '说话：先肯定，再给一个具体可执行的下一步，最后用陪伴感收尾；一次只说一件事，口语、短句。',
+  '自报家门（首次见面说一次，之后不重复）：「嗨，我是可可，你的专属教练。不吼人、不画饼，只陪你练到赢。让我们一起动起来！」',
+  '红线：不羞辱、不身材焦虑；不越界医疗（伤病 / 孕期 / 慢病建议就医）；不极端节食 / 超量训练；保护数据隐私；做不到就直说；性别不刻板。',
+].join('\n');
+
+/** 当前人设文件路径（`SOUL_PATH` 覆盖优先） */
+export function soulPath() {
+  const override = String(process.env.SOUL_PATH || '').trim();
+  return override || DEFAULT_SOUL_PATH;
+}
+
+/**
+ * 读一份人设文件（纯读取 + 截断，不缓存）：测试 / 诊断可以直接用。
+ *
+ * @param {string} [file] 人设文件路径
+ * @param {{maxChars?:number, logger?:{warn?:Function}}} [opts]
+ * @returns {string} 人设正文；读不到 → `FALLBACK_SOUL`
+ */
+export function loadSoulText(file = soulPath(), { maxChars = SOUL_MAX_CHARS, logger = console } = {}) {
+  const warn = (message) => {
+    if (logger && typeof logger.warn === 'function') logger.warn(message);
+  };
+  let text = '';
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    warn(`[soul] 读不到人设文件 ${path.basename(file)}，使用内置兜底人设`);
+    return FALLBACK_SOUL;
+  }
+  if (typeof text !== 'string' || !text.trim()) {
+    warn(`[soul] 人设文件 ${path.basename(file)} 是空的，使用内置兜底人设`);
+    return FALLBACK_SOUL;
+  }
+  if (text.length > maxChars) {
+    warn(`[soul] 人设超过 ${maxChars} 字符，已截断`);
+    return text.slice(0, maxChars);
+  }
+  return text;
+}
+
+/** 模块级缓存：{file, text}；路径变了（例如测试改了 SOUL_PATH）才重读 */
+let soulCache = { file: soulPath(), text: loadSoulText(soulPath()) };
+
+/** 当前生效的人设正文（读一次、缓存；路径变化自动重读） */
+export function readSoul() {
+  const file = soulPath();
+  if (!soulCache || soulCache.file !== file) {
+    soulCache = { file, text: loadSoulText(file) };
+  }
+  return soulCache.text;
+}
+
+/** 清掉缓存（测试在改 `SOUL_PATH` 后用；生产代码不需要） */
+export function resetSoulCache() {
+  soulCache = null;
+}
 
 /** 模型只给了工具、没给文字时的兜底短句（会被 TTS 念出来，必须很短） */
 export const ACTION_REPLY = Object.freeze({
@@ -532,14 +619,50 @@ export function compactContext(context, { maxChars = 6000 } = {}) {
  */
 export function buildSystemPrompt({ locale = 'zh', context = null, maxContextChars = 6000 } = {}) {
   const lang = locale === 'en' ? 'en' : 'zh';
-  const state = compactContext(context, { maxChars: maxContextChars });
-  // 人设：教练性别来自长期偏好（prefs.voiceGender），只影响人称 / 自称，不要刻意
-  const genderRaw = context && context.memory && context.memory.prefs
-    && context.memory.prefs.voiceGender;
+  const soul = readSoul();
+
+  /**
+   * ③ 当前记忆（prefs / facts）单独给一段 —— 人设（①）和运行规则（②）之后、state（④）之前。
+   * state 里**不再重复** memory，避免同一份个人信息在一段 prompt 里出现两次。
+   */
+  const mem = context && typeof context === 'object' && context.memory && typeof context.memory === 'object'
+    ? context.memory
+    : {};
+  const srcPrefs = mem.prefs && typeof mem.prefs === 'object' ? mem.prefs : {};
+  const srcFacts = mem.facts && typeof mem.facts === 'object' ? mem.facts : {};
+  const pick = (src, fields) => {
+    const out = {};
+    for (const field of fields) {
+      const value = src[field];
+      if (value !== undefined && value !== null) out[field] = value;
+    }
+    return out;
+  };
+  const memory = {
+    prefs: pick(srcPrefs, PREFS_FIELDS),
+    facts: pick(srcFacts, FACTS_FIELDS),
+  };
+
+  let stateCtx = context;
+  if (context && typeof context === 'object' && !Array.isArray(context)) {
+    stateCtx = { ...context };
+    delete stateCtx.memory;
+  }
+  const state = compactContext(stateCtx, { maxChars: maxContextChars });
+
+  // 教练性别来自长期偏好（prefs.voiceGender）：只改音色与形象，不改人格 / 话术
+  const genderRaw = srcPrefs.voiceGender;
   const gender = genderRaw === 'male' ? 'male' : 'female';
-  return [
-    '你是「体感健身游戏」里的 AI 教练。用户说的话来自语音识别，可能有口误或同音字。',
-    'You are the AI coach inside a motion fitness game. User text comes from streaming speech recognition and may contain mishearings.',
+  // 首次对话只自报一次：服务端在首次成功回复后把 prefs.introSeen 置 true
+  const introSeen = srcPrefs.introSeen === true;
+
+  const lines = [
+    // ① 人设（SOUL.md 原文；唯一来源）
+    soul,
+    '',
+    '—— 以下是本产品的运行规则（身份与人设见上文 SOUL）/ Product runtime rules (identity and persona are in SOUL above) ——',
+    '你的身份与人设见上文 SOUL。用户说的话来自语音识别，可能有口误或同音字。',
+    'Your identity and persona are defined in SOUL above. User text comes from streaming speech recognition and may contain mishearings.',
     '',
     'Agent 行为准则 / Agent rules:',
     '1. 你能看到用户此刻在做什么、做得怎么样（state 里的 now / session / performance / history / signals）。',
@@ -558,8 +681,8 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
     '   When the user asks to exit, call exit_workout with confirm:true right away; do not ask again.',
     '8. 一次最多调用 3 个工具；改完目标不需要再调一次 report_progress。',
     '   At most 3 tool calls per turn; do not follow a target change with report_progress.',
-    '9. 长期记忆（state.memory）里的 prefs / facts 是用户之前让你记下的，可以直接参考，不要重新问一遍。',
-    '   The prefs / facts in state.memory were remembered earlier — use them without asking again.',
+    '9. 「当前记忆 / Current memory」里的 prefs / facts 是用户之前让你记下的，可以直接参考，不要重新问一遍。',
+    '   The prefs / facts in “Current memory” were remembered earlier — use them without asking again.',
     '10. **记忆规则**：只有当用户**明确要求或明确陈述**时才写记忆 —— 偏好用 remember，事实用 remember_fact。',
     '    **不要根据推测写 facts**；remember_fact 必须带 evidence（用户原话片段），没有 evidence 就不要调它。',
     '    写入前如果与已有记忆冲突（例如之前记的 tone=warm，用户现在说喜欢严格），**先口头确认**再写。',
@@ -569,14 +692,35 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
     '11. **防复读**：state.lastCoachLines 是你最近说过的 5 句，不要重复它们；state.recentEvents 是最近 60 秒的',
     '    计次 / 门控失败 / 关键帧命中，回答「刚才怎么样」时直接引用里面的数字，不要编。',
     '    Do not repeat the lines in state.lastCoachLines; quote state.recentEvents instead of inventing recent numbers.',
-    `12. 教练性别：${gender === 'male' ? '男' : '女'}。用对应的人称与自称（例如「哥 / 姐」）要克制，不要刻意；`
-      + '文案里不要写死「她 / 他」。用户说「换个男声 / 换个女教练」时调用 set_voice_gender。',
-    `    Coach gender: ${gender}. Use matching person / self-reference sparingly and never force it; `
+    `12. 教练性别：${gender === 'male' ? '男' : '女'}（音色与形象不同；人格、专业度、话术完全一致，不要强化性别刻板印象；`
+      + '性别中立的内核不变，人称与自称不要因为性别改变，不要刻意）。',
+    `    Coach gender: ${gender}. Voice and avatar differ only; personality, professionalism and wording are identical. `
+      + 'Do not reinforce gender stereotypes, keep the neutral core, and do not change person/self-reference by gender — '
       + 'never hard-code “she” or “he”. Call set_voice_gender when the user asks for a male / female coach voice.',
     `13. 用用户的语言回答 / Answer in: ${lang === 'en' ? 'English' : '中文'}。`,
+    '14. 回答收尾尽量带一句自然的「动起来！」；**不要每句都硬加**。',
+    '    End with a natural “动起来！” / “Let’s move!” when it fits; never force it into every sentence.',
+    '15. 红线：不羞辱/不身材焦虑；不越界医疗（伤病/孕期/慢病→建议就医）；不极端节食/超量训练；数据隐私；做不到就直说；性别不刻板。',
+    '    Red lines: no shaming or body anxiety; no medical overreach (injury / pregnancy / chronic conditions → see a doctor); '
+      + 'no extreme dieting or overtraining; data privacy; admit what you cannot do; no gender stereotypes.',
+  ];
+
+  if (!introSeen) {
+    lines.push(
+      '这是首次对话，先说一次自报家门（用 SOUL 里那句原文），之后不再重复。',
+      'This is the first conversation: introduce yourself once using the exact line in SOUL, then never repeat it.',
+    );
+  }
+
+  lines.push(
     '',
+    // ③ 当前记忆（prefs / facts）
+    `当前记忆 / Current memory (prefs / facts): ${JSON.stringify(memory)}`,
+    '',
+    // ④ state（客户端算好的结构化快照）
     `state (JSON): ${state}`,
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 export default {
@@ -590,6 +734,13 @@ export default {
   MAX_TOOL_CALLS,
   ACTION_REPLY,
   EMPTY_REPLY,
+  DEFAULT_SOUL_PATH,
+  SOUL_MAX_CHARS,
+  FALLBACK_SOUL,
+  soulPath,
+  loadSoulText,
+  readSoul,
+  resetSoulCache,
   actionsFromToolCalls,
   buildSystemPrompt,
   compactContext,

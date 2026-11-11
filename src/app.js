@@ -845,7 +845,7 @@ const MEMORY_PATH = '/memory';
 const MEMORY_FORGET_PATH = '/memory/forget';
 const MEMORY_USER_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 /** 这些字段要显示 / 进 context（**和 server/memory-store.mjs 的白名单一致**，测试会比对） */
-const MEMORY_PREF_FIELDS = Object.freeze(['tone', 'difficulty', 'sessionMinutes', 'restSec', 'voiceSource', 'voiceGender', 'rate']);
+const MEMORY_PREF_FIELDS = Object.freeze(['tone', 'difficulty', 'sessionMinutes', 'restSec', 'voiceSource', 'voiceGender', 'rate', 'introSeen']);
 const MEMORY_FACT_FIELDS = Object.freeze(['goal', 'injuries', 'weeklyGoal']);
 
 /** 生成一个合法、够随机的 userId（不能有 `.` / `/`，所以不可能穿越路径） */
