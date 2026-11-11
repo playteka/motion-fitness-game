@@ -10,8 +10,10 @@
  *      `session.js` → `COMMANDS[].run(ctx, args)`（P3.2 的同一批 handler），这里不碰任何 state。
  *   ③ **中文 + 英文描述**：既给模型看（function calling 的 description），
  *      也用于「你能做什么」这类回答（`toolHelpRows()`）。
- *   ④ **安全**：`exit_workout` 必须 `confirm: true` 才产生退出动作；否则只回一句
- *      「要退出的话说『确认退出』」，绝不擅自结束训练。
+ *   ④ **安全**：`exit_workout` **不再要求 `confirm`**（用户要求「说退出就退出」✓）：
+ *      模型照旧带 `confirm:true` 也好、没带也好，都会直接产生退出动作，**不会再问用户一遍**。
+ *      服务端不再有「需要确认的工具」→ 旧的 `CONFIRM_PROMPT` 兜底话术已删除；
+ *      通用确认机制仍保留在会话层（`session.js` 的 `pendingConfirm`），留给以后需要确认的动作。
  *
  * 动作 id 也不在这里抄：`start_workout` 的枚举直接来自 `src/catalog.js` 的 `EXERCISES`。
  */
@@ -30,12 +32,6 @@ export const EXERCISE_IDS = Object.freeze(EXERCISES.map((e) => e.id));
 
 /** 一次回答里最多执行几个工具（护栏：防止模型一口气把界面拆了） */
 export const MAX_TOOL_CALLS = 3;
-
-/** `exit_workout` 没带 confirm 时的回话（中英各一句；服务端按 locale 选） */
-export const CONFIRM_PROMPT = Object.freeze({
-  zh: '要退出的话说「确认退出」。',
-  en: 'Say "confirm exit" if you really want to leave the workout.',
-});
 
 /** 模型只给了工具、没给文字时的兜底短句（会被 TTS 念出来，必须很短） */
 export const ACTION_REPLY = Object.freeze({
@@ -69,7 +65,7 @@ const oneOf = (description, values) => ({ type: 'string', description, enum: [..
  *   intents    对应命令表里的 intent（可以一对多，例如 navigate 覆盖 5 条）
  *   zh / en    一句中文 / 英文描述
  *   parameters JSON Schema
- *   map(args)  → { intent, args } 或 { refused: 'confirm' | 'bad-args' | ... }
+ *   map(args)  → { intent, args } 或 { refused: 'bad-args' | ... }
  */
 export const LLM_TOOL_DEFS = Object.freeze([
   /* ---------------- 训练 ---------------- */
@@ -115,17 +111,16 @@ export const LLM_TOOL_DEFS = Object.freeze([
   Object.freeze({
     name: 'exit_workout',
     intents: ['exit'],
-    zh: '退出当前这一组（**必须先问用户一次**，只有用户明确说「确认退出」时才能带 confirm:true）。',
-    en: 'Leave the current set. Ask the user first; only set confirm:true after they explicitly confirm.',
-    /** 安全标记：没带 confirm 只问不执行（服务端 + 会话层各拦一次） */
-    requiresConfirm: true,
+    zh: '退出当前这一组（**直接退出，不再问一遍**）。',
+    en: 'Leave the current set right away (no extra confirmation).',
+    /**
+     * `confirm` 只为兼容系统提示词里「带 confirm:true」的写法保留：可选、可省略，
+     * 服务端**不再**据此拦截。说退出就退出（用户要求）。
+     */
     parameters: schema({
-      confirm: bool('用户是否已经明确确认退出 / did the user explicitly confirm'),
+      confirm: bool('兼容字段，可省略；服务端不再据此拦截 / optional and ignored'),
     }),
-    map(args) {
-      if (args.confirm !== true) return { refused: 'confirm' };
-      return { intent: 'exit', args: { confirm: true } };
-    },
+    map: () => ({ intent: 'exit', args: {} }),
   }),
   Object.freeze({
     name: 'retry_set',
@@ -349,13 +344,13 @@ export function resolveExerciseId(value) {
  *
  * @param {Array<{name:string,args:object}>} toolCalls 模型返回的工具调用
  * @param {object} [opts]
- * @param {'zh'|'en'} [opts.locale='zh'] 拒绝话术用哪种语言
+ * @param {'zh'|'en'} [opts.locale='zh'] 保留参数（当前没有需要 locale 的拒绝话术）
  * @returns {{ actions: Array<{intent:string,args:object}>,
  *            refusals: Array<{name:string,reason:string}>,
- *            prompts: string[] }}
+ *            prompts: string[] }} prompts 目前恒为空（没有工具需要二次确认），字段保留给以后
  */
 export function actionsFromToolCalls(toolCalls, { locale = 'zh' } = {}) {
-  const lang = locale === 'en' ? 'en' : 'zh';
+  void locale;   // 兼容旧调用；拒绝话术已全部走通用兜底
   const actions = [];
   const refusals = [];
   const prompts = [];
@@ -375,8 +370,6 @@ export function actionsFromToolCalls(toolCalls, { locale = 'zh' } = {}) {
     }
     if (!mapped || (mapped.refused && !mapped.intent)) {
       refusals.push({ name, reason: (mapped && mapped.refused) || 'bad-args' });
-      // 退出没确认：模型没带 confirm，回一句「要退出就说确认退出」，别的拒绝就不多嘴
-      if (mapped && mapped.refused === 'confirm') prompts.push(CONFIRM_PROMPT[lang]);
       continue;
     }
     if (!mapped.intent || !COMMANDS.some((c) => c.intent === mapped.intent)) {
@@ -430,7 +423,8 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
     '6. 用户问「刚才哪里没做好 / 这组怎么样」时：直接用 performance.keyframes / signals.keyframeHitRate 里的数字回答，'
       + '**不要**调 report_progress（那是「念给我听」才用的）。',
     '   For "how did I do / what went wrong", answer from performance / signals directly; do not call report_progress.',
-    '7. 退出训练（exit_workout）必须先问一次；只有用户明确说「确认退出 / confirm exit」才带 confirm:true。',
+    '7. 用户说退出就**直接退出**（exit_workout，带 confirm:true），不要再问一遍 ✗。',
+    '   When the user asks to exit, call exit_workout with confirm:true right away; do not ask again.',
     '8. 一次最多调用 3 个工具；改完目标不需要再调一次 report_progress。',
     `9. 用用户的语言回答 / Answer in: ${lang === 'en' ? 'English' : '中文'}。`,
     '',
@@ -447,7 +441,6 @@ export default {
   UNCOVERED_INTENTS,
   UNKNOWN_TOOLED_INTENTS,
   MAX_TOOL_CALLS,
-  CONFIRM_PROMPT,
   ACTION_REPLY,
   EMPTY_REPLY,
   actionsFromToolCalls,

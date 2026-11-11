@@ -91,7 +91,7 @@ import {
 } from '../server/llm-provider.mjs';
 import {
   LLM_TOOLS, LLM_TOOL_DEFS, TOOL_INTENT_MAP, TOOLED_INTENTS, UNCOVERED_INTENTS,
-  UNKNOWN_TOOLED_INTENTS, MAX_TOOL_CALLS, CONFIRM_PROMPT, EMPTY_REPLY, EXERCISE_IDS,
+  UNKNOWN_TOOLED_INTENTS, MAX_TOOL_CALLS, EMPTY_REPLY, EXERCISE_IDS,
   actionsFromToolCalls, toolHelpRows, resolveExerciseId,
 } from '../server/llm-tools.mjs';
 import { LOCALES, setLang, t } from '../src/i18n.js';
@@ -2286,9 +2286,10 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
     COMMANDS.every((c) => c.zh.length > 0 && c.en.length > 0
       && typeof c.helpKey === 'string' && c.helpKey.startsWith('coach.commandHelp.')
       && typeof c.run === 'function'));
-  ok('只有 exit 需要二次确认（confirm: true），其它命令都不弹确认',
-    COMMANDS.filter((c) => c.confirm === true).map((c) => c.intent).join(',') === 'exit');
-  ok('确认等待时间就是用户要求的 8 秒（COMMAND_CONFIRM_MS）', COMMAND_CONFIRM_MS === 8000);
+  ok('没有任何命令需要二次确认（confirm !== true）：说退出就退出',
+    COMMANDS.every((c) => c.confirm !== true),
+    JSON.stringify(COMMANDS.filter((c) => c.confirm === true).map((c) => c.intent)));
+  ok('确认机制本身仍在（8 秒等待常量保留，留给以后需要确认的动作）', COMMAND_CONFIRM_MS === 8000);
 
   for (const cmd of COMMANDS) {
     const [zh, en] = SAMPLES[cmd.intent];
@@ -2397,11 +2398,28 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
 }
 
 /* ================================================================== *
- * 22. P3.2 快车道执行 + exit 的 pendingConfirm 状态机
+ * 22. P3.2 快车道执行 + 通用确认状态机（合成命令；exit 已改成说退出就退出）
  * ================================================================== */
-console.log('\n[23] P3.2 快车道执行 + exit 确认状态机（8 秒自动取消）');
+console.log('\n[23] P3.2 快车道执行 + 通用确认状态机（合成命令 / 8 秒超时）');
 {
   setLang('zh', { persist: false });
+
+  /**
+   * 用一条**合成命令**驱动通用确认机制：`confirm: true` 的命令才会先问确认。
+   * `exit` 已经不需要确认了（用户要求「说退出就退出」），但 `session.js` 的
+   * `pendingConfirm` / `COMMAND_CONFIRM_MS` 机制保留 —— 这条合成命令就是它的夹具。
+   */
+  const DEMO_CONFIRM = Object.freeze({
+    intent: 'demoConfirm',
+    zh: Object.freeze(['演示确认']),
+    en: Object.freeze(['demo confirm']),
+    helpKey: 'coach.commandHelp.demoConfirm',
+    confirm: true,
+    run(ctx) {
+      ctx.demoAction?.();
+      return { key: 'coach.cmdAck.done' };
+    },
+  });
 
   /** 一整套假 ctx：只记录被调用了哪些现有函数，不改状态 */
   function makeCtx(overrides = {}) {
@@ -2441,6 +2459,8 @@ console.log('\n[23] P3.2 快车道执行 + exit 确认状态机（8 秒自动取
       changeLang: (lang) => calls.push(['changeLang', lang]),
       openVoiceHelp: () => calls.push(['openVoiceHelp']),
       closeVoiceHelp: () => calls.push(['closeVoiceHelp']),
+      /** 合成命令的执行痕迹（证明「确认后才真的执行」） */
+      demoAction: () => calls.push(['demoAction']),
       ...overrides,
     };
     return ctx;
@@ -2453,13 +2473,20 @@ console.log('\n[23] P3.2 快车道执行 + exit 确认状态机（8 秒自动取
       mic: fakeMic(),
       asr: fakeAsr(),
       tts,
-      llm: { reply: () => { llmCalls.n += 1; return { text: 'LLM-REPLY' }; } },
+      llm: {
+        reply: opts.llmReply || (() => { llmCalls.n += 1; return { text: 'LLM-REPLY' }; }),
+      },
       commandCtx: ctx,
+      // 合成确认命令：塞进会话的命令表（`parseCommand` 不认它，靠 LLM 回合的 actions 驱动）
+      ...(opts.commands ? { commands: opts.commands } : {}),
       thinkDelay: 0,
       confirmMs: opts.confirmMs ?? 30,
     });
     return { session, tts, llmCalls };
   }
+
+  /** 让 LLM 回合返回一条「需要确认」的合成命令 action */
+  const demoReply = () => ({ actions: [{ intent: 'demoConfirm', args: {} }] });
 
   /** 让教练把话说完 → 回到 listening（下一步的确认才听得到） */
   async function speakDone(session, tts) {
@@ -2581,57 +2608,99 @@ console.log('\n[23] P3.2 快车道执行 + exit 确认状态机（8 秒自动取
     session.stop();
   }
 
-  // ⑦ exit：第一次只问确认，不执行
+  // ⑦ exit：说退出就退出 —— 立刻执行，不再问确认
   {
     const ctx = makeCtx();
     const { session, tts } = makeCommandSession(ctx);
     await session.start();
     session.onUserText('退出');
-    ok('第一次说「退出」**不执行**：pendingConfirm.intent=exit，菜单没打开',
-      session.pendingConfirm && session.pendingConfirm.intent === 'exit'
-      && !ctx.calls.some((c) => c[0] === 'openMenu')
-      && !ctx.calls.some((c) => c[0] === 'showHome'),
-      JSON.stringify({ pending: session.pendingConfirm, calls: ctx.calls }));
-    ok('教练问「确认退出吗？说『确认』或『取消』」',
-      session.snapshot().coachText === t('coach.confirm.ask'),
+    ok('说「退出」立刻执行：openMenu 当场被调用、pendingConfirm 为 null（不再等确认）',
+      ctx.calls.some((c) => c[0] === 'openMenu')
+      && session.pendingConfirm === null,
+      JSON.stringify({ calls: ctx.calls, pending: session.pendingConfirm }));
+    ok('字幕直接说「好的，退出这一组」，没有确认问句',
+      session.snapshot().coachText === t('coach.cmdAck.exit'),
       session.snapshot().coachText);
     await speakDone(session, tts);
+    session.stop();
+  }
 
-    session.onUserText('确认');
-    ok('再喂「确认」→ 真的退出（openMenu），pending 清空',
-      ctx.calls.some((c) => c[0] === 'openMenu')
+  // ⑦b 已经在菜单里说「退出」→ 直接回网页首页（同样不确认）
+  {
+    const ctx = makeCtx();
+    ctx.setSnap({ menuMode: true });
+    const { session } = makeCommandSession(ctx);
+    await session.start();
+    session.onUserText('退出');
+    ok('菜单里说「退出」→ 直接 showHome（不确认、pending 为 null）',
+      ctx.calls.some((c) => c[0] === 'showHome')
       && session.pendingConfirm === null,
       JSON.stringify({ calls: ctx.calls, pending: session.pendingConfirm }));
     session.stop();
   }
 
-  // ⑧ 取消：不执行
+  // ⑧ 通用确认机制（合成命令 confirm:true）：先问一句，确认后才执行
   {
     const ctx = makeCtx();
-    const { session, tts } = makeCommandSession(ctx);
+    const { session, tts } = makeCommandSession(ctx, {
+      commands: [DEMO_CONFIRM],
+      llmReply: demoReply,
+    });
     await session.start();
-    session.onUserText('退出');
+    session.onUserText('演示确认');
+    await tick(8);
+    ok('需要确认的合成命令：先问一句、还没执行（pending=demoConfirm、demoAction 未调用）',
+      session.pendingConfirm?.intent === 'demoConfirm'
+      && !ctx.calls.some((c) => c[0] === 'demoAction')
+      && session.snapshot().coachText === t('coach.confirm.ask'),
+      JSON.stringify({ pending: session.pendingConfirm, calls: ctx.calls,
+        coach: session.snapshot().coachText }));
+    await speakDone(session, tts);
+
+    session.onUserText('确认');
+    ok('再喂「确认」→ 合成命令真的执行（demoAction），pending 清空',
+      ctx.calls.some((c) => c[0] === 'demoAction')
+      && session.pendingConfirm === null,
+      JSON.stringify({ calls: ctx.calls, pending: session.pendingConfirm }));
+    session.stop();
+  }
+
+  // ⑨ 取消：不执行
+  {
+    const ctx = makeCtx();
+    const { session, tts } = makeCommandSession(ctx, {
+      commands: [DEMO_CONFIRM],
+      llmReply: demoReply,
+    });
+    await session.start();
+    session.onUserText('演示确认');
+    await tick(8);
     await speakDone(session, tts);
     session.onUserText('取消');
-    ok('「取消」→ 不退出、pending 清空、字幕说「好，不退出」',
-      !ctx.calls.some((c) => c[0] === 'openMenu')
+    ok('「取消」→ 不执行合成命令、pending 清空、字幕说「好，取消了」',
+      !ctx.calls.some((c) => c[0] === 'demoAction')
       && session.pendingConfirm === null
       && session.snapshot().coachText === t('coach.confirm.cancelled'),
       JSON.stringify({ calls: ctx.calls, coach: session.snapshot().coachText }));
     session.stop();
   }
 
-  // ⑨ 8 秒没回应 → 自动取消（用 confirmMs=20 模拟）
+  // ⑩ 8 秒没回应 → 自动取消（用 confirmMs=20 模拟）
   {
     const ctx = makeCtx();
-    const { session } = makeCommandSession(ctx, { confirmMs: 20 });
+    const { session } = makeCommandSession(ctx, {
+      confirmMs: 20,
+      commands: [DEMO_CONFIRM],
+      llmReply: demoReply,
+    });
     await session.start();
-    session.onUserText('退出');
+    session.onUserText('演示确认');
+    await tick(8);
     ok('等待确认期间 pendingConfirm 有记录',
       !!session.snapshot().pendingConfirm);
     await new Promise((r) => setTimeout(r, 40));
     ok('20ms 里没有回应（等价于 8 秒）→ 自动取消：不执行、pending 清空、字幕提示超时',
-      !ctx.calls.some((c) => c[0] === 'openMenu')
+      !ctx.calls.some((c) => c[0] === 'demoAction')
       && session.pendingConfirm === null
       && session.snapshot().coachText === t('coach.confirm.timeout'),
       JSON.stringify({ calls: ctx.calls, pending: session.pendingConfirm,
@@ -2639,28 +2708,36 @@ console.log('\n[23] P3.2 快车道执行 + exit 确认状态机（8 秒自动取
     session.stop();
   }
 
-  // ⑩ 等确认时说了别的话 → 再问一次，不会误执行
+  // ⑪ 等确认时说了别的话 → 再问一次，不会误执行
   {
     const ctx = makeCtx();
-    const { session, tts } = makeCommandSession(ctx);
+    const { session, tts } = makeCommandSession(ctx, {
+      commands: [DEMO_CONFIRM],
+      llmReply: demoReply,
+    });
     await session.start();
-    session.onUserText('退出');
+    session.onUserText('演示确认');
+    await tick(8);
     await speakDone(session, tts);
     session.onUserText('今天天气不错');
-    ok('等确认时说了别的话 → 再问一次「确认 / 取消」，pending 还在',
+    ok('等确认时说了别的话 → 再问一次「确认 / 取消」，pending 还在、没执行',
       session.pendingConfirm !== null
       && session.snapshot().coachText === t('coach.confirm.repeat')
-      && !ctx.calls.some((c) => c[0] === 'openMenu'),
+      && !ctx.calls.some((c) => c[0] === 'demoAction'),
       JSON.stringify({ pending: session.pendingConfirm, coach: session.snapshot().coachText }));
     session.stop();
   }
 
-  // ⑪ stop / pause 会清掉等待中的确认（不留悬空计时器）
+  // ⑫ stop / pause 会清掉等待中的确认（不留悬空计时器）
   {
     const ctx = makeCtx();
-    const { session } = makeCommandSession(ctx);
+    const { session } = makeCommandSession(ctx, {
+      commands: [DEMO_CONFIRM],
+      llmReply: demoReply,
+    });
     await session.start();
-    session.onUserText('退出');
+    session.onUserText('演示确认');
+    await tick(8);
     session.stop();
     ok('关闭教练 / 页面隐藏时，等待中的确认会被清掉', session.pendingConfirm === null);
   }
@@ -3825,18 +3902,19 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
       resolveExerciseId('平板支撑') === null && resolveExerciseId('plank') === 'plank'
       && call('start_workout', { exerciseId: 'no-such' }).actions.length === 0);
 
-    // 安全：exit_workout 没带 confirm → 不产生退出动作，只回一句确认话
+    // exit_workout 不再需要 confirm：没带也照样产生退出动作（说退出就退出）
     const noConfirm = actionsFromToolCalls([{ name: 'exit_workout', args: {} }], { locale: 'zh' });
-    ok('安全：exit_workout 不带 confirm → **不执行**，只提示「要退出的话说确认退出」',
-      noConfirm.actions.length === 0 && noConfirm.refusals[0]?.reason === 'confirm'
-      && noConfirm.prompts[0] === CONFIRM_PROMPT.zh,
+    ok('exit_workout 不带 confirm → 照样产生 exit 动作（不再问一遍）',
+      noConfirm.actions.length === 1 && noConfirm.actions[0].intent === 'exit'
+      && noConfirm.refusals.length === 0 && noConfirm.prompts.length === 0,
       JSON.stringify(noConfirm));
-    const enPrompt = actionsFromToolCalls([{ name: 'exit_workout', args: {} }], { locale: 'en' });
-    ok('英文界面同一句提示用英文（英文界面下也不擅自退出）',
-      enPrompt.actions.length === 0 && enPrompt.prompts[0] === CONFIRM_PROMPT.en);
+    const enNoConfirm = actionsFromToolCalls([{ name: 'exit_workout', args: {} }], { locale: 'en' });
+    ok('英文界面同一行为：exit_workout 不带 confirm 也直接执行',
+      enNoConfirm.actions.length === 1 && enNoConfirm.actions[0].intent === 'exit'
+      && enNoConfirm.prompts.length === 0);
     const confirmed = call('exit_workout', { confirm: true });
-    ok('exit_workout 带 confirm:true → exit{confirm:true}',
-      confirmed.actions[0]?.intent === 'exit' && confirmed.actions[0]?.args.confirm === true);
+    ok('exit_workout 带 confirm:true 也照样是 exit（兼容旧调用，action 里不残留 confirm）',
+      confirmed.actions[0]?.intent === 'exit' && confirmed.actions[0]?.args.confirm === undefined);
 
     // 异常输入：未知工具 / 参数不合法 / 超过上限
     const junk = actionsFromToolCalls([{ name: 'rm_rf', args: {} }, { name: 'set_target', args: { value: 0 } }]);
@@ -4042,7 +4120,7 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
     ok('system 提示里明确写了「数字由客户端算好，不许自己编」',
       /不许自己编/.test(sys.content) && /Never invent numbers/.test(sys.content));
 
-    // exit_workout 没带 confirm：不产生退出动作，reply 换成确认话
+    // exit_workout 没带 confirm：照样返回 exit 动作（不再回「要退出就说确认退出」）
     const exitNoConfirm = createMockLlmProvider({ script: [{ toolCalls: [{ name: 'exit_workout', args: {} }] }] });
     const routeExit = createLlmRoutes({ provider: exitNoConfirm, config: cfg, guard: createLlmGuard(), logger: () => {} });
     const srv2 = httpMod.createServer(routeExit);
@@ -4060,9 +4138,9 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
       req.end(JSON.stringify({ text: '退出吧', locale: 'zh' }));
     });
     const exitJson = JSON.parse(expr.body);
-    ok('安全：模型只说 exit_workout（没 confirm）→ actions 里**没有 exit**，回复是「要退出就说确认退出」',
-      expr.status === 200 && exitJson.actions.length === 0
-      && exitJson.reply === CONFIRM_PROMPT.zh,
+    ok('exit_workout 不带 confirm（服务端）→ 直接返回 exit 动作，回复留空（等前端念命令表的短确认）',
+      expr.status === 200 && exitJson.actions.length === 1
+      && exitJson.actions[0].intent === 'exit' && exitJson.reply === '',
       expr.body);
     await new Promise((r) => srv2.close(r));
 
@@ -4476,21 +4554,23 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
       && s.snapshot().recentCommands.includes('setTarget'),
       JSON.stringify(s.snapshot().recentCommands));
 
-    // exit 没 confirm：只问不执行
+    // exit 不再需要 confirm：LLM 给的 exit 直接执行，不再问确认
     const calls2 = [];
-    const ctx2 = new Proxy({}, { get: () => (...a) => { calls2.push(a); } });
+    const ctx2 = new Proxy({}, { get: (_t, key) => (...a) => { calls2.push(String(key)); } });
     const s2 = createVoiceSession({
       mic: fakeMic(), asr: fakeAsr(), tts: fakeTts(),
       llm: { reply: () => ({ text: '好，退出。', actions: [{ intent: 'exit', args: {} }] }) },
       commandCtx: ctx2, thinkDelay: 0,
     });
     await s2.start();
-    s2.onUserText('退出吧');
+    // 这句话**故意不含「退出」**（否则会命中命令快车道），要走 LLM 回合才测得到工具动作
+    s2.onUserText('我不太想练了');
     await tick(8);
-    ok('安全网：LLM 给的 exit 没带 confirm → 不执行 exit，改成问一句确认',
-      s2.pendingConfirm && s2.pendingConfirm.intent === 'exit'
-      && s2.snapshot().coachText === t('coach.confirm.ask'),
-      JSON.stringify({ pending: s2.pendingConfirm, coach: s2.snapshot().coachText }));
+    ok('LLM 给的 exit 不带 confirm → 直接执行（openMenu 被调用），pendingConfirm 为 null',
+      s2.pendingConfirm === null && calls2.includes('openMenu')
+      && s2.snapshot().coachText === '好，退出。',
+      JSON.stringify({ pending: s2.pendingConfirm, calls: calls2,
+        coach: s2.snapshot().coachText }));
     s2.stop();
 
     // 「教练在想…」：1.5s 没回来才出现（测试把 thinkSlowMs 调成 20ms）

@@ -1607,14 +1607,16 @@ export default {
 
     /* ---------------- P3.2 command fast lane ---------------- */
     /**
-     * Confirmation words: matched **only while waiting for confirmation** (after the first "exit").
+     * Confirmation words: matched **only while waiting for confirmation** (generic mechanism,
+     * driven by `COMMANDS[].confirm`). No command needs a confirmation today (`exit` leaves right
+     * away); this word list and wording stay for future actions.
      * The command table itself lives in src/voice/commands.js; its phrases are `commands` below.
      */
     confirmWords: ['confirm', 'yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'correct', 'right'],
     cancelWords: ['cancel', 'no', 'nope', 'never mind', 'abort', 'negative', 'stop it'],
     confirm: {
-      ask: 'Exit for sure? Say "confirm" or "cancel".',
-      cancelled: 'Okay, staying in.',
+      ask: 'Are you sure? Say "confirm" or "cancel".',
+      cancelled: 'Okay, cancelled.',
       timeout: 'I did not hear a confirmation, so I cancelled it.',
       repeat: 'Waiting for your confirmation: say "confirm" or "cancel".',
     },
@@ -1670,7 +1672,7 @@ export default {
       startWorkout: 'Start training (say "start" or "train squats"; a target works too: "squat 20 reps")',
       pause: 'Pause this set',
       resume: 'Resume this set',
-      exit: 'Exit this set (**asks for confirmation first**)',
+      exit: 'Exit this set (**immediately, no second confirmation**)',
       retrySet: 'Do another set (reset the count and restart the countdown)',
       nextExercise: 'Switch to the next exercise in the library',
       setTarget: 'Set the target to N reps / seconds ("set target to 20 reps", "target one minute")',

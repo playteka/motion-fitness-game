@@ -14,8 +14,8 @@
  *     由 `i18n.js` 统一取（`tests/test-i18n.mjs` 因此能继续检查中英对称）；
  *   - 没有匹配上就返回 `unknown`（见 `parse.js`），**绝不猜**。
  *
- * `exit` 带 `confirm: true`：会话状态机会先问一次，下一步的「确认 / 取消」才生效，
- * 8 秒没回应自动取消（见 `COMMAND_CONFIRM_MS` 与 `session.js` 的 `pendingConfirm`）。
+ * `exit` **不再二次确认**（用户要求：说退出就退出 ✓）：`confirm: false`，命令一到就执行。
+ * 旧的「确认 / 取消」状态机仍保留在 session.js 里（其它需要确认的动作以后还能用）。
  */
 
 import { t, LOCALES } from '../i18n.js';
@@ -248,7 +248,9 @@ export const COMMANDS = Object.freeze([
     },
   }),
   command('exit', {
-    confirm: true,
+    // 说退出就退出（用户要求）：不再走二次确认。确认机制本身仍在 session.js 里
+    // （`pendingConfirm` + `COMMAND_CONFIRM_MS`），留给以后真正需要确认的动作。
+    confirm: false,
     run(ctx) {
       const s = snapshotOf(ctx);
       // 训练里「退出」= 回手势菜单（和右上角退出圆环同一个动作）；

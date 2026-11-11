@@ -8944,7 +8944,7 @@ console.log('\n[18] 右上角「设置」环 → 中间选择每组次数 / 秒�
  * [19] P3.2 命令快车道：真实 app.js + DOM 桩，喂一句话看界面真的变了
  *
  * 覆盖用户要求的那几条：
- *   暂停 / 设目标 / 退出确认（确认·取消·超时）/ 开始深蹲 / 帮助 / 胡话。
+ *   暂停 / 设目标 / 退出（直接生效，不再二次确认）/ 开始深蹲 / 帮助 / 胡话。
  * 走的是 `voice.onUserText()` 的真实路径：parseCommand → run(ctx) → 字幕 + 状态。
  * ------------------------------------------------------------------ */
 
@@ -9025,49 +9025,41 @@ console.log('\n[19] P3.2 命令快车道：喂一句话 → 界面真的变了')
     elements.get('coachCoachText').textContent);
   await finishSpeech(utter);
 
-  /* ---- ④ 「退出」→ 先问确认；「确认」才真的退出 ---- */
+  /* ---- ④ 「退出」→ 直接退出（回手势菜单），不再问确认 ---- */
   api.state.session = 'running';
   utter = await feed('退出');
-  ok('喂「退出」→ **不立即退出**：还没进菜单，pendingConfirm=intent exit，字幕问确认',
-    api.state.menuMode === false
-    && api.voice.pendingConfirm && api.voice.pendingConfirm.intent === 'exit'
-    && elements.get('coachCoachText').textContent === tC('coach.confirm.ask'),
-    JSON.stringify({ menuMode: api.state.menuMode, pending: api.voice.pendingConfirm,
-      coach: elements.get('coachCoachText').textContent }));
-  await finishSpeech(utter);
-
-  utter = await feed('确认');
-  ok('再喂「确认」→ 真的退出（回手势菜单），pending 清空',
-    api.state.menuMode === true && api.voice.pendingConfirm === null,
+  ok('喂「退出」→ **立刻退出**：直接回手势菜单、pendingConfirm 为 null（不再问确认）',
+    api.state.menuMode === true
+    && api.voice.pendingConfirm === null,
     JSON.stringify({ menuMode: api.state.menuMode, pending: api.voice.pendingConfirm }));
+  ok('字幕直接说「好的，退出这一组」（没有确认问句）',
+    elements.get('coachCoachText').textContent === tC('coach.cmdAck.exit'),
+    elements.get('coachCoachText').textContent);
   await finishSpeech(utter);
 
-  /* ---- ⑤ 「退出」→「取消」：不退出 ---- */
+  /* ---- ⑤ 菜单里说「退出」→ 直接回网页首页（同样不确认） ---- */
+  utter = await feed('退出');
+  ok('菜单里说「退出」→ 直接回网页首页（homeMode=true、menuMode=false、pending 为 null）',
+    api.state.homeMode === true && api.state.menuMode === false
+    && api.voice.pendingConfirm === null,
+    JSON.stringify({ homeMode: api.state.homeMode, menuMode: api.state.menuMode,
+      pending: api.voice.pendingConfirm }));
+  await finishSpeech(utter);
+
+  /* ---- ⑥ 说「退出」不会在 8 秒后冒出确认 / 超时（确认机制没挂到 exit 上） ---- */
   api.showHome();
   api.openExercise('squat');
   api.state.session = 'running';
-  utter = await feed('退出');
-  await finishSpeech(utter);
-  utter = await feed('取消');
-  ok('喂「取消」→ 不退出：还在训练页、menuMode=false、pending 清空',
-    api.state.menuMode === false && api.state.homeMode === false
-    && api.state.exerciseId === 'squat' && api.voice.pendingConfirm === null,
-    JSON.stringify({ menuMode: api.state.menuMode, homeMode: api.state.homeMode,
-      exercise: api.state.exerciseId, pending: api.voice.pendingConfirm }));
-  await finishSpeech(utter);
-
-  /* ---- ⑥ 8 秒没回应 → 自动取消（测试里把 confirmMs 调到 30ms） ---- */
   api.voice.confirmMs = 30;
   utter = await feed('退出');
-  ok('超时测试：先进入等待确认', api.voice.pendingConfirm?.intent === 'exit');
   await wait(70);
-  ok('30ms 没回应（等价于 8 秒）→ 自动取消：不退出、pending 清空、字幕提示超时',
-    api.state.menuMode === false && api.voice.pendingConfirm === null
-    && elements.get('coachCoachText').textContent === tC('coach.confirm.timeout'),
+  ok('说「退出」后等 70ms（等价于 8 秒）：不会冒出确认 / 超时提示，已经退出',
+    api.state.menuMode === true && api.voice.pendingConfirm === null
+    && elements.get('coachCoachText').textContent === tC('coach.cmdAck.exit'),
     JSON.stringify({ menuMode: api.state.menuMode, pending: api.voice.pendingConfirm,
       coach: elements.get('coachCoachText').textContent }));
   api.voice.confirmMs = 8000;   // 恢复默认 8 秒
-  await finishSpeech(coachStubs.utterances.at(-1));   // 超时提示说完 → 回到 listening
+  await finishSpeech(utter);
 
   /* ---- ⑦ 「开始深蹲」→ 走 startGestureMode（全屏 + 权限）+ 进入深蹲 ---- */
   api.showHome();

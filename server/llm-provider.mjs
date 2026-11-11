@@ -604,7 +604,7 @@ export function createLlmRoutes({
         const usage = limitGuard.addUsage(out && out.usage);
         let reply = String((out && out.text) || '').trim();
         // 模型只调了工具没说话 → 让前端的会话层用**命令表自己的短确认**（比编一句通用话准确）；
-        // 退出没确认 → 用确认话术；什么都没给 → 一句「没听懂」。
+        // prompts 现在恒为空（没有工具需要二次确认，`exit_workout` 也直接执行）；什么都没给 → 一句「没听懂」。
         if (!reply && prompts.length) reply = prompts[0];
         if (!reply && !actions.length) reply = EMPTY_REPLY[locale];
         if (typeof logger === 'function') {

@@ -27,7 +27,8 @@
  * P3.3 自由对话的接缝（**只有这一层**）：
  *   `llm.reply(text)` 可以返回 `{ text, actions: [{ intent, args }] }`；
  *   会话层拿 `intent` 去**命令表**里找同一条命令的 `run()` 执行（复用 P3.2 的 handler，
- *   不另写一套），执行完再把 `text` 当教练说的话念出来。`exit` 仍然要 confirm。
+ *   不另写一套），执行完再把 `text` 当教练说的话念出来。命令表里标了 `confirm: true` 的
+ *   命令仍然会先问一次确认（通用机制；当前没有命令用到 —— `exit` 已改成直接执行）。
  */
 
 import { t, getLang } from '../i18n.js';
@@ -367,7 +368,7 @@ export function createVoiceSession({
       const args = action.args && typeof action.args === 'object' && !Array.isArray(action.args)
         ? { ...action.args }
         : {};
-      // 安全网：`exit` 必须带 confirm。模型漏了 → 只问一句，绝不真的退出。
+      // 通用安全网：命令表里标了 `confirm: true` 的命令必须带 confirm。模型漏了 → 只问一句，绝不自作主张。
       if (cmd.confirm && args.confirm !== true) {
         armPending(cmd, {});
         askedConfirm = true;
@@ -706,7 +707,7 @@ export function createVoiceSession({
         /**
          * P3.3：模型返回了 `actions` → 用**命令表原有的 handler** 真执行
          * （`startWorkout` / `setTarget` … 一条都不另写）。执行结果不念，念的是模型那句话。
-         * `exit` 没带 confirm 时只问一次（`askedConfirm`），绝不擅自退出。
+         * `confirm: true` 的命令没带 confirm 时只问一次（`askedConfirm`），不擅自执行。
          */
         let askedConfirm = false;
         let actionsAck = null;
