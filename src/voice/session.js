@@ -1030,6 +1030,8 @@ export function createVoiceSession({
     interrupt,
     fail,
     setMuted,
+    /** R3：裁判给的 `actions` 也走**同一份**命令表 handler（和 LLM 自由对话一模一样） */
+    runActions,
     /** 短时记忆：记一条事件 / 发任意事件（规则引擎）/ 读最近事件 / 读教练最近 5 句 / 读最近 10 轮 */
     recordEvent,
     emitEvent,

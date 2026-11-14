@@ -134,6 +134,16 @@ function blankSnapshot() {
       speak: 0, skip: 0, lastRule: '', event: '', priority: 0, ms: 0, reason: '', skipRule: '',
       added: 0, removed: 0, lastAdd: '', lastRemove: '', by: '',
     },
+    /**
+     * R3 LLM 裁判（`judge:ask` / `judge:skip`）：
+     *   ask    = 真的问出去几次；spoke = 其中出声几次；failed = 失败 / 超时几次
+     *   event  = 最近一次问的是哪个事件；ms = 最近一次耗时
+     *   skip   = 被护栏挡掉几次；reason = 最近一次挡掉的原因
+     *          （coach-off / muted / speaking / cooldown / busy / superseded / duplicate / bad-event …）
+     */
+    judge: {
+      ask: 0, spoke: 0, failed: 0, skip: 0, event: '', ms: 0, reason: '', ok: false, code: '',
+    },
   };
 }
 
@@ -183,6 +193,7 @@ export function createDiag({
       tts: { ...state.tts },
       session: { ...state.session },
       rule: { ...state.rule },
+      judge: { ...state.judge },
       asrError: state.asrError ? { ...state.asrError } : null,
     };
   }
@@ -392,6 +403,27 @@ export function createDiag({
           removed: state.rule.removed + 1,
           lastRemove: String(entry.id || ''),
           by: String(entry.by || ''),
+        };
+        break;
+      /* R3 LLM 裁判（`judge:ask` / `judge:skip`）：问了几次 / 出声几次 / 挡掉几次 */
+      case 'judge:ask':
+        state.judge = {
+          ...state.judge,
+          ask: state.judge.ask + 1,
+          spoke: state.judge.spoke + (entry.spoke === true ? 1 : 0),
+          failed: state.judge.failed + (entry.ok === true ? 0 : 1),
+          event: String(entry.event || ''),
+          ms: Math.max(0, Number(entry.ms) || 0),
+          ok: entry.ok === true,
+          code: String(entry.code || ''),
+        };
+        break;
+      case 'judge:skip':
+        state.judge = {
+          ...state.judge,
+          skip: state.judge.skip + 1,
+          reason: String(entry.reason || ''),
+          event: String(entry.event || state.judge.event || ''),
         };
         break;
       /* ---------------- 会话状态机（session:*） ----------------

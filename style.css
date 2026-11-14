@@ -2611,6 +2611,76 @@ kbd {
  * 所以看起来就是「一整行从右往左推过去」（传送带），不再是原地淡入淡出。
  * 距离与时长由 app.js 按舞台宽度算好写成 `--menu-slide-x` / `--menu-anim-*`。
  */
+/* ================================================================== *
+ * P3.5 收尾：教练头像 = **极简光环**（用户拍板：不要真人 / 卡通脸）
+ *
+ * 左下角一颗发光圆环 + 中心光点：
+ *   · 呼吸动画（光环缓慢放大 + 透明度起伏）；
+ *   · 教练说话时（`.is-speaking`）更亮、呼吸更快；
+ *   · `prefers-reduced-motion: reduce` → 完全静止（只留一圈静态光）。
+ * 纯装饰层：`aria-hidden` + `pointer-events: none`，不挡任何点击 / 手势圆环。
+ * ================================================================== */
+.coach-aura {
+  position: absolute;
+  left: calc(18px + env(safe-area-inset-left, 0px));
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  width: 56px;
+  height: 56px;
+  pointer-events: none;
+  z-index: 7;               /* 和「一组结束」圆环同层：盖在画面上、弹窗之下 */
+  opacity: 0.82;
+  display: grid;
+  place-items: center;
+  transition: opacity 240ms ease;
+}
+.coach-aura[hidden] { display: none; }
+.coach-aura-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(120, 255, 214, 0.75);
+  box-shadow:
+    0 0 12px rgba(120, 255, 214, 0.55),
+    0 0 26px rgba(60, 220, 190, 0.35),
+    inset 0 0 14px rgba(120, 255, 214, 0.28);
+  animation: coachAuraBreathe 3.2s ease-in-out infinite;
+}
+.coach-aura-core {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #f2fffb 0%, rgba(150, 255, 226, 0.85) 55%, rgba(120, 255, 214, 0) 100%);
+  box-shadow: 0 0 14px rgba(150, 255, 226, 0.85);
+  animation: coachAuraPulse 3.2s ease-in-out infinite;
+}
+/* 教练在说话：更亮 + 呼吸更快（不是换颜色，避免和弹幕 / 状态环抢色） */
+.coach-aura.is-speaking { opacity: 1; }
+.coach-aura.is-speaking .coach-aura-ring {
+  border-color: rgba(190, 255, 238, 0.95);
+  box-shadow:
+    0 0 18px rgba(150, 255, 226, 0.85),
+    0 0 40px rgba(60, 220, 190, 0.5),
+    inset 0 0 18px rgba(150, 255, 226, 0.4);
+  animation-duration: 1.6s;
+}
+.coach-aura.is-speaking .coach-aura-core {
+  background: radial-gradient(circle, #ffffff 0%, rgba(190, 255, 238, 0.95) 55%, rgba(150, 255, 226, 0) 100%);
+  animation-duration: 1.6s;
+}
+@keyframes coachAuraBreathe {
+  0%, 100% { transform: scale(0.94); opacity: 0.72; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+@keyframes coachAuraPulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.75; }
+  50% { transform: scale(1.15); opacity: 1; }
+}
+/* 关掉动效的用户：光环静止（保留发光，不做呼吸） */
+@media (prefers-reduced-motion: reduce) {
+  .coach-aura-ring, .coach-aura-core,
+  .coach-aura.is-speaking .coach-aura-ring,
+  .coach-aura.is-speaking .coach-aura-core { animation: none; }
+}
 .menu-screen { position: absolute; inset: 0; will-change: transform; }
 .menu-ghost { position: absolute; inset: 0; pointer-events: none; will-change: transform; }
 @keyframes menuScreenOutLeft { from { transform: translateX(0); } to { transform: translateX(calc(-1 * var(--menu-slide-x))); } }

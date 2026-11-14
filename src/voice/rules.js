@@ -730,7 +730,7 @@ export function readRule({
 }
 
 /**
- * 内置规则（R1 的四条 + R2 的两条缺省规则）。
+ * 内置规则（R1 的三条 + R2 的两条缺省规则 + R1 的催促；门控纠正已交给 R3 裁判）。
  *
  * | 规则 | 触发 | 说法 | 优先级 |
  * |---|---|---|---|
@@ -739,16 +739,20 @@ export function readRule({
  * | 最后 3 个 | rep + remainingLte:3 | 「还剩 {n} 个」 | 40 |
  * | 过半 | progress + pctGte:50（每组一次） | 「一半了，节奏别乱」 | 30（话量=多） |
  * | 读秒（最后 5 秒） | hold-tick + remainingLte:5 | 「5」「4」「3」… | 40（bypassGap） |
- * | 门控连错 2 次 | gate-fail + consecutive:2 | 按 gate 名的具体口令 | 60 |
  * | 8 秒没动 | idle + secGte:8 | 「继续啊，我等你」 | 20 |
  *
+ * ⚠️ **R3 起「门控连错 2 次」不再走规则快车道**（用户拍板：停用 R1 那条模板，防双声 ✗）：
+ *    它改成由 LLM 裁判判断（`gate-fail2` 事件）—— 模型失败 / 超时才回退这条口令，
+ *    回退文本仍然复用 `rule.gateFail2` + `gateCueKey`（同一份文案，不另写一句）。
+ *
  * 话量三档（设置里的「少 / 中 / 多」）：
- *   少 = 只报每 5 个 + 读秒 + 最后 3 个 + 纠正；
+ *   少 = 只报每 5 个 + 读秒 + 最后 3 个；
  *   中 = 再加每个都报 + 最后 5 秒倒数 + 催促（默认）；
  *   多 = 再加过半。
  */
 export function builtinRules({ t = defaultTranslate } = {}) {
   const translate = typeof t === 'function' ? t : defaultTranslate;
+  void translate;   // 门控口令现在由 app.js 的裁判兜底渲染（同一份 gateCueKey），这里不再用
   return [
     repRule(),
     readRule(),
@@ -787,24 +791,10 @@ export function builtinRules({ t = defaultTranslate } = {}) {
       bypassGap: true,
       volumes: ['mid', 'high'],
     },
-    {
-      id: 'gate-fail-2',
-      scope: 'set',
-      label: 'rule.name.gateFail',
-      trigger: {
-        event: 'gate-fail',
-        filter: { consecutive: 2 },
-        resetOn: ['gate-ok', 'set-start', 'session-start'],
-      },
-      action: {
-        template: 'rule.gateFail2',
-        args: (ev) => ({ cue: translate(gateCueKey(eventContext(ev).gate), {}) }),
-      },
-      cooldownMs: 8000,
-      priority: RULE_PRIORITIES.correct,
-      budget: { perSet: 0, perMinute: 3 },
-      volumes: ['low', 'mid', 'high'],
-    },
+    /**
+     * 门控连错 2 次那条**已停用**（R3：交给 LLM 裁判的 `gate-fail2` 事件，防双声 ✗）。
+     * 口令文案与 `gateCueKey` 仍然保留：裁判失败时 app.js 用它兜底。
+     */
     {
       id: 'idle-8',
       scope: 'set',
@@ -821,7 +811,7 @@ export function builtinRules({ t = defaultTranslate } = {}) {
 
 /** 内置规则的 id（测试 / 文档一处定义；顺序 = builtinRules() 的顺序） */
 export const BUILTIN_RULE_IDS = Object.freeze([
-  'rep-count', 'hold-read-5', 'last-three', 'halfway', 'countdown-5', 'gate-fail-2', 'idle-8',
+  'rep-count', 'hold-read-5', 'last-three', 'halfway', 'countdown-5', 'idle-8',
 ]);
 
 /** 规则名（`rule.name.*` 词条键；没写 label 的规则说「其他规则」） */

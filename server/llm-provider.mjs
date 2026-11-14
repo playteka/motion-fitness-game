@@ -34,10 +34,12 @@ import { fileURLToPath } from 'node:url';
 import { loadEnvFile, redactSecrets } from './env.mjs';
 import {
   EMPTY_REPLY,
+  JUDGE_EVENT_TYPES,
   LLM_EVENT_SESSION_START,
   LLM_TOOLS,
   actionsFromToolCalls,
   buildSystemPrompt,
+  isJudgeAskEvent,
 } from './llm-tools.mjs';
 // 长期记忆（服务端 MD）：`/llm` 里工具要真的把 prefs / facts 写进去，
 // 并且把「用户记住了什么」带回前端 —— 白名单 / 路径安全全在 memory-store 里。
@@ -72,6 +74,8 @@ export const LLM_MAX_CONTEXT_CHARS = 6000;
  * （system prompt 的事件规则也要用它），这里 re-export 给路由 / 测试 / 前端对照。
  */
 export { LLM_EVENT_SESSION_START };
+/** R3 裁判事件口径（唯一来源 `src/voice/judge.js`；这里 re-export 给测试 / 前端对照） */
+export { JUDGE_EVENT_TYPES, isJudgeAskEvent };
 
 /** provider 元信息：默认地址 / 默认模型 / key 回退变量 */
 export const LLM_PROVIDER_SPECS = Object.freeze({
@@ -521,8 +525,153 @@ export function sessionStartEventMessage({ locale = 'zh', context = null } = {})
   return `[事件] 用户刚刚进入训练：动作=${ex}${targetText}，这是本次训练的第一句对话。请主动打个招呼。`;
 }
 
-/** 组一次请求的 messages（system + 最近历史 + 这一句 / 一条 session-start 事件） */
-export function buildLlmMessages({
+/* ------------------------------------------------------------------ *
+ * R3：LLM 裁判 —— 事件 → user 消息（中英各一套）
+ *
+ * 用户原话：「新增 POST /llm {event, context} 事件类型（服务端 buildLlmMessages 里按 event 生成
+ * user 消息 ✓，中英 ✓）」。
+ *
+ * 这些 user 消息**不是用户说的话**，而是一条系统事件描述：模型据此判断「要不要说一句」。
+ * 所有数字都来自客户端算好的 `context`（`session` 与 `judge` 块），服务端不猜、不补数字。
+ * ------------------------------------------------------------------ */
+
+/** 数字 → 紧凑文本（`—` = 客户端没给） */
+function judgeNum(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10);
+}
+
+/** 给模型看的区间：`>=50` / `<=158` / `50~158` */
+function judgeRange(check, lang) {
+  const min = Number.isFinite(Number(check && check.min)) ? Number(check.min) : null;
+  const max = Number.isFinite(Number(check && check.max)) ? Number(check.max) : null;
+  if (min !== null && max !== null) return `${judgeNum(min)}~${judgeNum(max)}`;
+  if (min !== null) return `${lang === 'en' ? '>=' : '≥'}${judgeNum(min)}`;
+  if (max !== null) return `${lang === 'en' ? '<=' : '≤'}${judgeNum(max)}`;
+  return '—';
+}
+
+/**
+ * 一条裁判事件 → 一条 user 消息（中文 / 英文）。
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.event]   `JUDGE_ASK_EVENTS` 之一
+ * @param {'zh'|'en'} [opts.locale]
+ * @param {object} [opts.context] 客户端算好的结构化快照（`session` + `judge` 块）
+ * @returns {string}
+ */
+export function judgeEventMessage({ event = '', locale = 'zh', context = null } = {}) {
+  const lang = locale === 'en' ? 'en' : 'zh';
+  const ev = String(event || '');
+  const ctx = context && typeof context === 'object' ? context : {};
+  const j = ctx.judge && typeof ctx.judge === 'object' ? ctx.judge : {};
+  const session = ctx.session && typeof ctx.session === 'object' ? ctx.session : {};
+  const name = String(session.name || session.exerciseId || '').trim().slice(0, 40);
+  const unit = String(j.unit || '').slice(0, 8);
+  const ex = name || (lang === 'en' ? 'this exercise' : '这个动作');
+  const num = judgeNum;
+
+  if (ev === 'set-complete') {
+    const set = j.set && typeof j.set === 'object' ? j.set : {};
+    const prev = j.prev && typeof j.prev === 'object' ? j.prev : null;
+    const trend = String(j.trend || 'first');
+    const trendZh = { first: '没有上一组可比', improved: '比上一组高', declined: '比上一组低', flat: '和上一组一样' }[trend] || trend;
+    const trendEn = { first: 'no previous set', improved: 'higher than the previous set', declined: 'lower than the previous set', flat: 'same as the previous set' }[trend] || trend;
+    if (lang === 'en') {
+      return `[Event] Set finished: exercise=${ex}, this set=${num(set.value)}${unit ? ` ${unit}` : ''}, `
+        + `score=${num(set.score)}, target=${num(set.target)}; `
+        + (prev ? `previous set=${num(prev.value)}${unit ? ` ${unit}` : ''}, ${num(prev.score)} points; ` : '')
+        + `comparison=${trendEn}.`;
+    }
+    return `[事件] 一组结束：动作=${ex}，本组=${num(set.value)}${unit}，得分=${num(set.score)}，目标=${num(set.target)}；`
+      + (prev ? `上一组=${num(prev.value)}${unit}、${num(prev.score)} 分；` : '')
+      + `对比=${trendZh}。`;
+  }
+
+  if (ev === 'pr') {
+    const rec = String(j.record || 'score');
+    const whatZh = { score: '分数', value: '数量', both: '分数和数量' }[rec] || rec;
+    const whatEn = { score: 'score', value: 'amount', both: 'score and amount' }[rec] || rec;
+    if (lang === 'en') {
+      return `[Event] New personal record: exercise=${ex}, score=${num(j.score)} (old record ${num(j.prevScore)}), `
+        + `${num(j.value)}${unit ? ` ${unit}` : ''} (old record ${num(j.prevValue)}${unit ? ` ${unit}` : ''}); improved ${whatEn}.`;
+    }
+    return `[事件] 破纪录：动作=${ex}，本组得分=${num(j.score)}（旧纪录 ${num(j.prevScore)} 分），`
+      + `本组 ${num(j.value)}${unit}（旧纪录 ${num(j.prevValue)}${unit}）；刷新的是${whatZh}。`;
+  }
+
+  if (ev === 'rep-judge') {
+    const miss = j.miss && typeof j.miss === 'object' ? j.miss : null;
+    if (lang === 'en') {
+      return `[Event] Every-${num(j.every) || 3}-rep check: exercise=${ex}, ${num(j.reps)}/${num(session.target || j.target)}`
+        + `${unit ? ` ${unit}` : ''} done, score=${num(j.score)}.`
+        + (miss ? ` Keyframe not hit yet: ${String(miss.name || '')} (${num(miss.pts)}/${num(miss.max)} points, ${num(miss.gap)} short).` : '');
+    }
+    return `[事件] 每 ${num(j.every) || 3} 个一次的检视：动作=${ex}，已完成 ${num(j.reps)}/${num(session.target || j.target)}${unit}，`
+      + `得分=${num(j.score)}。`
+      + (miss ? `还没做到的关键帧：${String(miss.name || '')}（${num(miss.pts)}/${num(miss.max)} 分，差 ${num(miss.gap)} 分）。` : '');
+  }
+
+  if (ev === 'hold-judge') {
+    if (lang === 'en') {
+      return `[Event] Time-based check (every 10s): exercise=${ex}, ${num(j.elapsedSec)}s elapsed, `
+        + `target ${num(j.target)}s, ${num(j.remainingSec)}s left.`;
+    }
+    return `[事件] 计时检视（每 10 秒）：动作=${ex}，已经 ${num(j.elapsedSec)} 秒，目标 ${num(j.target)} 秒，`
+      + `还剩 ${num(j.remainingSec)} 秒。`;
+  }
+
+  if (ev === 'idle') {
+    if (lang === 'en') {
+      return `[Event] Idle: no movement for ${num(j.idleSec)}s (exercise=${ex}, ${num(j.reps)}/${num(j.target)}${unit ? ` ${unit}` : ''}). `
+        + 'You will be asked again every 10s while it stays idle.';
+    }
+    return `[事件] 静止：已经 ${num(j.idleSec)} 秒没有动作（动作=${ex}，${num(j.reps)}/${num(j.target)}${unit}）。`
+      + '只要还静止，之后每满 10 秒会再问你一次。';
+  }
+
+  if (ev === 'out-of-frame') {
+    if (lang === 'en') {
+      return `[Event] Out of frame: nobody visible for ${num(j.outSec)}s (exercise=${ex}). `
+        + 'You will be asked again every 10s until the person is back.';
+    }
+    return `[事件] 出画：画面里已经 ${num(j.outSec)} 秒看不到人（动作=${ex}）。`
+      + '只要还没回到画面，之后每满 10 秒会再问你一次。';
+  }
+
+  if (ev === 'gate-fail2') {
+    const gate = String(j.gate || '');
+    const cue = String(j.cue || '').slice(0, 60);
+    const worst = j.worst && typeof j.worst === 'object' ? j.worst : null;
+    if (lang === 'en') {
+      return `[Event] Gate failed 2 times in a row: gate=${gate || '—'}`
+        + (cue ? `, what to do: "${cue}"` : '')
+        + (worst
+          ? `; off target: ${String(worst.metric || '')}=${num(worst.value)} (needs ${judgeRange(worst, 'en')}), ${num(worst.gap)} off.`
+          : '; no numeric detail available — follow the cue above.');
+    }
+    return `[事件] 门控连续 2 次没通过：门控=${gate || '—'}`
+      + (cue ? `，该做到的是「${cue}」` : '')
+      + (worst
+        ? `；没达标：${String(worst.metric || '')}=${num(worst.value)}（要求 ${judgeRange(worst, 'zh')}），差 ${num(worst.gap)}。`
+        : '；识别器没给出具体数值 —— 按上面那句口令提醒。');
+  }
+
+  if (ev === 'keyframe-miss2') {
+    const frame = j.keyframe && typeof j.keyframe === 'object' ? j.keyframe : {};
+    const frameName = String(frame.name || frame.id || '').slice(0, 40);
+    if (lang === 'en') {
+      return `[Event] Same keyframe missed 2 times in a row: ${frameName || '—'} `
+        + `(${num(frame.pts)}/${num(frame.max)} points, ${num(frame.gap)} short).`;
+    }
+    return `[事件] 关键帧连续 2 次漏掉：${frameName || '—'}（${num(frame.pts)}/${num(frame.max)} 分，差 ${num(frame.gap)} 分）。`;
+  }
+
+  return lang === 'en' ? `[Event] ${ev}` : `[事件] ${ev}`;
+}
+
+/** 组一次请求的 messages（system + 最近历史 + 这一句 / 一条 session-start 事件 / 一条裁判事件） */export function buildLlmMessages({
   text = '',
   locale = 'zh',
   context = null,
@@ -532,9 +681,18 @@ export function buildLlmMessages({
   maxContextChars = LLM_MAX_CONTEXT_CHARS,
 } = {}) {
   const lang = locale === 'en' ? 'en' : 'zh';
-  const userContent = event === LLM_EVENT_SESSION_START
+  const eventName = String(event || '');
+  /**
+   * 三种 user 消息：
+   *   ① `session-start` → 进场问候（P3.3 的事件描述，自由文本回复）；
+   *   ② 裁判事件（8 个触发点）→ 服务端按事件生成的**事件描述**（模型只回严格 JSON）；
+   *   ③ 其余 → 用户说的那句话（原行为不变）。
+   */
+  const userContent = eventName === LLM_EVENT_SESSION_START
     ? sessionStartEventMessage({ locale: lang, context })
-    : String(text).slice(0, LLM_MAX_TEXT);
+    : (isJudgeAskEvent(eventName)
+      ? judgeEventMessage({ event: eventName, locale: lang, context })
+      : String(text).slice(0, LLM_MAX_TEXT));
   return [
     { role: 'system', content: buildSystemPrompt({ locale: lang, context, maxContextChars, event }) },
     ...historyMessages(history, { maxTurns }),
@@ -667,11 +825,14 @@ export function createLlmRoutes({
       const data = parsed.data;
       const text = String(data.text == null ? '' : data.text).trim();
       /**
-       * 可选的 `event`：目前只认 `session-start`（进训练后主动问候）。
-       * 它允许 `text` 为空 —— 这条 user 消息由服务端按 context 生成；
-       * 其它任何值都当普通对话，仍然要求有 text（旧客户端行为不变）。
+       * 可选的 `event`：`session-start`（进训练后主动问候）+ R3 的 8 个裁判事件。
+       * 两类都允许 `text` 为空 —— user 消息由服务端按 context / 事件生成；
+       * 其它任何值都当普通对话，仍然要求有 text（旧客户端行为不变；未知事件名不放行空文本）。
        */
-      const event = data.event === LLM_EVENT_SESSION_START ? LLM_EVENT_SESSION_START : '';
+      const rawEvent = String(data.event == null ? '' : data.event);
+      const event = JUDGE_EVENT_TYPES.includes(rawEvent) ? rawEvent : '';
+      /** R3：裁判模式（严格 JSON + 默认 null）；`session-start` 不算，它还是普通问候 */
+      const judgeMode = isJudgeAskEvent(event);
       if (!text && !event) {
         sendJson(res, 400, { ok: false, error: 'empty-text' });
         return;
@@ -720,13 +881,51 @@ export function createLlmRoutes({
         text,
         locale,
         context,
-        history: data.history,
+        // 裁判是无状态的一条事件一条请求：不带对话历史（省 token，也不会被上一句带跑）
+        history: judgeMode ? [] : data.history,
         event,
         maxTurns: maxHistoryTurns,
       });
       const started = Date.now();
       try {
         const out = await provider.chat({ messages, tools: LLM_TOOLS });
+        const usage = limitGuard.addUsage(out && out.usage);
+        /**
+         * R3 裁判模式：模型应当只回严格 JSON。
+         * 服务端**原样**把这段文本交回客户端（由 `src/voice/judge.js` 的 `parseJudgeReply` 解析）：
+         *   - 空输出 / `{"speak":null}` → 客户端静默；
+         *   - 不合法 JSON → 客户端静默（门控那条回退 R1 模板口令）。
+         * 这里**不做** `EMPTY_REPLY` 兜底、不执行任何工具调用（裁判的 actions 在 JSON 里，由客户端执行）。
+         */
+        if (judgeMode) {
+          const reply = String((out && out.text) || '').trim();
+          if (typeof logger === 'function') {
+            try {
+              logger('llm judge', {
+                provider: cfg.provider,
+                model: cfg.model,
+                ms: Date.now() - started,
+                prompt: usage.prompt,
+                completion: usage.completion,
+                chars: reply.length,
+                event,
+              });
+            } catch { /* ignore */ }
+          }
+          sendJson(res, 200, {
+            ok: true,
+            event,
+            reply,
+            actions: [],
+            refusals: [],
+            memoryOps: [],
+            memory: null,
+            usage,
+            provider: cfg.provider,
+            model: cfg.model,
+          });
+          return;
+        }
         const { actions, refusals, prompts, memoryOps } = actionsFromToolCalls(
           out && out.toolCalls,
           { locale },
@@ -753,7 +952,6 @@ export function createLlmRoutes({
             introMarked = true;
           } catch { /* 标记失败就不标，下一轮还会提醒一次 */ }
         }
-        const usage = limitGuard.addUsage(out && out.usage);
         let reply = String((out && out.text) || '').trim();
         // 模型只调了工具没说话 → 让前端的会话层用**命令表自己的短确认**（比编一句通用话准确）；
         // prompts 现在恒为空（没有工具需要二次确认，`exit_workout` 也直接执行）；什么都没给 → 一句「没听懂」。
@@ -821,6 +1019,9 @@ export default {
   LLM_RATE_WINDOW_MS,
   LLM_MAX_HISTORY_TURNS,
   LLM_EVENT_SESSION_START,
+  /** R3 裁判事件口径（唯一来源是 src/voice/judge.js；这里 re-export 给测试 / 前端对照） */
+  JUDGE_EVENT_TYPES,
+  isJudgeAskEvent,
   LLM_PROVIDERS,
   LLM_PROVIDER_SPECS,
   normalizeProviderName,
@@ -835,6 +1036,7 @@ export default {
   createLlmRoutes,
   buildLlmMessages,
   sessionStartEventMessage,
+  judgeEventMessage,
   historyMessages,
   applyMemoryOps,
 };

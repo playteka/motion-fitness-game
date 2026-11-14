@@ -26,6 +26,8 @@ import { COMMANDS } from '../src/voice/commands.js';
 // 规则频道（rep 报数 / read 读秒）只在 src/voice/rules.js 定义一处，工具的枚举也读它
 import { RULE_CHANNELS } from '../src/voice/rules.js';
 import { EXERCISES, EXERCISE_MAP } from '../src/catalog.js';
+// R3 裁判事件口径（一处定义：前端 `src/voice/judge.js`；这里只读，不另抄）
+import { JUDGE_EVENTS, isJudgeAskEvent } from '../src/voice/judge.js';
 // 记忆白名单只在一处定义（server/memory-store.mjs）：工具能写哪些字段、字段取值范围，
 // 都由那边说了算，这里只负责把模型的参数翻译成「记忆操作」。
 import { PREFS_FIELDS, FACTS_FIELDS } from './memory-store.mjs';
@@ -51,6 +53,16 @@ export const EXERCISE_IDS = Object.freeze(EXERCISES.map((e) => e.id));
  * 系统事件描述；system prompt 里另有一条事件规则（见 buildSystemPrompt 第 16 条）。
  */
 export const LLM_EVENT_SESSION_START = 'session-start';
+
+/**
+ * R3：裁判事件（**8 个触发点**，口径唯一来源是 `src/voice/judge.js` 的 `JUDGE_EVENTS`）。
+ *
+ * 这些事件走 `/llm {event, context}`：user 消息由服务端按事件生成（不是用户说的话），
+ * 模型只回严格 JSON（`{"speak": string|null, "actions": [...]?}`）—— 见 `buildSystemPrompt` 第 17 条。
+ * `session-start` 虽然也在 `JUDGE_EVENTS` 里，但它复用 P3.3 的普通问候（自由文本），不是裁判模式。
+ */
+export const JUDGE_EVENT_TYPES = JUDGE_EVENTS;
+export { isJudgeAskEvent };
 
 /** 一次回答里最多执行几个工具（护栏：防止模型一口气把界面拆了） */
 export const MAX_TOOL_CALLS = 3;
@@ -710,6 +722,25 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
   // 教练性别来自长期偏好（prefs.voiceGender）：只改音色与形象，不改人格 / 话术
   const genderRaw = srcPrefs.voiceGender;
   const gender = genderRaw === 'male' ? 'male' : 'female';
+  /**
+   * P3.5 收尾：语气档来自长期偏好 `prefs.tone`（**默认 warm**）。
+   * 用户拍板：「语气 = 温和 + 幽默；鼓励具体、偶尔自嘲一句、不放任、不油腻」。
+   * 白名单和 server/memory-store.mjs 的 PREFS_SPEC.tone 一致（warm / funny / strict）。
+   */
+  const toneRaw = String(srcPrefs.tone || 'warm');
+  const tone = ['warm', 'funny', 'strict'].includes(toneRaw) ? toneRaw : 'warm';
+  const toneRuleZh = tone === 'strict'
+    ? '11b. **语气档 = 严格**：只讲要点、少寒暄，直接给下一步；该夸也只夸一句、不铺陈。'
+    : (tone === 'funny'
+      ? '11b. **语气档 = 温和幽默**：鼓励具体（说清「哪儿好」），可以偶尔轻轻开个玩笑或者自嘲一句（例如「我跟你说，这个动作我当年也抖」）；'
+        + '**不放任**（该纠正就纠正）、**不油腻**（不夸张、不肉麻、不用网络烂梗），幽默不能盖过要点。'
+      : '11b. **语气档 = 温和**（默认）：鼓励具体（说清「哪儿好」）、语气平稳不夸张；可以带一点点轻松感，但不讲笑话、不肉麻。');
+  const toneRuleEn = tone === 'strict'
+    ? 'Tone = strict: just the point, minimal small talk, one short praise at most.'
+    : (tone === 'funny'
+      ? 'Tone = warm + funny: praise something specific, now and then a light joke or one self-deprecating line;'
+        + ' never indulgent (still correct what needs correcting), never cheesy — humour must never outweigh the point.'
+      : 'Tone = warm (default): specific encouragement, steady and unexaggerated, a touch of lightness but no jokes.');
   // 首次对话只自报一次：服务端在首次成功回复后把 prefs.introSeen 置 true
   const introSeen = srcPrefs.introSeen === true;
 
@@ -749,6 +780,9 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
     '11. **防复读**：state.lastCoachLines 是你最近说过的 5 句，不要重复它们；state.recentEvents 是最近 60 秒的',
     '    计次 / 门控失败 / 关键帧命中，回答「刚才怎么样」时直接引用里面的数字，不要编。',
     '    Do not repeat the lines in state.lastCoachLines; quote state.recentEvents instead of inventing recent numbers.',
+    // P3.5 收尾：语气档（prefs.tone：warm / funny / strict；默认 warm）
+    toneRuleZh,
+    `    ${toneRuleEn}`,
     `12. 教练性别：${gender === 'male' ? '男' : '女'}（音色与形象不同；人格、专业度、话术完全一致，不要强化性别刻板印象；`
       + '性别中立的内核不变，人称与自称不要因为性别改变，不要刻意）。',
     `    Coach gender: ${gender}. Voice and avatar differ only; personality, professionalism and wording are identical. `
@@ -771,9 +805,26 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
       + ' (`event: session-start`), greet the user proactively, mention today\'s exercise / target and one cue;'
       + ' keep it to 1–2 sentences and ≤40 characters (or about 25 words in English); never ask a list of questions;'
       + ' if Current memory has a goal / injury, you may mention it briefly.',
+    /* R3：裁判模式（事件触发）。只在这一类事件里加，普通对话 / 进场问候不受影响。 */
+    ...(isJudgeAskEvent(event) ? [
+      '17. **裁判模式（R3，事件触发）**：这次不是用户在说话，而是系统把**一个事件**交给你，由你决定要不要说一句。',
+      '    只回**严格 JSON**，格式固定：{"speak": string|null, "actions": [{"intent": "...", "args": {}}]?}。',
+      '    - **默认 speak = null**：没有增益就不说；只有确实能帮上忙（纠正动作 / 提醒节奏 / 破纪录 / 复盘）时才说**一句**，',
+      '      口语、≤40 字、不能有 Markdown / emoji / 换行。',
+      '    - **静默优先**：拿不准就 null；不要说「加油」「继续」这类没有信息量的空话；不要问问题。',
+      '    - 数字只能用 state（含 judge 块）里给的，**不许自己编** ✗。',
+      '    - actions 可选：只有确实要改界面 / 训练状态时才给（intent 必须是已有工具对应的那条），否则省略。',
+      '    - **JSON 之外一个字符都不要**：不要解释、不要前后缀、不要 ```json 代码块。',
+      '    **Judge mode (R3, event-triggered)**: this is a system event, not the user speaking; decide whether one short'
+        + ' line is worth saying. Reply with STRICT JSON only: {"speak": string|null, "actions": [...]?}.'
+        + ' Default speak = null; speak only when it genuinely helps (fix form / pacing / new record / set review),'
+        + ' one spoken sentence, ≤40 characters (or about 25 words in English), no markdown / emoji / newlines.',
+      '    Prefer silence; never say empty filler like "keep going"; never ask questions; never invent numbers;'
+        + ' use actions only when you really need to change state, and output nothing outside the JSON object.',
+    ] : []),
   ];
 
-  if (!introSeen) {
+  if (!introSeen && !isJudgeAskEvent(event)) {
     lines.push(
       /**
        * 首次见面 + 这次是「进入训练」的主动问候：自报家门必须压成一句短的，
@@ -805,6 +856,8 @@ export default {
   LLM_TOOL_DEFS,
   LLM_TOOLS,
   LLM_EVENT_SESSION_START,
+  JUDGE_EVENT_TYPES,
+  isJudgeAskEvent,
   TOOL_BY_NAME,
   TOOL_INTENT_MAP,
   TOOLED_INTENTS,

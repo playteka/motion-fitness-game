@@ -17,6 +17,8 @@
 import { LOCALES } from '../i18n.js';
 // R1：事件口径（进 prompt 的那几类）只在 events.js 定义一次，这里不另抄一份
 import { AGENT_EVENT_TYPES } from './events.js';
+// R3：裁判的事件口径 / 严格 JSON 解析只在 judge.js 定义一次（服务端也 import 同一个文件）
+import { JUDGE_TIMEOUT_MS, isJudgeAskEvent, parseJudgeReply } from './judge.js';
 
 /** 服务端路由（和 server/llm-provider.mjs 的 LLM_PATH / LLM_HEALTH_PATH 一致） */
 export const LLM_PATH = '/llm';
@@ -603,13 +605,16 @@ export function createLlmClient({
     if (max === 0) history.length = 0;
   }
 
-  /** 发一次对话请求；失败一律抛 { code }。`event:'session-start'` 允许空 text（服务端生成事件描述） */
-  async function respond(text, { locale = 'zh', context = null, history: extra = null, event = '' } = {}) {
-    const body = String(text == null ? '' : text).trim();
-    const ev = event === LLM_EVENT_SESSION_START ? LLM_EVENT_SESSION_START : '';
-    if (!body && !ev) throw llmClientError('llm-empty');
+  /**
+   * POST 一次 `/llm`：超时 / 状态码 / 坏 JSON 一律映射成稳定 `{code}`（不重试、不弹窗）。
+   * @param {object} payload 请求体
+   * @param {number} [wait] 这一次最多等多久（默认构造时那个 timeoutMs）
+   * @returns {Promise<object>} 解析好的响应体
+   */
+  async function postJson(payload, wait = waitMs) {
     const f = resolveFetch();
     if (!f) throw llmClientError('llm-network', 'fetch unavailable');
+    const waitValue = Math.max(1, Number(wait) || waitMs);
     const controller = new AbortController();
     let timedOut = false;
     let timer = null;
@@ -618,21 +623,9 @@ export function createLlmClient({
       timer = setTimeout(() => {
         timedOut = true;
         try { controller.abort(); } catch { /* ignore */ }
-        reject(llmClientError('llm-timeout', `timeout after ${waitMs}ms`));
-      }, waitMs);
+        reject(llmClientError('llm-timeout', `timeout after ${waitValue}ms`));
+      }, waitValue);
     });
-    const started = now();
-    const payload = {
-      text: body.slice(0, LLM_CLIENT_MAX_TEXT),
-      locale: locale === 'en' ? 'en' : 'zh',
-      context: context && typeof context === 'object' ? context : null,
-      // 长期记忆按 userId 分文件（服务端还会再校验一次 `^[a-zA-Z0-9_-]{1,32}$`）
-      user: String(typeof userId === 'function' ? userId() : userId || 'default').slice(0, 32) || 'default',
-      // 只带最近 10 轮（服务端会再夹一次）；**不落盘**
-      history: Array.isArray(extra) ? extra.slice(-(turns * 2)) : history.slice(),
-    };
-    // 只有真正的会话开始事件才带 `event`；空 text 的合法性由服务端按这个字段判断
-    if (ev) payload.event = ev;
     try {
       const res = await Promise.race([f(pathUrl, {
         method: 'POST',
@@ -649,6 +642,35 @@ export function createLlmClient({
         throw llmClientError(code, `status ${status}`);
       }
       if (!data || typeof data !== 'object') throw llmClientError('llm-bad-json');
+      return data;
+    } catch (err) {
+      if (timedOut) throw llmClientError('llm-timeout', `timeout after ${waitValue}ms`);
+      if (err && err.code) throw err;
+      throw llmClientError('llm-network', String((err && err.message) || err));
+    } finally {
+      try { clearTimeout(timer); } catch { /* ignore */ }
+    }
+  }
+
+  /** 发一次对话请求；失败一律抛 { code }。`event:'session-start'` 允许空 text（服务端生成事件描述） */
+  async function respond(text, { locale = 'zh', context = null, history: extra = null, event = '' } = {}) {
+    const body = String(text == null ? '' : text).trim();
+    const ev = event === LLM_EVENT_SESSION_START ? LLM_EVENT_SESSION_START : '';
+    if (!body && !ev) throw llmClientError('llm-empty');
+    const started = now();
+    const payload = {
+      text: body.slice(0, LLM_CLIENT_MAX_TEXT),
+      locale: locale === 'en' ? 'en' : 'zh',
+      context: context && typeof context === 'object' ? context : null,
+      // 长期记忆按 userId 分文件（服务端还会再校验一次 `^[a-zA-Z0-9_-]{1,32}$`）
+      user: String(typeof userId === 'function' ? userId() : userId || 'default').slice(0, 32) || 'default',
+      // 只带最近 10 轮（服务端会再夹一次）；**不落盘**
+      history: Array.isArray(extra) ? extra.slice(-(turns * 2)) : history.slice(),
+    };
+    // 只有真正的会话开始事件才带 `event`；空 text 的合法性由服务端按这个字段判断
+    if (ev) payload.event = ev;
+    try {
+      const data = await postJson(payload);
       const reply = String(data.reply || '').trim();
       const actions = normalizeActions(data.actions);
       if (!reply && !actions.length) throw llmClientError('llm-bad-json', 'empty reply');
@@ -675,14 +697,59 @@ export function createLlmClient({
         ms,
       };
     } catch (err) {
-      const code = (err && err.code)
-        || (timedOut ? 'llm-timeout' : 'llm-network');
+      const code = (err && err.code) || 'llm-network';
       record('llm:fail', { code, ms: Math.max(0, Number(now()) - Number(started)) });
-      if (timedOut) throw llmClientError('llm-timeout', `timeout after ${waitMs}ms`);
       if (err && err.code) throw err;
       throw llmClientError(code, String((err && err.message) || err));
-    } finally {
-      try { clearTimeout(timer); } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * R3 裁判：一条事件 → `POST /llm {event, context}` → 模型回**严格 JSON**
+   * `{"speak": string|null, "actions": [...]?}`。
+   *
+   * - 只等 8s（用户拍板；比普通对话的 9s 更短）→ 超时抛 `llm-timeout`，由 `judge.js` 静默收场；
+   * - 不带对话历史（裁判是无状态的，一条事件一条请求）；
+   * - 不合法 JSON / 空输出都按失败抛 `llm-bad-json`（调用方静默；门控那条回退 R1 模板）。
+   *
+   * @param {string} event `JUDGE_ASK_EVENTS` 之一
+   * @param {{locale?:string, context?:object}} [opts]
+   * @returns {Promise<{speak:string|null, actions:object[], ms:number, provider:string, model:string}>}
+   */
+  async function judge(event, { locale = 'zh', context = null } = {}) {
+    const ev = String(event || '');
+    if (!isJudgeAskEvent(ev)) throw llmClientError('llm-bad-event', ev);
+    const payload = {
+      // 事件是唯一入口：服务端按它生成 user 消息（text 为空）
+      event: ev,
+      text: '',
+      locale: locale === 'en' ? 'en' : 'zh',
+      context: context && typeof context === 'object' ? context : null,
+      user: String(typeof userId === 'function' ? userId() : userId || 'default').slice(0, 32) || 'default',
+    };
+    const started = now();
+    try {
+      const data = await postJson(payload, Math.min(waitMs, JUDGE_TIMEOUT_MS));
+      const parsed = parseJudgeReply(data.reply);
+      const ms = Math.max(0, Number(now()) - Number(started));
+      if (!parsed.ok) throw llmClientError('llm-bad-json', parsed.reason);
+      const actions = normalizeActions(parsed.actions);
+      last = {
+        ms, actions: actions.length, provider: data.provider || '', model: data.model || '', judge: true,
+      };
+      record('llm:reply', { ms, actions: actions.length, judge: true });
+      return {
+        speak: parsed.speak,
+        actions,
+        ms,
+        provider: String(data.provider || ''),
+        model: String(data.model || ''),
+      };
+    } catch (err) {
+      const code = (err && err.code) || 'llm-network';
+      record('llm:fail', { code, ms: Math.max(0, Number(now()) - Number(started)) });
+      if (err && err.code) throw err;
+      throw llmClientError(code, String((err && err.message) || err));
     }
   }
 
@@ -719,6 +786,7 @@ export function createLlmClient({
     timeoutMs: waitMs,
     historyTurns: turns,
     respond,
+    judge,
     health,
     /** 清空对话记忆（刷新页面也会清；这是给「清空对话」/ 测试用的） */
     reset() {

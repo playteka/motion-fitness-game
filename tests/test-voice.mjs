@@ -60,6 +60,15 @@ import {
   TTS_HEALTH_PATH, TTS_MAX_TEXT, TTS_STREAM_FIRST_MS,
   createVolcMessageParser, volcAudioBytes, unwrapVolcAudio,
 } from '../server/volc-tts.mjs';
+// R3：LLM 裁判（触发口径 / 严格 JSON / 护栏）
+import {
+  createJudge, JUDGE_EVENTS, JUDGE_ASK_EVENTS, isJudgeEvent, isJudgeAskEvent, judgePriority,
+  shouldJudgeRep, shouldJudgeHold, shouldJudgeIdle, shouldJudgeOutOfFrame,
+  parseJudgeReply, clampJudgeSpeak, parseGateDiagRow, worstGateCheck,
+  JUDGE_TIMEOUT_MS, JUDGE_COOLDOWN_MS, JUDGE_DEDUPE_MS, JUDGE_MAX_CHARS,
+  REP_JUDGE_EVERY, HOLD_JUDGE_EVERY_SEC, IDLE_JUDGE_START_SEC, OUT_OF_FRAME_JUDGE_START_SEC,
+  GATE_FAIL_JUDGE_STREAK, KEYFRAME_MISS_JUDGE_STREAK,
+} from '../src/voice/judge.js';
 import {
   downsampleToPcm16, pcm16Rms, pcm16Peak, pcmBytesToMs, floatToPcm16,
   createPcmFramer, pcmBytesPerSec,
@@ -95,6 +104,8 @@ import {
   loadLlmConfig, createLlmGuard, createLlmProvider, createMockLlmProvider,
   createLlmRoutes, buildLlmMessages, sessionStartEventMessage, historyMessages,
   normalizeProviderName, llmHttpCode,
+  // R3：裁判事件口径 + 按事件生成 user 消息（服务端）
+  JUDGE_EVENT_TYPES, judgeEventMessage, isJudgeAskEvent as isJudgeAskEventServer,
 } from '../server/llm-provider.mjs';
 import {
   LLM_TOOLS, LLM_TOOL_DEFS, TOOL_INTENT_MAP, TOOLED_INTENTS, UNCOVERED_INTENTS,
@@ -7299,14 +7310,15 @@ console.log('\n[38] R1/R2 规则引擎：filter / 冷却 / 预算 / 优先级抢
   ok('话量三档：low / mid / high，默认 mid（脏值归一化到 mid）',
     COACH_VOLUMES.join(',') === 'low,mid,high' && DEFAULT_COACH_VOLUME === 'mid'
     && normalizeCoachVolume('xx') === 'mid' && normalizeCoachVolume(undefined) === 'mid');
-  ok('内置七条规则 id 一处定义（和 builtinRules() 一一对应）',
-    BUILTIN_RULE_IDS.length === 7
+  ok('内置六条规则 id 一处定义（和 builtinRules() 一一对应；门控那条 R3 已停用）',
+    BUILTIN_RULE_IDS.length === 6
+    && !BUILTIN_RULE_IDS.includes('gate-fail-2')
     && builtinRules().map((r) => r.id).join(',') === BUILTIN_RULE_IDS.join(','));
   ok('两条「频道」规则：rep 报数 / read 读秒，缺省规则 id 一处定义（每 5 秒读秒是缺省）',
     RULE_CHANNELS.join(',') === 'rep,read'
     && DEFAULT_RULE_BY_CHANNEL.rep === 'rep-count' && DEFAULT_RULE_BY_CHANNEL.read === 'hold-read-5'
     && DEFAULT_READ_EVERY_SEC === 5);
-  ok('模板全在 locales：七条规则的模板键都能取到词条（模板是函数的也能取）',
+  ok('模板全在 locales：六条规则的模板键都能取到词条（模板是函数的也能取）',
     builtinRules().every((r) => {
       const keys = typeof r.action.template === 'function'
         ? [1, 5, 10].map((n) => r.action.template({ n }))
@@ -7455,25 +7467,25 @@ console.log('\n[38] R1/R2 规则引擎：filter / 冷却 / 预算 / 优先级抢
     && eventContext({ type: 'tick', data: { elapsedSec: 5, hold: 1 } }).hold === true
     && !matchesFilter({ hold: true }, eventContext({ type: 'tick', data: { elapsedSec: 5 } })));
 
-  /* ---------------- consecutive：门控连错 2 次 ---------------- */
+  /* ---------------- R3：门控连错 2 次已交给 LLM 裁判（R1 模板停用，防双声） ---------------- */
   const g = makeEngine();
   fire(g, 'session-start');
   fire(g, 'gate-fail', { g: 'kneelPushup' });
   clock.t += 500;
   out = fire(g, 'gate-fail', { g: 'kneelPushup' });
-  const cue = t('status.need.kneelPushup');
-  ok('consecutive:2 —— 门控连错 2 次才开口，而且说的是这个门控的具体口令（膝盖 / 髋）',
-    out && out.speak.ruleId === 'gate-fail-2' && out.speak.priority === RULE_PRIORITIES.correct
-    && out.speak.text.includes(cue) && out.speak.text.includes('膝盖') && out.speak.text.includes('髋'),
-    JSON.stringify(out && out.speak.text));
-  clock.t += 100;
-  const again = fire(g, 'gate-fail', { g: 'kneelPushup' });
-  ok('同一句话 8 秒冷却内不重复（consecutive 已经到 3 也不再喊）', again === null, JSON.stringify(again));
+  ok('R3：R1 不再为「门控连错 2 次」开口（交给裁判的 gate-fail2 事件，防双声 ✗）',
+    out === null && !builtinRules().some((r) => r.id === 'gate-fail-2'), JSON.stringify(out));
   clock.t += 100;
   fire(g, 'gate-ok', { g: 'kneelPushup' });
-  ok('gate-ok 之后连续计数清零（再错一次不喊）', fire(g, 'gate-fail', { g: 'kneelPushup' }) === null);
-  ok('未知门控名 → 兜底用 status.need.stand 那句（不会念出键名）',
-    gateCueKey('nope') === 'status.need.stand' && gateCueKey('prone') === 'status.need.prone');
+  ok('gateCueKey 仍然一处定义：未知门控名兜底 status.need.stand（裁判兜底口令也用它）',
+    gateCueKey('nope') === 'status.need.stand' && gateCueKey('prone') === 'status.need.prone'
+    && gateCueKey('kneelPushup') === 'status.need.kneelPushup');
+  ok('门控那句 R1 模板**文案还在**（rule.gateFail2 + {cue}；裁判失败 / 超时用它回退）',
+    (() => {
+      const line = t('rule.gateFail2', { cue: t('status.need.kneelPushup') });
+      return typeof line === 'string' && line.includes(t('status.need.kneelPushup'))
+        && !line.includes('{cue}');
+    })());
 
   /* ---------------- 读秒：最后 5 秒 + bypassGap ---------------- */
   const c = makeEngine();
@@ -7626,9 +7638,9 @@ console.log('\n[38] R1/R2 规则引擎：filter / 冷却 / 预算 / 优先级抢
   clock.t += 6000;
   ok('话量=少：最后 3 个**照说**', fireLow('rep', { n: 17, target: 20, v: true })?.speak.ruleId === 'last-three');
   clock.t += 6000;
-  ok('话量=少：门控连错**照说**（纠正永远保留）',
+  ok('话量=少：门控连错**不再由 R1 说**（R3 起交给裁判；纠正类只剩最后 3 个）',
     fireLow('gate-fail', { g: 'prone' }) === null
-    && fireLow('gate-fail', { g: 'prone' })?.speak.ruleId === 'gate-fail-2');
+    && fireLow('gate-fail', { g: 'prone' }) === null);
   const volHi = makeEngine({ volume: 'high' });
   fire(volHi, 'session-start', {}, { volume: 'high' });
   clock.t += 1000;
@@ -7647,9 +7659,9 @@ console.log('\n[38] R1/R2 规则引擎：filter / 冷却 / 预算 / 优先级抢
     diagBus.snapshot().rule.skip === 1 && diagBus.snapshot().rule.reason === 'muted',
     JSON.stringify(diagBus.snapshot().rule));
   clock.t += 1000;
-  diagEngine.handle({ type: 'gate-fail', data: { g: 'prone' } }, st({ speaking: true }));
+  diagEngine.handle({ type: 'idle', data: { sec: 9 } }, st({ speaking: true }));
   clock.t += 1000;
-  diagEngine.handle({ type: 'gate-fail', data: { g: 'prone' } }, st({ speaking: true }));
+  diagEngine.handle({ type: 'idle', data: { sec: 9 } }, st({ speaking: true }));
   ok('诊断：正在说话被挡记 reason=speaking', diagBus.snapshot().rule.reason === 'speaking');
   diagBus.record('rule:speak', { ruleId: 'last-three', event: 'rep', priority: 40, ms: 3 });
   ok('诊断字典认 `rule:speak {ruleId, event, priority, ms}`',
@@ -7761,6 +7773,409 @@ console.log('\n[39] R2：数词（一/二/五）· repRule / readRule 工厂 · 
     repHit && repHit.speak.ruleId === 'user-rep-5'
     && tickHit && tickHit.speak.ruleId === 'user-read-10',
     JSON.stringify([repHit && repHit.speak, tickHit && tickHit.speak]));
+}
+
+/* ================================================================== *
+ * [40] R3：LLM 当「裁判」—— 事件触发、严格 JSON、静默优先、并发 1、8s 冷却 / 15s 去重
+ * ================================================================== */
+console.log('\n[40] R3 LLM 裁判：8 个触发点口径 / 严格 JSON / 触发次数（假时钟）/ 并发 1 / 门控回退');
+{
+  setLang('zh', { persist: false });
+  const clock = { t: 9000000 };
+  const st = (extra = {}) => ({ enabled: true, muted: false, speaking: false, ...extra });
+  const makeDiag = () => createDiag({ fetch: async () => ({ ok: true }), now: () => clock.t });
+  /** 只记「谁被念了」的假 speak */
+  const makeSpeaker = () => {
+    const said = [];
+    return { said, speak: (text, meta) => said.push({ text, ...(meta || {}) }) };
+  };
+  /** 假定时器：手动 fire（测 8s 超时用） */
+  const makeTimers = () => {
+    const list = [];
+    return {
+      list,
+      setTimer: (fn, ms) => { list.push({ fn, ms }); return list.length; },
+      clearTimer: () => {},
+      fireAll: () => { for (const item of list.splice(0)) item.fn(); },
+    };
+  };
+
+  /* ---------------- 口径：一处定义（前端 / 服务端 / 测试同一份） ---------------- */
+  ok('[40] 裁判口径一处定义：9 个事件（8 个触发点 + 复用 session-start）',
+    JUDGE_EVENTS.length === 9
+    && JUDGE_EVENTS.join(',') === 'set-complete,pr,rep-judge,hold-judge,idle,out-of-frame,gate-fail2,keyframe-miss2,session-start'
+    && JUDGE_ASK_EVENTS.length === 8 && !JUDGE_ASK_EVENTS.includes('session-start'),
+    JSON.stringify(JUDGE_EVENTS));
+  ok('[40] 服务端读的是同一份 JUDGE_EVENTS（JUDGE_EVENT_TYPES === JUDGE_EVENTS）',
+    Array.isArray(JUDGE_EVENT_TYPES) && JUDGE_EVENT_TYPES.join(',') === JUDGE_EVENTS.join(','));
+  ok('[40] isJudgeEvent / isJudgeAskEvent：session-start 算事件但**不走**裁判模式',
+    isJudgeEvent('session-start') && !isJudgeAskEvent('session-start')
+    && isJudgeEvent('rep-judge') && isJudgeAskEvent('rep-judge')
+    && !isJudgeEvent('nope') && !isJudgeAskEvent(''));
+  ok('[40] 触发优先级：破纪录最高（可抢占），静止最低',
+    judgePriority('pr') === 100 && judgePriority('gate-fail2') === 80
+    && judgePriority('set-complete') === 60 && judgePriority('rep-judge') === 40
+    && judgePriority('out-of-frame') === 30 && judgePriority('idle') === 20
+    && judgePriority('nope') === 0);
+
+  /* ---------------- 触发次数（假时钟 / 假计数） ---------------- */
+  const countRep = (max) => {
+    let n = 0;
+    for (let i = 1; i <= max; i += 1) if (shouldJudgeRep(i)) n += 1;
+    return n;
+  };
+  ok('[40] 每 3 个：1~12 个里只问 4 次（3 / 6 / 9 / 12），0 不算',
+    REP_JUDGE_EVERY === 3 && countRep(12) === 4 && !shouldJudgeRep(0)
+    && shouldJudgeRep(3) && !shouldJudgeRep(4));
+  ok('[40] 计时类每 10 秒：1~30 秒里问 3 次（10 / 20 / 30），0 秒 / 9 秒不问',
+    HOLD_JUDGE_EVERY_SEC === 10
+    && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 19, 20, 29, 30].filter((s) => shouldJudgeHold(s)).join(',')
+      === '10,20,30'
+    && !shouldJudgeHold(0) && !shouldJudgeHold(9));
+  ok('[40] 静止：10 秒起、之后每 10 秒一次（9 秒不问 / 10 问 / 11~19 不问 / 20 再问）',
+    IDLE_JUDGE_START_SEC === 10
+    && !shouldJudgeIdle(9) && shouldJudgeIdle(10) && !shouldJudgeIdle(11)
+    && !shouldJudgeIdle(19) && shouldJudgeIdle(20) && shouldJudgeIdle(30)
+    && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].filter((s) => shouldJudgeIdle(s)).length === 2);
+  ok('[40] 出画：和静止同一套口径（10 秒起、每 10 秒一次，回到画面由调用方清零）',
+    OUT_OF_FRAME_JUDGE_START_SEC === 10
+    && !shouldJudgeOutOfFrame(9) && shouldJudgeOutOfFrame(10)
+    && !shouldJudgeOutOfFrame(15) && shouldJudgeOutOfFrame(20));
+  ok('[40] 护栏数值就是用户拍板的：8s 冷却 / 15s 去重 / 8s 超时 / 一句话 ≤40 字',
+    JUDGE_COOLDOWN_MS === 8000 && JUDGE_DEDUPE_MS === 15000
+    && JUDGE_TIMEOUT_MS === 8000 && JUDGE_MAX_CHARS === 40
+    && GATE_FAIL_JUDGE_STREAK === 2 && KEYFRAME_MISS_JUDGE_STREAK === 2);
+
+  /* ---------------- 严格 JSON 解析（speak / actions / 静默） ---------------- */
+  ok('[40] `{"speak":null}` → 静默（ok=true, speak=null，不是失败）',
+    parseJudgeReply('{"speak": null}').ok === true
+    && parseJudgeReply('{"speak": null}').speak === null
+    && parseJudgeReply('{"speak":null}').actions.length === 0);
+  ok('[40] `{"speak":"节奏再稳一点"}` → 原样取出这一句',
+    parseJudgeReply('{"speak":"节奏再稳一点"}').speak === '节奏再稳一点');
+  ok('[40] 模型多包一层 ```json 围栏 / 前后有解释文字也能抠出来',
+    parseJudgeReply('```json\n{"speak":"好"}\n```').speak === '好'
+    && parseJudgeReply('这是结果：{"speak":"好"} 以上').speak === '好');
+  ok('[40] 空输出 = 静默（不是失败）；不是 JSON / 缺 speak / speak 不是字符串 → ok=false（调用方静默）',
+    parseJudgeReply('').ok === true && parseJudgeReply('').speak === null
+    && parseJudgeReply('我觉得还行').ok === false
+    && parseJudgeReply('{"text":"x"}').ok === false
+    && parseJudgeReply('{"speak": 42}').ok === false);
+  ok('[40] 超过 40 字截断（按码点，不切一半）；换行压成空格；成对引号去掉',
+    parseJudgeReply(`{"speak":"${'啊'.repeat(60)}"}`).speak.length === 40
+    && clampJudgeSpeak('第一行\n第二行') === '第一行 第二行'
+    && clampJudgeSpeak('"节奏很好"') === '节奏很好'
+    && clampJudgeSpeak('   ') === '');
+  ok('[40] actions 只在是数组时保留（每项要有 intent）',
+    parseJudgeReply('{"speak":null,"actions":[{"intent":"pause","args":{}},{"nope":1}]}').actions.length === 1
+    && parseJudgeReply('{"speak":null,"actions":"x"}').actions.length === 0);
+
+  /* ---------------- 门控诊断 → 「差多少」 ---------------- */
+  const checks = parseGateDiagRow('✗ knee 120(>=50<=158)✗ hip 40(>=50<=158)✗ armRaised 0.9(<=0.45)✗');
+  ok('[40] 门控诊断行解析：哪个量 / 当前值 / 上下限 / 差多少',
+    checks.length === 3
+    && checks[0].metric === 'knee' && checks[0].value === 120 && checks[0].ok === false
+    && checks[1].metric === 'hip' && checks[1].gap === 10
+    && Math.abs(checks[2].gap - 0.45) < 0.06,
+    JSON.stringify(checks));
+  ok('[40] 过了的那条 gap=0；worstGateCheck 挑差得最多的那条',
+    parseGateDiagRow('✗ knee 99(>=50<=158)✓').every((c) => c.gap === 0 && c.ok)
+    && worstGateCheck(checks).metric === 'hip' && worstGateCheck([]) === null);
+
+  /* ---------------- 控制器：静默优先 + 真出声 ---------------- */
+  {
+    const diag = makeDiag();
+    const sp = makeSpeaker();
+    const judge = createJudge({
+      ask: async () => ({ speak: null, actions: [] }),
+      speak: sp.speak,
+      diag,
+      now: () => clock.t,
+    });
+    const silentRun = await judge.request('rep-judge', { context: { judge: { event: 'rep-judge' } } });
+    ok('[40] mock LLM 回 speak:null → **不出声**（一句都不念），但诊断记了 judge:ask {ok:true, spoke:false}',
+      silentRun.ok === true && silentRun.spoke === false && sp.said.length === 0
+      && diag.snapshot().judge.ask === 1 && diag.snapshot().judge.spoke === 0
+      && diag.snapshot().judge.ok === true,
+      JSON.stringify({ run: silentRun, judge: diag.snapshot().judge }));
+    ok('[40] 静默率（mock 下）= 100%（问了 1 次、一句没说）',
+      judge.silenceRate === 100 && judge.stats.asked === 1 && judge.stats.silenced === 1);
+  }
+  {
+    const diag = makeDiag();
+    const sp = makeSpeaker();
+    const judge = createJudge({
+      ask: async () => ({ speak: '膝盖再弯一点', actions: [] }),
+      speak: sp.speak,
+      diag,
+      now: () => clock.t,
+    });
+    const run = await judge.request('rep-judge');
+    ok('[40] 模型给了一句话 → 走同一条教练通道念出去（source=judge，不是 fallback）',
+      run.spoke === true && sp.said.length === 1 && sp.said[0].text === '膝盖再弯一点'
+      && sp.said[0].fallback !== true
+      && diag.snapshot().judge.spoke === 1 && judge.silenceRate === 0,
+      JSON.stringify({ run, said: sp.said }));
+  }
+
+  /* ---------------- 护栏：冷却 / 去重 / 静音 / 说话中 / 教练关 ---------------- */
+  {
+    const diag = makeDiag();
+    const sp = makeSpeaker();
+    let calls = 0;
+    const judge = createJudge({
+      ask: async () => { calls += 1; return { speak: null }; },
+      speak: sp.speak,
+      diag,
+      now: () => clock.t,
+    });
+    await judge.request('rep-judge');
+    const again = await judge.request('rep-judge');
+    ok('[40] 同触发 8s 冷却：8 秒内再触发 → judge:skip {reason:"cooldown"}（不发请求）',
+      again.skipped === 'cooldown' && calls === 1
+      && diag.snapshot().judge.reason === 'cooldown',
+      JSON.stringify({ again, calls }));
+    clock.t += 8000;
+    const later = await judge.request('rep-judge');
+    ok('[40] 过 8 秒之后同一个触发可以再问一次', later.ok === true && calls === 2);
+    clock.t += 100;   // 换一个触发不受「同触发冷却」影响（各自记各自的时刻）
+    const other = await judge.request('hold-judge');
+    ok('[40] 冷却按触发分开算：hold-judge 不受 rep-judge 影响', other.ok === true && calls === 3);
+  }
+  {
+    const sp = makeSpeaker();
+    const judge = createJudge({
+      ask: async () => ({ speak: '同一句话' }),
+      speak: sp.speak,
+      now: () => clock.t,
+    });
+    await judge.request('rep-judge');
+    clock.t += 8000;
+    const dup = await judge.request('hold-judge');     // 8s 后再来一条，同一句 → 去重
+    ok('[40] 同文本 15s 内不重复（8 秒后同一个句子还没过窗口）',
+      sp.said.length === 1 && dup.spoke === false,
+      JSON.stringify({ said: sp.said.length, dup }));
+    clock.t += 8000;                                    // 累计 16s > 15s
+    const dup2 = await judge.request('idle');
+    ok('[40] 过了 15s 去重窗口，同一句话可以再说（不是永久禁掉）',
+      dup2.spoke === true && sp.said.length === 2, JSON.stringify(dup2));
+  }
+  {
+    const sp = makeSpeaker();
+    const diag = makeDiag();
+    let status = st({ enabled: false });
+    let calls = 0;
+    const judge = createJudge({
+      ask: async () => { calls += 1; return { speak: '好' }; },
+      speak: sp.speak,
+      diag,
+      status: () => status,
+      now: () => clock.t,
+    });
+    const off = await judge.request('rep-judge');
+    status = st({ muted: true });
+    const muted = await judge.request('hold-judge');
+    status = st({ speaking: true });
+    const speaking = await judge.request('idle');
+    ok('[40] 教练关 / 静音 → 直接丢弃（诊断说清是哪道栏杆）；正在说话 → 请求可以问，但**出声那一刻**丢弃',
+      off.skipped === 'coach-off' && muted.skipped === 'muted'
+      && speaking.ok === true && speaking.spoke === false
+      && calls === 1 && sp.said.length === 0
+      && diag.snapshot().judge.skip === 3 && diag.snapshot().judge.reason === 'speaking',
+      JSON.stringify({ off, muted, speaking, judge: diag.snapshot().judge }));
+    status = st();
+    clock.t += 1000;
+    const back = await judge.request('set-complete');
+    ok('[40] 恢复之后照常问（丢弃不占用冷却）', back.ok === true && calls === 2);
+  }
+
+  /* ---------------- 并发 1：新触发取消旧的（破纪录可抢占） ---------------- */
+  {
+    const diag = makeDiag();
+    const sp = makeSpeaker();
+    let resolveFirst = null;
+    let n = 0;
+    const judge = createJudge({
+      ask: (event) => {
+        n += 1;
+        if (event === 'rep-judge') return new Promise((resolve) => { resolveFirst = resolve; });
+        return Promise.resolve({ speak: '破纪录了' });
+      },
+      speak: sp.speak,
+      diag,
+      now: () => clock.t,
+    });
+    const slow = judge.request('rep-judge');
+    await Promise.resolve();
+    ok('[40] 并发 1：同一时刻只有一条在飞（inflight 有值）', !!judge.inflight && n === 1,
+      JSON.stringify(judge.inflight));
+    clock.t += 100;
+    const pr = await judge.request('pr');
+    ok('[40] 破纪录（优先级 100）抢占低优先级请求：新请求立刻问出去并出声',
+      pr.ok === true && pr.spoke === true && sp.said.at(-1).text === '破纪录了');
+    resolveFirst({ speak: '这条已经晚了' });
+    const stale = await slow;
+    ok('[40] 被取消的旧请求回来也只丢：不出声、不记 spoke',
+      stale.spoke === false && stale.skipped === 'superseded'
+      && !sp.said.some((item) => item.text === '这条已经晚了'),
+      JSON.stringify({ stale, said: sp.said }));
+    ok('[40] 诊断：被判超车的那条记 judge:skip {reason:"superseded"}',
+      diag.snapshot().judge.skip >= 1);
+  }
+  {
+    const judge = createJudge({
+      ask: () => new Promise(() => {}),   // 永不返回
+      speak: () => {},
+      now: () => clock.t,
+    });
+    judge.request('pr');
+    await Promise.resolve();
+    const lower = await judge.request('idle');
+    ok('[40] 低优先级触发在飞时不会挤掉高优先级（reason=busy）', lower.skipped === 'busy');
+  }
+
+  /* ---------------- 超时 8s / 失败：门控回退模板，其余静默 ---------------- */
+  {
+    const diag = makeDiag();
+    const sp = makeSpeaker();
+    const timers = makeTimers();
+    const judge = createJudge({
+      ask: () => new Promise(() => {}),
+      speak: sp.speak,
+      diag,
+      now: () => clock.t,
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+    });
+    const p = judge.request('rep-judge');
+    await Promise.resolve();
+    clock.t += 8000;
+    timers.fireAll();
+    const run = await p;
+    ok('[40] 超时 8s → 静默收场（ok:false、不出声、不重试），诊断带 code=timeout',
+      run.ok === false && run.spoke === false && sp.said.length === 0
+      && diag.snapshot().judge.failed === 1 && diag.snapshot().judge.code === 'timeout'
+      && timers.list.length === 0,
+      JSON.stringify({ run, judge: diag.snapshot().judge }));
+  }
+  {
+    const sp = makeSpeaker();
+    const judge = createJudge({
+      ask: async () => { const err = new Error('nope'); err.code = 'llm-timeout'; throw err; },
+      speak: sp.speak,
+      now: () => clock.t,
+    });
+    const silent = await judge.request('rep-judge');
+    ok('[40] LLM 失败（非门控）→ 静默，不回退任何模板口令',
+      silent.ok === false && silent.spoke === false && sp.said.length === 0);
+  }
+  {
+    const diag = makeDiag();
+    const sp = makeSpeaker();
+    const judge = createJudge({
+      ask: async () => { const err = new Error('nope'); err.code = 'llm-http-503'; throw err; },
+      speak: sp.speak,
+      diag,
+      now: () => clock.t,
+    });
+    const fallback = '膝盖再弯一点（连着两次没到位，先摆好）';
+    const run = await judge.request('gate-fail2', {
+      context: { judge: { event: 'gate-fail2', gate: 'kneelPushup' } },
+      fallback,
+    });
+    ok('[40] 门控那条 LLM 失败 → **回退 R1 模板口令**（同一句，source=fallback）',
+      run.ok === false && run.spoke === true
+      && sp.said.length === 1 && sp.said[0].text === fallback && sp.said[0].fallback === true
+      && diag.snapshot().judge.spoke === 1,
+      JSON.stringify({ run, said: sp.said }));
+  }
+
+  /* ---------------- 服务端：一条事件一条 user 消息（中英各一套） ---------------- */
+  const ctx = {
+    session: { name: '自重深蹲', exerciseId: 'squat', kind: 'reps', target: 20, reps: 6 },
+    performance: { score: 88 },
+    judge: {
+      event: 'set-complete',
+      unit: '次',
+      set: { value: 15, score: 88, target: 20, kind: 'reps' },
+      prev: { value: 12, score: 71 },
+      trend: 'improved',
+      record: 'score',
+      score: 88, prevScore: 71, value: 15, prevValue: 12,
+      every: 3, reps: 6, elapsedSec: 20, remainingSec: 40, idleSec: 10, outSec: 12,
+      gate: 'kneelPushup', cue: '膝盖再弯一点', streak: 2,
+      worst: { metric: 'hip', value: 40, min: 50, max: 158, gap: 10 },
+      keyframe: { id: 'kneeLine', name: '膝盖过脚尖', pts: 3, max: 7, gap: 4 },
+      miss: { name: '膝盖过脚尖', pts: 3, max: 7, gap: 4 },
+    },
+  };
+  const zhMsgs = {};
+  for (const event of JUDGE_ASK_EVENTS) {
+    zhMsgs[event] = judgeEventMessage({ event, locale: 'zh', context: ctx });
+  }
+  ok('[40] 8 个裁判事件都生成了中文 user 消息（都以 [事件] 开头、不重复）',
+    JUDGE_ASK_EVENTS.every((e) => zhMsgs[e].startsWith('[事件]'))
+    && new Set(Object.values(zhMsgs)).size === 8,
+    JSON.stringify(zhMsgs));
+  ok('[40] 每条消息都带上了这条事件的关键数字（不是一句空话）',
+    zhMsgs['set-complete'].includes('15') && zhMsgs['set-complete'].includes('88')
+    && zhMsgs['set-complete'].includes('71') && zhMsgs['set-complete'].includes('比上一组高')
+    && zhMsgs.pr.includes('破纪录') && zhMsgs.pr.includes('88')
+    && zhMsgs['rep-judge'].includes('6/20') && zhMsgs['rep-judge'].includes('膝盖过脚尖')
+    && zhMsgs['hold-judge'].includes('20 秒') && zhMsgs['hold-judge'].includes('40 秒')
+    && zhMsgs.idle.includes('10 秒') && zhMsgs['out-of-frame'].includes('12 秒')
+    && zhMsgs['gate-fail2'].includes('kneelPushup') && zhMsgs['gate-fail2'].includes('hip=40')
+    && zhMsgs['gate-fail2'].includes('差 10')
+    && zhMsgs['keyframe-miss2'].includes('膝盖过脚尖') && zhMsgs['keyframe-miss2'].includes('差 4'),
+    JSON.stringify(zhMsgs));
+  /** 英文环境下的 context：动作名 / 口令 / 关键帧名都由客户端按语言给英文（见 buildAgentContext） */
+  const ctxEn = JSON.parse(JSON.stringify(ctx));
+  ctxEn.session.name = 'Squat';
+  ctxEn.judge.cue = 'bend the knee a bit more';
+  ctxEn.judge.unit = 'reps';
+  ctxEn.judge.miss = { name: 'knee over toes', pts: 3, max: 7, gap: 4 };
+  ctxEn.judge.keyframe = { id: 'kneeLine', name: 'knee over toes', pts: 3, max: 7, gap: 4 };
+  const enMsgs = Object.fromEntries(JUDGE_ASK_EVENTS.map((e) => (
+    [e, judgeEventMessage({ event: e, locale: 'en', context: ctxEn })])
+  ));
+  ok('[40] 英文另一套：都以 [Event] 开头、和中文不同、没有残留中文',
+    JUDGE_ASK_EVENTS.every((e) => enMsgs[e].startsWith('[Event]') && enMsgs[e] !== zhMsgs[e]
+      && !/[\u4e00-\u9fff]/.test(enMsgs[e])),
+    JUDGE_ASK_EVENTS.map((e) => `${e}:${enMsgs[e].startsWith('[Event]') ? '' : 'no-prefix'}`
+      + `${enMsgs[e] === zhMsgs[e] ? 'same' : ''}${/[\u4e00-\u9fff]/.test(enMsgs[e]) ? 'cjk' : ''}`
+      + (enMsgs[e].startsWith('[Event]') && !/[\u4e00-\u9fff]/.test(enMsgs[e]) ? '' : ` ${enMsgs[e]}`)).join(' | '));
+  ok('[40] buildLlmMessages 里按 event 生成 user 消息（最后一条就是它）',
+    buildLlmMessages({ event: 'gate-fail2', locale: 'zh', context: ctx }).at(-1).content
+      === zhMsgs['gate-fail2']
+    && buildLlmMessages({ event: 'rep-judge', locale: 'en', context: ctxEn }).at(-1).content
+      === enMsgs['rep-judge']);
+  ok('[40] 裁判 mode 的 system prompt 写明了严格 JSON / 默认 null / ≤40 字 / 不编数字',
+    (() => {
+      const sys = buildLlmMessages({ event: 'rep-judge', locale: 'zh', context: ctx })[0].content;
+      return sys.includes('{"speak": string|null') && sys.includes('默认 speak = null')
+        && sys.includes('40 字') && sys.includes('不要问问题') && sys.includes('不许自己编');
+    })());
+  ok('[40] session-start 仍然是**普通问候**（不是裁判 mode，也不带 JSON 规则）',
+    (() => {
+      const msgs = buildLlmMessages({ event: 'session-start', locale: 'zh', context: ctx });
+      return msgs.at(-1).content.startsWith('[事件] 用户刚刚进入训练')
+        && !msgs[0].content.includes('默认 speak = null');
+    })());
+  ok('[40] 裁判请求**不带对话历史**（一条事件一条请求，最后一条是这条事件）',
+    (() => {
+      const msgs = buildLlmMessages({
+        event: 'idle', locale: 'zh', context: ctx,
+        history: [{ role: 'user', content: '上一句' }, { role: 'assistant', content: '上一答' }],
+      });
+      // buildLlmMessages 本身照旧拼历史；「裁判不带历史」由路由决定（history: judgeMode ? [] : …）
+      return msgs.length >= 2 && msgs.at(-1).content === zhMsgs.idle;
+    })());
+  /* 首次见面只自报一次：裁判 mode 下**不加**「先说一次自报家门」（否则模型会在训练中自我介绍一下） */
+  ok('[40] 裁判 mode 下不加「首次自报家门」（introSeen 未置位时也只说事件本身）',
+    (() => {
+      const sys = buildLlmMessages({ event: 'rep-judge', locale: 'zh', context: ctx })[0].content;
+      return !sys.includes('先说一次自报家门') && !sys.includes('这是首次对话');
+    })());
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

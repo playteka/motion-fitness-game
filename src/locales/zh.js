@@ -55,6 +55,11 @@ export default {
     coachVolumeMid: '中（默认：逐次报数 + 每 5 秒读秒）',
     coachVolumeHigh: '多（再加过半提醒）',
     coachRuleCount: '当前生效规则 {count} 条',
+    // P3.5 收尾：教练语气三档（长期偏好 prefs.tone：warm / funny / strict）
+    coachTone: '教练语气',
+    coachToneWarm: '温和（默认）',
+    coachToneFunny: '温和幽默（偶尔自嘲一句）',
+    coachToneStrict: '严格（只讲要点，不寒暄）',
     fullscreen: '全屏显示视频框',
     // 画面右下角「正在记录调试数据」的角标：数字 + 单位，鼠标移上去看这句话
     recUnit: '帧已记录',
@@ -998,6 +1003,11 @@ export default {
     voiceGenderHint: '男声 / 女声只影响教练朗读的音色（默认女声）；这个选择会记进「教练记忆」，下次打开还在。'
       + '也可以直接说「用男声」「换成女教练」。',
     voiceGenderSaveFailed: '声音已经换了，但没写进教练记忆（预览服务器没起来？）—— 下次打开可能回到女声。',
+    // P3.5 收尾：教练语气（长期偏好 prefs.tone，写进服务端 MD；默认温和）
+    tone: '语气',
+    toneHint: '语气只改「怎么说」，不改专业判断：温和 = 鼓励具体、不夸张；温和幽默 = 再加一点轻松的玩笑 / 偶尔自嘲一句，'
+      + '**不放任、不油腻**；严格 = 只讲要点、少寒暄。这个选择会记进「教练记忆」，下次打开还在。',
+    toneSaveFailed: '语气已经换了，但没写进教练记忆（预览服务器没起来？）—— 下次打开可能回到温和。',
     // P3.4：允许插话打断（默认开；关掉后教练说话时不会被打断，但仍在聆听）
     bargeInToggle: '允许插话打断',
     bargeInHint: '教练说话时你直接开口就能把它打断（只停语音，字幕 / 弹幕照常留着）。'

@@ -57,8 +57,17 @@ import { createEventBus } from './voice/events.js';
 import {
   createRuleEngine, builtinRules, normalizeCoachVolume, COACH_VOLUMES,
   DEFAULT_COACH_VOLUME, MIN_GAP_MS, RULE_CHANNELS, DEFAULT_RULE_BY_CHANNEL,
-  repRule, readRule, describeRule, estimateSpeechMs,
+  repRule, readRule, describeRule, estimateSpeechMs, gateCueKey,
 } from './voice/rules.js';
+// R3：LLM 当「裁判」—— 事件触发，由模型判断要不要说一句（默认不说；口径全在 judge.js）
+import {
+  createJudge, shouldJudgeRep, shouldJudgeHold, shouldJudgeIdle, shouldJudgeOutOfFrame,
+  parseGateDiagRow, worstGateCheck,
+  JUDGE_EVENTS, REP_JUDGE_EVERY, HOLD_JUDGE_EVERY_SEC,
+  IDLE_JUDGE_START_SEC, OUT_OF_FRAME_JUDGE_START_SEC,
+  GATE_FAIL_JUDGE_STREAK, KEYFRAME_MISS_JUDGE_STREAK,
+  JUDGE_COOLDOWN_MS, JUDGE_DEDUPE_MS,
+} from './voice/judge.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -347,6 +356,12 @@ const state = {
   lastIdleSec: -1,       // 上一次发 idle 的秒数（每秒一发，8 秒没动就催）
   lastActivityAt: 0,     // 上一次「有动作」的时刻（计次 / 开始一组；8 秒没动就看它）
   tempoAt: 0,            // 上一次发 tempo 的时刻（每 10 秒一发）
+  /* ---- R3 LLM 裁判（事件触发的连续次数 / 去重游标） ---- */
+  gateFailStreak: 0,     // 门控连续失败几次（≥2 问裁判；gate-ok / 一组开始清零）
+  missKeyframeId: '',    // 连续漏掉的是哪一帧（labelKey）
+  missKeyframeStreak: 0, // 同一帧连续漏掉几次（≥2 问裁判；这一轮没漏就清零）
+  lastOutOfFrameSec: -1, // 上一次发「出画」的秒数（10 秒起每 10 秒一次）
+  judgeSeed: 0,          // 裁判用的递增序号（诊断对账；不参与判断）
   // ---- AI 语音教练（P3.0 基座）----
   voice: null,           // session.snapshot() 的最近一份（只在 coach.js 里渲染，app 不直接改）
 };
@@ -735,6 +750,8 @@ voice.subscribe((snap) => {
   state.voice = snap;
   coach.render(snap);
   syncCoachToggle(!!snap.enabled);
+  // P3.5 收尾：头像光环跟着「教练在不在说话」变亮 / 变暗（平时呼吸）
+  syncCoachAura();
   // 关闭 / 出错：把音量表那一路音频就地释放（render 里也兜了一次，这里保证状态变化即释放）
   if (!snap.enabled || snap.state === 'off' || snap.state === 'error') coach.stopVu();
   // 回退 Web Speech 时共享麦克风已经交给浏览器的识别器了：音量表没有流可用，收掉
@@ -756,6 +773,270 @@ voice.subscribe((snap) => {
 });
 // 对话显示模式先和设置对齐（弹幕模式收起两行字幕面板；字幕模式照旧）
 applyDialogueMode(state.settings.dialogue);
+
+/* ------------------------------------------------------------------ *
+ * R3：LLM 当「裁判」—— 事件触发，由模型判断要不要说一句
+ *
+ * 用户原话（R3）：「LLM 当裁判：事件触发，由模型判断要不要说一句」——
+ * 8 个触发点（本文件里的 `judgeSetComplete` / `judgePr` / `judgeRepTick` / `judgeHoldTick` /
+ * `judgeIdleTick` / `judgeOutOfFrameTick` / `judgeGateEvent` / `judgeKeyframeEvent`；
+ * `session-start` 复用已有的 `greetSessionStart()`）。
+ *
+ * 分工（和 R1 规则快车道**不抢活**）：
+ *   - R1：确定性口令（逐次报数 / 每 5 秒读秒 / 最后 3 个 / 8 秒没动…）→ 一个请求都不发；
+ *   - R3：**只有**这 8 个时机问一次模型 `{"speak": string|null}`，默认 null（静默优先）；
+ *     护栏（并发 1 / 8s 冷却 / 15s 去重 / 说话中丢弃 / 8s 超时）全在 `src/voice/judge.js`；
+ *   - 门控连错 2 次：R1 那条模板已停用（防双声），这里问裁判；模型失败 / 超时才回退
+ *     同一句模板口令（`rule.gateFail2` + `gateCueKey`，文案一处定义）。
+ *
+ * 诊断：`judge:ask {event, ok, ms, spoke}` / `judge:skip {reason}`（logs/coach-diag.jsonl）。
+ * ------------------------------------------------------------------ */
+
+/** 裁判能不能开口（教练开着 / 没静音 / 没在说话） */
+function judgeStatus() {
+  return {
+    enabled: !!state.settings.coachEnabled && !!voice.enabled
+      && voice.state !== 'off' && voice.state !== 'error',
+    muted: !!coachMuted || !!voice.muted,
+    speaking: voice.state === 'speaking',
+  };
+}
+
+/** 门控兜底口令（R1 那条模板的文案：`rule.gateFail2` + `gateCueKey`；只在裁判失败时念） */
+function gateFallbackText(gate) {
+  try {
+    return t('rule.gateFail2', { cue: t(gateCueKey(gate)) });
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 裁判用的时钟（生产环境 = `Date.now`；测试可以换成假时钟，用来断言 8s 冷却 / 15s 去重的节奏）。
+ * 和 `poseLoadTuning` 一样：只放这一个可替换点，不散落别的钩子。
+ */
+let judgeClock = () => Date.now();
+function setJudgeClock(fn) {
+  judgeClock = typeof fn === 'function' ? fn : () => Date.now();
+  return judgeClock;
+}
+
+/**
+ * 裁判本体：ask 走**同一条** `/llm` 客户端（8s 超时），说出口走**同一条**教练通道
+ * （`voice.onCoachText()` → 弹幕 + TTS + 降级），actions 走**同一份**命令表 handler。
+ */
+const judge = createJudge({
+  ask: (event, { context }) => coachLlmClient.judge(event, { locale: getLang(), context }),
+  speak: (text, meta = {}) => {
+    try { voice.onCoachText(text, { source: meta.fallback ? 'judge-fallback' : 'judge' }); } catch { /* ignore */ }
+  },
+  runActions: (actions) => {
+    try { voice.runActions(actions); } catch { /* 动作失败不该影响这句话 */ }
+  },
+  status: judgeStatus,
+  diag: coachDiag,
+  now: () => judgeClock(),
+});
+
+/** 当前动作的计量单位（「次」/「秒」），给模型看的话里带上，避免它把次数说成秒 */
+function judgeUnit() {
+  try {
+    const ex = localizedExercise(state.exerciseId);
+    return ex && ex.unit ? String(ex.unit) : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 一条裁判事件的 context：标准 Agent 快照 + `judge` 块（数字全在客户端算好，模型只解释 / 决策）。
+ * @param {string} event `JUDGE_EVENTS` 之一
+ * @param {object} [extra] 这条事件自己的字段
+ */
+function judgeContext(event, extra = {}) {
+  let base = {};
+  try { base = getLlmContext(''); } catch { base = {}; }
+  return { ...base, judge: { event, unit: judgeUnit(), ...extra } };
+}
+
+/**
+ * 问裁判一句（fire-and-forget；返回的 Promise 给测试 await）。
+ * @param {string} event
+ * @param {object} [extra] 进 `context.judge` 的字段
+ * @param {{fallback?:string}} [opts] `fallback` = LLM 失败时念的兜底口令（只有门控那条传）
+ */
+function askJudge(event, extra = {}, { fallback = '' } = {}) {
+  state.judgeSeed = (state.judgeSeed || 0) + 1;
+  try {
+    return judge.request(event, { context: judgeContext(event, extra), fallback });
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+
+/** 这一轮第一个没做到的关键帧（`{id,name,pts,max,gap}`；全做到了 → null） */
+function firstMissedKeyframe() {
+  const det = state.detector;
+  if (!det || typeof det.stepStatus !== 'function') return null;
+  let steps = [];
+  try { steps = det.stepStatus() || []; } catch { return null; }
+  const step = steps.find((s) => s && !s.done);
+  if (!step) return null;
+  const idx = state.criteriaStepStage && state.criteriaStepStage[step.id] !== undefined
+    ? Number(state.criteriaStepStage[step.id])
+    : -1;
+  const maxObj = idx >= 0 ? state.criteriaMax?.[idx] : null;
+  const max = maxObj ? (Number(maxObj.points) || 0) + (Number(maxObj.bonus) || 0) : 0;
+  const pts = idx >= 0 ? (Number(state.criteriaPts?.[idx]) || 0) : 0;
+  let name = '';
+  try { name = step.labelKey ? t(step.labelKey) : ''; } catch { name = ''; }
+  return {
+    id: String(step.id || step.labelKey || ''),
+    name: String(name || step.labelKey || '').slice(0, 40),
+    pts,
+    max,
+    gap: Math.max(0, max - pts),
+  };
+}
+
+/* ---------------- 8 个触发点 ---------------- */
+
+/**
+ * ① 一组结束 → 复盘这组（分数 / 对比同动作的上一组）。
+ * 在 `stopSession()` 里、`saveSession()` 之后调用（history[0] 就是刚存进去的这一组）。
+ */
+function judgeSetComplete({ ex, value, score } = {}) {
+  if (!ex) return null;
+  const history = loadList(STORE.history);
+  const cur = history[0] || null;
+  // 「上组」= 同一个动作**最近**的那一组（跳过刚存的这一条，也跳过中间练的别的动作）
+  const prev = history.slice(1).find((h) => h && h.exerciseId === ex.id) || null;
+  const prevScore = prev ? (Number(prev.score) || 0) : 0;
+  const trend = !prev ? 'first' : (score > prevScore ? 'improved' : (score < prevScore ? 'declined' : 'flat'));
+  return askJudge('set-complete', {
+    set: {
+      value: Number(value) || 0,
+      score: Number(score) || 0,
+      target: Math.max(0, Math.round(Number(state.target) || 0)),
+      kind: ex.kind === 'hold' ? 'hold' : 'reps',
+      at: Number(cur && cur.at) || 0,
+    },
+    prev: prev ? { value: Number(prev.value) || 0, score: prevScore } : null,
+    trend,
+  });
+}
+
+/**
+ * ② 破纪录 → 立即问（`pr` 优先级最高，可抢占正在飞的那条裁判请求）。
+ * @param {{record?:string, score?:number, prevScore?:number, value?:number, prevValue?:number}} info
+ */
+function judgePr(info = {}) {
+  return askJudge('pr', {
+    record: String(info.record || 'score'),
+    score: Number(info.score) || 0,
+    prevScore: Number(info.prevScore) || 0,
+    value: Number(info.value) || 0,
+    prevValue: Number(info.prevValue) || 0,
+  });
+}
+
+/** ③ 每 3 个 → 检视一次（带上第一个还没做到的关键帧 + 差多少分） */
+function judgeRepTick(reps) {
+  const det = state.detector;
+  const n = Number(reps) || 0;
+  return askJudge('rep-judge', {
+    every: REP_JUDGE_EVERY,
+    reps: n,
+    target: Math.max(0, Math.round(Number(state.target) || 0)),
+    score: det ? (Number(det.score) || 0) : 0,
+    miss: firstMissedKeyframe(),
+  });
+}
+
+/** ④ 计时类每 10 秒 → 检视一次 */
+function judgeHoldTick(elapsedSec) {
+  const sec = Math.max(0, Math.round(Number(elapsedSec) || 0));
+  const target = Math.max(0, Math.round(Number(state.target) || 0));
+  return askJudge('hold-judge', {
+    every: HOLD_JUDGE_EVERY_SEC,
+    elapsedSec: sec,
+    target,
+    remainingSec: Math.max(0, target - sec),
+  });
+}
+
+/** ⑤ 静止 10s 起、每 10 秒一次（直到有动作） */
+function judgeIdleTick(idleSec) {
+  const det = state.detector;
+  return askJudge('idle', {
+    idleSec: Math.max(0, Math.round(Number(idleSec) || 0)),
+    reps: det ? (Number(det.validReps) || 0) : 0,
+    target: Math.max(0, Math.round(Number(state.target) || 0)),
+  });
+}
+
+/** ⑥ 出画 10s 起、每 10 秒一次（直到回画面） */
+function judgeOutOfFrameTick(outSec) {
+  return askJudge('out-of-frame', { outSec: Math.max(0, Math.round(Number(outSec) || 0)) });
+}
+
+/**
+ * ⑦a 门控连续 2 次没通过 → 带上「哪条门控 + 差多少」问裁判；
+ *     模型失败 / 超时 → 回退 R1 那句模板口令（`gateFallbackText`）。
+ * @param {{data?:{g?:string}}} [ev] 事件总线上的 `gate-fail`（`g` = 哪条门控；比 det.gateName 更准）
+ */
+function judgeGateEvent(ev) {
+  state.gateFailStreak = (state.gateFailStreak || 0) + 1;
+  if (state.gateFailStreak < GATE_FAIL_JUDGE_STREAK) return null;
+  const det = state.detector;
+  const gate = String((ev && ev.data && ev.data.g) || (det && det.gateName) || '');
+  let checks = [];
+  try {
+    const rows = det && typeof det.diag === 'function' ? (det.diag() || []) : [];
+    const row = rows.find((item) => item && item.key === 'debug.diag.gate');
+    checks = parseGateDiagRow(row && row.value);
+  } catch { checks = []; }
+  return askJudge('gate-fail2', {
+    gate,
+    cue: (() => { try { return t(gateCueKey(gate)); } catch { return ''; } })(),
+    streak: state.gateFailStreak,
+    worst: worstGateCheck(checks),
+    checks: checks.slice(0, 4),
+  }, { fallback: gateFallbackText(gate) });
+}
+
+/**
+ * ⑦b 同一个关键帧连续 2 次漏掉 → 带上「哪一帧 + 差多少分」问裁判。
+ * @param {{data?:{f?:string}}} ev 事件总线上的 `keyframe-miss`
+ */
+function judgeKeyframeEvent(ev) {
+  const id = String((ev && ev.data && ev.data.f) || '');
+  if (!id) return null;
+  if (id === state.missKeyframeId) state.missKeyframeStreak = (state.missKeyframeStreak || 0) + 1;
+  else { state.missKeyframeId = id; state.missKeyframeStreak = 1; }
+  if (state.missKeyframeStreak < KEYFRAME_MISS_JUDGE_STREAK) return null;
+  const frame = firstMissedKeyframe() || {
+    id, name: String(id).slice(0, 40), pts: 0, max: 0, gap: 0,
+  };
+  return askJudge('keyframe-miss2', { keyframe: frame, streak: state.missKeyframeStreak });
+}
+
+/* ---------------- 总线接线（和 R1 规则引擎共用同一条总线） ---------------- */
+
+/** 一组 / 一次训练开始：连续次数清零（门控 / 关键帧的「连续 2 次」重新算） */
+function resetJudgeStreaks() {
+  state.gateFailStreak = 0;
+  state.missKeyframeId = '';
+  state.missKeyframeStreak = 0;
+  state.lastOutOfFrameSec = -1;
+}
+
+voiceBus.on('gate-fail', (ev) => { judgeGateEvent(ev); });
+voiceBus.on('gate-ok', () => { state.gateFailStreak = 0; });
+voiceBus.on('keyframe-miss', (ev) => { judgeKeyframeEvent(ev); });
+voiceBus.on('set-start', () => { resetJudgeStreaks(); });
+voiceBus.on('session-start', () => { resetJudgeStreaks(); });
+voiceBus.on('session-end', () => { resetJudgeStreaks(); });
 
 /** 一次动作完成后，进度条保持「空的」多久（让清零看得见） */
 const CRITERIA_CLEAR_MS = 650;
@@ -969,11 +1250,94 @@ function setVoiceGender(raw) {
   return gender;
 }
 
+/* ------------------------------------------------------------------ *
+ * P3.5 收尾：教练语气（长期偏好 prefs.tone —— warm 温和 / funny 温和幽默 / strict 严格）
+ *
+ * 用户原话：「语气档 = 温和 + 幽默；prefs.tone 已有 → 写进 system prompt
+ * （语气：温和而幽默——鼓励具体、偶尔自嘲一句、不放任、不油腻）；默认 warm」。
+ *
+ * 一处定义：可选值就是服务端 `server/memory-store.mjs` 的白名单（warm / funny / strict），
+ * 界面只显示人话，写进去的永远是这三个值；写服务端 MD 失败只提示一句，不回滚当前语气。
+ * ------------------------------------------------------------------ */
+
+/** 可选语气（和服务端 memory-store 的 PREFS_SPEC.tone 白名单一致） */
+const COACH_TONES = Object.freeze(['warm', 'funny', 'strict']);
+/** 默认语气：温和（用户拍板） */
+const DEFAULT_COACH_TONE = 'warm';
+
+/** 当前语气（没设置过 / 脏值 → warm） */
+function currentCoachTone() {
+  const raw = state.memory && state.memory.prefs ? state.memory.prefs.tone : '';
+  return COACH_TONES.includes(raw) ? raw : DEFAULT_COACH_TONE;
+}
+
+/** 设置页那个下拉框对齐当前语气（记忆拉回来 / 命令改了之后都要调） */
+function syncCoachToneUi() {
+  const tone = currentCoachTone();
+  const sel = $('coachToneSel');
+  if (sel) sel.value = tone;
+  return tone;
+}
+
+/** 只应用（不写服务端）：启动拉到记忆 / 模型改了记忆之后调用 */
+function applyCoachTone(raw) {
+  const tone = COACH_TONES.includes(raw) ? raw : DEFAULT_COACH_TONE;
+  // 只有真的记过语气才写进本地 prefs（没记过就**不编一个 tone 出来**，
+  // 否则「教练记得什么」面板会凭空多出一条，清空记忆也清不掉）
+  if (COACH_TONES.includes(raw)) state.memory.prefs = { ...state.memory.prefs, tone };
+  syncCoachToneUi();
+  try { coachDiag?.record?.('coach:tone', { tone }); } catch { /* ignore */ }
+  return tone;
+}
+
+/**
+ * 切换教练语气（设置下拉框 / 语音命令 / 工具共用）。
+ * **同步生效**（下一句 system prompt 就是新语气），写服务端 MD 是后台动作。
+ */
+function setCoachTone(raw) {
+  const tone = applyCoachTone(raw);
+  writeMemory({ prefs: { tone } }).then((saved) => {
+    if (!saved) setCueLine(t('settings.toneSaveFailed'), 'warn');
+  }).catch(() => { /* 记忆写不进去不影响当前语气 */ });
+  return tone;
+}
+
+/* ------------------------------------------------------------------ *
+ * P3.5 收尾：教练头像 = 极简光环（发光圆环 + 中心光点）
+ *
+ * 用户拍板：「训练界面左下/右下加一个发光圆环头像；呼吸动画；说话时环变亮；
+ * prefers-reduced-motion 静止；**不要**真人/卡通脸」。
+ *
+ * 只在「训练界面 + 教练开着」时出现；回主页 / 手势菜单 / 关掉教练都收起来。
+ * 每帧调用也只改一次 DOM（`coachAuraSig` 记住上一次的状态）—— 它不参与识别，纯装饰。
+ * ------------------------------------------------------------------ */
+
+/** 上一次写进 DOM 的（可见 / 说话中）组合；'' = 还没写过 */
+let coachAuraSig = '';
+
+/**
+ * 对齐头像光环的显示状态（受管于教练开关与当前视图）。
+ * @returns {boolean} 现在是不是显示着
+ */
+function syncCoachAura() {
+  const el = $('coachAura');
+  if (!el) return false;
+  const visible = !state.homeMode && !state.menuMode
+    && !!state.settings.coachEnabled && !!voice.enabled
+    && voice.state !== 'off' && voice.state !== 'error';
+  const speaking = visible && voice.state === 'speaking';
+  const sig = `${visible ? 1 : 0}${speaking ? 1 : 0}`;
+  if (sig === coachAuraSig) return visible;
+  coachAuraSig = sig;
+  el.hidden = !visible;
+  el.classList.toggle('is-speaking', speaking);
+  return visible;
+}
+
 /**
  * 「允许插话打断」开关（P3.4）：默认开，随设置持久化。
  * 关掉后教练说话时**不会**被用户插话打断（仍在聆听，只是不自动切回 listening）。
- */
-function syncBargeInToggle() {
+ */function syncBargeInToggle() {
   const btn = $('btnBargeIn');
   if (btn) btn.setAttribute('aria-pressed', String(!!state.settings.bargeIn));
 }
@@ -1172,6 +1536,8 @@ function applyMemoryData(data) {
   };
   // 记忆里的「教练声音性别」立刻应用到 TTS 与设置面板（md 是唯一权威）
   applyVoiceGenderPreference(state.memory.prefs.voiceGender);
+  // P3.5 收尾：教练语气（prefs.tone）同样以服务端 MD 为准（没记过 = 温和）
+  applyCoachTone(state.memory.prefs.tone);
   if (memoryModalOpen()) renderMemoryPanel();
   return state.memory;
 }
@@ -1774,6 +2140,7 @@ function showHome({ syncRoute = true } = {}) {
   closeRecordsModal();
   buildHome();
   updateButtons();
+  syncCoachAura();
   if (syncRoute) setRoute('#/');
   // 主页在竖屏下不挡（浏览动作库没问题）：视图一换就重算一次遮罩
   syncDeviceClasses();
@@ -1799,6 +2166,7 @@ function showWorkout() {
   syncCornerExit();
   // 动作页要横向画面：手机上竖屏进入时，把「请把手机横过来」的遮罩亮出来
   syncDeviceClasses();
+  syncCoachAura();
 }
 
 /** 从主页点进某个动作（进入训练页） */
@@ -5195,11 +5563,25 @@ function selectFromMenu(id) {
 let sessionGreetDone = false;
 /** 这一次「开始体感训练」是否允许问候（只有 startGestureMode 会 arm；?autostart 不会） */
 let sessionGreetArmed = false;
+/**
+ * 问候在等姿态模型：用户要求「进入全屏状态时，要**等姿态模型全部加载完毕之后**再触发
+ * session-start，不要姿态模型还没加载好就开始说话」。
+ *
+ * 进训练时模型还在加载 → 这里记一笔（**不发请求**）；等 `loadPoseModel()` 成功那一刻
+ * 由 `greetAfterModelReady()` 补一次 —— 补完就清掉，**绝不重复触发** ✗。
+ */
+let sessionGreetPending = false;
+
+/** 问候的就绪条件：姿态模型已加载完（`engineReady`）且识别器已创建（`state.detector`） */
+function poseModelReadyForGreet() {
+  return !!state.engineReady && !!state.detector;
+}
 
 /** 回到首页：下一次训练重新允许问候（退出训练 / 回首页后可以再次触发） */
 function resetSessionGreet() {
   sessionGreetDone = false;
   sessionGreetArmed = false;
+  sessionGreetPending = false;
 }
 
 /** 内置问候（LLM 未配置 / 失败 / 超时；按当前动作 + 目标生成，绝不静默） */
@@ -5224,10 +5606,24 @@ function greetBlockedReason() {
 
 /**
  * 会话开始问候（全链路最后一步调用）。
- * @returns {boolean} 是否真的发起了问候（false = 条件不满足 / 已经问候过）
+ *
+ * ⚠️ 用户要求：**等姿态模型全部加载完毕之后**再触发 —— 模型还在加载（进度条还在走）时
+ * 这里只记一笔 `sessionGreetPending`，**一个请求都不发**；等 `loadPoseModel()` 成功时
+ * 由 `greetAfterModelReady()` 补一次（只补一次）。
+ *
+ * @returns {boolean} 是否真的发起了问候（false = 条件不满足 / 已经问候过 / 模型还没就绪）
  */
 function greetSessionStart() {
   if (!sessionGreetArmed || sessionGreetDone) return false;
+  if (!poseModelReadyForGreet()) {
+    // 模型还没加载完：先不说，等就绪（诊断里能看到「这一句为什么没说」）
+    sessionGreetPending = true;
+    try {
+      coachDiag?.record?.('coach:greet', { ok: false, ms: 0, fallback: false, skipped: 'model-loading' });
+    } catch { /* ignore */ }
+    return false;
+  }
+  sessionGreetPending = false;
   const blocked = greetBlockedReason();
   if (blocked) {
     try { coachDiag?.record?.('coach:greet', { ok: false, ms: 0, fallback: false, skipped: blocked }); } catch { /* ignore */ }
@@ -5277,6 +5673,21 @@ function greetSessionStart() {
       fallback();
     });
   return true;
+}
+
+/**
+ * 姿态模型就绪那一刻补一次问候（`loadPoseModel()` 成功后调用）。
+ *
+ * 用户要求「等姿态模型全部加载完毕之后再触发 session-start」：
+ * 进训练时模型还在加载 → `greetSessionStart()` 只记 `sessionGreetPending`；这里把它补上。
+ * **只补一次**：补完就清掉标记，之后再就绪（换模型 / 重载）也不会重复问候 ✗。
+ *
+ * @returns {boolean} 这次是否真的补发了问候
+ */
+function greetAfterModelReady() {
+  if (!sessionGreetPending) return false;
+  sessionGreetPending = false;
+  return greetSessionStart();
 }
 
 /**
@@ -6692,7 +7103,7 @@ function stopSession(reason = 'user') {
   if (hasWork) {
     // 「第几组」= 今天这个动作已经练过的组数 + 1（这一组还没写进 history，所以先算）
     const setNo = setIndexFor(ex.id);
-    saveSession({ ex, value, partial: det.partialReps, reason, score });
+    const saved = saveSession({ ex, value, partial: det.partialReps, reason, score });
     /**
      * 中时记忆 · 上次练到哪了（**localStorage `mfg.lastSession.v1`**，不搬服务端）：
      * 一组结束 / 中途退出都在这里更新；finished = 达标（这一组做完了）。
@@ -6708,6 +7119,22 @@ function stopSession(reason = 'user') {
     // 下一组是同动作的下一个序号（除非用户换动作 / 说「继续上次」覆盖）
     state.currentSetExerciseId = ex.id;
     state.currentSetIndex = setNo + 1;
+    /**
+     * R3：一组结束 → 裁判复盘（分数 / 对比上组）；破了纪录 → 再补一条 `pr`（优先级最高）。
+     * 放在 `saveSession()` 之后：这时 history[0] 就是刚存进去的这一组。
+     */
+    try {
+      judgeSetComplete({ ex, value, score });
+      if (saved && saved.record) {
+        judgePr({
+          record: saved.record,
+          score,
+          prevScore: saved.prev ? saved.prev.score : 0,
+          value,
+          prevValue: saved.prev ? saved.prev.value : 0,
+        });
+      }
+    } catch { /* 裁判失败不该影响结算 */ }
   }
   // 本组结果也念出来（以语音为主：用户不必转头看小结卡）。
   // **只念次数 / 时长 + 一句夸奖，不念分数**（用户要求：语音一律不报分数）——
@@ -6841,6 +7268,17 @@ function saveSession({ ex, value, partial, reason, score = 0 }) {
     };
     saveList(STORE.records, records);
   }
+  /**
+   * R3 破纪录：`cur` 是**这次之前**的最好成绩。
+   *   - 第一次练这个动作（cur 不存在）不算「破纪录」（没有可比对象）；
+   *   - 分数 / 数量各自变好都会报，`record` 说明刷新的是哪一项。
+   */
+  const record = !cur ? ''
+    : (betterScore && betterValue ? 'both' : (betterScore ? 'score' : (betterValue ? 'value' : '')));
+  return {
+    record,
+    prev: cur ? { value: Number(cur.value) || 0, score: Number(cur.score) || 0 } : null,
+  };
 }
 
 function loadRecords() {
@@ -7217,8 +7655,21 @@ function handleEvents(events, now = performance.now()) {
             t: steps.length,
             f: missed[0].labelKey || '',
           });
+        } else {
+          // R3：这一轮全做到了 → 「同一个关键帧连续 2 次」重新算
+          state.missKeyframeId = '';
+          state.missKeyframeStreak = 0;
         }
       } catch { /* 短时记忆失败不该影响计次 */ }
+      /**
+       * R3：每 3 个问一次裁判（只在**有效**计次时数；半程不算）。
+       * 放在 `recordEvent` 之后：模型看到的是「刚计上这一下」之后的状态。
+       */
+      if (ev.valid) {
+        try {
+          if (shouldJudgeRep(det.validReps)) judgeRepTick(det.validReps);
+        } catch { /* 裁判失败不该影响计次 */ }
+      }
       // 一次动作结束（有效或半程）→ 进度条**点亮最后一格**并保持 0.65 秒（让用户看到「这一轮走完了」），
       // 之后自动收回起点，下一轮重新一格一格走。
       // 注意：识别器真正计上的那一次，这里会把整条链补满 —— 保证「做完了就一定显示做完」。
@@ -7362,6 +7813,8 @@ function resetRuleCursors(now = performance.now()) {
   state.lastIdleSec = -1;
   state.lastActivityAt = Date.now();
   state.tempoAt = now;
+  // R3：出画的秒数游标也清零（新的这一组重新数）
+  state.lastOutOfFrameSec = -1;
 }
 
 /**
@@ -7402,6 +7855,13 @@ function syncRuleEvents(now = performance.now()) {
       tickData.remainingSec = Math.max(0, Math.ceil(leftMs / 1000));
     }
     emitVoiceEvent('tick', tickData);
+    /**
+     * R3：计时类每 10 秒问一次裁判（10 / 20 / 30 … 秒）——
+     * 和 R1 的「每 5 秒读秒」是两回事：读秒是确定性的，裁判是判断「要不要多说一句」。
+     */
+    if (timeBased && shouldJudgeHold(elapsedSec)) {
+      try { judgeHoldTick(elapsedSec); } catch { /* 裁判失败不该影响计时 */ }
+    }
   }
 
   // 读秒：只在最后 5 秒每秒一发（`{n}` = 还剩几秒）
@@ -7414,6 +7874,16 @@ function syncRuleEvents(now = performance.now()) {
     }
   }
 
+  // 出画（R3）：看不到人满 10 秒起，每 10 秒问一次裁判；`state.lostSince` 在回到画面时归零
+  const lostMs = state.lostSince ? Math.max(0, now - state.lostSince) : 0;
+  const outSec = lostMs > 0 ? Math.floor(lostMs / 1000) : 0;
+  if (outSec !== state.lastOutOfFrameSec) {
+    state.lastOutOfFrameSec = outSec;
+    if (shouldJudgeOutOfFrame(outSec)) {
+      try { judgeOutOfFrameTick(outSec); } catch { /* 裁判失败不该影响训练 */ }
+    }
+  }
+
   // 8 秒没动：每秒一发（从最后一次计次算起；一组刚开始也算「有活动」）
   // ⚠️ 计时类（平板支撑这类「保持」）不算：撑着不动**就是**在练，这里催「继续啊」会莫名其妙；
   //    真掉姿势了由门控（gate-fail）那条规则管。
@@ -7422,6 +7892,10 @@ function syncRuleEvents(now = performance.now()) {
     if (idleSec !== state.lastIdleSec && idleSec > 0) {
       state.lastIdleSec = idleSec;
       emitVoiceEvent('idle', { sec: idleSec });
+      // R3：静止 10 秒起，每 10 秒问一次裁判（直到有动作）
+      if (shouldJudgeIdle(idleSec)) {
+        try { judgeIdleTick(idleSec); } catch { /* 裁判失败不该影响训练 */ }
+      }
     }
   }
 
@@ -8106,6 +8580,9 @@ async function loadPoseModel({ showMask = true } = {}) {
     state.modelError = null;
     if (mask) mask.classList.add('hidden');
     updatePipelineStatus();
+    // 用户要求：等姿态模型**全部加载完毕**再触发 session-start → 这里补上刚才被推迟的那次问候
+    // （正常路径下没人等它 → 空操作；补过一次之后不会再来 ✗）
+    try { greetAfterModelReady(); } catch { /* 问候失败不该影响模型加载 */ }
     return true;
   } catch (err) {
     if (!logged) recordFail(err, { attempt: 0, willRetry: false });
@@ -8519,6 +8996,12 @@ function bindUI() {
     }
     // R2：话量旁边只显示「当前生效规则条数」（完整规则列表留给 R4）
     syncRuleCount();
+    // P3.5 收尾：教练语气（prefs.tone，写进服务端 MD；默认温和）
+    const toneSel = $('coachToneSel');
+    if (toneSel) {
+      syncCoachToneUi();
+      toneSel.addEventListener('change', (e) => setCoachTone(e.target.value));
+    }
     // P3.4 插话打断：默认开；点一下立刻生效并持久化（关掉后教练说话不再被截断）
     const bargeBtn = $('btnBargeIn');
     if (bargeBtn) {
@@ -9249,6 +9732,11 @@ window.__mfg = {
   // 教练声音性别（长期偏好 prefs.voiceGender；设置按钮 / 命令 / 工具共用一个入口）
   setVoiceGender, currentVoiceGender, applyVoiceGenderPreference, syncVoiceGenderUi,
   TTS_GENDERS, TTS_DEFAULT_GENDER,
+  // P3.5 收尾：教练语气（prefs.tone：warm 温和 / funny 温和幽默 / strict 严格）+ 头像光环
+  //   setCoachTone / applyCoachTone : 设置下拉框与记忆同步的唯一入口（写服务端 MD）
+  //   syncCoachAura                 : 左下角发光圆环（说话时 is-speaking、回主页收起）
+  setCoachTone, applyCoachTone, currentCoachTone, syncCoachToneUi,
+  COACH_TONES, DEFAULT_COACH_TONE, syncCoachAura,
   // P3.4 插话打断：控制器（onPartial / reset / 常量）+ 设置入口 + 的「允许插话打断」开关
   bargeIn, applyBargeIn, BARGE_IN_MAX_LATENCY_MS,
   // P3.5 语音排障：诊断收集器（snapshot / record / flush）+ 独立自检控制器
@@ -9273,7 +9761,11 @@ window.__mfg = {
   llmClient: coachLlmClient, voiceLlm, llmMock: coachLlmMock,
   getLlmContext, buildAgentContext, applyFreeChat, refreshLlmStatus, syncFreeChatToggle,
   // 会话开始事件（进入训练 → 主动问候）：触发 / 重置 / 内置兜底文案（测试与调试用）
-  greetSessionStart, resetSessionGreet, sessionGreetFallbackText,
+  //   greetSessionStart      : 全链路最后一步（**等姿态模型就绪**才说；没就绪只记一笔）
+  //   greetAfterModelReady  : loadPoseModel() 成功后补一次（只补一次）
+  //   poseModelReadyForGreet: 就绪条件（engineReady + detector 都在）
+  greetSessionStart, greetAfterModelReady, poseModelReadyForGreet, resetSessionGreet,
+  sessionGreetFallbackText,
   // R1 动态快车道（事件总线 + 规则引擎）：
   //   voiceBus        : createEventBus() 的那条总线（emit / on / recent / clear）
   //   ruleEngine      : 规则表 + handle()（add / remove / list / reset / spoken）
@@ -9286,6 +9778,21 @@ window.__mfg = {
   // R2 口述建规则：规则增 / 删 / 查 + 缺省规则补回 + 设置页的「生效规则条数」
   addCoachRule, removeCoachRules, listCoachRules, ensureDefaultRules, syncRuleCount,
   RULE_CHANNELS, DEFAULT_RULE_BY_CHANNEL,
+  // R3 LLM 裁判（事件触发；模型只回严格 JSON，**默认不说**）：
+  //   judge           : createJudge() 实例（request / stats / silenceRate / inflight）
+  //   askJudge        : 一条事件 → 问裁判（标准 Agent 快照 + judge 块）
+  //   judgeStatus     : 现在能不能开口（教练开着 / 没静音 / 没在说话）
+  //   gateFallbackText: 门控那只的 R1 模板兜底口令（模型失败 / 超时才念）
+  //   judge*          : 8 个触发点各自的入口（测试可以直接调，不必喂整帧）
+  //   judge:ask / judge:skip 诊断在 coachDiag.snapshot().judge
+  judge, askJudge, judgeContext, judgeStatus, gateFallbackText, setJudgeClock,
+  judgeSetComplete, judgePr, judgeRepTick, judgeHoldTick, judgeIdleTick, judgeOutOfFrameTick,
+  judgeGateEvent, judgeKeyframeEvent, firstMissedKeyframe, resetJudgeStreaks,
+  JUDGE_EVENTS, JUDGE_COOLDOWN_MS, JUDGE_DEDUPE_MS,
+  REP_JUDGE_EVERY, HOLD_JUDGE_EVERY_SEC, IDLE_JUDGE_START_SEC, OUT_OF_FRAME_JUDGE_START_SEC,
+  GATE_FAIL_JUDGE_STREAK, KEYFRAME_MISS_JUDGE_STREAK,
+  shouldJudgeRep, shouldJudgeHold, shouldJudgeIdle, shouldJudgeOutOfFrame,
+  parseGateDiagRow, worstGateCheck,
   // 「教练正在说话还剩多少台词」（计数规则据此决定这一下要不要跳过）
   coachSpeakLeftMs,
   // 三层记忆（长时层在服务端 MD；中时层的「上次未完成 / 训练摘要」由这里同步）

@@ -55,6 +55,11 @@ export default {
     coachVolumeMid: 'Mid (default: every rep + read out every 5s)',
     coachVolumeHigh: 'High (plus the halfway nudge)',
     coachRuleCount: 'Active rules right now: {count}',
+    // P3.5 wrap-up: coach tone (long-term preference prefs.tone: warm / funny / strict)
+    coachTone: 'Coach tone',
+    coachToneWarm: 'Warm (default)',
+    coachToneFunny: 'Warm + funny (an occasional self-deprecating joke)',
+    coachToneStrict: 'Strict (just the point, no small talk)',
     fullscreen: 'Fullscreen video frame',
     // Recording badge in the bottom-right of the stage: number + unit, hover shows this line
     recUnit: 'frames logged',
@@ -1005,6 +1010,12 @@ export default {
     voiceGenderHint: 'Male / female only changes the spoken voice (female by default); the choice is stored in the coach memory and comes back next time. '
       + 'You can also just say “use a male voice” or “switch to a female coach”.',
     voiceGenderSaveFailed: 'The voice changed, but it could not be written to the coach memory (is the preview server running?) — it may fall back to female next time.',
+    // P3.5 wrap-up: coach tone (long-term preference prefs.tone; warm by default)
+    tone: 'Tone',
+    toneHint: 'Tone only changes *how* the coach talks, never the judgement: warm = specific encouragement, no exaggeration; '
+      + 'warm + funny = a light joke or a bit of self-deprecation now and then, never indulgent, never cheesy; '
+      + 'strict = just the point, no small talk. The choice is stored in the coach memory and comes back next time.',
+    toneSaveFailed: 'The tone changed, but it could not be written to the coach memory (is the preview server running?) — it may fall back to warm next time.',
     // P3.4 interruption (on by default; off keeps the coach from being cut off, still listening)
     bargeInToggle: 'Allow interruption',
     bargeInHint: 'While the coach is talking you can cut in just by speaking (only the audio stops; the subtitle / danmaku stays). '

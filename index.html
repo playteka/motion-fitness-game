@@ -452,6 +452,13 @@
           </div>
 
           <div class="countdown" id="countdown" hidden><span id="countdownNum">3</span></div>
+          <!-- P3.5 收尾：教练头像 = **极简光环**（不要真人 / 卡通脸）。
+               左下角一颗发光圆环 + 中心光点，呼吸动画；教练说话时更亮（.is-speaking），
+               prefers-reduced-motion 时完全静止。纯装饰：aria-hidden + 不接收指针事件。 -->
+          <div class="coach-aura" id="coachAura" hidden aria-hidden="true">
+            <span class="coach-aura-ring"></span>
+            <span class="coach-aura-core"></span>
+          </div>
           <div class="celebrate" id="celebrate" hidden><div class="celebrate-inner"><span id="celebrateText"></span></div></div>
         </div>
 
@@ -705,6 +712,17 @@
             </select>
           </label>
           <p class="modal-hint" data-i18n="settings.coachVolumeHint"></p>
+          <!-- P3.5 收尾：教练语气（长期偏好 prefs.tone：warm 温和 / funny 温和幽默 / strict 严格），
+               写进服务端 MD，和「教练记得什么」面板同步；只改怎么说，不改专业判断 -->
+          <label class="field wide">
+            <span data-i18n="ui.coachTone"></span>
+            <select id="coachToneSel">
+              <option value="warm" data-i18n="ui.coachToneWarm" selected></option>
+              <option value="funny" data-i18n="ui.coachToneFunny"></option>
+              <option value="strict" data-i18n="ui.coachToneStrict"></option>
+            </select>
+          </label>
+          <p class="modal-hint" data-i18n="settings.toneHint"></p>
           <!-- R2 口述建规则：这里**只显示生效规则条数**（完整列表留给 R4），文字由 syncRuleCount() 填 -->
           <p class="modal-hint" id="coachRuleCount"></p>
           <p class="modal-hint" data-i18n="settings.ttsHint"></p>
