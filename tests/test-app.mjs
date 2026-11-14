@@ -9946,6 +9946,21 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
     api.state.voice.coachText === '5', JSON.stringify(api.state.voice.coachText));
   ok('[51] 到这里仍然**一个 /llm 请求都没发**', llmPosts.length === 0, JSON.stringify(llmPosts));
   await finishSpeech();
+
+  /* 限时计数类（开合跳）也按秒走：同样每 5 秒读秒（用户原话「计时的运动」） */
+  api.openExercise('jumpingJack');
+  api.state.session = 'running';
+  api.state.target = 60;
+  api.ruleEngine.reset();
+  api.resetRuleCursors();
+  api.voice.emitEvent('set-start', { target: 60 });
+  await wait(1100);
+  api.state.elapsedMs = 5000;
+  api.syncRuleEvents(performance.now());
+  await flush();
+  ok('[51] 限时计数类（开合跳）同样每 5 秒读秒：「五秒」',
+    api.state.voice.coachText === '五秒', JSON.stringify(api.state.voice.coachText));
+  await finishSpeech();
   api.openExercise(savedHoldEx);
   api.state.session = 'running';
   api.state.target = 20;

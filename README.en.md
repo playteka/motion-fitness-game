@@ -1681,7 +1681,7 @@ a spoken sentence / an event from a detector
 | Rule | Trigger | What it says (English example) | Priority |
 |---|---|---|---|
 | Count every rep (default) | `rep`, auto-thinned to every 1 / 2 / 3 depending on pace; every 5 at low talkativeness | "one", "two", "three"…; the 5th / 10th say "five reps" / "ten reps, that's it" | 35 (counting, may interrupt) |
-| Read the time every 5 s (default) | `tick` on a timed move, every 5 seconds (the final 5 s go to the countdown) | "five seconds", "ten seconds"… | 45 (read-aloud, may interrupt) |
+| Read the time every 5 s (default) | `tick` on a time-based move (hold / timed count), every 5 seconds (the final 5 s go to the countdown) | "five seconds", "ten seconds"… | 45 (read-aloud, may interrupt) |
 | Last 3 reps | `rep` with 3 or fewer left | "3 to go" | 40 (countdown) |
 | Final 5 s countdown | `hold-tick` with 5 seconds or less | "5", "4", "3"… | 40 (countdown, may interrupt) |
 | Halfway | `progress` at 50% or more (once per set) | "Halfway there, keep the rhythm going" | 30 (encourage, high only) |

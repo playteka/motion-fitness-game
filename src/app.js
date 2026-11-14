@@ -7387,15 +7387,17 @@ function syncRuleEvents(now = performance.now()) {
 
   // 计时：**每秒**一发 tick（规则自己按 everySec 决定要不要开口：
   // 缺省的「每 5 秒读秒」= everySec:5；口述的「每 30 秒报时」= everySec:30）
-  // data 里带 hold / timed 两个标记，让「计时类才读秒」的规则分得清动作类型。
+  // data 里的 hold = 「时间型动作」（保持类 + 限时计数类，都是按秒走的），
+  // 让「计时的运动才读秒」的缺省规则分得清动作类型；timed 只标限时计数类。
   const elapsedSec = Math.floor(state.elapsedMs / 1000);
   if (elapsedSec !== state.lastTickSec) {
     state.lastTickSec = elapsedSec;
     const tickData = { elapsedSec };
-    if (isHold) tickData.hold = 1;
-    else if (isTimed) tickData.timed = 1;
-    // 还剩几秒（计时类）：缺省的读秒规则用 remainingGt:5 把最后 5 秒让给逐秒倒数
-    if (isTimed || isHold) {
+    const timeBased = isHold || isTimed;
+    if (timeBased) tickData.hold = 1;
+    if (isTimed) tickData.timed = 1;
+    // 还剩几秒（时间型动作）：缺省的读秒规则用 remainingGt:5 把最后 5 秒让给逐秒倒数
+    if (timeBased) {
       const leftMs = isHold ? (target * 1000 - (Number(det.holdMs) || 0)) : (target * 1000 - state.elapsedMs);
       tickData.remainingSec = Math.max(0, Math.ceil(leftMs / 1000));
     }

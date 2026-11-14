@@ -140,7 +140,7 @@ export function eventContext(event, streak = 0) {
     streak: Math.max(0, Math.round(Number(streak) || 0)),
     gate: String(d.g ?? d.gate ?? ''),
     id: String(d.id ?? d.k ?? ''),
-    /** 计时类动作（平板支撑 / 靠墙静蹲…）发出来的 tick 带 hold:1；限时计数类带 timed:1 */
+    /** 时间型动作（保持类 / 限时计数类）发出来的 tick 带 hold:1；限时计数类另带 timed:1 */
     hold: d.hold === true || d.hold === 1,
     timed: d.timed === true || d.timed === 1,
     raw: d,
@@ -694,8 +694,8 @@ export function repRule({ every = 0, id = 'rep-count', scope = 'set' } = {}) {
  * @param {number} [opts.every] 间隔秒数（缺省 DEFAULT_READ_EVERY_SEC = 5）
  * @param {string} [opts.id]    规则 id（缺省 `hold-read-5`）
  * @param {string} [opts.scope] 作用域（缺省 `set`；口述规则用 `session`）
- * @param {boolean} [opts.holdOnly] 只认计时类动作（`tick` 带 hold:1）——缺省规则是 true，
- *        口述的「每 30 秒报时」是 false（计数类也报时）
+ * @param {boolean} [opts.holdOnly] 只认**时间型动作**（`tick` 带 hold:1 —— 保持类 + 限时计数类），
+ *        缺省规则是 true；口述的「每 30 秒报时」是 false（计数类动作也报时）
  */
 export function readRule({
   every = DEFAULT_READ_EVERY_SEC,
