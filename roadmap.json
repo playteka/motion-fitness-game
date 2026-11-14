@@ -1,0 +1,78 @@
+{
+  "updated": "2026-11-14T03:00:24.435Z",
+  "note": "done 由 git 提交主题里的 marker 推导（在 preview-server.js 里算），不手工维护 ✓",
+  "stages": [
+    {
+      "id": "P3.0",
+      "title": "AI 教练基座",
+      "weight": 4,
+      "marker": "P3.0"
+    },
+    {
+      "id": "P3.1",
+      "title": "火山流式语音识别",
+      "weight": 10,
+      "marker": "P3.1"
+    },
+    {
+      "id": "P3.2",
+      "title": "命令快车道",
+      "weight": 8,
+      "marker": "P3.2"
+    },
+    {
+      "id": "P3.3",
+      "title": "LLM + 工具调用 + Agent 上下文",
+      "weight": 14,
+      "marker": "P3.3"
+    },
+    {
+      "id": "P3.4",
+      "title": "流式 TTS + 插话打断",
+      "weight": 12,
+      "marker": "P3.4"
+    },
+    {
+      "id": "MEM",
+      "title": "三层记忆（短/中/长）",
+      "weight": 12,
+      "marker": "三层教练记忆"
+    },
+    {
+      "id": "SOUL",
+      "title": "可可教练人设（SOUL.md）",
+      "weight": 6,
+      "marker": "SOUL.md"
+    },
+    {
+      "id": "GREET",
+      "title": "进入训练主动问候",
+      "weight": 4,
+      "marker": "session-start"
+    },
+    {
+      "id": "R1",
+      "title": "R1 事件总线 + 规则引擎",
+      "weight": 10,
+      "marker": "R1 动态快车道"
+    },
+    {
+      "id": "R2",
+      "title": "R2 默认私教报数 + 口述建规则",
+      "weight": 10,
+      "marker": "R2"
+    },
+    {
+      "id": "R3",
+      "title": "R3 LLM 当调度员（add_rule）",
+      "weight": 5,
+      "marker": "R3"
+    },
+    {
+      "id": "R4",
+      "title": "R4 规则面板与话量细化",
+      "weight": 5,
+      "marker": "R4"
+    }
+  ]
+}

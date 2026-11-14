@@ -703,6 +703,25 @@ export const previewHandler = (req, res) => {
       };
     };
 
+
+    /**
+     * 整体进度（用户要求：看板要有一条「带百分比的总体进度条」✓）。
+     * 完成度**从 git 历史推导** ✓：roadmap.json 里每个阶段有 marker（形如 "P3.1" / "R1 动态快车道"），
+     * 在最近 400 条提交主题里出现过 = 已完成 ✓ —— 不靠手工维护，不会过期 ✓。
+     */
+    const roadmapProgress = () => {
+      let spec = null;
+      try { spec = JSON.parse(fs.readFileSync(path.join(ROOT, 'roadmap.json'), 'utf8')); } catch { return null; }
+      const subjects = run(['log', '--pretty=format:%s', '-400']).split('\n').filter(Boolean);
+      const stages = (spec.stages || []).map((st) => {
+        const hit = subjects.find((msg) => st.marker && msg.includes(st.marker));
+        return { id: st.id, title: st.title, weight: Number(st.weight) || 0, done: !!hit, commit: hit ? hit.slice(0, 2) : '' };
+      });
+      const total = stages.reduce((n, st) => n + st.weight, 0) || 1;
+      const done = stages.reduce((n, st) => n + (st.done ? st.weight : 0), 0);
+      return { percent: Math.round((done / total) * 100), doneWeight: done, totalWeight: total, stages };
+    };
+
     let payload;
     try {
       const porcelain = run(['status', '--porcelain']).split('\n').filter(Boolean);
@@ -734,6 +753,7 @@ export const previewHandler = (req, res) => {
         recentFiles: recent,
         recentCommits: recentCommits(),
         task: taskProgress(),
+        roadmap: roadmapProgress(),
         /**
          * 服务健康（用户要求：把 /health 合并进看板顶部 ✓）。
          * 只报「配没配 / 跑多久」，**不含任何凭证值** ✗。
@@ -759,7 +779,7 @@ export const previewHandler = (req, res) => {
       payload = {
         updated: Date.now(), branch: '?', ahead: 0, lastCommit: '(unavailable)',
         files: [], fileDetails: [], localScripts: [], tree: { files: 0, add: 0, del: 0 },
-        recentFiles: [], recentCommits: [], task: null, health: { ok: false }, busy: false,
+        recentFiles: [], recentCommits: [], task: null, roadmap: null, health: { ok: false }, busy: false,
       };
     }
     res.writeHead(200, {
