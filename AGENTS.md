@@ -32,6 +32,23 @@
   `.mjs` 再 `node` 跑；文件的换行符要跟着原来的（README 是 CRLF，src 是 LF）。
 - **日志**：`logs/` 是「记录调试数据」写出来的真实关节数据（已 gitignore），只留在本地。
 
+## 改代码必须同步 `Design/` 文档（用户明确要求，缺了视为没做完）
+
+> 用户原话：「改任何源代码 → 同步更新 `Design/` 里对应文档与 `Design/ARCHITECTURE.md`
+> （提交信息里注明『docs: Design 同步』），否则视为不完整。」
+
+- `Design/` 是**逐文件**设计文档：`Design/src/*.md`、`Design/src/voice/*.md`、`Design/server/*.md`、
+  根目录的 `Design/index.md` / `style.md` / `preview-server.md`，`tests/` 汇总在 `Design/tests.md`；
+  索引与分层见 **`Design/README.md`**（一份 md 对一个源文件）。
+- 每份文档固定七节（为什么需要它 / 数据结构 / 算法流程 / 对外接口 / 与谁有关 / 易错点 / 读代码建议），
+  正文里的行号必须是**真实存在的区间**（如 `L120-L180`），不确定写「（待确认）」。
+- **改动判定**：
+  - 改了某个 `src/**`、`server/**`、`index.html`、`style.css`、`preview-server.js` → 更新对应 md；
+  - 改了模块边界 / 数据流 / 端点 / 文件增删 → 同时更新 `Design/ARCHITECTURE.md` 与 `Design/README.md` 索引；
+  - 只改注释 / 纯格式 → 可以不更新，但行号大幅漂移时要顺手校正。
+- **提交信息**：代码 + 文档放在同一个提交里，信息末尾加一行 `docs: Design 同步`。
+  提交只写明确路径（别 `git add -A`，`coach.env` / `server/memory/` / `logs/` 绝不入库）。
+
 ## 每次改完代码：**自动重启预览服务**（用户明确要求）
 
 > 用户原话：「每次修改完代码之后请帮我自动把服务重启，请记住。」
