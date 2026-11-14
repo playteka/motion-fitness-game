@@ -8943,8 +8943,9 @@ console.log('\n[18] 右上角「设置」环 → 中间选择每组次数 / 秒�
 /* ------------------------------------------------------------------ *
  * [19] P3.2 命令快车道：真实 app.js + DOM 桩，喂一句话看界面真的变了
  *
- * 覆盖用户要求的那几条：
- *   暂停 / 设目标 / 退出（直接生效，不再二次确认）/ 开始深蹲 / 帮助 / 胡话。
+ * 覆盖用户要求的那几条（快车道瘦身后只留 6 类）：
+ *   暂停 / 继续 / 退出（直接生效）/ 开始深蹲 / 别说话 / 说话 / 帮助面板（6 行）/ 胡话；
+ *   另钉住「设成 30 次」「回到首页」「换个男声」**快车道不认** → 交给 LLM，且不静默。
  * 走的是 `voice.onUserText()` 的真实路径：parseCommand → run(ctx) → 字幕 + 状态。
  * ------------------------------------------------------------------ */
 
@@ -8995,35 +8996,52 @@ console.log('\n[19] P3.2 命令快车道：喂一句话 → 界面真的变了')
     JSON.stringify({ session: api.state.session, coach: elements.get('coachCoachText').textContent }));
   await finishSpeech(utter);
 
-  /* ---- ② 「设成 30 次」→ 当前动作的目标 + HUD 目标文案 ---- */
+  /* ---- ② 用户点名移出快车道的说法：快车道**不认**，交给 LLM（不静默） ----
+   *   用户要求：「回到首页」「设成 20 次」「换个男声」→ 快车道不认 → 走 LLM；
+   *   LLM 不可用时也必须回一句「这个我得上线才能处理」，绝不静默。 ---- */
+  const sayAndWait = async (text) => {
+    api.voice.onUserText(text);
+    await wait(500);   // app 的 thinkDelay = 360ms + LLM 回合
+    await flush();
+    return elements.get('coachCoachText').textContent;
+  };
+
   api.setTarget(15, 'squat');
-  utter = await feed('设成 30 次');
-  ok('喂「设成 30 次」→ settings.targets.squat === 30、state.target === 30、HUD 目标「30 次」',
-    api.state.settings.targets.squat === 30 && api.state.target === 30
-    && hudTargetText() === `30 ${tC('ui.repsUnit')}`,
-    JSON.stringify({ stored: api.state.settings.targets.squat, target: api.state.target, hud: hudTargetText() }));
-  ok('教练回「目标改成 30 次」（来自命令表的短确认词条）',
-    elements.get('coachCoachText').textContent === tC('coach.cmdAck.setTarget', {
-      value: 30, unit: tC('ui.repsUnit'),
-    }), elements.get('coachCoachText').textContent);
-  await finishSpeech(utter);
+  const targetBefore = api.state.settings.targets.squat;
+  const hudBefore = hudTargetText();
+  let coachLine = await sayAndWait('设成 30 次');
+  ok('喂「设成 30 次」→ 快车道不再执行：目标（存储 / state / HUD）一个都没变',
+    api.state.settings.targets.squat === targetBefore && api.state.target === targetBefore
+    && hudTargetText() === hudBefore,
+    JSON.stringify({ stored: api.state.settings.targets.squat, target: api.state.target,
+      hud: hudTargetText() }));
+  ok('并且不是静默：教练回了「这个我得上线才能处理…」那句兜底',
+    coachLine === tC('coach.reply.fallback'), coachLine);
+  await finishSpeech(coachStubs.utterances.at(-1));
 
-  utter = await feed('加 5 个');
-  ok('喂「加 5 个」→ 目标 30 → 35（HUD 跟着变）',
-    api.state.settings.targets.squat === 35 && api.state.target === 35
-    && hudTargetText() === `35 ${tC('ui.repsUnit')}`,
-    JSON.stringify({ target: api.state.target, hud: hudTargetText() }));
-  await finishSpeech(utter);
+  const homeBefore = api.state.homeMode;
+  const menuBefore = api.state.menuMode;
+  coachLine = await sayAndWait('回到首页');
+  ok('喂「回到首页」→ 快车道不认：界面没跳回首页（交给 LLM）',
+    api.state.homeMode === homeBefore && api.state.menuMode === menuBefore,
+    JSON.stringify({ home: api.state.homeMode, menu: api.state.menuMode }));
+  ok('字幕仍然是「这个我得上线才能处理…」（LLM 不在线也不静默）',
+    coachLine === tC('coach.reply.fallback'), coachLine);
+  await finishSpeech(coachStubs.utterances.at(-1));
 
-  /* ---- ③ 查询：「我做了几个」读当前 state ---- */
-  api.state.detector.validReps = 7;
-  api.state.detector.score = 42;
-  utter = await feed('我做了几个');
-  ok('喂「我做了几个」→ 教练读出当前次数与分数（7 个 / 42 分）',
-    elements.get('coachCoachText').textContent.includes('7')
-    && elements.get('coachCoachText').textContent.includes('42'),
-    elements.get('coachCoachText').textContent);
-  await finishSpeech(utter);
+  const origGender = api.voiceCommandCtx.setVoiceGender;
+  let genderCalls = 0;
+  api.voiceCommandCtx.setVoiceGender = (...args) => {
+    genderCalls += 1;
+    return origGender ? origGender(...args) : undefined;
+  };
+  coachLine = await sayAndWait('换个男声');
+  ok('喂「换个男声」→ 快车道不认：setVoiceGender 一次都没被调（交给 LLM）',
+    genderCalls === 0, String(genderCalls));
+  ok('字幕说明「要上线才能处理」；恢复真实 handler',
+    coachLine === tC('coach.reply.fallback'), coachLine);
+  api.voiceCommandCtx.setVoiceGender = origGender;
+  await finishSpeech(coachStubs.utterances.at(-1));
 
   /* ---- ④ 「退出」→ 直接退出（回手势菜单），不再问确认 ---- */
   api.state.session = 'running';
@@ -9084,33 +9102,39 @@ console.log('\n[19] P3.2 命令快车道：喂一句话 → 界面真的变了')
   api.voiceCommandCtx.startGestureMode = origStart;
   await finishSpeech(utter);
 
-  /* ---- ⑧ 「我能说什么」→ 帮助面板（表格从命令表生成） ---- */
-  utter = await feed('我能说什么');
+  /* ---- ⑧ 帮助面板：只列 6 类快车道口令 + 「更多说法请直接对教练说」 ---- */
+  const helpRows = api.openVoiceHelp();
   const helpHtml = elements.get('voiceHelpList').innerHTML;
-  const helpRows = (helpHtml.match(/<tr data-intent=/g) || []).length;
-  ok('喂「我能说什么」→ 帮助面板出现，且行数 = 命令表条数',
+  const renderedRows = (helpHtml.match(/<tr data-intent=/g) || []).length;
+  ok('帮助面板只渲染 6 类（暂停 / 继续合成一行），不再是整张命令表',
     elements.get('voiceHelpModal').hidden === false
-    && helpRows === api.COMMANDS.length && helpRows >= 20,
-    JSON.stringify({ open: !elements.get('voiceHelpModal').hidden, rows: helpRows,
-      commands: api.COMMANDS.length }));
-  ok('帮助表每行三列（中文说法 / English / 作用），并且含「开始训练」「暂停」',
-    helpHtml.includes('开始训练') && helpHtml.includes('暂停')
-    && (helpHtml.match(/<td>/g) || []).length === helpRows * 3,
-    JSON.stringify({ rows: helpRows, cells: (helpHtml.match(/<td>/g) || []).length }));
+    && helpRows === 6 && renderedRows === 6
+    && helpHtml.includes('data-intent="startWorkout"')
+    && helpHtml.includes('data-intent="pause"'),
+    JSON.stringify({ open: !elements.get('voiceHelpModal').hidden, rows: renderedRows,
+      returned: helpRows }));
+  ok('帮助表每行三列（中文说法 / English / 作用），含「开始训练」「暂停」「继续」',
+    helpHtml.includes('开始训练') && helpHtml.includes('暂停') && helpHtml.includes('继续')
+    && (helpHtml.match(/<td>/g) || []).length === renderedRows * 3,
+    JSON.stringify({ rows: renderedRows, cells: (helpHtml.match(/<td>/g) || []).length }));
+  ok('帮助面板说明写明「只执行 6 类 / 更多说法请直接对教练说」（避免「说了没反应」的困惑）',
+    elements.get('voiceHelpLead').textContent.includes('6 类')
+    && elements.get('voiceHelpLead').textContent.includes('更多说法请直接对教练说'),
+    elements.get('voiceHelpLead').textContent);
   documentStub.dispatch('keydown', {
     key: 'Escape', target: documentStub.body, preventDefault() {},
   });
   ok('按 Esc 关掉帮助面板（和其它弹窗一致）',
     elements.get('voiceHelpModal').hidden === true);
-  await finishSpeech(utter);
 
   // 设置里那一行入口：点一下打开的是同一张表
   api.openSettings();
   elements.get('btnVoiceHelp').dispatch('click');
-  ok('设置里「语音命令一览」入口能打开同一个面板',
+  ok('设置里「语音命令一览」入口能打开同一个面板（6 行、含 pause、不再有 home）',
     elements.get('settingsModal').hidden === false
     && elements.get('voiceHelpModal').hidden === false
-    && elements.get('voiceHelpList').innerHTML.includes('data-intent="home"'));
+    && elements.get('voiceHelpList').innerHTML.includes('data-intent="pause"')
+    && !elements.get('voiceHelpList').innerHTML.includes('data-intent="home"'));
   api.closeVoiceHelp();
   api.closeSettings();
 
@@ -9182,9 +9206,9 @@ console.log('\n[19] P3.2 命令快车道：喂一句话 → 界面真的变了')
     const rec = coachStubs.recognitions.at(-1);
     const spokenBefore = coachStubs.utterances.length;
 
-    utter = await feed('设成 20 次');
-    const ackText = tC('coach.cmdAck.setTarget', { value: 20, unit: tC('ui.repsUnit') });
-    ok('⑫ 命令回合（「设成 20 次」）的确认语**真的走 TTS**（朗读队列收到这一句）',
+    utter = await feed('暂停');
+    const ackText = tC('coach.cmdAck.pause');
+    ok('⑫ 快车道口令（「暂停」）的确认语**真的走 TTS**（朗读队列收到这一句）',
       coachStubs.utterances.length === spokenBefore + 1
       && coachStubs.utterances.at(-1).text === ackText,
       JSON.stringify({ before: spokenBefore, after: coachStubs.utterances.length,
@@ -9202,12 +9226,12 @@ console.log('\n[19] P3.2 命令快车道：喂一句话 → 界面真的变了')
     ok('⑫ 前置：这一句还在念（speaking），ASR 没有被停',
       api.state.voice.state === 'speaking' && rec && rec.stopped === 0,
       JSON.stringify({ state: api.state.voice.state, stopped: rec && rec.stopped }));
-    api.voice.onUserText('加 5 个');
+    api.voice.onUserText('继续');
     await flush();
     ok('⑫ 教练说话中用户说的下一句照样处理（先插话打断再执行，不静默丢弃）',
-      api.state.settings.targets.squat === 25 && seen.includes('session:barge-final')
+      api.state.session === 'running' && seen.includes('session:barge-final')
       && api.state.voice.state === 'speaking',
-      JSON.stringify({ target: api.state.settings.targets.squat,
+      JSON.stringify({ session: api.state.session,
         barge: seen.includes('session:barge-final'), state: api.state.voice.state }));
     await finishSpeech(coachStubs.utterances.at(-1));
     ok('⑫ 念完回 listening，识别器没被 stop（final 之后继续聆听，没有关会话）',

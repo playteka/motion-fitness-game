@@ -26,6 +26,7 @@ import {
 } from '../src/voice/parse.js';
 import {
   COMMANDS, COMMAND_BY_INTENT, COMMAND_CONFIRM_MS, CONFIRM_WORDS, CANCEL_WORDS,
+  FAST_LANE_CLASSES, FAST_LANE_INTENTS, ZERO_LLM_INTENTS, PARSE_INTENTS, commandHelpRows,
 } from '../src/voice/commands.js';
 import {
   createLlm, createAsr, createVuMeter, createVolcAsr, createAutoAsr,
@@ -2293,10 +2294,24 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
   setLang('zh', { persist: false });
 
   /**
-   * 每条 intent 的**代表说法**（不是直接拿说法表第一项：带槽位的命令要给它一个完整句子，
-   * 比如 pick 必须带「第三个」、setTarget 必须带数字）。表里有、这里没有会直接失败。
+   * **快车道只保留 6 类**（暂停 / 继续算一类 → 7 个 intent）。
+   * 每条 intent 的**代表说法**（不是直接拿说法表第一项：带槽位的命令要给它一个完整句子）。
    */
   const SAMPLES = {
+    startWorkout: ['开始训练', 'start training'],
+    pause: ['暂停', 'pause'],
+    resume: ['继续', 'resume'],
+    exit: ['退出', 'exit'],
+    mute: ['别说话', 'be quiet'],
+    unmute: ['说话', 'unmute'],
+    stopListening: ['关闭教练', 'stop listening'],
+  };
+
+  /**
+   * 用户点名移除的 **19 个 intent**（不再从 COMMANDS 匹配 → 交给 LLM）。
+   * 中英各给一条说法，两条都必须是 `unknown`（绝不猜）。
+   */
+  const REMOVED = {
     home: ['回首页', 'go home'],
     menu: ['打开菜单', 'open menu'],
     next: ['下一页', 'next page'],
@@ -2308,33 +2323,43 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
     openRecords: ['训练记录', 'workout history'],
     openBest: ['最佳成绩', 'best score'],
     openExerciseSettings: ['运动设定', 'exercise settings'],
-    startWorkout: ['开始训练', 'start training'],
-    pause: ['暂停', 'pause'],
-    resume: ['继续', 'resume'],
-    exit: ['退出', 'exit'],
     retrySet: ['再来一组', 'one more set'],
     nextExercise: ['换动作', 'next exercise'],
-    continueLast: ['继续上次', 'continue last'],
     setTarget: ['设成 20 次', 'set target to 20 reps'],
     adjustTarget: ['加 5 个', 'add 5 reps'],
-    mute: ['别说话', 'be quiet'],
-    unmute: ['说话', 'unmute'],
-    stopListening: ['关闭教练', 'stop listening'],
     help: ['我能说什么', 'what can i say'],
     switchLang: ['说英文', 'speak english'],
-    setVoiceGender: ['用男声', 'use a male voice'],
     reportProgress: ['我做了几个', 'how many did i do'],
-    // R2 口述建规则（零 LLM）：数字会被换成槽位
+    setVoiceGender: ['用男声', 'use a male voice'],
+  };
+
+  /** 不在移除清单里的 4 个零 LLM 口令（继续上次 + 口述规则三条）—— 仍然走快车道 */
+  const ZERO_LLM_SAMPLES = {
+    continueLast: ['继续上次', 'continue last'],
     addRule: ['每 10 个报一次', 'report every 10 reps'],
     removeRule: ['别报数了', 'stop counting'],
     listRules: ['现在有什么规则', 'what rules are on'],
   };
 
-  ok(`命令表共 ${COMMANDS.length} 条 intent，每条都有中英测试样例`,
-    COMMANDS.length >= 20
-    && Object.keys(SAMPLES).length === COMMANDS.length
-    && COMMANDS.every((c) => Array.isArray(SAMPLES[c.intent])),
+  ok(`命令表共 ${COMMANDS.length} 条 intent（run 全保留，给 LLM 工具调用用）`,
+    COMMANDS.length === 30
+    && Object.keys(SAMPLES).length === FAST_LANE_INTENTS.length
+    && COMMANDS.every((c) => Array.isArray(SAMPLES[c.intent]) || Object.keys(REMOVED).includes(c.intent)
+      || Object.keys(ZERO_LLM_SAMPLES).includes(c.intent)),
     JSON.stringify({ commands: COMMANDS.map((c) => c.intent), samples: Object.keys(SAMPLES) }));
+  ok('快车道 = 6 类（暂停 / 继续合成一类）/ 7 个核心 intent / +4 个零 LLM 口令 = 匹配 11 个',
+    FAST_LANE_CLASSES.length === 6
+    && FAST_LANE_INTENTS.length === 7
+    && ZERO_LLM_INTENTS.length === 4
+    && PARSE_INTENTS.length === 11,
+    JSON.stringify({ classes: FAST_LANE_CLASSES.map((c) => c.id), fast: FAST_LANE_INTENTS,
+      zero: ZERO_LLM_INTENTS, parse: PARSE_INTENTS }));
+  ok('帮助面板只列 6 类（暂停 / 继续合成一行；其余说法交给 LLM）', (() => {
+    const rows = commandHelpRows();
+    return rows.length === 6
+      && rows.map((r) => r.intent).join(',') === 'startWorkout,pause,exit,mute,unmute,stopListening'
+      && rows.every((r) => r.zh && r.en && r.helpKey.startsWith('coach.commandHelp.'));
+  })(), JSON.stringify(commandHelpRows().map((r) => r.intent)));
   ok('intent 不重复；COMMAND_BY_INTENT 与命令表一一对应',
     new Set(COMMANDS.map((c) => c.intent)).size === COMMANDS.length
     && COMMANDS.every((c) => COMMAND_BY_INTENT[c.intent] === c));
@@ -2347,14 +2372,34 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
     JSON.stringify(COMMANDS.filter((c) => c.confirm === true).map((c) => c.intent)));
   ok('确认机制本身仍在（8 秒等待常量保留，留给以后需要确认的动作）', COMMAND_CONFIRM_MS === 8000);
 
+  // ① 6 类快车道：中英说法都命中
   for (const cmd of COMMANDS) {
+    if (!SAMPLES[cmd.intent]) continue;
     const [zh, en] = SAMPLES[cmd.intent];
     const pz = parseCommand(zh, 'zh');
     const pe = parseCommand(en, 'en');
-    ok(`中文「${zh}」→ ${cmd.intent}`, pz.intent === cmd.intent,
+    ok(`快车道中文「${zh}」→ ${cmd.intent}`, pz.intent === cmd.intent,
       JSON.stringify(pz));
-    ok(`English "${en}" → ${cmd.intent}`, pe.intent === cmd.intent,
+    ok(`快车道 English "${en}" → ${cmd.intent}`, pe.intent === cmd.intent,
       JSON.stringify(pe));
+  }
+
+  // ② 用户点名移除的 19 个 intent：快车道**不再认**，一律 unknown → 交给 LLM
+  for (const [intent, [zh, en]] of Object.entries(REMOVED)) {
+    const pz = parseCommand(zh, 'zh');
+    const pe = parseCommand(en, 'en');
+    ok(`快车道不认「${zh}」（${intent}）→ unknown`, pz.intent === 'unknown' && pz.confidence === 0,
+      JSON.stringify(pz));
+    ok(`快车道不认 "${en}"（${intent}）→ unknown`, pe.intent === 'unknown' && pe.confidence === 0,
+      JSON.stringify(pe));
+  }
+
+  // ③ 不在移除清单里的 4 个零 LLM 口令：仍然命中（run 与 R2 规则一条都没动）
+  for (const [intent, [zh, en]] of Object.entries(ZERO_LLM_SAMPLES)) {
+    ok(`零 LLM 口令「${zh}」仍然命中 ${intent}（不在移除清单里）`,
+      parseCommand(zh, 'zh').intent === intent, JSON.stringify(parseCommand(zh, 'zh')));
+    ok(`零 LLM 口令 "${en}" 仍然命中 ${intent}`,
+      parseCommand(en, 'en').intent === intent, JSON.stringify(parseCommand(en, 'en')));
   }
 
   // 数字归一化：中文数字 / 单位换算 / 全角 / 大小写
@@ -2362,43 +2407,35 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
     cnToInt('二十') === 20 && cnToInt('十五') === 15 && cnToInt('两') === 2
     && cnToInt('一百二十') === 120 && cnToInt('一百') === 100
     && cnToInt('3') === 3);
-  ok('「深蹲二十次」→ 深蹲、20 次', (() => {
+  ok('「深蹲二十次」→ 深蹲、20 次（startWorkout 仍在快车道）', (() => {
     const p = parseCommand('深蹲二十次');
     return p.intent === 'startWorkout' && p.args.exerciseId === 'squat'
       && p.args.value === 20 && p.args.unit === 'reps';
   })(), JSON.stringify(parseCommand('深蹲二十次')));
-  ok('「设成两秒」→ 2 秒（中文数字 + 秒）', (() => {
-    const p = parseCommand('设成两秒');
-    return p.intent === 'setTarget' && p.args.value === 2 && p.args.unit === 'seconds';
-  })(), JSON.stringify(parseCommand('设成两秒')));
-  ok('「目标 一分钟」→ 60 秒（分钟换算成秒）', (() => {
-    const p = parseCommand('目标 一分钟');
-    return p.intent === 'setTarget' && p.args.value === 60 && p.args.unit === 'seconds';
-  })(), JSON.stringify(parseCommand('目标 一分钟')));
-  ok('「目标 30 秒」→ 30 秒', (() => {
-    const p = parseCommand('目标 30 秒');
-    return p.intent === 'setTarget' && p.args.value === 30 && p.args.unit === 'seconds';
-  })());
+  ok('「设成两秒」「目标 一分钟」「目标 30 秒」→ unknown（设目标已交给 LLM）', (() => {
+    const a = parseCommand('设成两秒');
+    const b = parseCommand('目标 一分钟');
+    const c = parseCommand('目标 30 秒');
+    return a.intent === 'unknown' && b.intent === 'unknown' && c.intent === 'unknown';
+  })(), JSON.stringify([parseCommand('设成两秒'), parseCommand('目标 一分钟'), parseCommand('目标 30 秒')]));
   ok('「练深蹲」→ startWorkout + exerciseId=squat', (() => {
     const p = parseCommand('练深蹲');
     return p.intent === 'startWorkout' && p.args.exerciseId === 'squat';
   })(), JSON.stringify(parseCommand('练深蹲')));
-  ok('「加 5 个」→ +5；「减 10」→ −10', (() => {
+  ok('「加 5 个」「减 10」→ unknown（调目标已交给 LLM）', (() => {
     const up = parseCommand('加 5 个');
     const down = parseCommand('减 10');
-    return up.intent === 'adjustTarget' && up.args.delta === 5
-      && down.intent === 'adjustTarget' && down.args.delta === -10;
+    return up.intent === 'unknown' && down.intent === 'unknown';
   })(), JSON.stringify([parseCommand('加 5 个'), parseCommand('减 10')]));
-  ok('「第三个」→ pick index=2（第 3 个 → 0 起下标 2）；「第 4 个」→ 3', (() => {
+  ok('「第三个」「第 4 个」→ unknown（选菜单项已交给 LLM）', (() => {
     const a = parseCommand('第三个');
     const b = parseCommand('第 4 个');
-    return a.intent === 'pick' && a.args.index === 2 && b.intent === 'pick' && b.args.index === 3;
+    return a.intent === 'unknown' && b.intent === 'unknown';
   })(), JSON.stringify([parseCommand('第三个'), parseCommand('第 4 个')]));
-  ok('「说英文」→ switchLang=en；「说中文」→ switchLang=zh', (() => {
+  ok('「说英文」「说中文」→ unknown（切语言已交给 LLM）', (() => {
     const a = parseCommand('说英文');
     const b = parseCommand('说中文');
-    return a.intent === 'switchLang' && a.args.lang === 'en'
-      && b.intent === 'switchLang' && b.args.lang === 'zh';
+    return a.intent === 'unknown' && b.intent === 'unknown';
   })());
 
   /* ---------------- R2 口述建规则：间隔槽位 / 频道 / 同义说法 ---------------- */
@@ -2450,8 +2487,8 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
   })(), JSON.stringify([ruleParse('report every 10 reps', 'en'), ruleParse('stop counting', 'en')]));
   ok('只带「每」没有间隔的句子**不算**建规则（「每天练多久」→ unknown，不瞎猜）',
     ruleParse('每天练多久').intent === 'unknown', JSON.stringify(ruleParse('每天练多久')));
-  ok('建规则没匹配到数字时也不误伤老命令（「再来一组」仍然是 retrySet）',
-    ruleParse('再来一组').intent === 'retrySet' && ruleParse('暂停').intent === 'pause');
+  ok('建规则没匹配到数字时也不误伤快车道（「暂停」仍然是 pause；「再来一组」已交给 LLM → unknown）',
+    ruleParse('暂停').intent === 'pause' && ruleParse('再来一组').intent === 'unknown');
 
 
   // 唤醒词：有就去掉并置 usedWake；没有也照常解析
@@ -2628,29 +2665,22 @@ console.log('\n[23] P3.2 快车道执行 + 通用确认状态机（合成命令 
     session.stop();
   }
 
-  // ② setTarget / adjustTarget 的参数真的传进 ctx.setTarget
+  // ② 用户点名移除的 19 个 intent：快车道不认 → 一句话交给 LLM（ctx 一次都不调）
   {
     const ctx = makeCtx();
-    const { session, tts } = makeCommandSession(ctx);
+    const { session, tts, llmCalls } = makeCommandSession(ctx);
     await session.start();
-    session.onUserText('设成 30 次');
-    ok('「设成 30 次」→ ctx.setTarget(30, squat)，字幕回「目标改成 30 次」',
-      ctx.calls.some((c) => c[0] === 'setTarget' && c[1] === 30 && c[2] === 'squat')
-      && session.snapshot().coachText.includes('30')
-      && session.snapshot().coachText.includes(t('ui.repsUnit')),
-      JSON.stringify({ calls: ctx.calls, coach: session.snapshot().coachText }));
-    await speakDone(session, tts);
-    session.onUserText('加 5 个');
-    ok('「加 5 个」（当前 30）→ ctx.setTarget(35, squat)，字幕说「加 5」',
-      ctx.calls.some((c) => c[0] === 'setTarget' && c[1] === 35)
-      && session.snapshot().coachText.includes('35')
-      && session.snapshot().coachText.includes(t('ui.repsUnit')),
-      JSON.stringify({ calls: ctx.calls, coach: session.snapshot().coachText }));
-    await speakDone(session, tts);
-    session.onUserText('减 10');
-    ok('「减 10」（当前 35）→ ctx.setTarget(25, squat)',
-      ctx.calls.some((c) => c[0] === 'setTarget' && c[1] === 25),
-      JSON.stringify(ctx.calls));
+    const removed = ['设成 30 次', '加 5 个', '减 10', '第三个', '我做了几个', '我能说什么', '说英文', '换个男声', '回到首页', '再来一组'];
+    for (const phrase of removed) {
+      const before = llmCalls.n;
+      const callsBefore = ctx.calls.length;
+      session.onUserText(phrase);
+      await tick(3);
+      ok(`「${phrase}」不再走快车道 → 交给 LLM（命令 ctx 一次都没被调）`,
+        llmCalls.n === before + 1 && ctx.calls.length === callsBefore,
+        JSON.stringify({ llm: llmCalls.n, calls: ctx.calls.slice(callsBefore) }));
+      await speakDone(session, tts);
+    }
     session.stop();
   }
 
@@ -2664,20 +2694,6 @@ console.log('\n[23] P3.2 快车道执行 + 通用确认状态机（合成命令 
       ctx.calls.some((c) => c[0] === 'startGestureMode')
       && ctx.calls.some((c) => c[0] === 'selectExercise' && c[1] === 'squat'),
       JSON.stringify(ctx.calls));
-    session.stop();
-  }
-
-  // ④ 「第三个」：菜单没开就先开菜单，再交给 pickMenuItem
-  {
-    const ctx = makeCtx();
-    const { session } = makeCommandSession(ctx);
-    await session.start();
-    session.onUserText('第三个');
-    ok('「第三个」→ 先 openMenu，再 pickMenuItem(2)，字幕报第 3 个',
-      ctx.calls.some((c) => c[0] === 'openMenu')
-      && ctx.calls.some((c) => c[0] === 'pickMenuItem' && c[1] === 2)
-      && session.snapshot().coachText.includes('3'),
-      JSON.stringify({ calls: ctx.calls, coach: session.snapshot().coachText }));
     session.stop();
   }
 
@@ -2699,21 +2715,6 @@ console.log('\n[23] P3.2 快车道执行 + 通用确认状态机（合成命令 
       ctx.calls.some((c) => c[0] === 'setCoachMuted' && c[1] === false)
       && session.muted === false && tts.spoken.length >= 1,
       JSON.stringify({ muted: session.muted, spoken: tts.spoken.length }));
-    session.stop();
-  }
-
-  // ⑥ 查询 / 帮助 / 切语言
-  {
-    const ctx = makeCtx();
-    const { session, tts } = makeCommandSession(ctx);
-    await session.start();
-    session.onUserText('我做了几个');
-    ok('「我做了几个」→ 读快照回答（12 个 / 88 分）',
-      session.snapshot().coachText.includes('12') && session.snapshot().coachText.includes('88'),
-      session.snapshot().coachText);
-    await speakDone(session, tts);
-    session.onUserText('我能说什么');
-    ok('「我能说什么」→ ctx.openVoiceHelp()', ctx.calls.some((c) => c[0] === 'openVoiceHelp'));
     session.stop();
   }
 
@@ -6168,7 +6169,7 @@ console.log('\n[37] final 之后继续聆听 / TTS 卡住也不吞掉下一句 /
       JSON.stringify({ state: session.snapshot().state, enabled: session.enabled,
         asrStops: asr.stopped, micClosed: mic.closed }));
 
-    asr.emit('设成 20 次');
+    asr.emit('暂停');
     await tick();
     ok('① 下一句 final 照常被处理（命令快车道：TTS 收到第二句，状态又到 speaking）',
       session.snapshot().state === 'speaking' && tts.spoken.length === 2,
@@ -6757,17 +6758,16 @@ console.log('\n[34] 教练声音：女声默认 / 男声 zh_male_taocheng_uranus
     && resolveCoachVoice({ voice: '随便一个音色' }) === '');
 
   // 4 句中文 + 4 句英文（用户拍板的准确说法）+ 常见变体
+  // **快车道瘦身后**：换声音不再从 COMMANDS 匹配（交给 LLM），这些说法一律 unknown；
+  // 命令本身（`setVoiceGender` 的 run）与工具 `set_voice_gender` 都还在（下面继续测）。
   const zhCases = [
     ['换个女声', 'female'], ['换女声', 'female'], ['用女声', 'female'], ['女声吧', 'female'],
     ['换个男声', 'male'], ['换男声', 'male'], ['用男声', 'male'], ['男声吧', 'male'],
     ['换个女教练', 'female'], ['换女教练', 'female'], ['女教练吧', 'female'],
     ['换个男教练', 'male'], ['换男教练', 'male'], ['男教练吧', 'male'],
   ];
-  ok('中文 4 句 + 变体全部命中 setVoiceGender，且 args.gender 正确',
-    zhCases.every(([phrase, gender]) => {
-      const r = parseCommand(phrase, 'zh');
-      return r.intent === 'setVoiceGender' && r.args.gender === gender;
-    }),
+  ok('中文 14 句换声音**不再由快车道认**（→ unknown，交给 LLM）',
+    zhCases.every(([phrase]) => parseCommand(phrase, 'zh').intent === 'unknown'),
     JSON.stringify(zhCases.map(([p]) => [p, parseCommand(p, 'zh')])));
   const enCases = [
     ['switch to a female voice', 'female'], ['female voice', 'female'],
@@ -6775,11 +6775,8 @@ console.log('\n[34] 教练声音：女声默认 / 男声 zh_male_taocheng_uranus
     ['male voice', 'male'], ['use the male voice', 'male'],
     ['female coach', 'female'], ['male coach', 'male'],
   ];
-  ok('英文 8 句全部命中 setVoiceGender，且 args.gender 正确',
-    enCases.every(([phrase, gender]) => {
-      const r = parseCommand(phrase, 'en');
-      return r.intent === 'setVoiceGender' && r.args.gender === gender;
-    }),
+  ok('英文 8 句换声音同样 → unknown（走 LLM 的工具调用）',
+    enCases.every(([phrase]) => parseCommand(phrase, 'en').intent === 'unknown'),
     JSON.stringify(enCases.map(([p]) => [p, parseCommand(p, 'en')])));
 
   const toolGender = actionsFromToolCalls([{ name: 'set_voice_gender', args: { gender: 'male' } }], { locale: 'zh' });

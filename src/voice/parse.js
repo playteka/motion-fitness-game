@@ -13,7 +13,10 @@
  *   4) 拿 `commands.js` 的说法表做最长匹配（中英两套都参与，所以界面是英文时说中文也认）；
  *      标了 `numeric: true` 的命令（口述建规则）匹配前会抹掉两边的数字，所以「每 10 个报一次」
  *      的说法表项能命中「每 3 个报一次」；
- *   5) 匹配不上 → `{ intent: 'unknown' }`（**不猜**）。
+ *      **只有 `PARSE_INTENTS` 里的 intent 参与匹配**（6 类快车道 + 4 个零 LLM 口令，见 commands.js）；
+ *      其余 intent（回到首页 / 设成 20 次 / 换个男声 / 打开设置…）一律不再从 COMMANDS 认，
+ *      统一交给 LLM 的工具调用；
+ *   5) 匹配不上 → `{ intent: 'unknown' }`（**不猜**，交给 LLM）。
  *
  * 说法表 / 命令含义 / 帮助文案都在 `commands.js` 与 `src/locales/*.js` 里，
  * 这里只做「把一句人话变成 { intent, args }」这一件事。
@@ -21,7 +24,7 @@
 
 import { LOCALES } from '../i18n.js';
 import { EXERCISES } from '../catalog.js';
-import { COMMANDS, CONFIRM_WORDS, CANCEL_WORDS } from './commands.js';
+import { COMMANDS, PARSE_INTENTS, CONFIRM_WORDS, CANCEL_WORDS } from './commands.js';
 
 /* ------------------------------------------------------------------ *
  * 字符 / 单位常量（中文用 \u 转义写：源码里不留写死的中文，见 test-i18n）
@@ -524,6 +527,8 @@ export function parseCommand(text, locale = 'zh') {
 
   let best = null;
   for (const cmd of COMMANDS) {
+    // 快车道瘦身：只有 PARSE_INTENTS 参与匹配（其余说法交给 LLM，见 commands.js 顶部说明）
+    if (!PARSE_INTENTS.includes(cmd.intent)) continue;
     if (!slotReady(cmd.intent, slots)) continue;
     for (const key of ['zh', 'en']) {
       for (const phrase of cmd[key] || []) {
@@ -532,6 +537,12 @@ export function parseCommand(text, locale = 'zh') {
         if (!best || score > best.score) best = { cmd, phrase, score };
       }
     }
+  }
+
+  if (best) {
+    // 防误伤：「speak English / 说英文」是切语言（已交给 LLM），不能因为 unmute 有个 "speak"
+    // 就顺手解除静音 —— 句子里出现明确的语言词时，unmute 让路，按 unknown 交给 LLM。
+    if (best.cmd.intent === 'unmute' && lang) best = null;
   }
 
   if (best) {
@@ -551,7 +562,9 @@ export function parseCommand(text, locale = 'zh') {
     return parsed;
   }
 
-  // 没有命中固定说法时的「槽位兜底」：只在证据足够强时才认
+  // 没有命中固定说法时的「槽位兜底」：只在证据足够强、而且属于快车道时才认。
+  // 只有动作名还能单独触发 startWorkout（「练深蹲」）；序数 / 分类 / 语言**不再兜底** ——
+  // 那些命令已经交给 LLM（「第三个」「上肢」「说英文」一律 unknown，绝不猜）。
   if (exerciseId) {
     return {
       intent: 'startWorkout',
@@ -559,15 +572,6 @@ export function parseCommand(text, locale = 'zh') {
       confidence: amount ? 0.85 : 0.8,
       usedWake: used,
     };
-  }
-  if (ordinal) {
-    return { intent: 'pick', args: { index: ordinal - 1 }, confidence: 0.8, usedWake: used };
-  }
-  if (category) {
-    return { intent: 'category', args: { category }, confidence: 0.8, usedWake: used };
-  }
-  if (lang) {
-    return { intent: 'switchLang', args: { lang }, confidence: 0.75, usedWake: used };
   }
   return unknown;
 }

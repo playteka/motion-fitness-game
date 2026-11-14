@@ -1027,7 +1027,7 @@ export default {
       + 'It can see which exercise you are doing, how well each keyframe of this set is going, and what you did in recent sets, '
       + 'so it answers like a real coach and can genuinely change the target / switch exercises / pause for you. '
       + 'The conversation memory stays in memory only (last 10 turns) and is cleared on refresh; nothing is written to disk. '
-      + 'Turn it off and only the offline command fast-lane is used (no network, no cost, but only the commands in that table). '
+      + 'Turn it off and only the offline command fast-lane is used (no network, no cost, but only those 6 command classes). '
       + 'The API key lives in the local coach.env only and never reaches the browser.',
     freeChatStatus: 'Current model: {provider} / {model}',
     freeChatNotConfigured: 'Current model: {provider} (no key yet — put LLM_API_KEY in coach.env and restart the preview server)',
@@ -1682,7 +1682,7 @@ export default {
       question: 'Good question. Slow the movement down and stand steady first — I will stay with you.',
       thanks: 'You are welcome — keep this rhythm going.',
       // Fallback when nothing matched: tell the user what they can say (P3.2)
-      fallback: 'I did not catch that. Try "start squat", "pause", or ask "what can I say".',
+      fallback: 'I need to be online to handle that. The fast lane directly understands "start squat", "pause", "resume", "exit", "be quiet", "speak" and "stop listening"; for anything else, just talk to the coach.',
     },
     // Canned encouraging / coaching lines for every other input (mock LLM picks one at random)
     encourage: [
@@ -1773,7 +1773,7 @@ export default {
       openBest: 'Open the best scores',
       openExerciseSettings: 'Open exercise settings',
       startWorkout: 'Start training (say "start" or "train squats"; a target works too: "squat 20 reps")',
-      pause: 'Pause this set',
+      pause: 'Pause / resume this set (say "pause" or "continue")',
       resume: 'Resume this set',
       exit: 'Exit this set (**immediately, no second confirmation**)',
       retrySet: 'Do another set (reset the count and restart the countdown)',
@@ -1858,7 +1858,7 @@ export default {
       open: 'Voice commands',
       lead: 'Open the full list of phrases I understand (Chinese / English).',
       title: 'Voice commands',
-      intro: 'No wake word needed — just say it. If nothing happens, the phrase was not matched; check this list.',
+      intro: 'The fast lane only runs these 6 command classes directly: start workout, pause / resume, exit, be quiet, speak, stop listening. For anything else, just talk to the coach (that goes to the LLM and needs a connection).',
       colZh: 'Chinese',
       colEn: 'English',
       colWhat: 'What it does',

@@ -4,7 +4,7 @@
  * 每一条 = 一个 intent + 中英两套说法 + 可选参数 + `run(ctx, args)`。
  * 同一张表同时驱动三件事：
  *   ① 快车道执行（`session.onUserText()` → `parseCommand()` → `run(ctx, args)`）；
- *   ② 「教练，我能说什么」帮助面板（`app.js` 的 `renderVoiceHelp()` 直接遍历这张表）；
+ *   ② LLM 工具调用（`server/llm-tools.mjs` 的 `TOOL_INTENT_MAP` 也按 intent 找这里的 `run()`）；
  *   ③ 测试（`tests/test-voice.mjs` 遍历 `COMMANDS`，每条 intent 的中英说法都至少跑一条）。
  *
  * 硬约束：
@@ -16,6 +16,19 @@
  *
  * `exit` **不再二次确认**（用户要求：说退出就退出 ✓）：`confirm: false`，命令一到就执行。
  * 旧的「确认 / 取消」状态机仍保留在 session.js 里（其它需要确认的动作以后还能用）。
+ *
+ * ## 快车道瘦身（用户决定：只留 6 类）
+ *
+ * **`run()` 一个都不删** —— 它们仍然给 LLM 的工具调用用（`TOOL_INTENT_MAP` 按 intent 找 handler）。
+ * 变的只是「哪些 intent 参与 `parseCommand()` 的说法匹配」：
+ *
+ *   - `FAST_LANE_CLASSES` —— 用户口径的 **6 类**（暂停 / 继续算一类），帮助面板只列这 6 行；
+ *   - `FAST_LANE_INTENTS` —— 上面 6 类实际展开的 **7 个 intent**（`pause` 与 `resume` 是两个）；
+ *   - `ZERO_LLM_INTENTS` —— 4 个**不在移除清单里**的零 LLM 口令（「继续上次」+ 口述规则三条）。
+ *     R2 的「口述建规则」本来就是**不联网、不花钱**的功能，用户给的 19 条移除清单里也没有它们，
+ *     所以它们**继续留在快车道**（但不出现在帮助面板那 6 行里，见 `commandHelpRows()`）；
+ *   - `PARSE_INTENTS` = 上面两组之和（11 个）：`parseCommand()` **只在这 11 个里找说法**，
+ *     其余 19 个 intent（home / menu / … / setVoiceGender）不再从 `COMMANDS` 匹配，统一交给 LLM。
  */
 
 import { t, LOCALES } from '../i18n.js';
@@ -27,6 +40,42 @@ export const COMMAND_CONFIRM_MS = 8000;
 
 /** 五个分类的 id（说法里的分类名本身来自 locales 的 `cat.*`，不在这里抄第二份） */
 const CATEGORY_IDS = ['upper', 'lower', 'core', 'full', 'stretch'];
+
+/* ------------------------------------------------------------------ *
+ * 快车道范围（**一处定义**：parse.js 与帮助面板都从这里取）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 用户口径的 **6 类**快车道口令（暂停 / 继续是两个 intent，算一类）。
+ *
+ * `id` 同时是帮助面板的 `data-intent` 与 `coach.commandHelp.<id>` 的 key；
+ * `intents` 是这一类的说法来源（中英说法仍从 locales 的 `coach.commands.*` 取，不另抄）。
+ */
+export const FAST_LANE_CLASSES = Object.freeze([
+  Object.freeze({ id: 'startWorkout', intents: Object.freeze(['startWorkout']) }),
+  Object.freeze({ id: 'pause', intents: Object.freeze(['pause', 'resume']) }),
+  Object.freeze({ id: 'exit', intents: Object.freeze(['exit']) }),
+  Object.freeze({ id: 'mute', intents: Object.freeze(['mute']) }),
+  Object.freeze({ id: 'unmute', intents: Object.freeze(['unmute']) }),
+  Object.freeze({ id: 'stopListening', intents: Object.freeze(['stopListening']) }),
+]);
+
+/** 6 类展开后的 7 个 intent（`pause` / `resume` 各算一个） */
+export const FAST_LANE_INTENTS = Object.freeze(
+  [...new Set(FAST_LANE_CLASSES.flatMap((group) => group.intents))],
+);
+
+/**
+ * 不在用户移除清单里的 4 个**零 LLM** 口令，继续留在快车道：
+ * `continueLast`（继续上次）+ R2 口述规则三条（建 / 关 / 列）。
+ * 帮助面板不列它们（只列 6 类），但说「每 10 个报一次」仍然本机执行、不联网。
+ */
+export const ZERO_LLM_INTENTS = Object.freeze([
+  'continueLast', 'addRule', 'removeRule', 'listRules',
+]);
+
+/** `parseCommand()` 允许匹配的全部 intent（7 个核心 + 4 个零 LLM = 11 个） */
+export const PARSE_INTENTS = Object.freeze([...FAST_LANE_INTENTS, ...ZERO_LLM_INTENTS]);
 
 /** 从两份词条里取某个 intent 的说法数组（中英各一套；两份 locale 由 i18n 测试保证结构一致） */
 function phrases(intent) {
@@ -458,12 +507,25 @@ export const COMMAND_BY_INTENT = Object.freeze(
   Object.fromEntries(COMMANDS.map((c) => [c.intent, c])),
 );
 
-/** 帮助面板的数据行：中文说法 / English / 作用（作用走词条，按当前语言渲染） */
+/**
+ * 帮助面板的数据行：中文说法 / English / 作用（作用走词条，按当前语言渲染）。
+ *
+ * **只渲染 6 类快车道口令**（暂停 / 继续合成一行）—— 其余说法请在帮助面板的说明里
+ * 直接告诉用户「更多说法请直接对教练说」（交给 LLM）。`run()` 与 `COMMANDS` 不动。
+ */
 export function commandHelpRows() {
-  return COMMANDS.map((c) => ({
-    intent: c.intent,
-    zh: c.zh.join(' / '),
-    en: c.en.join(' / '),
-    helpKey: c.helpKey,
-  }));
+  return FAST_LANE_CLASSES.map((group) => {
+    const commands = group.intents
+      .map((intent) => COMMAND_BY_INTENT[intent])
+      .filter(Boolean);
+    // 同一类里的说法去重后合并（暂停 / 继续并成一行）
+    const zh = [...new Set(commands.flatMap((c) => c.zh))].join(' / ');
+    const en = [...new Set(commands.flatMap((c) => c.en))].join(' / ');
+    return {
+      intent: group.id,
+      zh,
+      en,
+      helpKey: `coach.commandHelp.${group.id}`,
+    };
+  });
 }
