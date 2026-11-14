@@ -1,6 +1,6 @@
 # src/locales/en.js — 英文词条（与 zh.js 同结构）
 
-> 层：文案数据 ｜ 2027 行 ｜ 纯对象字面量，`export default`
+> 层：文案数据 ｜ 2088 行 ｜ 纯对象字面量，`export default`
 > 一句话：英文界面 / 英文语音的全部文案，**键结构必须与 `zh.js` 完全一致**。
 
 ## 1. 它解决什么问题（为什么需要它）
@@ -18,13 +18,13 @@
 | `meta` | L7 附近 | `code:'en' / label / htmlLang:'en' / speechLang:'en-US' / title` |
 | `app` / `ui` | L16 起 | 品牌、界面控件 |
 | `diag` / `calib` / `status` / `phase` / `summary` / `debug` | 中段 | 诊断、校准、状态、结算 |
-| `ex` / `steps` / `cat` / `menu` / `home` / `exercise` | 中段 | 动作文案与导航 |
+| `ex` / `steps` / `cat` / `menu` / `home` / **`plan`** / `exercise` | 中段（`plan` 在 L930） | 动作文案、导航与**排课（`plan.*`）** |
 | `records` / `settings` / `memory` | 中后段 | 记录、设置、记忆面板 |
 | `judge` / `metric` / `spec` | 中后段 | 判定依据与关键帧判据 |
 | `cue` / `fam` / `cues` / `speech` | 后段 | 提示、族模板、动作专属提示、语音 |
-| `coach` / `voice` / `rule` | 末段（约 L1560 / L1952 / L1975） | AI 教练（含 R4 的 `coach.diag.whySaid*` / `whySkip*` / `reason.*`）、语音状态、规则描述（含 R4 的 `rule.source.*` / `rule.cond.*`） |
+| `coach` / `voice` / `rule` | 末段（约 L1602 / L2014 / L2037） | AI 教练（含 R4 的 `coach.diag.whySaid*` / `whySkip*` / `reason.*`；排课确认语与告别语 `*Plan`）、语音状态、规则描述（含 R4 的 `rule.source.*` / `rule.cond.*`） |
 
-> 具体行号随内容增长而变；以「分组名」定位，比记行号可靠。当前工作区版本 **2027 行**。
+> 具体行号随内容增长而变；以「分组名」定位，比记行号可靠。当前工作区版本 **2088 行**。
 
 ## 3. 算法与流程（步骤化）
 

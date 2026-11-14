@@ -71,6 +71,7 @@
 | `src/voice/events.js` | [src/voice/events.md](src/voice/events.md) | 事件总线（14 类事件、60 秒窗口、紧凑副本） |
 | `src/voice/judge.js` | [src/voice/judge.md](src/voice/judge.md) | LLM 裁判：8 触发点、严格 JSON、默认沉默 |
 | `src/voice/llm.js` | [src/voice/llm.md](src/voice/llm.md) | 前端 `/llm` 客户端 + Agent 上下文构建 |
+| `src/voice/plan.js` | [src/voice/plan.md](src/voice/plan.md) | **排课**（每日单次计划）：模板 / 禁忌 / 时长预算 / `validatePlan` / 执行队列 |
 | `src/voice/coach.js` | [src/voice/coach.md](src/voice/coach.md) | 教练界面层：状态环 / 字幕 / 头像 / VU |
 | `src/voice/danmaku.js` | [src/voice/danmaku.md](src/voice/danmaku.md) | 对话弹幕（用户青 / 教练薄荷绿，4 轨道） |
 | `src/voice/tts-volc.js` | [src/voice/tts-volc.md](src/voice/tts-volc.md) | 火山 TTS 播放层：MSE / 解码队列 / 三段降级 |
@@ -107,6 +108,6 @@
 
 ## 覆盖核对
 
-- 源文件（`src/**/*.js` 35 + `server/*.mjs` 11 + 根目录 3 = **49**）
-- 文档（本索引之外 **51** 份，含 `ARCHITECTURE.md` 与 `tests.md`）：逐文件一一对应，`tests/` 用一份汇总。
+- 源文件（`src/**/*.js` **36** + `server/*.mjs` 11 + 根目录 3 = **50**）
+- 文档（本索引之外 **52** 份，含 `ARCHITECTURE.md` 与 `tests.md`）：逐文件一一对应，`tests/` 用一份汇总。
 - 抽查方式见 `tests.md` 的「读代码建议」：任选一份文档，按其中的 `Lx-Ly` 打开源码即可对照。

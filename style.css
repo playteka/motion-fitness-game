@@ -2552,6 +2552,88 @@ kbd {
 .start-gesture-sub { font-size: 13px; color: var(--muted); }
 .start-gesture-go { font-size: 20px; opacity: 0.8; }
 
+/* ---------- 排课：「今天练什么」卡片（首页，在大「开始」按钮下面） ----------
+   用户要求：首页卡片 → 计划预览（动作 / 组数 / 时长 / 理由）+「开始」「换一个」。
+   配色沿用主页那套 `--home-*` 令牌（与 .ex-card 同一档卡片底），所以两屏颜色仍然是一份定义；
+   卡片藏起来（hidden）时不占版面。 */
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 20px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(52, 229, 196, 0.38);
+  background: linear-gradient(135deg, rgba(52, 229, 196, 0.12), rgba(56, 189, 248, 0.10));
+  box-shadow: var(--shadow);
+}
+.plan-card[hidden] { display: none; }
+.plan-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.plan-badge {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(52, 229, 196, 0.55);
+  color: #7cf5dc;
+}
+.plan-title { margin: 0; font-size: 18px; font-weight: 800; }
+.plan-reason { margin: 0; font-size: 13px; line-height: 1.55; color: var(--muted); }
+.plan-list {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plan-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 13px;
+}
+.plan-item.active { border-color: rgba(52, 229, 196, 0.75); background: rgba(52, 229, 196, 0.12); }
+.plan-item.done { opacity: 0.72; }
+.plan-item-name { font-weight: 700; }
+.plan-item-detail { color: var(--text); }
+.plan-item-rest { color: var(--muted); font-size: 12px; }
+.plan-item-note { color: var(--muted); font-size: 12px; }
+.plan-meta { margin: 0; font-size: 12px; color: var(--muted); }
+.plan-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+.plan-btn {
+  min-height: 44px;              /* 热区 ≥44px：和全站其它按钮一致 */
+  padding: 0 22px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.plan-btn:hover { transform: translateY(-1px); border-color: #7dd3fc; }
+.plan-btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.plan-btn--primary {
+  border-color: rgba(52, 229, 196, 0.65);
+  background: linear-gradient(120deg, rgba(52, 229, 196, 0.30), rgba(56, 189, 248, 0.24));
+  color: #04121a;
+}
+.plan-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+/* 主页上卡片文字提亮（和 .ex-card 同一档 --home-*） */
+body.is-home .plan-card { background: var(--home-card); border-color: var(--home-line); color: var(--home-text); }
+body.is-home .plan-reason,
+body.is-home .plan-item-rest,
+body.is-home .plan-item-note,
+body.is-home .plan-meta { color: var(--home-muted); }
+body.is-home .plan-badge { color: var(--home-accent); border-color: rgba(52, 229, 196, 0.55); }
+
 /* ---------- 手势选择菜单（全屏视频界面上的圆环菜单） ----------
    用户要求：「在这个视频界面里面，给出手势选择菜单，也采用手进入圆环 3 秒的方式来进行选择，
    菜单项就是各项运动。」圆环本身复用 `.ring-btn` / `.ring-*`（和退出圆环同一套动画），

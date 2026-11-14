@@ -18,8 +18,8 @@
 | `test-engines.mjs` | 228 | 通用引擎一次循环一次数、门控、跳跃离地、左右交替（含第二路证据）、死虫式/坐姿体前屈/卷腹判据、后箭步蹲门控掉帧回归 |
 | `test-specs.mjs` | 797 | 弹窗数字喂回识别器（必须落在它自己的计次线上）、门控与 `GATE_LIMITS` 同源、19 动作都有指标、图标角度 = 判据角度 |
 | `test-page.mjs` | 700 | `index.html` 结构、圆环布局与热区、`data-i18n` 完整性、无 emoji 图标、麦克风接线、运动设定两步弹窗、R4 规则面板 DOM / 词条 / 样式 |
-| `test-app.mjs` | 1357 | 真实 DOM 桩里的整机流程：命令快车道（只留 6 类；已移出的说法交给 LLM）、全屏/权限、设置环翻页、HUD、记录、记忆面板、规则与裁判、告别、R4 规则面板（逐条开关 / 开回恢复 / 一键恢复默认 / 报数·读秒） |
-| `test-voice.mjs` | 957 | 命令解析（6 类 7 个 intent 命中 + 19 个已移出 intent 一律 `unknown`）、会话状态机、ASR 适配器、火山代理/协议/降采样、TTS 降级、规则引擎、裁判、告别、诊断、R4 来源 / 触发条件人话 / 总开关 / `lastSpeak`·`lastSkip` |
+| `test-app.mjs` | 1379 | 真实 DOM 桩里的整机流程：命令快车道（只留 6 类；已移出的说法交给 LLM）、全屏/权限、设置环翻页、HUD、记录、记忆面板、规则与裁判、告别、R4 规则面板（逐条开关 / 开回恢复 / 一键恢复默认 / 报数·读秒）、**排课**（卡面 / LLM 微调与回退 / 换一个 / 三件套 / 依次执行 / 组间推进 / 完成告别 / 清除记录 / 语音） |
+| `test-voice.mjs` | 1000 | 命令解析（6 类 7 个 intent 命中 + 19 个已移出 intent 一律 `unknown` + 排课三条）、会话状态机、ASR 适配器、火山代理/协议/降采样、TTS 降级、规则引擎、裁判、告别、诊断、R4 来源 / 触发条件人话 / 总开关 / `lastSpeak`·`lastSkip`、**排课**（4 种目标模板 / 伤病禁忌 / 时长预算 / `validatePlan` / `planToQueue` / plan-request 事件与 schema） |
 | `synthetic-pose.mjs` | — | **合成姿势生成器**：按关节角造 33 点（`foldShin()` 在公制空间折叠，折 X° = 膝角 180−X°） |
 | `preview-icons.mjs` | — | `npm run icons:preview`：把所有关键帧图标渲成一张预览 PNG（人工检查用，不是断言） |
 | `fixtures/lungeBack-right-leg-back.json` | — | 真实帧夹具（后箭步蹲右腿向后不计数那个 bug 的现场数据） |
@@ -67,4 +67,5 @@ npm test
 1. `package.json` 的 `test` 脚本（七套的顺序）；
 2. `tests/synthetic-pose.mjs` 顶部（合成姿势怎么造，理解后其它测试都好读）；
 3. `tests/test-detectors.mjs` 里带用户引述的段落（最能说明「为什么这么判」）；
-4. `tests/test-voice.mjs` 的 `[25]`（真实 http server 验 gzip / 静态资源，写法最特殊）。
+4. `tests/test-voice.mjs` 的 `[25]`（真实 http server 验 gzip / 静态资源，写法最特殊）；
+5. `tests/test-voice.mjs` 的 `[42]` 与 `tests/test-app.mjs` 的 `[56]`（排课：纯函数 + 真实 DOM 桩两套）。

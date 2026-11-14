@@ -1,6 +1,6 @@
 # index.html — 单页应用骨架（静态 DOM + 所有弹窗 + WebGL/canvas 容器）
 
-> 层：界面（结构） ｜ 989 行 ｜ 无构建步骤，直接被浏览器加载
+> 层：界面（结构） ｜ 1009 行 ｜ 无构建步骤，直接被浏览器加载
 > 一句话：`src/app.js` 需要的每一个 DOM 节点都在这里；id 是它俩之间的契约。
 
 ## 1. 它解决什么问题（为什么需要它）
@@ -18,6 +18,7 @@
 | 顶栏 | L22-L60 | 品牌、版本号、返回 / 最佳 / 记录 / 运动设定 / 设置 按钮 | 图标全部是内联 Lucide 线条（不用 emoji） |
 | 舞台 | 中段 | `<video id="video">` + `<canvas id="overlay">` | 摄像头画面 + 骨架/轮廓画布 |
 | 主页 / 动作库 | 中段 | 分类卡、动作卡、目标选择 | 由 `app.js` 动态渲染，容器在这里 |
+| 排课卡（今日计划） | L85-L105 | `#planCard` / `#planTitle` / `#planReason` / `#planList` / `#planMeta` / `#btnPlanStart` / `#btnPlanShuffle` | 计划预览 + 开始 / 换一个；文案走 `plan.*`，内容由 `renderPlanCard()` 填 |
 | HUD / 圆环 | 中段 | 右上进度圆环、左下退出圆环、手势圆环 | 尺寸来自 CSS `--ring-px` |
 | 弹窗 | 后段 | 设置 / 记录 / 最佳 / 运动设定 / 语音帮助 / 记忆 | `hidden` 属性控制显隐 |
 | R4 规则面板（在设置弹窗里） | L720-L740 | 报数 / 读秒两个 toggle、`#ruleList`（列表由 `app.js` 动态建）、`#btnRuleReset`、`#ruleLimitHint` | 行数不写死：`renderRulePanel()` 按规则表渲染 |

@@ -35,6 +35,7 @@ import { loadEnvFile, redactSecrets } from './env.mjs';
 import {
   EMPTY_REPLY,
   JUDGE_EVENT_TYPES,
+  LLM_EVENT_PLAN_REQUEST,
   LLM_EVENT_SESSION_END,
   LLM_EVENT_SESSION_START,
   LLM_TOOLS,
@@ -75,7 +76,7 @@ export const LLM_MAX_CONTEXT_CHARS = 6000;
  * 会话开始事件（`POST /llm {event:'session-start'}`）：唯一字符串定义在 `llm-tools.mjs`
  * （system prompt 的事件规则也要用它），这里 re-export 给路由 / 测试 / 前端对照。
  */
-export { LLM_EVENT_SESSION_START, LLM_EVENT_SESSION_END };
+export { LLM_EVENT_SESSION_START, LLM_EVENT_SESSION_END, LLM_EVENT_PLAN_REQUEST };
 /** R3 裁判事件口径（唯一来源 `src/voice/judge.js`；这里 re-export 给测试 / 前端对照） */
 export { JUDGE_EVENT_TYPES, isJudgeAskEvent, isJudgeFarewellEvent };
 
@@ -753,6 +754,66 @@ function signed(value) {
   return n > 0 ? `+${n}` : String(n);
 }
 
+/* ------------------------------------------------------------------ *
+ * 排课（plan-request）→ 一条 user 消息（中英各一套）
+ *
+ * 用户要求：「把 {goal, minutes, gear, injuries, recent20, template} 交给模型 → 期望返回结构化计划 JSON」。
+ * 服务端只负责把这些**客户端算好的约束**写成一条事件描述；schema / 只能从动作库选 / 时长预算 /
+ * 伤病禁忌都在 `buildSystemPrompt()` 第 19 条（与 `src/voice/plan.js` 同一份常量）。
+ * 回包是**严格 JSON**，客户端必须 `parsePlanJson()` + `validatePlan()`，不合法回退模板。
+ * ------------------------------------------------------------------ */
+
+/** recent / template 压成一行（模型要的是约束，不是长表格） */
+function planRecentText(list, lang) {
+  const rows = Array.isArray(list) ? list : [];
+  if (!rows.length) return lang === 'en' ? 'none' : '无';
+  return rows.slice(0, 20).map((row) => {
+    const id = String((row && row.exerciseId) || '').slice(0, 32);
+    const days = Math.max(0, Math.round(Number(row && row.daysAgo) || 0));
+    return `${id}(${days}${lang === 'en' ? 'd' : '\u5929'})`;
+  }).join(', ');
+}
+
+function planTemplateText(template, lang) {
+  const t = template && typeof template === 'object' ? template : null;
+  if (!t) return lang === 'en' ? 'none' : '无';
+  const title = String(t.title || '').slice(0, 80);
+  const blocks = (Array.isArray(t.blocks) ? t.blocks : []).map((b) => {
+    const id = String((b && b.exerciseId) || '').slice(0, 32);
+    const sets = Math.max(0, Math.round(Number(b && b.sets) || 0));
+    const target = Math.max(0, Math.round(Number(b && b.target) || 0));
+    const rest = Math.max(0, Math.round(Number(b && b.restSec) || 0));
+    return `${id} ${sets}x${target}+${rest}s`;
+  }).join(', ');
+  return title ? `${title} [${blocks}]` : `[${blocks}]`;
+}
+
+/**
+ * `event: plan-request` 的 user 消息（中英各一套）。
+ *
+ * @param {{locale?:string, context?:object}} [opts]
+ * @returns {string} 直接作为 messages 里那条 user 的内容
+ */
+export function planRequestEventMessage({ locale = 'zh', context = null } = {}) {
+  const lang = locale === 'en' ? 'en' : 'zh';
+  const ctx = context && typeof context === 'object' ? context : {};
+  const goal = String(ctx.goal || 'fatLoss').slice(0, 24);
+  const gear = String(ctx.gear || 'none').slice(0, 24);
+  const minutes = Math.max(1, Math.round(Number(ctx.minutes) || 20));
+  const injuries = Array.isArray(ctx.injuries) ? ctx.injuries.map((x) => String(x).slice(0, 24)) : [];
+  const recent = planRecentText(ctx.recent, lang);
+  const template = planTemplateText(ctx.template, lang);
+  if (lang === 'en') {
+    return `[Event] The user asks for a training plan for today (plan-request): goal=${goal}, minutes=${minutes}, `
+      + `gear=${gear}, injuries=${injuries.length ? injuries.join(', ') : 'none'}, recent=${recent}, template=${template}. `
+      + 'Follow the plan rules in the system prompt and reply with the STRICT JSON plan only '
+      + '(title / rationale / blocks).';
+  }
+  return `[事件] 用户要一份今天的训练计划（plan-request）：目标=${goal}，时长=${minutes} 分钟，器械=${gear}，`
+    + `伤病=${injuries.length ? injuries.join('、') : '无'}，最近=${recent}，模板=${template}。`
+    + '请按 system 里的排课规则，只回严格 JSON 计划（title / rationale / blocks）。';
+}
+
 /** 组一次请求的 messages（system + 最近历史 + 这一句 / 一条 session-start / session-end / 裁判事件） */export function buildLlmMessages({
   text = '',
   locale = 'zh',
@@ -765,19 +826,22 @@ function signed(value) {
   const lang = locale === 'en' ? 'en' : 'zh';
   const eventName = String(event || '');
   /**
-   * 三种 user 消息：
+   * 四种 user 消息：
    *   ① `session-start` → 进场问候（P3.3 的事件描述，自由文本回复）；
    *   ② 裁判事件（8 个触发点）→ 服务端按事件生成的**事件描述**（模型只回严格 JSON）；
    *   ③ `session-end` → 离场告别（事件描述，自由文本、≤2 句）；
-   *   ④ 其余 → 用户说的那句话（原行为不变）。
+   *   ④ `plan-request` → 排课请求（事件描述，模型只回**严格 JSON 计划**）；
+   *   ⑤ 其余 → 用户说的那句话（原行为不变）。
    */
   const userContent = eventName === LLM_EVENT_SESSION_START
     ? sessionStartEventMessage({ locale: lang, context })
     : (eventName === LLM_EVENT_SESSION_END
       ? sessionEndEventMessage({ locale: lang, context })
-      : (isJudgeAskEvent(eventName)
-        ? judgeEventMessage({ event: eventName, locale: lang, context })
-        : String(text).slice(0, LLM_MAX_TEXT)));
+      : (eventName === LLM_EVENT_PLAN_REQUEST
+        ? planRequestEventMessage({ locale: lang, context })
+        : (isJudgeAskEvent(eventName)
+          ? judgeEventMessage({ event: eventName, locale: lang, context })
+          : String(text).slice(0, LLM_MAX_TEXT))));
   return [
     { role: 'system', content: buildSystemPrompt({ locale: lang, context, maxContextChars, event }) },
     ...historyMessages(history, { maxTurns }),
@@ -916,11 +980,14 @@ export function createLlmRoutes({
        * 未知事件名不放行空文本）。
        */
       const rawEvent = String(data.event == null ? '' : data.event);
-      const event = JUDGE_EVENT_TYPES.includes(rawEvent) ? rawEvent : '';
+      const event = (JUDGE_EVENT_TYPES.includes(rawEvent) || rawEvent === LLM_EVENT_PLAN_REQUEST)
+        ? rawEvent : '';
       /** R3：裁判模式（严格 JSON + 默认 null）；`session-start` 不算，它还是普通问候 */
       const judgeMode = isJudgeAskEvent(event);
       /** 告别模式（自由文本、必须说、≤2 句）：`session-end` */
       const farewellMode = isJudgeFarewellEvent(event);
+      /** 排课模式（严格 JSON 计划；由客户端校验，不合法回退模板）：`plan-request` */
+      const planMode = event === LLM_EVENT_PLAN_REQUEST;
       if (!text && !event) {
         sendJson(res, 400, { ok: false, error: 'empty-text' });
         return;
@@ -969,8 +1036,8 @@ export function createLlmRoutes({
         text,
         locale,
         context,
-        // 裁判 / 告别都是无状态的一条事件一条请求：不带对话历史（省 token，也不会被上一句带跑）
-        history: (judgeMode || farewellMode) ? [] : data.history,
+        // 裁判 / 告别 / 排课都是无状态的一条事件一条请求：不带对话历史（省 token，也不会被上一句带跑）
+        history: (judgeMode || farewellMode || planMode) ? [] : data.history,
         event,
         maxTurns: maxHistoryTurns,
       });
@@ -1025,6 +1092,41 @@ export function createLlmRoutes({
           if (typeof logger === 'function') {
             try {
               logger('llm farewell', {
+                provider: cfg.provider,
+                model: cfg.model,
+                ms: Date.now() - started,
+                prompt: usage.prompt,
+                completion: usage.completion,
+                chars: reply.length,
+                event,
+              });
+            } catch { /* ignore */ }
+          }
+          sendJson(res, 200, {
+            ok: true,
+            event,
+            reply,
+            actions: [],
+            refusals: [],
+            memoryOps: [],
+            memory: null,
+            usage,
+            provider: cfg.provider,
+            model: cfg.model,
+          });
+          return;
+        }
+        /**
+         * 排课模式（plan-request）：模型回**严格 JSON 计划**。
+         * 服务端**原样**把这段文本交回客户端（解析 / 校验 / 回退模板都在 `src/voice/plan.js` + `app.js`）：
+         *   - 不合法的 JSON → 客户端回退模板，绝不交付不安全计划；
+         *   - 不执行任何工具调用、不写记忆（排课不该顺带改界面）。
+         */
+        if (planMode) {
+          const reply = String((out && out.text) || '').trim();
+          if (typeof logger === 'function') {
+            try {
+              logger('llm plan', {
                 provider: cfg.provider,
                 model: cfg.model,
                 ms: Date.now() - started,
@@ -1143,6 +1245,7 @@ export default {
   LLM_MAX_HISTORY_TURNS,
   LLM_EVENT_SESSION_START,
   LLM_EVENT_SESSION_END,
+  LLM_EVENT_PLAN_REQUEST,
   /** R3 裁判事件口径（唯一来源是 src/voice/judge.js；这里 re-export 给测试 / 前端对照） */
   JUDGE_EVENT_TYPES,
   isJudgeAskEvent,
@@ -1162,6 +1265,7 @@ export default {
   buildLlmMessages,
   sessionStartEventMessage,
   sessionEndEventMessage,
+  planRequestEventMessage,
   judgeEventMessage,
   historyMessages,
   applyMemoryOps,

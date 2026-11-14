@@ -96,16 +96,27 @@ import {
   LLM_PATH as LLM_CLIENT_PATH, LLM_CLIENT_TIMEOUT_MS, LLM_HISTORY_TURNS,
   LLM_EVENT_SESSION_START as LLM_CLIENT_EVENT,
   LLM_EVENT_SESSION_END as LLM_CLIENT_EVENT_END,
+  LLM_EVENT_PLAN_REQUEST as LLM_CLIENT_EVENT_PLAN,
   AGENT_CONTEXT_MAX_CHARS, AGENT_EVENTS_MAX, AGENT_EVENTS_WINDOW_MS, AGENT_EVENT_MAX_CHARS,
   AGENT_MEMORY_PREF_FIELDS, AGENT_MEMORY_FACT_FIELDS,
   weekTrend, startOfLocalWeek, normalizeRecentEvents, lastSessionForContext, memoryForContext,
   trainingSummaryForContext, AGENT_SUMMARY_MAX, AGENT_EVENT_KINDS,
 } from '../src/voice/llm.js';
+// 排课（每日单次计划）：模板 / 校验 / 执行队列全是纯函数
+import {
+  PLAN_GOALS, PLAN_GEAR, PLAN_MIN_BLOCKS, PLAN_MAX_BLOCKS, PLAN_MAX_SETS,
+  PLAN_MIN_REPS, PLAN_MIN_HOLD_SEC, PLAN_MAX_REST_SEC,
+  buildPlanTemplate, validatePlan, planToQueue, planTotals, queueTotals,
+  parsePlanJson, buildPlanRequest, normalizeInjuries, muscleFocus, perSetSeconds,
+} from '../src/voice/plan.js';
+import { EXERCISE_MAP, isTimedReps } from '../src/catalog.js';
 import {
   LLM_PATH, LLM_HEALTH_PATH, LLM_TIMEOUT_MS, LLM_MAX_TOKENS, LLM_RATE_LIMIT,
   LLM_RATE_WINDOW_MS, LLM_MAX_HISTORY_TURNS, LLM_EVENT_SESSION_START, LLM_EVENT_SESSION_END,
+  LLM_EVENT_PLAN_REQUEST,
   loadLlmConfig, createLlmGuard, createLlmProvider, createMockLlmProvider,
-  createLlmRoutes, buildLlmMessages, sessionStartEventMessage, sessionEndEventMessage, historyMessages,
+  createLlmRoutes, buildLlmMessages, sessionStartEventMessage, sessionEndEventMessage,
+  planRequestEventMessage, historyMessages,
   normalizeProviderName, llmHttpCode,
   // R3：裁判事件口径 + 按事件生成 user 消息（服务端）
   JUDGE_EVENT_TYPES, judgeEventMessage, isJudgeAskEvent as isJudgeAskEventServer,
@@ -2338,25 +2349,29 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
     setVoiceGender: ['用男声', 'use a male voice'],
   };
 
-  /** 不在移除清单里的 4 个零 LLM 口令（继续上次 + 口述规则三条）—— 仍然走快车道 */
+  /** 不在移除清单里的零 LLM 口令（继续上次 + 口述规则三条 + 排课三条）—— 仍然走快车道 */
   const ZERO_LLM_SAMPLES = {
     continueLast: ['继续上次', 'continue last'],
     addRule: ['每 10 个报一次', 'report every 10 reps'],
     removeRule: ['别报数了', 'stop counting'],
     listRules: ['现在有什么规则', 'what rules are on'],
+    // 排课：模板是纯函数算的，断网 / 没配 LLM 也必须能答、能开始
+    makePlan: ['今天练什么', 'what should i train today'],
+    shufflePlan: ['换一个计划', 'shuffle the plan'],
+    startPlan: ['就按这个开始', 'start this plan'],
   };
 
   ok(`命令表共 ${COMMANDS.length} 条 intent（run 全保留，给 LLM 工具调用用）`,
-    COMMANDS.length === 30
+    COMMANDS.length === 33
     && Object.keys(SAMPLES).length === FAST_LANE_INTENTS.length
     && COMMANDS.every((c) => Array.isArray(SAMPLES[c.intent]) || Object.keys(REMOVED).includes(c.intent)
       || Object.keys(ZERO_LLM_SAMPLES).includes(c.intent)),
     JSON.stringify({ commands: COMMANDS.map((c) => c.intent), samples: Object.keys(SAMPLES) }));
-  ok('快车道 = 6 类（暂停 / 继续合成一类）/ 7 个核心 intent / +4 个零 LLM 口令 = 匹配 11 个',
+  ok('快车道 = 6 类（暂停 / 继续合成一类）/ 7 个核心 intent / +7 个零 LLM 口令（含排课三条）= 匹配 14 个',
     FAST_LANE_CLASSES.length === 6
     && FAST_LANE_INTENTS.length === 7
-    && ZERO_LLM_INTENTS.length === 4
-    && PARSE_INTENTS.length === 11,
+    && ZERO_LLM_INTENTS.length === 7
+    && PARSE_INTENTS.length === 14,
     JSON.stringify({ classes: FAST_LANE_CLASSES.map((c) => c.id), fast: FAST_LANE_INTENTS,
       zero: ZERO_LLM_INTENTS, parse: PARSE_INTENTS }));
   ok('帮助面板只列 6 类（暂停 / 继续合成一行；其余说法交给 LLM）', (() => {
@@ -3964,7 +3979,7 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
       UNCOVERED_INTENTS.length === 0, UNCOVERED_INTENTS.join(','));
     ok('工具里写的 intent 都真的存在（UNKNOWN_TOOLED_INTENTS 为空）',
       UNKNOWN_TOOLED_INTENTS.length === 0, UNKNOWN_TOOLED_INTENTS.join(','));
-    ok('TOOLED_INTENTS 的数量 = COMMANDS 的数量（27 条 intent 全部可达；记忆工具没有 client intent）',
+    ok('TOOLED_INTENTS 的数量 = COMMANDS 的数量（33 条 intent 全部可达；记忆工具没有 client intent）',
       TOOLED_INTENTS.length === COMMANDS.length,
       `${TOOLED_INTENTS.length} / ${COMMANDS.length}`);
     ok('工具数 ≥ 15，且每个工具都有 name / 中英描述 / JSON Schema 参数',
@@ -3985,6 +4000,8 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
       // R2 口述建规则（零 LLM：快车道不联网，但这三条也让模型能触发同一套 run()）
       add_rule: ['addRule'], remove_rule: ['removeRule'], list_rules: ['listRules'],
       pick_category: ['category'], pick_index: ['pick'], stop_listening: ['stopListening'],
+      // 排课（每日单次计划）：两条工具覆盖三个 intent（make_plan 用 shuffle 区分「排」与「换」）
+      make_plan: ['makePlan', 'shufflePlan'], start_plan: ['startPlan'],
       // 长期记忆：服务端副作用，没有 client intent
       remember: [], remember_fact: [], forget: [],
     };
@@ -3993,7 +4010,7 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
       return Array.isArray(got) && got.length === intents.length
         && intents.every((i) => got.includes(i));
     });
-    ok('25 个工具 → 30 条 intent 的映射与命令表一致（含 navigate / open_panel / set_voice 三对多 + 3 个记忆工具 + 3 个规则工具）',
+    ok('27 个工具 → 33 条 intent 的映射与命令表一致（含 navigate / open_panel / set_voice / make_plan 四对多 + 3 个记忆工具 + 3 个规则工具）',
       mapOk && Object.keys(TOOL_INTENT_MAP).length === Object.keys(expectMap).length,
       JSON.stringify(TOOL_INTENT_MAP));
     // OpenAI 风格的 function calling：tools 是 [{type:'function', function:{name,description,parameters}}]
@@ -8563,6 +8580,373 @@ console.log('\n[41] R4 规则面板：来源徽标 / 触发条件人话 / 报数
       Object.entries(DIAG_REASON_KEYS)
         .filter(([, key]) => flat.zh[key] === undefined || flat.en[key] === undefined)
         .map(([code]) => code).join(', '));
+  }
+}
+
+/* ================================================================== *
+ * [42] 排课（每日单次计划）：模板选择 / 伤病禁忌 / 时长预算 / 校验 / 执行队列 /
+ *      计划口令（零 LLM 快车道）/ plan-request 事件（服务端 user 消息 + system schema）
+ *
+ * 用户要求：「今天练什么」→ 一份可执行计划 + 一键开始（只做每日单次计划）。
+ * 全程不联网：模板与校验都是纯函数；plan-request 只检查「服务端会拼出什么提示词」。
+ * ================================================================== */
+console.log('\n[42] 排课：目标模板 / 伤病禁忌 / 时长预算 / validatePlan / planToQueue / plan-request');
+{
+  setLang('zh', { persist: false });
+
+  /* ---------------- 42.1 四种目标的模板选择 ---------------- */
+  const plans = Object.fromEntries(PLAN_GOALS.map((goal) => [goal, buildPlanTemplate({ goal, minutes: 20, injuries: [] })]));
+  ok('[42] 四个目标都能排出计划（title / blocks / source / rationale 齐全）',
+    PLAN_GOALS.every((goal) => {
+      const p = plans[goal];
+      return p && p.source === 'template' && typeof p.title === 'string' && p.title.length > 0
+        && typeof p.rationale === 'string' && p.rationale.length > 0
+        && Array.isArray(p.blocks) && p.blocks.length >= PLAN_MIN_BLOCKS && p.blocks.length <= PLAN_MAX_BLOCKS
+        && p.blocks.every((b) => b.exerciseId && b.sets >= 1 && b.target > 0 && b.restSec >= 0 && typeof b.note === 'string');
+    }), JSON.stringify(Object.fromEntries(PLAN_GOALS.map((g) => [g, plans[g]?.blocks.length]))));
+  ok('[42] 减脂 = 全身循环（同一份里至少 3 个不同分类的动作，且都是全身/大肌群）', (() => {
+    const ids = plans.fatLoss.blocks.map((b) => b.exerciseId);
+    const cats = new Set(ids.flatMap((id) => (EXERCISE_MAP[id] || {}).cats || []));
+    return ids.includes('jumpingJack') && ids.includes('squat') && cats.size >= 3;
+  })(), plans.fatLoss.blocks.map((b) => b.exerciseId).join(','));
+  ok('[42] 体能 = 间歇（限时计数 / 计时动作占多数，组间休息短）', (() => {
+    const ids = plans.endurance.blocks.map((b) => b.exerciseId);
+    const timed = ids.filter((id) => isTimedReps(EXERCISE_MAP[id]) || EXERCISE_MAP[id].kind === 'hold');
+    const rests = plans.endurance.blocks.map((b) => b.restSec);
+    return timed.length >= 2 && Math.max(...rests) <= 30;
+  })(), JSON.stringify(plans.endurance.blocks.map((b) => [b.exerciseId, b.restSec])));
+  ok('[42] 体态 = 核心 + 拉伸（前段核心、末段拉伸，拉伸类一定是 hold）', (() => {
+    const ids = plans.posture.blocks.map((b) => b.exerciseId);
+    const stretch = ids.filter((id) => (EXERCISE_MAP[id].cats || []).includes('stretch'));
+    const core = ids.filter((id) => (EXERCISE_MAP[id].cats || []).includes('core'));
+    const firstStretch = ids.findIndex((id) => (EXERCISE_MAP[id].cats || []).includes('stretch'));
+    return stretch.length >= 2 && core.length >= 2 && firstStretch >= 0
+      && ids.slice(firstStretch).every((id) => (EXERCISE_MAP[id].cats || []).includes('stretch'))
+      && stretch.every((id) => EXERCISE_MAP[id].kind === 'hold');
+  })(), plans.posture.blocks.map((b) => b.exerciseId).join(','));
+  ok('[42] 增肌 = 上 / 下肢分化：最近 7 天上肢练得多 → 今天练下肢（`recent` 真的参与决策）', (() => {
+    const now = Date.now();
+    const upperHeavy = [
+      { exerciseId: 'pushup', at: now - 86400000 },
+      { exerciseId: 'kneePushup', at: now - 86400000 },
+      { exerciseId: 'pushup', at: now - 2 * 86400000 },
+    ];
+    const lowerHeavy = [
+      { exerciseId: 'squat', at: now - 86400000 },
+      { exerciseId: 'lungeBack', at: now - 86400000 },
+    ];
+    const a = buildPlanTemplate({ goal: 'muscle', minutes: 20, recent: upperHeavy });
+    const b = buildPlanTemplate({ goal: 'muscle', minutes: 20, recent: lowerHeavy });
+    const catOf = (p) => p.blocks.map((x) => EXERCISE_MAP[x.exerciseId].cats);
+    return a.focus === 'lower' && b.focus === 'upper'
+      && catOf(a).filter((c) => c.includes('upper')).length === 0
+      && catOf(b).filter((c) => c.includes('lower')).length === 0
+      && a.title !== b.title;
+  })(), JSON.stringify({
+    upper: muscleFocus([{ exerciseId: 'pushup', at: Date.now() }]),
+    lower: muscleFocus([{ exerciseId: 'squat', at: Date.now() }]),
+  }));
+
+  /* ---------------- 42.2 器械三档 ---------------- */
+  const gearPlans = Object.fromEntries(PLAN_GEAR.map((gear) => [gear, buildPlanTemplate({ goal: 'muscle', minutes: 20, gear })]));
+  ok('[42] 器械三档都能排（none / dumbbells / band）；负重两档的计次目标下调 + 备注写明怎么加负荷', (() => {
+    const reps = (p) => p.blocks.slice(0, 2).map((b) => b.target).join(',');
+    const db = gearPlans.dumbbells;
+    const band = gearPlans.band;
+    return PLAN_GEAR.every((g) => gearPlans[g].blocks.length >= PLAN_MIN_BLOCKS)
+      && reps(db) !== reps(gearPlans.none)
+      && db.blocks.some((b) => b.note && b.note.length > 0)
+      && band.blocks.some((b) => b.note && b.note.length > 0);
+  })(), JSON.stringify({
+    none: gearPlans.none.blocks.slice(0, 2).map((b) => b.target),
+    dumbbells: gearPlans.dumbbells.blocks.slice(0, 2).map((b) => b.target),
+    band: gearPlans.band.blocks.slice(0, 2).map((b) => b.target),
+  }));
+
+  /* ---------------- 42.3 伤病禁忌表 ---------------- */
+  {
+    const kneePlan = buildPlanTemplate({ goal: 'fatLoss', minutes: 20, injuries: ['膝盖'] });
+    const kneeIds = kneePlan.blocks.map((b) => b.exerciseId);
+    const kneeBanned = ['squatJump', 'squat', 'lunge', 'lungeBack', 'burpee', 'lungeJump'];
+    ok('[42] 膝盖伤病：禁跳跃 / 深蹲 / 弓步 / 波比 —— 一个都不出现，并且换成了替代动作',
+      kneeBanned.every((id) => !kneeIds.includes(id))
+      && kneeIds.includes('squatSumo')
+      && kneePlan.injuries.includes('knee')
+      && kneePlan.blocks.some((b) => b.note.includes(t('plan.note.swapped'))),
+      JSON.stringify(kneeIds));
+
+    const waistPlan = buildPlanTemplate({ goal: 'posture', minutes: 20, injuries: ['腰疼'] });
+    const waistIds = waistPlan.blocks.map((b) => b.exerciseId);
+    ok('[42] 腰伤病：禁臀桥 / 卷腹（高强度屈伸）—— 换成死虫式，绝不出现在计划里',
+      ['bridge', 'crunch', 'reverseCrunch'].every((id) => !waistIds.includes(id))
+      && waistIds.includes('deadBug'),
+      JSON.stringify(waistIds));
+
+    ok('[42] 禁忌判定按维度归一化（中文「膝盖 / 腰」和英文 knee / waist 都认）',
+      JSON.stringify(normalizeInjuries(['膝盖'])) === '["knee"]'
+      && JSON.stringify(normalizeInjuries(['腰'])) === '["waist"]'
+      && JSON.stringify(normalizeInjuries(['knee', 'shoulder'])) === '["knee"]'
+      && normalizeInjuries(null).length === 0,
+      JSON.stringify(normalizeInjuries(['膝盖', '腰', 'knee'])));
+
+    const bothPlan = buildPlanTemplate({ goal: 'fatLoss', minutes: 20, injuries: ['膝盖', '腰'] });
+    const bothIds = bothPlan.blocks.map((b) => b.exerciseId);
+    ok('[42] 膝盖 + 腰同时命中：剩下的仍然 ≥2 个动作，且两边禁忌都不出现',
+      bothIds.length >= PLAN_MIN_BLOCKS
+      && ['squatJump', 'squat', 'lunge', 'lungeBack', 'burpee', 'bridge', 'crunch', 'reverseCrunch']
+        .every((id) => !bothIds.includes(id)),
+      JSON.stringify(bothIds));
+  }
+
+  /* ---------------- 42.4 时长预算 ---------------- */
+  ok('[42] 时长预算：5 / 10 / 20 / 45 分钟都能排，且 Σ(组数×每组时长+休息) ≤ minutes × 60',
+    [5, 10, 20, 45].every((minutes) => {
+      const p = buildPlanTemplate({ goal: 'fatLoss', minutes });
+      const totals = planTotals(p);
+      return totals.seconds <= minutes * 60 && totals.actions >= PLAN_MIN_BLOCKS;
+    }), [5, 10, 20, 45].map((m) => {
+      const p = buildPlanTemplate({ goal: 'fatLoss', minutes: m });
+      return `${m}min:${planTotals(p).seconds}s`;
+    }).join(' '));
+  ok('[42] 每组时长按动作 kind 估（计次 ≈ 每次 3 秒 / 计时 = 目标秒 / 限时计数 = 目标秒）',
+    perSetSeconds({ exerciseId: 'squat', target: 10 }) === 30
+    && perSetSeconds({ exerciseId: 'plank', target: 40 }) === 40
+    && perSetSeconds({ exerciseId: 'jumpingJack', target: 45 }) === 45,
+    JSON.stringify({
+      squat: perSetSeconds({ exerciseId: 'squat', target: 10 }),
+      plank: perSetSeconds({ exerciseId: 'plank', target: 40 }),
+      jumpingJack: perSetSeconds({ exerciseId: 'jumpingJack', target: 45 }),
+    }));
+  ok('[42] 结构：≥2 个、≤6 个动作；组数 1~4；目标不低于动作下限',
+    PLAN_GOALS.every((goal) => {
+      const p = buildPlanTemplate({ goal, minutes: 20 });
+      return p.blocks.length >= PLAN_MIN_BLOCKS && p.blocks.length <= PLAN_MAX_BLOCKS
+        && p.blocks.every((b) => b.sets >= 1 && b.sets <= PLAN_MAX_SETS
+          && b.target >= (EXERCISE_MAP[b.exerciseId].kind === 'hold' ? PLAN_MIN_HOLD_SEC : PLAN_MIN_REPS));
+    }), PLAN_GOALS.map((g) => `${g}:${buildPlanTemplate({ goal: g, minutes: 20 }).blocks.length}`).join(' '));
+
+  /* ---------------- 42.5 validatePlan：非法 id / 超时长 / 结构 / 禁忌 ---------------- */
+  {
+    const good = buildPlanTemplate({ goal: 'endurance', minutes: 20 });
+    ok('[42] validatePlan 对模板计划放行（ok=true, reasons 为空）',
+      (() => { const v = validatePlan(good, { minutes: 20 }); return v.ok && v.reasons.length === 0; })(),
+      JSON.stringify(validatePlan(good, { minutes: 20 })));
+
+    const badId = { ...good, blocks: [{ ...good.blocks[0], exerciseId: 'notAnExercise' }, good.blocks[1]] };
+    ok('[42] validatePlan 拒「动作 id 不合法」（unknown-exercise:<id>）',
+      (() => {
+        const v = validatePlan(badId, { minutes: 20 });
+        return !v.ok && v.reasons.some((r) => r.startsWith('unknown-exercise:'));
+      })(), JSON.stringify(validatePlan(badId, { minutes: 20 })));
+
+    const tooLong = { ...good, blocks: good.blocks.map((b) => ({ ...b, sets: 4, target: 100, restSec: 180 })) };
+    ok('[42] validatePlan 拒「超时长」（over-budget:<秒>）',
+      (() => {
+        const v = validatePlan(tooLong, { minutes: 5 });
+        return !v.ok && v.reasons.some((r) => r.startsWith('over-budget:'));
+      })(), JSON.stringify(validatePlan(tooLong, { minutes: 5 })));
+
+    const banned = { ...good, blocks: [{ exerciseId: 'squatJump', sets: 2, target: 10, restSec: 30 }, good.blocks[1]] };
+    ok('[42] validatePlan 拒「伤病禁忌」（banned:squatJump / banned:bridge 等）',
+      (() => {
+        const v = validatePlan(banned, { minutes: 20, injuries: ['knee'] });
+        return !v.ok && v.reasons.includes('banned:squatJump');
+      })(), JSON.stringify(validatePlan(banned, { minutes: 20, injuries: ['knee'] })));
+
+    ok('[42] validatePlan 拒结构问题：只有 1 个动作 / 7 个动作 / 组数 0 / 目标为 0 / title 为空',
+      (() => {
+        const one = validatePlan({ title: 'x', source: 'template', blocks: [good.blocks[0]] }, {});
+        const many = validatePlan({
+          title: 'x',
+          source: 'template',
+          blocks: [...good.blocks, ...good.blocks, ...good.blocks].slice(0, 7),
+        }, {});
+        const badSets = validatePlan({ ...good, blocks: [{ ...good.blocks[0], sets: 0 }, good.blocks[1]] }, {});
+        const badTarget = validatePlan({ ...good, blocks: [{ ...good.blocks[0], target: 0 }, good.blocks[1]] }, {});
+        const noTitle = validatePlan({ ...good, title: '  ' }, {});
+        return !one.ok && one.reasons.includes('too-few-blocks')
+          && !many.ok && many.reasons.includes('too-many-blocks')
+          && !badSets.ok && badSets.reasons.some((r) => r.startsWith('bad-sets:'))
+          && !badTarget.ok && badTarget.reasons.some((r) => r.startsWith('bad-target:'))
+          && !noTitle.ok && noTitle.reasons.includes('bad-title');
+      })());
+
+    ok('[42] validatePlan 接受注入的 catalog（测试用假库：库外的 id 一律拒）',
+      (() => {
+        const small = { squat: EXERCISE_MAP.squat, plank: EXERCISE_MAP.plank };
+        const only = { title: 'x', source: 'template', blocks: [{ exerciseId: 'squat', sets: 2, target: 10, restSec: 20 }, { exerciseId: 'jumpingJack', sets: 2, target: 30, restSec: 20 }] };
+        const v = validatePlan(only, { catalog: small });
+        return !v.ok && v.reasons.includes('unknown-exercise:jumpingJack');
+      })());
+  }
+
+  /* ---------------- 42.6 planToQueue：执行队列 ---------------- */
+  {
+    const plan = buildPlanTemplate({ goal: 'endurance', minutes: 20 });
+    const queue = planToQueue(plan);
+    const sets = queue.filter((s) => s.type === 'set');
+    const rests = queue.filter((s) => s.type === 'rest');
+    const expectSets = plan.blocks.reduce((n, b) => n + b.sets, 0);
+    ok('[42] planToQueue：一组一步 + 组间休息一步，最后一组后面没有休息',
+      sets.length === expectSets
+      && rests.length === expectSets - 1
+      && queue.length === expectSets + expectSets - 1
+      && queue.at(-1).type === 'set'
+      && sets.every((s) => s.exerciseId && s.target > 0 && s.setIndex >= 1 && s.blockIndex >= 0),
+      JSON.stringify({ sets: sets.length, rests: rests.length, last: queue.at(-1)?.type }));
+    ok('[42] planToQueue 的顺序就是计划顺序（按 block / set 递增）', (() => {
+      let bi = 0;
+      let si = 1;
+      for (const step of queue) {
+        if (step.type !== 'set') continue;
+        if (step.blockIndex < bi || (step.blockIndex === bi && step.setIndex < si)) return false;
+        bi = step.blockIndex;
+        si = step.setIndex;
+      }
+      return bi === plan.blocks.length - 1;
+    })(), '');
+    ok('[42] queueTotals 的组数 = 计划组数；预计秒数与 planTotals 同量级（差在最后一段休息）',
+      queueTotals(queue).sets === planTotals(plan).sets
+      && Math.abs(queueTotals(queue).seconds - planTotals(plan).seconds) <= 180,
+      JSON.stringify({ queue: queueTotals(queue), plan: planTotals(plan) }));
+  }
+
+  /* ---------------- 42.7 「换一个」= 变体真的换出血 ---------------- */
+  ok('[42] variant 旋转起手动作：variant 0 / 1 的计划不同（「换一个」不是假按钮）',
+    (() => {
+      const a = buildPlanTemplate({ goal: 'fatLoss', minutes: 20, variant: 0 });
+      const b = buildPlanTemplate({ goal: 'fatLoss', minutes: 20, variant: 1 });
+      const sig = (p) => p.blocks.map((x) => `${x.exerciseId}:${x.sets}:${x.target}`).join('|');
+      return sig(a) !== sig(b) && b.blocks.length >= PLAN_MIN_BLOCKS;
+    })());
+
+  /* ---------------- 42.8 计划口令（零 LLM 快车道） ---------------- */
+  {
+    const planSamples = [
+      ['今天练什么', 'makePlan', 'zh'],
+      ['换一个计划', 'shufflePlan', 'zh'],
+      ['就按这个开始', 'startPlan', 'zh'],
+      ['继续今天的计划', 'startPlan', 'zh'],
+      ['what should i train today', 'makePlan', 'en'],
+      ['shuffle the plan', 'shufflePlan', 'en'],
+      ['start this plan', 'startPlan', 'en'],
+    ];
+    ok('[42] 四个语音说法都命中对应 intent（今天练什么 / 换一个计划 / 就按这个开始 / 继续今天的计划）',
+      planSamples.every(([text, intent, locale]) => parseCommand(text, locale).intent === intent),
+      JSON.stringify(planSamples.map(([text, , locale]) => [text, parseCommand(text, locale).intent])));
+    ok('[42] 排课三条都在快车道（断网 / 没配 LLM 也能用）',
+      ['makePlan', 'shufflePlan', 'startPlan'].every((i) => PARSE_INTENTS.includes(i)));
+
+    // run() 只调注入的 ctx：用假 ctx 验证「真的调了 makeTodayPlan / startTodayPlan」并翻译成确认语
+    const calls = [];
+    const ctx = {
+      makeTodayPlan: (args) => { calls.push(['make', args]); return { actions: 4, minutes: 20, title: 'T' }; },
+      startTodayPlan: () => { calls.push(['start']); return { ok: true, index: 1, total: 4, actions: 4, name: '深蹲' }; },
+    };
+    const mk = COMMAND_BY_INTENT.makePlan.run(ctx, {});
+    const sh = COMMAND_BY_INTENT.shufflePlan.run(ctx, {});
+    const st = COMMAND_BY_INTENT.startPlan.run(ctx, {});
+    ok('[42] makePlan / shufflePlan / startPlan 的 run() 只调注入的 ctx，并给出带数字的确认语',
+      calls.length === 3 && calls[0][0] === 'make' && calls[1][1] && calls[1][1].shuffle === true
+      && mk.key === 'coach.cmdAck.makePlan' && mk.params.actions === 4
+      && sh.key === 'coach.cmdAck.shufflePlan'
+      && st.key === 'coach.cmdAck.startPlan' && st.params.index === 2 && st.params.name === '深蹲',
+      JSON.stringify({ calls, mk, sh, st }));
+    const none = COMMAND_BY_INTENT.startPlan.run({ startTodayPlan: () => ({ ok: false }) }, {});
+    ok('[42] 没有计划时 startPlan 回「先说今天练什么」而不是硬启动',
+      none.key === 'coach.cmdAck.planNone');
+    ok('[42] 排课的确认语 / 帮助文案都有中英词条',
+      ['makePlan', 'shufflePlan', 'startPlan', 'planNone', 'planFailed'].every((k) => {
+        const zhVal = flat.zh[`coach.cmdAck.${k}`];
+        const enVal = flat.en[`coach.cmdAck.${k}`];
+        return typeof zhVal === 'string' && typeof enVal === 'string' && zhVal !== enVal;
+      }) && ['makePlan', 'shufflePlan', 'startPlan'].every((k) => flat.zh[`coach.commandHelp.${k}`]
+        && flat.en[`coach.commandHelp.${k}`]));
+  }
+
+  /* ---------------- 42.9 plan-request（服务端事件 + system schema） ---------------- */
+  {
+    ok('[42] plan-request 事件字符串：前端 llm.js 与服务端 llm-tools 是同一个',
+      LLM_CLIENT_EVENT_PLAN === LLM_EVENT_PLAN_REQUEST && LLM_CLIENT_EVENT_PLAN === 'plan-request',
+      JSON.stringify({ client: LLM_CLIENT_EVENT_PLAN, server: LLM_EVENT_PLAN_REQUEST }));
+
+    const template = buildPlanTemplate({ goal: 'fatLoss', minutes: 20 });
+    const request = buildPlanRequest({
+      goal: 'fatLoss',
+      minutes: 20,
+      gear: 'dumbbells',
+      injuries: ['膝盖'],
+      recent: [{ exerciseId: 'pushup', at: Date.now() - 86400000 }],
+      template,
+    });
+    ok('[42] buildPlanRequest 只带模型要的六个字段（goal / minutes / gear / injuries / recent20 / template）',
+      request.goal === 'fatLoss' && request.minutes === 20 && request.gear === 'dumbbells'
+      && request.injuries.includes('knee')
+      && request.recent.length === 1 && request.recent[0].exerciseId === 'pushup'
+      && request.template && Array.isArray(request.template.blocks)
+      && JSON.stringify(Object.keys(request).sort()) === JSON.stringify(['gear', 'goal', 'injuries', 'minutes', 'recent', 'template']),
+      JSON.stringify(Object.keys(request)));
+
+    const msgZh = planRequestEventMessage({ locale: 'zh', context: request });
+    const msgEn = planRequestEventMessage({ locale: 'en', context: request });
+    ok('[42] 服务端按事件生成 user 消息（中英各一套，带目标 / 时长 / 伤病 / 模板）',
+      /plan-request/.test(msgZh) && /fatLoss/.test(msgZh) && /20/.test(msgZh) && /knee/.test(msgZh)
+      && /plan-request/.test(msgEn) && /fatLoss/.test(msgEn) && /20/.test(msgEn) && /knee/.test(msgEn)
+      && msgZh !== msgEn,
+      msgZh.slice(0, 160));
+
+    const messages = buildLlmMessages({ text: '', locale: 'zh', context: request, event: 'plan-request' });
+    ok('[42] buildLlmMessages(plan-request)：system 里带 JSON schema +「只能从动作库选」+ 时长预算 + 伤病禁忌',
+      (() => {
+        const system = messages[0].content;
+        return messages.length === 2
+          && messages[1].role === 'user'
+          && /"blocks"/.test(system) && /exerciseId/.test(system)
+          && /只能从动作库里选/.test(system)
+          && /时长预算/.test(system) && /伤病禁忌/.test(system)
+          && planRequestEventMessage({ locale: 'zh', context: request }) === messages[1].content;
+      })(), messages[0].content.slice(0, 120));
+    ok('[42] plan-request 的 system 里没有追加「首次对话要说自报家门」那两行（排课不是聊天）',
+      !messages[0].content.includes('这是首次对话，先说一次自报家门')
+      && !messages[0].content.includes('This is the first conversation: introduce yourself once'));
+    ok('[42] 排课事件的 schema 约束与 plan.js 同一份常量（2~6 个动作 / 1~4 组 / 目标下限 / 休息上限）',
+      (() => {
+        const system = messages[0].content;
+        return system.includes(`${PLAN_MIN_BLOCKS}`) && system.includes(`${PLAN_MAX_BLOCKS}`)
+          && system.includes(`${PLAN_MAX_SETS}`) && system.includes(`${PLAN_MIN_REPS}`)
+          && system.includes(`${PLAN_MAX_REST_SEC}`) && system.includes(`${PLAN_MIN_HOLD_SEC}`);
+      })());
+    ok('[42] 伤病禁忌表进 prompt（膝盖禁 squatJump / 腰禁 bridge，替代动作也在）',
+      (() => {
+        const system = messages[0].content;
+        return system.includes('squatJump') && system.includes('bridge')
+          && system.includes('squatSumo') && system.includes('deadBug');
+      })());
+
+    // 解析模型回包：合法 / 代码块 / 不合法 JSON / 包一层 plan
+    const goodJson = JSON.stringify({
+      title: 'AI 计划',
+      rationale: '按你的状态排的',
+      blocks: [
+        { exerciseId: 'squat', sets: 3, target: 15, restSec: 30 },
+        { exerciseId: 'plank', sets: 2, target: 40, restSec: 20 },
+      ],
+    });
+    const parsedOk = parsePlanJson(goodJson);
+    const fenced = parsePlanJson('```json\n' + goodJson + '\n```');
+    const chattered = parsePlanJson('好的，计划如下：' + goodJson + ' 动起来！');
+    const wrapped = parsePlanJson(JSON.stringify({ plan: JSON.parse(goodJson) }));
+    const broken = parsePlanJson('{not json');
+    ok('[42] parsePlanJson 能吃纯 JSON / ```json 代码块 / 前后带一句话 / {plan:{...}} 包一层；坏 JSON 明确失败',
+      parsedOk.ok && parsedOk.plan.blocks.length === 2 && parsedOk.plan.source === 'llm'
+      && parsedOk.plan.blocks[0].sets === 3 && parsedOk.plan.blocks[0].restSec === 30
+      && fenced.ok && chattered.ok && wrapped.ok
+      && !broken.ok && broken.plan === null && broken.reason === 'bad-json',
+      JSON.stringify({ broken, reason: parsedOk.reason }));
+    ok('[42] 解析出来的计划**必须**再过 validatePlan（LLM 编的 id / 超时长一律拒）',
+      validatePlan(parsedOk.plan, { minutes: 20 }).ok
+      && !validatePlan({ ...parsedOk.plan, blocks: [{ exerciseId: 'madeUpMove', sets: 2, target: 10, restSec: 10 }, parsedOk.plan.blocks[1]] }, { minutes: 20 }).ok
+      && !validatePlan(parsedOk.plan, { minutes: 1 }).ok);
   }
 }
 

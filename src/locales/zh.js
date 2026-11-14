@@ -923,6 +923,51 @@ export default {
     recent: '最近练过',
   },
 
+  /* ---------------- 排课（每日单次计划：首页「今天练什么」卡片 + 语音） ---------------- */
+  plan: {
+    badge: '今日计划',
+    start: '开始',
+    shuffle: '换一个',
+    empty: '今天还没有计划',
+    detail: '{sets} 组 × {target} {unit}',
+    restShort: '组间 {sec} 秒',
+    meta: '{actions} 个动作 · {sets} 组 · 约 {min} 分钟 · 来源：{source}',
+    // 计划来源（LLM 微调通过校验才会替换模板）
+    sourceTemplate: '模板',
+    sourceLlm: 'AI 微调',
+    // 执行时的提示（状态条 / 语音）
+    blockLine: '第 {index}/{total} 个动作：{name} · {sets} 组 × {target} {unit}（组间休息 {rest} 秒）',
+    restLine: '组间休息 {sec} 秒，下一组马上开始…',
+    doneLine: '今天的计划完成：{actions} 个动作、{done} 组（完成率 {rate}%）',
+    pausedLine: '今天的计划先停在这儿；说「继续今天的计划」可以接着练。',
+    llmLine: 'AI 按你的状态微调了今天的计划。',
+    // 语音「今天练什么」的回答（先说总量，再念标题）
+    spoken: '今天的计划：{actions} 个动作，约 {min} 分钟。{title}',
+    goal: { fatLoss: '减脂', muscle: '增肌', endurance: '体能', posture: '体态' },
+    gear: { none: '徒手', dumbbells: '哑铃', band: '弹力带' },
+    injury: { knee: '膝盖', waist: '腰' },
+    focus: { upper: '上肢', lower: '下肢' },
+    title: {
+      fatLoss: '今日计划 · 减脂全身循环（{minutes} 分钟）',
+      muscleUpper: '今日计划 · 上肢增肌（{minutes} 分钟）',
+      muscleLower: '今日计划 · 下肢增肌（{minutes} 分钟）',
+      endurance: '今日计划 · 体能间歇（{minutes} 分钟）',
+      posture: '今日计划 · 体态：核心 + 拉伸（{minutes} 分钟）',
+    },
+    rationale: {
+      fatLoss: '减脂走全身循环：{actions} 个动作、{sets} 组，组间短休息（约 {rest} 秒）把心率顶起来。',
+      muscleUpper: '增肌分化：最近 7 天里上肢练得比下肢少（上肢 {upper} 组 / 下肢 {lower} 组），今天补上肢，组间休息拉长保证力量。',
+      muscleLower: '增肌分化：最近 7 天里下肢练得比上肢少（下肢 {lower} 组 / 上肢 {upper} 组），今天补下肢，组间休息拉长保证力量。',
+      endurance: '体能走间歇：{actions} 个动作短时高强、组间只留约 {rest} 秒，练心肺和恢复速度。',
+      posture: '体态优先：核心稳住 + 拉伸放开（{actions} 个动作），动作慢、不追次数，组间留足 {rest} 秒。',
+    },
+    note: {
+      swapped: '已按伤病换成替代动作',
+      dumbbells: '可加哑铃负重（目标次数已下调）',
+      band: '可加弹力带阻力（目标次数已下调）',
+    },
+  },
+
   exercise: {
     open: '运动设定',
     title: '运动设定',
@@ -1585,6 +1630,12 @@ export default {
     sessionEnd: {
       fallback: '今天练了 {duration}、{sets} 组、一共 {reps} 次，平均 {avg} 分，最佳一组 {best} 分。辛苦了，明天见，动起来！',
       fallbackEmpty: '今天练了 {duration}，0 组 0 次。来了就好，明天见！',
+      /**
+       * 今天的计划（排课）执行过时用这两句**更短的**变体：把「计划 N 个动作 / 完成率」
+       * 折进前两句里（告别语硬上限是 ≤2 句 / ≤60 字，见 judge.js 的 clampFarewellSpeak）。
+       */
+      fallbackPlan: '今天练了 {duration}、{sets} 组，计划 {actions} 个动作完成 {done} 个（{rate}%）。明天见，动起来！',
+      fallbackEmptyPlan: '今天练了 {duration}，计划 {actions} 个动作完成 {done} 个（{rate}%）。来了就好，明天见！',
       minutes: '{min} 分钟',
       seconds: '{sec} 秒',
     },
@@ -1805,6 +1856,10 @@ export default {
       addRule: ['每 10 个报一次', '每 5 个报一次', '每隔 5 个报一次', '每 30 秒报时', '每 10 秒读秒', '每 5 分钟报时'],
       removeRule: ['别报数了', '不报数了', '关掉报数', '别读秒了', '关掉报时', '关掉读秒'],
       listRules: ['现在有什么规则', '有什么规则', '有哪些规则', '现在的规则', '规则列表', '现在哪些规则'],
+      // 排课（每日单次计划）：说法本身进零 LLM 快车道，另有同名 LLM 工具
+      makePlan: ['今天练什么', '今天练点什么', '今天的计划是什么', '今日计划', '今天练啥', '今天练哪个'],
+      shufflePlan: ['换一个计划', '换个计划', '换一份计划', '重新排课', '重新安排计划', '打乱重排'],
+      startPlan: ['就按这个开始', '按这个开始', '照这个开始', '开始今天的计划', '继续今天的计划', '开始计划'],
     },
 
     /** 帮助面板「作用」那一列（commands.js 的表项只存 key，渲染时按当前语言取） */
@@ -1839,6 +1894,9 @@ export default {
       addRule: '口述建规则（作用到这次训练结束）：「每 10 个报一次」→ 报数间隔；「每 30 秒报时」→ 读秒间隔',
       removeRule: '口述关掉规则：「别报数了」关掉报数，「别读秒了」关掉读秒',
       listRules: '逐条报出现在生效的规则（规则名 + 间隔，最多说 3 条）',
+      makePlan: '报出今天练什么（计划里的动作 / 组数 / 时长 / 理由）',
+      shufflePlan: '换一份今天的计划（模板重排，伤病替代动作照样生效）',
+      startPlan: '按今天的计划开始（从上次停下的那一组接着练）',
     },
 
     /** 快车道执行后的**一句短确认**（run 返回 key，session 用 t() 翻成字幕） */
@@ -1897,6 +1955,12 @@ export default {
       rulesEmpty: '现在一条规则都没有。',
       listRules: '现在有 {count} 条规则：{items}。',
       rulesMore: '，还有 {n} 条',
+      // 排课（每日单次计划）
+      makePlan: '今天的计划有 {actions} 个动作、约 {minutes} 分钟：{title}。要开始就说「就按这个开始」。',
+      shufflePlan: '好，换了一份：{actions} 个动作、约 {minutes} 分钟。',
+      startPlan: '好，开始第 {index}/{total} 个动作：{name}。',
+      planNone: '还没有今天的计划，先说「今天练什么」我来排一份。',
+      planFailed: '计划没排出来，再说一次「今天练什么」试试。',
       failed: '这个操作没做成，再试一次。',
       done: '好的。',
     },

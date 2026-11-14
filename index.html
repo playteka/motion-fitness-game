@@ -83,6 +83,27 @@
         <svg class="ui-icon start-gesture-go" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>
       </button>
 
+      <!-- ============ 排课：「今天练什么」卡片（用户要求） ============
+           一条可执行的计划：动作 / 组数 / 时长 / 理由 + 「开始」「换一个」。
+           计划本身由 src/voice/plan.js（纯函数）排，LLM 只是可选微调（不合法回退模板）；
+           文案全部走词条 plan.*，内容由 app.js 的 renderPlanCard() 填。
+           藏起来时不占版面（没有计划 / 不在主页），所以 DOM 桩里也可以直接断言 hidden。 -->
+      <section class="plan-card" id="planCard" hidden>
+        <div class="plan-head">
+          <span class="plan-badge" data-i18n="plan.badge"></span>
+          <h3 class="plan-title" id="planTitle"></h3>
+        </div>
+        <p class="plan-reason" id="planReason"></p>
+        <ul class="plan-list" id="planList"></ul>
+        <p class="plan-meta" id="planMeta"></p>
+        <div class="plan-actions">
+          <button class="plan-btn plan-btn--primary" id="btnPlanStart" type="button"
+                  data-i18n="plan.start" data-i18n-title="plan.start" data-i18n-aria="plan.start"></button>
+          <button class="plan-btn" id="btnPlanShuffle" type="button"
+                  data-i18n="plan.shuffle" data-i18n-title="plan.shuffle" data-i18n-aria="plan.shuffle"></button>
+        </div>
+      </section>
+
       <div id="homeCats"></div>
     </main>
 

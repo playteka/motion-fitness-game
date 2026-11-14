@@ -38,6 +38,17 @@ export const LLM_EVENT_SESSION_START = 'session-start';
 export const LLM_EVENT_SESSION_END = 'session-end';
 
 /**
+ * 排课事件（`plan-request`）：和服务端 `server/llm-tools.mjs` 的 `LLM_EVENT_PLAN_REQUEST`
+ * 是同一个字符串（tests/test-voice.mjs 会比对两份）。
+ *
+ * 带这个事件时 `text` 为空：user 消息由服务端按 context 里的
+ * `{goal, minutes, gear, injuries, recent, template}`（`src/voice/plan.js` 的 `buildPlanRequest`）生成；
+ * 模型回**严格 JSON 计划**，调用方必须 `parsePlanJson()` + `validatePlan()`，
+ * **不合法就回退模板**（绝不交付不安全计划）。
+ */
+export const LLM_EVENT_PLAN_REQUEST = 'plan-request';
+
+/**
  * 客户端等多久（服务端自己 8s 超时，这里留 1s 余量：
  * 正常一定是服务端先返回 503，客户端这个只是兜底，避免请求永远挂着）。
  */
@@ -813,6 +824,47 @@ export function createLlmClient({
     }
   }
 
+  /**
+   * 排课（`event:'plan-request'`）：把**客户端算好的约束**（`buildPlanRequest`）交给模型，
+   * 拿回它写的计划 JSON 文本（**原样**返回；解析 / 校验 / 回退模板在调用方）。
+   *
+   * 失败语义和 `respond()` 一样（超时 / 503 / 429 抛 `{code}`）—— 调用方静默回退模板即可。
+   *
+   * @param {{locale?:string, context?:object}} [opts]
+   * @returns {Promise<{text:string, ms:number, provider:string, model:string}>}
+   */
+  async function requestPlan({ locale = 'zh', context = null } = {}) {
+    const payload = {
+      event: LLM_EVENT_PLAN_REQUEST,
+      text: '',
+      locale: locale === 'en' ? 'en' : 'zh',
+      context: context && typeof context === 'object' ? context : null,
+      user: String(typeof userId === 'function' ? userId() : userId || 'default').slice(0, 32) || 'default',
+    };
+    const started = now();
+    try {
+      const data = await postJson(payload, waitMs);
+      const text = String(data.reply || '').trim();
+      const ms = Math.max(0, Number(now()) - Number(started));
+      if (!text) throw llmClientError('llm-bad-json', 'empty plan');
+      last = {
+        ms, actions: 0, provider: data.provider || '', model: data.model || '', plan: true,
+      };
+      record('llm:plan', { ms, chars: text.length });
+      return {
+        text,
+        ms,
+        provider: String(data.provider || ''),
+        model: String(data.model || ''),
+      };
+    } catch (err) {
+      const code = (err && err.code) || 'llm-network';
+      record('llm:fail', { code, ms: Math.max(0, Number(now()) - Number(started)) });
+      if (err && err.code) throw err;
+      throw llmClientError(code, String((err && err.message) || err));
+    }
+  }
+
   /** 问服务端「配没配 / 谁 / 哪个模型」（设置面板显示用）；失败返回 null，不抛 */
   async function health() {
     const f = resolveFetch();
@@ -848,6 +900,7 @@ export function createLlmClient({
     respond,
     judge,
     farewell,
+    requestPlan,
     health,
     /** 清空对话记忆（刷新页面也会清；这是给「清空对话」/ 测试用的） */
     reset() {
@@ -881,6 +934,7 @@ export default {
   LLM_CLIENT_MAX_TEXT,
   LLM_EVENT_SESSION_START,
   LLM_EVENT_SESSION_END,
+  LLM_EVENT_PLAN_REQUEST,
   LLM_CLIENT_ERRORS,
   AGENT_CONTEXT_MAX_CHARS,
   AGENT_HISTORY_MAX,

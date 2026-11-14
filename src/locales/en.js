@@ -926,6 +926,48 @@ export default {
     recent: 'Recently trained',
   },
 
+  /* ---------------- Plan of the day (home "what should I train today" card + voice) ---------------- */
+  plan: {
+    badge: 'Plan of the day',
+    start: 'Start',
+    shuffle: 'Shuffle',
+    empty: 'No plan for today yet',
+    detail: '{sets} sets × {target} {unit}',
+    restShort: 'rest {sec}s',
+    meta: '{actions} exercises · {sets} sets · about {min} min · source: {source}',
+    sourceTemplate: 'template',
+    sourceLlm: 'AI tuned',
+    blockLine: 'Exercise {index}/{total}: {name} · {sets} sets × {target} {unit} (rest {rest}s between sets)',
+    restLine: 'Resting {sec}s — next set starts right after…',
+    doneLine: 'Today’s plan is done: {actions} exercises, {done} sets ({rate}% complete)',
+    pausedLine: 'Today’s plan is paused here; say “continue today’s plan” to pick it up.',
+    llmLine: 'The AI tuned today’s plan to your state.',
+    spoken: 'Today’s plan: {actions} exercises, about {min} minutes. {title}',
+    goal: { fatLoss: 'fat loss', muscle: 'muscle', endurance: 'endurance', posture: 'posture' },
+    gear: { none: 'no equipment', dumbbells: 'dumbbells', band: 'resistance band' },
+    injury: { knee: 'knee', waist: 'lower back' },
+    focus: { upper: 'upper body', lower: 'lower body' },
+    title: {
+      fatLoss: 'Today: fat-loss full-body circuit ({minutes} min)',
+      muscleUpper: 'Today: upper-body strength ({minutes} min)',
+      muscleLower: 'Today: lower-body strength ({minutes} min)',
+      endurance: 'Today: endurance intervals ({minutes} min)',
+      posture: 'Today: posture — core + stretch ({minutes} min)',
+    },
+    rationale: {
+      fatLoss: 'Fat loss calls for a full-body circuit: {actions} exercises, {sets} sets, short rests (~{rest}s) to keep the heart rate up.',
+      muscleUpper: 'Split training: upper body was trained less than lower body in the last 7 days ({upper} vs {lower} sets), so today is upper body with longer rests to keep strength.',
+      muscleLower: 'Split training: lower body was trained less than upper body in the last 7 days ({lower} vs {upper} sets), so today is lower body with longer rests to keep strength.',
+      endurance: 'Endurance calls for intervals: {actions} short, intense exercises with only ~{rest}s rest to train the heart and recovery.',
+      posture: 'Posture first: stable core + open stretches ({actions} exercises), slow and no rep chasing, with ~{rest}s rest between sets.',
+    },
+    note: {
+      swapped: 'swapped for a safer alternative (injury)',
+      dumbbells: 'you may add dumbbells (rep targets lowered)',
+      band: 'you may add band resistance (rep targets lowered)',
+    },
+  },
+
   /* ---------------- Per-exercise settings ---------------- */
   exercise: {
     open: 'Exercise settings',
@@ -1580,6 +1622,10 @@ export default {
     sessionEnd: {
       fallback: 'Today: {duration}, {sets} sets, {reps} reps in total, average {avg} points, best set {best}. Great work — see you tomorrow, let\'s move!',
       fallbackEmpty: 'Today: {duration}, 0 sets and 0 reps. Showing up already counts — see you tomorrow!',
+      // Shorter variants when today’s plan ran: fold “N exercises / completion” into the two sentences
+      // (farewell hard limit: ≤2 sentences / ≤60 characters — see clampFarewellSpeak in judge.js).
+      fallbackPlan: 'Today: {duration}, {sets} sets, plan {actions} exercises, {done} done ({rate}%). See you tomorrow — let\'s move!',
+      fallbackEmptyPlan: 'Today: {duration}, plan {actions} exercises, {done} done ({rate}%). Showing up counts — see you tomorrow!',
       minutes: '{min} min',
       seconds: '{sec}s',
     },
@@ -1813,6 +1859,13 @@ export default {
         'stop reading the time', 'stop the countdown', 'stop reading the clock'],
       listRules: ['what rules are on', 'what rules', 'list rules', 'which rules',
         'what rules do i have', 'show rules'],
+      // Plan of the day (daily single-session plan; the same intents are also LLM tools)
+      makePlan: ['what should i train today', 'what should i do today', 'what is today plan',
+        'what is my plan', 'today plan', 'plan for today'],
+      shufflePlan: ['shuffle the plan', 'another plan', 'change the plan', 'new plan',
+        'replan', 'plan something else'],
+      startPlan: ['start this plan', 'start the plan', 'start today plan', 'continue today plan',
+        'continue this plan', 'go with this plan'],
     },
 
     /** The "what it does" column of the help panel */
@@ -1847,6 +1900,9 @@ export default {
       addRule: 'Build a rule by voice (lasts until this workout ends): "every 10 reps" -> rep counting interval; "every 30 seconds" -> time read-aloud interval',
       removeRule: 'Turn a rule off by voice: "stop counting" / "stop reading the time"',
       listRules: 'Read out the active rules (name + interval, at most 3 of them)',
+      makePlan: 'Tell you what to train today (exercise / sets / duration / reason)',
+      shufflePlan: 'Shuffle today’s plan (template re-roll, injury swaps still apply)',
+      startPlan: 'Start today’s plan (resumes from the set you left off)',
     },
 
     /** One short confirmation after a fast-lane command (run returns a key, session translates it) */
@@ -1905,6 +1961,12 @@ export default {
       rulesEmpty: 'There are no rules right now.',
       listRules: 'There are {count} rules: {items}.',
       rulesMore: ', plus {n} more',
+      // Plan of the day
+      makePlan: 'Today’s plan has {actions} exercises, about {minutes} minutes: {title}. Say “start this plan” to begin.',
+      shufflePlan: 'Okay, shuffled: {actions} exercises, about {minutes} minutes.',
+      startPlan: 'Okay, exercise {index}/{total}: {name}.',
+      planNone: 'There is no plan for today yet — say “what should I train today” and I will build one.',
+      planFailed: 'I could not build a plan — say “what should I train today” again.',
       failed: 'That did not work — try again.',
       done: 'Okay.',
     },

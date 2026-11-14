@@ -26,6 +26,11 @@ import { COMMANDS } from '../src/voice/commands.js';
 // 规则频道（rep 报数 / read 读秒）只在 src/voice/rules.js 定义一处，工具的枚举也读它
 import { RULE_CHANNELS } from '../src/voice/rules.js';
 import { EXERCISES, EXERCISE_MAP } from '../src/catalog.js';
+// 排课：目标 / 器械 / 伤病禁忌与替代只在 src/voice/plan.js 定义一处（system prompt 读它，不另抄）
+import {
+  PLAN_GOALS, PLAN_GEAR, PLAN_MAX_BLOCKS, PLAN_MIN_BLOCKS, PLAN_MAX_SETS, PLAN_MIN_REPS,
+  PLAN_MIN_HOLD_SEC, PLAN_MIN_TIMED_SEC, PLAN_MAX_REST_SEC, INJURY_BANS, INJURY_SWAPS,
+} from '../src/voice/plan.js';
 // R3 裁判事件口径（一处定义：前端 `src/voice/judge.js`；这里只读，不另抄）
 import { JUDGE_EVENTS, isJudgeAskEvent, isJudgeFarewellEvent } from '../src/voice/judge.js';
 // 记忆白名单只在一处定义（server/memory-store.mjs）：工具能写哪些字段、字段取值范围，
@@ -63,6 +68,17 @@ export const LLM_EVENT_SESSION_START = 'session-start';
  * 和裁判模式**不同**：它回**自由文本**（不是 JSON）、**必须说**（不是默认不说），最多 2 句。
  */
 export const LLM_EVENT_SESSION_END = 'session-end';
+
+/**
+ * 排课事件（`plan-request`）：唯一字符串定义在这里，`llm-provider.mjs` re-export 给路由 / 测试；
+ * 前端同名常量在 `src/voice/llm.js`（`LLM_EVENT_PLAN_REQUEST`，测试会比对两份字符串）。
+ *
+ * 带这个事件时 `POST /llm` 的 `text` 可以为空 —— user 消息由服务端按 context 里的
+ * `{goal, minutes, gear, injuries, recent, template}` 生成；模型回**严格 JSON 计划**，
+ * 客户端 `src/voice/plan.js` 的 `parsePlanJson` + `validatePlan` 过一遍，
+ * **不合法就回退模板**（绝不交付不安全计划）。
+ */
+export const LLM_EVENT_PLAN_REQUEST = 'plan-request';
 
 /**
  * R3：裁判事件（**8 个触发点**，口径唯一来源是 `src/voice/judge.js` 的 `JUDGE_EVENTS`）。
@@ -273,6 +289,27 @@ export const LLM_TOOL_DEFS = Object.freeze([
     en: 'Continue the unfinished set from last time (same exercise, target and set).',
     parameters: schema(),
     map: () => ({ intent: 'continueLast', args: {} }),
+  }),
+
+  /* ---------------- 排课（每日单次计划） ---------------- */
+  Object.freeze({
+    name: 'make_plan',
+    intents: ['makePlan', 'shufflePlan'],
+    zh: '排 / 换今天的训练计划：shuffle=false 报出今天的计划（没有就排一份）；shuffle=true 换一份不同的。',
+    en: 'Build or shuffle today’s training plan: shuffle=false reports today’s plan (building one if missing); '
+      + 'shuffle=true rolls a different one.',
+    parameters: schema({ shuffle: bool('true = 换一份 / roll another plan') }),
+    map(args) {
+      return { intent: args && args.shuffle === true ? 'shufflePlan' : 'makePlan', args: {} };
+    },
+  }),
+  Object.freeze({
+    name: 'start_plan',
+    intents: ['startPlan'],
+    zh: '按今天的计划开始（从上次停下的那一组接着练）。',
+    en: 'Start today’s plan (resumes from the set you left off).',
+    parameters: schema(),
+    map: () => ({ intent: 'startPlan', args: {} }),
   }),
 
   /* ---------------- 目标 ---------------- */
@@ -851,10 +888,48 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
         + ' score / best set); (2) close with "see you tomorrow" or "let\u2019s move". Even when sets = 0, do not invent'
         + ' results — be kind ("you showed up"), still quote a real number, never ask questions,'
         + ' no markdown / emoji / newlines, and use only the numbers given in the judge block.',
+      // 排课：judge.plan 存在时（今天的计划执行过）可以带 1 个计划数字
+      '    若 judge 块里有 plan（今天执行过计划），可以顺带说一句「今天 N 个动作、完成率 X%」，仍只挑 1~2 个数字。',
+      '    If the judge block has `plan`, you may mention today’s plan (N exercises, X% complete) — still 1–2 numbers max.',
+    ] : []),
+    /**
+     * 排课模式（plan-request）：不是用户在说话，而是一次**排课请求**。
+     * 用户要求：system 里给 schema + 「只能从动作库选」；客户端收到后**必须** validatePlan，不合法回退模板。
+     * 目标 / 器械 / 伤病禁忌与替代全部从 `src/voice/plan.js` 取（一处定义），不在这里抄第二份。
+     */
+    ...(event === LLM_EVENT_PLAN_REQUEST ? [
+      '19. **排课模式（plan-request 事件）**：这次不是用户在说话，而是一次「排课」请求：'
+        + '把 context 里的 goal / minutes / gear / injuries / recent / template 当成约束，给出**今天的一份训练计划**。',
+      '    只回**严格 JSON**（一个 JSON 对象，不要解释、不要 ```json 代码块、不要前后缀），格式固定：',
+      '    {"title": string, "rationale": string, "blocks": [{"exerciseId": string, "sets": int, "target": int, "restSec": int, "note": string}]}',
+      `    - **只能从动作库里选**（exerciseId 必须是这些之一：${EXERCISE_IDS.join(' / ')}）；不许发明动作，同一个动作不能出现两次；`,
+      `    - **${PLAN_MIN_BLOCKS}~${PLAN_MAX_BLOCKS} 个动作**；每个动作 1~${PLAN_MAX_SETS} 组；`
+        + `计次动作 target 是「次」（≥${PLAN_MIN_REPS}），计时 / 限时计数是「秒」（≥${PLAN_MIN_HOLD_SEC} / ≥${PLAN_MIN_TIMED_SEC}）；restSec 0~${PLAN_MAX_REST_SEC}；`,
+      '    - **时长预算**：Σ 组数 ×（每组时长 + restSec）≤ minutes × 60 秒'
+        + '（计次按**每次 3 秒**估、计时 / 限时计数按 target 秒估）；宁可少一组也不要超时；',
+      '    - **伤病禁忌（硬约束）**：context.injuries 里的每一条对应动作**绝不能出现**：'
+        + `膝盖（knee）禁 ${(INJURY_BANS.knee || []).join(' / ')}；腰（waist）禁 ${(INJURY_BANS.waist || []).join(' / ')}。`
+        + `能换就换成替代动作（${Object.entries(INJURY_SWAPS).map(([from, to]) => `${from}→${to}`).join('、')}），换不了就不排它；`,
+      `    - 目标（goal）只能是 ${PLAN_GOALS.join(' / ')}，器械（gear）只能是 ${PLAN_GEAR.join(' / ')}；`
+        + 'template 只是起点，可以改，但不要偏离 goal / minutes / injuries。',
+      '    - title / rationale 用用户的语言；rationale 一句话说清「为什么这样排」（目标 + 时长 + 伤病取舍）。',
+      '    **Plan mode (plan-request)**: this is a planning request, not the user speaking. Use context'
+        + ' (goal / minutes / gear / injuries / recent / template) as hard constraints and answer with STRICT JSON only:'
+        + ' {"title": string, "rationale": string, "blocks": [{"exerciseId": string, "sets": int, "target": int,'
+        + ' "restSec": int, "note": string}]}.',
+      `    Pick exerciseId only from this catalog: ${EXERCISE_IDS.join(' / ')}; never invent or repeat an exercise;`
+        + ` ${PLAN_MIN_BLOCKS}–${PLAN_MAX_BLOCKS} exercises, 1–${PLAN_MAX_SETS} sets each; reps targets are counts (≥${PLAN_MIN_REPS})`
+        + ` and hold / timed targets are seconds (≥${PLAN_MIN_HOLD_SEC} / ≥${PLAN_MIN_TIMED_SEC}); restSec 0–${PLAN_MAX_REST_SEC}.`,
+      '    Budget: Σ sets × (per-set time + restSec) ≤ minutes × 60 s, where reps count as 3 s each and holds / timed sets'
+        + ' equal their target seconds — fewer sets is better than going over.',
+      `    Injuries are hard constraints: never include knee-banned (${(INJURY_BANS.knee || []).join(', ')}) or`
+        + ` waist-banned (${(INJURY_BANS.waist || []).join(', ')}) exercises; swap for an alternative when possible,`
+        + ' otherwise drop it. Output nothing outside the JSON object.',
     ] : []),
   ];
 
-  if (!introSeen && !isJudgeAskEvent(event) && !isJudgeFarewellEvent(event)) {
+  if (!introSeen && !isJudgeAskEvent(event) && !isJudgeFarewellEvent(event)
+    && event !== LLM_EVENT_PLAN_REQUEST) {
     lines.push(
       /**
        * 首次见面 + 这次是「进入训练」的主动问候：自报家门必须压成一句短的，
@@ -887,6 +962,7 @@ export default {
   LLM_TOOLS,
   LLM_EVENT_SESSION_START,
   LLM_EVENT_SESSION_END,
+  LLM_EVENT_PLAN_REQUEST,
   JUDGE_EVENT_TYPES,
   isJudgeAskEvent,
   isJudgeFarewellEvent,

@@ -52,6 +52,13 @@ import { createSelfTest } from './voice/selftest.js';
 import { COMMANDS, commandHelpRows } from './voice/commands.js';
 // P3.3 自由对话：POST /llm 的客户端（密钥在服务端；这里只有同源的 /llm）
 import { createLlmClient, buildAgentContext } from './voice/llm.js';
+// 排课（每日单次计划）：「今天练什么」→ 模板（纯函数）→ 可选 LLM 微调 → **必须**校验 → 执行
+import {
+  PLAN_GOALS, PLAN_GEAR, PLAN_DEFAULT_MINUTES, PLAN_MIN_MINUTES, PLAN_MAX_MINUTES,
+  PLAN_HISTORY_MAX, normalizeInjuries, buildPlanTemplate, validatePlan, planToQueue,
+  planTotals, buildPlanRequest, parsePlanJson, recentForPlan,
+  exerciseName as planExerciseName, targetUnit as planTargetUnit,
+} from './voice/plan.js';
 // R1 动态快车道：事件总线（一处定义的事件流）+ 规则引擎（确定性判断，**不发请求、不花钱**）
 import { createEventBus } from './voice/events.js';
 import {
@@ -98,6 +105,17 @@ const STORE = {
    * 0 组也如实记（0 组也是「上次」），这样下一场说「比上次多 N 次」才是真的。
    */
   lastTraining: 'mfg.lastTraining.v1',
+  /**
+   * ---------------- 排课（每日单次计划）----------------
+   * `plan`：今天的计划（`{title, blocks:[{exerciseId,sets,target,restSec,note}], source, rationale,
+   *   createdAt, goal, minutes, gear, injuries, variant}`）—— **含 source / createdAt**（用户要求）。
+   * `planProgress`：执行到第几个 block / 第几组（`{createdAt, index, set, doneSets, doneBlocks, done, at}`）。
+   * `planHistory`：最近 10 个计划（完成或换掉时入库）。
+   * 「清除训练记录」时**三件套一起清**（用户要求）。
+   */
+  plan: 'mfg.plan.v1',
+  planProgress: 'mfg.plan.progress.v1',
+  planHistory: 'mfg.plan.history.v1',
 };
 
 /**
@@ -200,6 +218,17 @@ const DEFAULT_SETTINGS = {
    * 缺省全开：不写某个 id 就是开（`ruleSwitchOn()` 只在值为 false 时返回 false）。
    */
   ruleSwitches: { rep: true, read: true },
+  /**
+   * 排课（每日单次计划）的四个输入（用户口径：goal / minutes / gear / injuries）。
+   *   - `planGoal: ''` = **自动**：优先用长期记忆 facts.goal（用户以前说过的目标），再退回减脂；
+   *   - `planInjuries: []` = **自动**：优先用长期记忆 facts.injuries（说过膝盖 / 腰就自动避开）；
+   *   - 时长默认 20 分钟；器械默认徒手。
+   * 界面上没有单独的排课设置项（用户只要首页那张卡 + 语音），但值可以改 / 会被动词识别覆盖。
+   */
+  planGoal: '',
+  planMinutes: PLAN_DEFAULT_MINUTES,
+  planGear: 'none',
+  planInjuries: [],
 };
 
 const REP_TARGETS = [8, 12, 15, 20, 30];
@@ -343,6 +372,20 @@ const state = {
   currentSetIndex: 0,
   /** currentSetIndex 属于哪个动作（换动作要重算） */
   currentSetExerciseId: '',
+  /* ---- 排课（每日单次计划）：今天练什么 → 一键开始 → 依次执行 --------------------
+   * 计划本体存在 localStorage（`mfg.plan.v1`），这里只是内存里的镜像 + 执行游标。
+   * 所有推进逻辑在 `planAfterSet()` / `startPlanBlock()` / `finishPlan()`（见下面那一节）。
+   */
+  plan: null,               // 今天的计划（`{title, blocks, source, rationale, createdAt, …}`）
+  planActive: false,        // 正在按计划执行（一组达标会自动推进到下一组 / 下一个动作）
+  planBlockIndex: 0,        // 执行到第几个动作（0 起）
+  planSetIndex: 1,          // 执行到这个动作的第几组（1 起）
+  planDoneSets: 0,          // 这次计划已经完成的组数
+  planDoneBlocks: 0,        // 这次计划已经完成的动作数
+  planRestTimer: null,      // 组间休息的定时器（换计划 / 手动停 / 回主页都要清）
+  planRestFn: null,         // 休息结束后要做什么（启动下一组）
+  planRestUntil: 0,         // 休息到什么时候（断点续练 / 界面提示用）
+  planDone: null,           // 最近一次「计划完成」的汇总（告别语读它）
   // ---- 限时计数（开合跳）----
   timeUp: false,            // 时间到：这一组停止计次，等庆祝动画走完再结算
   timeCallsSaid: null,      // 已经报过哪几档剩余时间（45/30/15/5 秒各报一次）
@@ -479,6 +522,11 @@ const voiceCommandCtx = {
   startGestureMode, selectExercise, pauseSession, resumeSession, retrySet, setTarget,
   // 「继续上次」：回到上次没练完的动作 + 目标 + 第几组（中时记忆）
   continueLastSession,
+  // 排课（每日单次计划）：语音「今天练什么 / 换一个计划 / 就按这个开始」走这一对入口
+  //   makeTodayPlan({shuffle, llm}) → planSummary（模板同步上卡，LLM 微调在后台、失败回退模板）
+  //   startTodayPlan()              → 从进度里那一组接着执行（没有进度就从第一组）
+  makeTodayPlan,
+  startTodayPlan,
   // 语音 / 查询
   setCoachMuted, setCoachEnabled, changeLang, getStateSnapshot,
   // R2 口述建规则（规则增 / 删 / 查；规则本体在 src/voice/rules.js，这里只登记）
@@ -1409,6 +1457,11 @@ function sessionFarewellStats() {
     prev,
     deltaReps: prev ? reps - prev.reps : 0,
     deltaScore: prev ? avgScore - prev.avgScore : 0,
+    /**
+     * 排课（每日单次计划）的进度：今天执行过计划才非 null。
+     * 告别语据此补一句「今天 N 个动作 / 完成率」（用户明确要求）。
+     */
+    plan: planFarewellStats(),
   };
 }
 
@@ -1422,14 +1475,30 @@ function farewellDurationText(sec) {
 /** 内置告别语（LLM 未配置 / 失败 / 超时；**含真实数字**，中英词条，绝不静默） */
 function sessionFarewellFallbackText(stats = sessionFarewellStats()) {
   const duration = farewellDurationText(stats.durationSec);
-  if (!stats.sets) return t('coach.sessionEnd.fallbackEmpty', { duration });
-  return t('coach.sessionEnd.fallback', {
-    duration,
-    sets: stats.sets,
-    reps: stats.reps,
-    avg: stats.avgScore,
-    best: stats.bestScore,
-  });
+  /**
+   * 今天的计划执行过（`stats.plan`）→ 用更短的 `fallbackPlan` / `fallbackEmptyPlan`：
+   * 「今天 N 个动作 / 完成率」必须出现在告别语里（用户要求），但不能超过 ≤2 句 / ≤60 字
+   * 的硬上限（`judge.js` 的 `clampFarewellSpeak`），所以折进前两句、而不是另起一句。
+   */
+  const plan = stats.plan && stats.plan.actions ? stats.plan : null;
+  if (!stats.sets) {
+    return plan
+      ? t('coach.sessionEnd.fallbackEmptyPlan', {
+        duration, actions: plan.actions, done: plan.done, rate: plan.rate,
+      })
+      : t('coach.sessionEnd.fallbackEmpty', { duration });
+  }
+  return plan
+    ? t('coach.sessionEnd.fallbackPlan', {
+      duration, sets: stats.sets, actions: plan.actions, done: plan.done, rate: plan.rate,
+    })
+    : t('coach.sessionEnd.fallback', {
+      duration,
+      sets: stats.sets,
+      reps: stats.reps,
+      avg: stats.avgScore,
+      best: stats.bestScore,
+    });
 }
 
 /** 一条告别事件的 context：标准 Agent 快照 + `judge` 块（数字全在这里算好，服务端只翻译成事件描述） */
@@ -1457,6 +1526,8 @@ function farewellContext(stats) {
         : null,
       deltaReps: stats.deltaReps,
       deltaScore: stats.deltaScore,
+      // 排课：今天 N 个动作 / 完成率（模型可以带一个计划数字；没有就不提）
+      plan: stats.plan || null,
     },
   };
 }
@@ -1738,6 +1809,15 @@ function loadSettings() {
     }
     merged.settingsVersion = SETTINGS_VERSION;
     merged.ruleSwitches = normalizeRuleSwitches(raw.ruleSwitches);
+    // 排课输入归一化：脏存档（不在枚举里的目标 / 器械、荒唐的时长、乱写的伤病）一律退回安全值
+    merged.planGoal = PLAN_GOALS.includes(merged.planGoal) ? merged.planGoal : '';
+    merged.planGear = PLAN_GEAR.includes(merged.planGear) ? merged.planGear : 'none';
+    merged.planMinutes = clamp(
+      Math.round(Number(merged.planMinutes) || PLAN_DEFAULT_MINUTES),
+      PLAN_MIN_MINUTES,
+      PLAN_MAX_MINUTES,
+    );
+    merged.planInjuries = normalizeInjuries(merged.planInjuries);
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS, ruleSwitches: normalizeRuleSwitches(null) };
@@ -2550,6 +2630,656 @@ function continueLastSession() {
 const scoreText = (n) => `${n} ${t('speech.scoreSuffix')}`.trim();
 
 /* ------------------------------------------------------------------ *
+ * 排课（每日单次计划）：今天练什么 → 可执行计划 + 一键开始
+ *
+ * 用户原话：「今天练什么」→ 一份可执行计划 + 一键开始（**只做每日单次计划**，不做 4 周周期）。
+ *
+ * 分工（改这里之前先看清边界）：
+ *   - **计划本体 / 校验 / 执行队列**全在 `src/voice/plan.js`（纯函数，Node 里能直接测）；
+ *   - 这一节只做四件事：① localStorage 三件套；② 模板 →（可选）LLM 微调 → **必须校验** → 卡面；
+ *     ③ 执行（依次 startWorkout → 组间休息 → 完成 → session-end）；④ 把计划数字交给告别语；
+ *   - 执行的起点**复用命令快车道那套入口**（`voiceCommandCtx` 的 startGestureMode / selectExercise /
+ *     setTarget），不另写一条「开始训练」的路 —— 测试可以把这几项换成探针。
+ * ------------------------------------------------------------------ */
+
+/** 本地日期是不是同一天（「今日计划」按本地日算，不按 UTC） */
+function sameLocalDay(ms) {
+  const a = new Date(Number(ms) || 0);
+  const b = new Date();
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+/** 读今天的计划（坏存档当作没有：下次重排，绝不拿一份非法计划去执行） */
+function readPlan() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORE.plan) || 'null');
+    if (!raw || typeof raw !== 'object') return null;
+    const check = validatePlan(raw, { minutes: raw.minutes, injuries: raw.injuries });
+    return check.ok ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 写今天的计划（同时同步到 state） */
+function savePlan(plan) {
+  if (!plan || typeof plan !== 'object') return null;
+  state.plan = plan;
+  try { localStorage.setItem(STORE.plan, JSON.stringify(plan)); } catch { /* 存不下也不影响这一屏 */ }
+  return plan;
+}
+
+/** 执行进度（`{createdAt, index, set, doneSets, doneBlocks, done, at}`；坏数据当作没有） */
+function readPlanProgress() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORE.planProgress) || 'null');
+    if (!raw || typeof raw !== 'object') return null;
+    return {
+      createdAt: Math.max(0, Number(raw.createdAt) || 0),
+      index: Math.max(0, Math.round(Number(raw.index) || 0)),
+      set: Math.max(1, Math.round(Number(raw.set) || 1)),
+      doneSets: Math.max(0, Math.round(Number(raw.doneSets) || 0)),
+      doneBlocks: Math.max(0, Math.round(Number(raw.doneBlocks) || 0)),
+      done: raw.done === true,
+      // 这份进度是不是「真的按计划开始过」（告别语只在开始过计划时才提计划数字）
+      started: raw.started === true,
+      at: Math.max(0, Number(raw.at) || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 写执行进度（合并式：只传变化的那几项） */
+function savePlanProgress(patch = {}) {
+  const prev = readPlanProgress() || {};
+  const next = {
+    createdAt: Math.max(0, Number(patch.createdAt ?? prev.createdAt) || 0),
+    index: Math.max(0, Math.round(Number(patch.index ?? prev.index ?? 0) || 0)),
+    set: Math.max(1, Math.round(Number(patch.set ?? prev.set ?? 1) || 1)),
+    doneSets: Math.max(0, Math.round(Number(patch.doneSets ?? prev.doneSets ?? 0) || 0)),
+    doneBlocks: Math.max(0, Math.round(Number(patch.doneBlocks ?? prev.doneBlocks ?? 0) || 0)),
+    done: patch.done === true,
+    // 一旦真的开始过计划就一直是 true（换组 / 手动停都不清；只有新计划会重置）
+    started: patch.started === true || (patch.started === undefined && prev.started === true),
+    at: Number(patch.at) || Date.now(),
+  };
+  try { localStorage.setItem(STORE.planProgress, JSON.stringify(next)); } catch { /* ignore */ }
+  return next;
+}
+
+/** 计划历史（最近 10 个；最新在前） */
+function readPlanHistory() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORE.planHistory) || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function pushPlanHistory(entry) {
+  if (!entry || typeof entry !== 'object') return readPlanHistory();
+  const list = readPlanHistory();
+  list.unshift(entry);
+  const next = list.slice(0, PLAN_HISTORY_MAX);
+  try { localStorage.setItem(STORE.planHistory, JSON.stringify(next)); } catch { /* ignore */ }
+  return next;
+}
+
+/** 清计划的三个键（「清除训练记录」时和 history / records / lastSession 一起清） */
+function clearPlanData() {
+  clearPlanRest();
+  state.plan = null;
+  state.planActive = false;
+  state.planDone = null;
+  state.planBlockIndex = 0;
+  state.planSetIndex = 1;
+  state.planDoneSets = 0;
+  state.planDoneBlocks = 0;
+  try { localStorage.removeItem(STORE.plan); } catch { /* ignore */ }
+  try { localStorage.removeItem(STORE.planProgress); } catch { /* ignore */ }
+  try { localStorage.removeItem(STORE.planHistory); } catch { /* ignore */ }
+  return true;
+}
+
+/** 长期记忆里的目标 → 排课目标（facts.goal 是用户自己说过的中文 / 英文；源码用 \u 转义不留中文） */
+const GOAL_FACT_WORDS = [
+  ['fatLoss', ['\u51cf\u8102', 'fat loss', 'lose fat', 'cut']],          // 减脂
+  ['muscle', ['\u589e\u808c', 'muscle', 'bulk', 'strength']],           // 增肌
+  ['endurance', ['\u4f53\u80fd', 'endurance', 'cardio', 'stamina']],    // 体能
+  ['posture', ['\u4f53\u6001', 'posture', 'mobility']],                 // 体态
+];
+
+function planGoalFromFacts(raw) {
+  const text = String(raw == null ? '' : raw).toLowerCase();
+  if (!text) return '';
+  for (const [goal, words] of GOAL_FACT_WORDS) {
+    if (words.some((w) => text.includes(w))) return goal;
+  }
+  return '';
+}
+
+/** 排课的四个输入：设置里显式写了就用它，否则用长期记忆（facts.goal / facts.injuries），再退回缺省 */
+function planPrefs() {
+  const facts = state.memory && state.memory.facts && typeof state.memory.facts === 'object'
+    ? state.memory.facts
+    : {};
+  const goal = PLAN_GOALS.includes(state.settings.planGoal)
+    ? state.settings.planGoal
+    : (planGoalFromFacts(facts.goal) || PLAN_GOALS[0]);
+  const gear = PLAN_GEAR.includes(state.settings.planGear) ? state.settings.planGear : PLAN_GEAR[0];
+  const minutes = clamp(
+    Math.round(Number(state.settings.planMinutes) || PLAN_DEFAULT_MINUTES),
+    PLAN_MIN_MINUTES,
+    PLAN_MAX_MINUTES,
+  );
+  const injuries = normalizeInjuries(
+    Array.isArray(state.settings.planInjuries) && state.settings.planInjuries.length
+      ? state.settings.planInjuries
+      : facts.injuries,
+  );
+  return { goal, gear, minutes, injuries };
+}
+
+/** 最近训练（增肌分化用；最多 20 条，和发给模型的 recent20 同一份） */
+function getPlanRecent() {
+  return recentForPlan(
+    loadList(STORE.history).slice(0, 20).map((h) => ({
+      exerciseId: h && h.exerciseId,
+      at: Number(h && h.at) || 0,
+    })),
+  );
+}
+
+/** 计划的「一句话汇总」（命令确认语 / 语音 / 测试都读同一份） */
+function planSummary(plan) {
+  if (!plan || !Array.isArray(plan.blocks)) return null;
+  const totals = planTotals(plan);
+  return {
+    ok: true,
+    title: String(plan.title || ''),
+    rationale: String(plan.rationale || ''),
+    actions: plan.blocks.length,
+    sets: totals.sets,
+    seconds: totals.seconds,
+    minutes: Math.max(0, Number(plan.minutes) || 0),
+    source: plan.source === 'llm' ? 'llm' : 'template',
+    createdAt: Number(plan.createdAt) || 0,
+  };
+}
+
+/** 计划里的动作签名（「换一个」用它确认真的换出了不同计划） */
+function planSignature(plan) {
+  if (!plan || !Array.isArray(plan.blocks)) return '';
+  return plan.blocks.map((b) => `${b.exerciseId}:${b.sets}:${b.target}`).join('|');
+}
+
+/**
+ * 排今天的计划（模板**同步**生成并上卡，LLM 微调在后台做、失败静默回退）。
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.shuffle] true = 换一套变体（必须和上一份不同）
+ * @param {boolean} [opts.llm]     true = 后台再问一次 LLM（不合法一律回退模板）
+ * @returns {object|null} `planSummary(plan)`
+ */
+function buildTodayPlan({ shuffle = false, llm = true } = {}) {
+  const prefs = planPrefs();
+  const prev = readPlan();
+  const recent = getPlanRecent();
+  let variant = shuffle ? (Math.round(Number(prev && prev.variant) || 0) + 1) : 0;
+  let plan = buildPlanTemplate({
+    goal: prefs.goal,
+    minutes: prefs.minutes,
+    gear: prefs.gear,
+    injuries: prefs.injuries,
+    recent,
+    variant,
+  });
+  // 「换一个」必须真的不一样：同一份就一直换变体（最多 8 次，绝不空转）
+  for (let i = 0; i < 8 && prev && planSignature(plan) === planSignature(prev); i += 1) {
+    variant += 1;
+    plan = buildPlanTemplate({
+      goal: prefs.goal,
+      minutes: prefs.minutes,
+      gear: prefs.gear,
+      injuries: prefs.injuries,
+      recent,
+      variant,
+    });
+  }
+  plan.createdAt = Date.now();
+  plan.variant = variant;
+  savePlan(plan);
+  // 新计划 = 从第一组开始（「换一个」也重置进度；「继续今天的计划」读的是这里）
+  savePlanProgress({
+    createdAt: plan.createdAt, index: 0, set: 1, doneSets: 0, doneBlocks: 0, done: false, at: Date.now(),
+  });
+  state.planActive = false;
+  state.planDoneSets = 0;
+  state.planDoneBlocks = 0;
+  state.planBlockIndex = 0;
+  state.planSetIndex = 1;
+  renderPlanCard();
+  if (llm) refinePlanWithLlm(plan).catch(() => {});
+  return planSummary(plan);
+}
+
+/** 排课诊断（失败只记稳定原因，不弹到界面上） */
+function recordPlanDiag(fields = {}) {
+  try { coachDiag?.record?.('plan:llm', fields); } catch { /* 诊断坏掉不影响排课 */ }
+}
+
+/**
+ * 语音 / 首页按钮的入口：「今天练什么」= 报出今天的计划（没有就排一份）；
+ * 「换一个计划」= 换一套变体（`shuffle: true`）。模板同步上卡，LLM 微调在后台。
+ */
+function makeTodayPlan({ shuffle = false, llm = true } = {}) {
+  const summary = buildTodayPlan({ shuffle, llm });
+  if (summary && state.homeMode) {
+    setCueLine(t('plan.spoken', {
+      actions: summary.actions,
+      min: summary.minutes,
+      title: summary.title,
+    }), 'info');
+  }
+  return summary;
+}
+
+/**
+ * LLM 微调（**可选**，走现有 `/llm {event:'plan-request'}`）：
+ * 模型回严格 JSON 计划 → `parsePlanJson` → **`validatePlan` 必须通过** → 才替换模板。
+ * 任何一步不合法 / 失败 / 超时 → **保留模板**（绝不交付不安全计划）。
+ *
+ * @param {object} template `buildTodayPlan()` 刚生成的模板计划
+ * @returns {Promise<object|null>} 通过校验的 LLM 计划（没有就是 null）
+ */
+async function refinePlanWithLlm(template) {
+  if (!template) return null;
+  if (!state.settings.freeChat || llmConfiguredCache === false) return null;
+  if (llmSealed) return null;
+  if (state.planActive) return null;
+  const prefs = planPrefs();
+  const request = buildPlanRequest({
+    goal: template.goal,
+    minutes: template.minutes,
+    gear: template.gear,
+    injuries: template.injuries,
+    recent: getPlanRecent(),
+    template,
+  });
+  const started = Date.now();
+  try {
+    const res = await coachLlmClient.requestPlan({ locale: getLang(), context: request });
+    const parsed = parsePlanJson(res.text, { titleFallback: template.title });
+    if (!parsed.ok) {
+      recordPlanDiag({ ok: false, reason: parsed.reason, ms: Date.now() - started });
+      return null;
+    }
+    const check = validatePlan(parsed.plan, {
+      minutes: template.minutes,
+      injuries: prefs.injuries.length ? prefs.injuries : template.injuries,
+    });
+    if (!check.ok) {
+      recordPlanDiag({ ok: false, reason: check.reasons.join(','), ms: Date.now() - started });
+      return null;   // 不合法 → 回退模板（绝不交付不安全计划）
+    }
+    // 期间换过计划 / 已经开始练了：这一份已经过时，丢弃（不覆盖用户的当前计划）
+    if (!state.plan || state.plan.createdAt !== template.createdAt || state.planActive) return null;
+    const totals = planTotals(parsed.plan);
+    const plan = {
+      ...parsed.plan,
+      source: 'llm',
+      goal: template.goal,
+      minutes: template.minutes,
+      gear: template.gear,
+      injuries: template.injuries,
+      focus: template.focus,
+      variant: template.variant,
+      actions: totals.actions,
+      sets: totals.sets,
+      seconds: totals.seconds,
+      createdAt: template.createdAt,
+    };
+    savePlan(plan);
+    renderPlanCard();
+    recordPlanDiag({ ok: true, actions: plan.blocks.length, ms: Date.now() - started });
+    // 在主页上顺口说一句「AI 微调了计划」（教练开着且在听才说）
+    if (state.homeMode && state.settings.coachEnabled && voice.enabled
+      && voice.state === 'listening' && !coachMuted) {
+      try { voice.onCoachText(t('plan.llmLine'), { source: 'tool' }); } catch { /* ignore */ }
+    }
+    return plan;
+  } catch (err) {
+    recordPlanDiag({ ok: false, reason: String((err && err.code) || 'llm-error'), ms: Date.now() - started });
+    return null;
+  }
+}
+
+/** 没有今天的计划就排一份（启动 / 语音 / 一键开始都走这里） */
+function ensureTodayPlan({ llm = true } = {}) {
+  const saved = readPlan();
+  if (saved && sameLocalDay(saved.createdAt)) {
+    state.plan = saved;
+    return saved;
+  }
+  const summary = buildTodayPlan({ llm });
+  return summary ? state.plan : null;
+}
+
+/** 首页卡片：计划预览（动作 / 组数 / 时长 / 理由）+ 「开始」「换一个」 */
+function renderPlanCard() {
+  const card = $('planCard');
+  if (!card) return 0;
+  const plan = state.plan || readPlan();
+  const show = !!(plan && Array.isArray(plan.blocks) && plan.blocks.length && state.homeMode);
+  card.hidden = !show;
+  if (!show) return 0;
+  const totals = planTotals(plan);
+  $('planTitle').textContent = plan.title || t('plan.badge');
+  $('planReason').textContent = plan.rationale || '';
+  const progress = readPlanProgress();
+  const done = progress && progress.createdAt === plan.createdAt && progress.done;
+  $('planList').innerHTML = plan.blocks.map((block, i) => {
+    const unit = planTargetUnit(block.exerciseId);
+    const active = state.planActive && state.planBlockIndex === i;
+    const classes = ['plan-item'];
+    if (active) classes.push('active');
+    if (done) classes.push('done');
+    const detail = t('plan.detail', { sets: block.sets, target: block.target, unit });
+    const rest = t('plan.restShort', { sec: Math.max(0, Number(block.restSec) || 0) });
+    return `<li class="${classes.join(' ')}" data-index="${i}">`
+      + `<span class="plan-item-name">${esc(planExerciseName(block.exerciseId))}</span>`
+      + `<span class="plan-item-detail">${esc(detail)}</span>`
+      + `<span class="plan-item-rest">${esc(rest)}</span>`
+      + (block.note ? `<span class="plan-item-note">${esc(block.note)}</span>` : '')
+      + '</li>';
+  }).join('');
+  $('planMeta').textContent = t('plan.meta', {
+    actions: plan.blocks.length,
+    sets: totals.sets,
+    min: Math.max(1, Math.round(totals.seconds / 60)),
+    source: plan.source === 'llm' ? t('plan.sourceLlm') : t('plan.sourceTemplate'),
+  });
+  $('btnPlanStart').disabled = !plan.blocks.length;
+  return plan.blocks.length;
+}
+
+/** 清掉组间休息的定时器（换计划 / 手动停 / 回主页都要清） */
+function clearPlanRest() {
+  if (state.planRestTimer !== null) {
+    try { clearTimeout(state.planRestTimer); } catch { /* ignore */ }
+    state.planRestTimer = null;
+  }
+  state.planRestFn = null;
+  state.planRestUntil = 0;
+}
+
+/** 回首页时把计划「先停在这儿」：进度保留（下次「继续今天的计划」能接上），定时器收掉 */
+function cancelPlanOnHome() {
+  if (!state.planActive) return false;
+  state.planActive = false;
+  clearPlanRest();
+  const plan = state.plan;
+  if (plan) {
+    savePlanProgress({
+      createdAt: plan.createdAt,
+      index: state.planBlockIndex,
+      set: state.planSetIndex,
+      doneSets: state.planDoneSets,
+      doneBlocks: state.planDoneBlocks,
+      done: false,
+      at: Date.now(),
+    });
+  }
+  return true;
+}
+
+/** 休息结束：执行排队的那一步（启动下一组）。测试可以直接调它跳过等待。 */
+function runPlanRest() {
+  const fn = state.planRestFn;
+  if (state.planRestTimer !== null) {
+    try { clearTimeout(state.planRestTimer); } catch { /* ignore */ }
+    state.planRestTimer = null;
+  }
+  state.planRestFn = null;
+  state.planRestUntil = 0;
+  if (typeof fn === 'function' && state.planActive) fn();
+  return true;
+}
+
+/** 组间休息 `sec` 秒后再做 `fn`（用真实定时器；runPlanRest() 可立即触发） */
+function planRestThen(fn, sec) {
+  clearPlanRest();
+  const seconds = Math.max(0, Math.min(180, Math.round(Number(sec) || 0)));
+  state.planRestFn = typeof fn === 'function' ? fn : null;
+  if (!seconds) { runPlanRest(); return 0; }
+  state.planRestUntil = Date.now() + seconds * 1000;
+  setCueLine(t('plan.restLine', { sec: seconds }), 'info');
+  state.planRestTimer = setTimeout(() => runPlanRest(), seconds * 1000);
+  return seconds;
+}
+
+/**
+ * 开始计划里的某一个动作的某一组。
+ *
+ * 「依次 startWorkout」走的是**命令快车道同一套入口**（voiceCommandCtx 里的
+ * startGestureMode → closeMenu → selectExercise → setTarget），所以不会绕过全屏 / 摄像头权限。
+ */
+function startPlanBlock(index = 0, set = 1) {
+  const plan = state.plan || readPlan();
+  if (!plan || !Array.isArray(plan.blocks) || !plan.blocks.length) return false;
+  const bi = Math.max(0, Math.min(plan.blocks.length - 1, Math.round(Number(index) || 0)));
+  const block = plan.blocks[bi];
+  const blockSets = Math.max(1, Math.round(Number(block.sets) || 1));
+  const si = Math.max(1, Math.min(blockSets, Math.round(Number(set) || 1)));
+  state.plan = plan;
+  state.planBlockIndex = bi;
+  state.planSetIndex = si;
+  // 先切动作，再置 planActive：selectExercise 可能触发 stopSession('switch')，
+  // 那一下若已经 planActive 会被误判成「用户手动停计划」。
+  // （用户中途改从另一组开始时，先把上一次的「计划正在跑」和休息定时器收掉。）
+  clearPlanRest();
+  state.planActive = false;
+  const ctx = voiceCommandCtx;
+  if (state.homeMode) ctx.startGestureMode?.();   // 第一次从主页进来：全屏 + 摄像头权限走原来那条路
+  else ctx.showWorkout?.();                        // 计划中间的动作：已经在训练页，不再重开菜单
+  ctx.closeMenu?.();
+  ctx.selectExercise?.(block.exerciseId);
+  if (Number(block.target) > 0) ctx.setTarget?.(Number(block.target), block.exerciseId);
+  state.planActive = true;
+  savePlanProgress({
+    createdAt: plan.createdAt,
+    index: bi,
+    set: si,
+    doneSets: state.planDoneSets,
+    doneBlocks: state.planDoneBlocks,
+    done: false,
+    started: true,
+    at: Date.now(),
+  });
+  setCueLine(t('plan.blockLine', {
+    index: bi + 1,
+    total: plan.blocks.length,
+    name: planExerciseName(block.exerciseId),
+    sets: blockSets,
+    target: Math.max(0, Math.round(Number(block.target) || 0)),
+    unit: planTargetUnit(block.exerciseId),
+    rest: Math.max(0, Math.round(Number(block.restSec) || 0)),
+  }), 'info');
+  renderPlanCard();
+  return true;
+}
+
+/**
+ * 「就按这个开始 / 继续今天的计划」：从进度里那一组接着练（没有进度就从第一组开始）。
+ * @returns {{ok:boolean,index:number,total:number,actions:number,name:string,resume:boolean}}
+ */
+function startTodayPlan() {
+  const plan = ensureTodayPlan({ llm: false });
+  if (!plan || !Array.isArray(plan.blocks) || !plan.blocks.length) return { ok: false };
+  const progress = readPlanProgress();
+  const fresh = !progress || progress.createdAt !== plan.createdAt || progress.done;
+  const index = fresh ? 0 : Math.max(0, Math.min(plan.blocks.length - 1, progress.index));
+  const block = plan.blocks[index];
+  const blockSets = Math.max(1, Math.round(Number(block.sets) || 1));
+  const set = fresh ? 1 : Math.max(1, Math.min(blockSets, progress.set));
+  state.planDoneSets = fresh ? 0 : Math.max(0, Number(progress.doneSets) || 0);
+  state.planDoneBlocks = fresh ? 0 : Math.max(0, Number(progress.doneBlocks) || 0);
+  startPlanBlock(index, set);
+  return {
+    ok: true,
+    index,
+    total: plan.blocks.length,
+    actions: plan.blocks.length,
+    name: planExerciseName(block.exerciseId),
+    resume: !fresh,
+  };
+}
+
+/** 显式从头 / 从某一组开始一份计划（首页「开始」按钮 = `startPlan({ index: 0, set: 1 })`） */
+function startPlan({ index = 0, set = 1 } = {}) {
+  const plan = ensureTodayPlan({ llm: false });
+  if (!plan) return { ok: false };
+  startPlanBlock(index, set);
+  return planSummary(plan);
+}
+
+/**
+ * 一组结束后推进计划（在 `stopSession` 末尾调）。
+ *
+ * - 达到目标（reason='goal'）→ 完成这组；本动作还有组就休息后做下一组，否则换下一个动作；
+ *   全部做完 → `finishPlan()`；
+ * - 手动停 / 换动作（其它 reason）→ **不推进**，保留进度（「继续今天的计划」能接上）。
+ */
+function planAfterSet(reason = 'user') {
+  if (!state.planActive) return false;
+  const plan = state.plan;
+  if (!plan || !Array.isArray(plan.blocks)) { state.planActive = false; return false; }
+  if (reason !== 'goal') {
+    state.planActive = false;
+    clearPlanRest();
+    savePlanProgress({
+      createdAt: plan.createdAt,
+      index: state.planBlockIndex,
+      set: state.planSetIndex,
+      doneSets: state.planDoneSets,
+      doneBlocks: state.planDoneBlocks,
+      done: false,
+      at: Date.now(),
+    });
+    setCueLine(t('plan.pausedLine'), 'warn');
+    renderPlanCard();
+    return true;
+  }
+  const block = plan.blocks[state.planBlockIndex] || {};
+  const blockSets = Math.max(1, Math.round(Number(block.sets) || 1));
+  state.planDoneSets = Math.max(0, Number(state.planDoneSets) || 0) + 1;
+  const nextSet = state.planSetIndex + 1;
+  if (nextSet <= blockSets) {
+    savePlanProgress({
+      createdAt: plan.createdAt,
+      index: state.planBlockIndex,
+      set: nextSet,
+      doneSets: state.planDoneSets,
+      doneBlocks: state.planDoneBlocks,
+      done: false,
+      at: Date.now(),
+    });
+    planRestThen(() => startPlanBlock(state.planBlockIndex, nextSet), block.restSec);
+    return true;
+  }
+  state.planDoneBlocks = Math.max(0, Number(state.planDoneBlocks) || 0) + 1;
+  const nextBlock = state.planBlockIndex + 1;
+  if (nextBlock < plan.blocks.length) {
+    savePlanProgress({
+      createdAt: plan.createdAt,
+      index: nextBlock,
+      set: 1,
+      doneSets: state.planDoneSets,
+      doneBlocks: state.planDoneBlocks,
+      done: false,
+      at: Date.now(),
+    });
+    planRestThen(() => startPlanBlock(nextBlock, 1), block.restSec);
+    return true;
+  }
+  finishPlan();
+  return true;
+}
+
+/**
+ * 计划完成：记历史 + 清进度 + 回首页（showHome 会发 `session-end`，
+ * 告别语里带「今天 N 个动作 / 完成率」）。
+ */
+function finishPlan() {
+  const plan = state.plan;
+  if (!plan || !Array.isArray(plan.blocks) || !plan.blocks.length) return null;
+  const totals = planTotals(plan);
+  const doneSets = Math.max(0, Math.min(totals.sets, Math.round(Number(state.planDoneSets) || 0)));
+  const doneBlocks = Math.max(0, Math.min(plan.blocks.length, Math.round(Number(state.planDoneBlocks) || 0)));
+  const rate = totals.sets ? Math.min(100, Math.round((doneSets / totals.sets) * 100)) : 0;
+  const stats = {
+    createdAt: plan.createdAt,
+    goal: plan.goal,
+    actions: plan.blocks.length,
+    doneActions: doneBlocks,
+    doneSets,
+    totalSets: totals.sets,
+    rate: doneSets >= totals.sets ? 100 : rate,
+    at: Date.now(),
+  };
+  state.planDone = stats;
+  state.planActive = false;
+  clearPlanRest();
+  pushPlanHistory({
+    ...plan,
+    finishedAt: stats.at,
+    setsDone: doneSets,
+    totalSets: totals.sets,
+    rate: stats.rate,
+  });
+  savePlanProgress({
+    createdAt: plan.createdAt,
+    index: plan.blocks.length - 1,
+    set: 1,
+    doneSets,
+    doneBlocks,
+    done: true,
+    at: stats.at,
+  });
+  setCueLine(t('plan.doneLine', { actions: stats.actions, done: doneSets, rate: stats.rate }), 'good');
+  renderPlanCard();
+  showHome();   // 完成 → 走 session-end（告别语带计划数字）
+  return stats;
+}
+
+/** 告别语用的计划进度（今天**真的按计划练过**才非 null；0 组也如实） */
+function planFarewellStats() {
+  const plan = state.plan || readPlan();
+  if (!plan || !Array.isArray(plan.blocks) || !plan.blocks.length) return null;
+  const progress = state.planDone || readPlanProgress();
+  // 只是首页生成过计划、根本没点「开始」→ 告别语不提计划（否则每次都会说「完成 0 个」）
+  if (!state.planDone && !(progress && progress.started === true)) return null;
+  const totals = planTotals(plan);
+  const doneSets = Math.max(0, Math.min(totals.sets, Math.round(Number(progress.doneSets) || 0)));
+  const doneActions = Math.max(0, Math.min(
+    plan.blocks.length,
+    Math.round(Number(progress.doneBlocks ?? progress.doneActions) || 0),
+  ));
+  const rate = totals.sets ? Math.min(100, Math.round((doneSets / totals.sets) * 100)) : 0;
+  return {
+    actions: plan.blocks.length,
+    done: doneActions,
+    sets: doneSets,
+    totalSets: totals.sets,
+    rate,
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * 界面构建
  * ------------------------------------------------------------------ */
 
@@ -2636,6 +3366,8 @@ function buildHome() {
     p.textContent = t('home.noResult');
     box.appendChild(p);
   }
+  // 排课卡（「今天练什么」的预览 + 开始 / 换一个）：和动作库一起按当前语言重画
+  renderPlanCard();
 }
 
 /* ------------------------------------------------------------------ *
@@ -2785,6 +3517,11 @@ function showHome({ syncRoute = true } = {}) {
   exitFullscreen();
   // 回首页 = 这次训练结束：下一次「开始体感训练」可以重新 greeted 一次（同一次训练里切动作不重复）
   resetSessionGreet();
+  /**
+   * 排课：手动回首页 = 今天的计划**先停在这儿**（进度保留，「继续今天的计划」能接上）。
+   * 必须放在 `session-end` 之前：告别语要读得到这份进度（今天 N 个动作 / 完成率）。
+   */
+  cancelPlanOnHome();
   // R1：一次训练结束 → 事件（规则引擎清 session 作用域；`set` 也一起清，免得下一组还被上一组限流）
   emitVoiceEvent('session-end');
   // 主页上不校准也不计数：摄像头可以留着预热，但不能在浏览动作时偷偷开始一组
@@ -2816,7 +3553,6 @@ function showHome({ syncRoute = true } = {}) {
   // 主页在竖屏下不挡（浏览动作库没问题）：视图一换就重算一次遮罩
   syncDeviceClasses();
 }
-
 /** 切到动作页 */
 function showWorkout() {
   // 「主页 → 动作页」= 一次新的训练：记下开始时刻（告别要说「今天练了多久」）
@@ -7321,6 +8057,26 @@ function getStateSnapshot() {
     lastSession: getLastSession(),
     history,
     bestScore,
+    /**
+     * 排课：今天的计划摘要（给模型看的「今天本来要练什么 / 练到哪了」；
+     * 只放**已经算好的数字**，模型不许自己编）。
+     */
+    plan: (() => {
+      const plan = state.plan || readPlan();
+      if (!plan || !Array.isArray(plan.blocks) || !plan.blocks.length) return null;
+      const totals = planTotals(plan);
+      return {
+        title: String(plan.title || ''),
+        source: plan.source === 'llm' ? 'llm' : 'template',
+        actions: plan.blocks.length,
+        sets: totals.sets,
+        minutes: Math.max(0, Number(plan.minutes) || 0),
+        active: !!state.planActive,
+        index: Number(state.planBlockIndex) || 0,
+        set: Number(state.planSetIndex) || 1,
+        doneSets: Number(state.planDoneSets) || 0,
+      };
+    })(),
   };
 }
 
@@ -7866,6 +8622,13 @@ function stopSession(reason = 'user') {
   toCalibration({ silent: false, afterSet: true });
   // 手上都是汗、离键盘远：一组做完直接把「退出 / 再做一次」摆成两个手势圆环
   offerSetChoices();
+  /**
+   * 排课：这一组是按计划做的吗？
+   *   - reason='goal'（达标）→ 休息后自动推进到下一组 / 下一个动作，全部做完走 finishPlan()
+   *   - 其它（手动停 / 换动作）→ 只保留进度，「继续今天的计划」能接上
+   * 放在最后：结算（history / lastSession / 裁判）都已经写完，推进时看到的是新状态。
+   */
+  try { planAfterSet(reason); } catch { /* 排课推进失败不该影响这一组的结算 */ }
 }
 
 /**
@@ -9896,6 +10659,15 @@ function bindUI() {
 
   // 首页那个大「开始」按钮：全手势操作的入口（开摄像头 → 全屏 → 手势菜单）
   $('btnStartGesture')?.addEventListener('click', () => startGestureMode());
+  /**
+   * 排课卡（用户要求）：「开始」= 按今天的计划第一组开始；「换一个」= 换一套变体。
+   * 计划模板是纯函数同步算的，所以这两个按钮**断网也立刻有反应**（LLM 微调在后台跑）。
+   */
+  $('btnPlanStart')?.addEventListener('click', () => {
+    try { audio.unlock(); } catch { /* 音频解锁失败不影响开始 */ }
+    startTodayPlan();
+  });
+  $('btnPlanShuffle')?.addEventListener('click', () => { makeTodayPlan({ shuffle: true, llm: true }); });
   // 页码按钮：鼠标 / 触屏用户的翻页办法（手势是向上 / 向下挥手）
   $('menuPage')?.addEventListener('click', () => flipMenuPage(1));
   // 原生全屏的状态变化（标准 API 与老 WebKit 的事件名不一样，两个都听）；
@@ -9969,8 +10741,14 @@ function bindUI() {
     saveList(STORE.records, {});
     // 中时记忆「上次练到哪了」也要一起清（用户要求：清空记录不留残余）
     clearLastSession();
+    /**
+     * 排课三件套（`mfg.plan.v1` / `mfg.plan.progress.v1` / `mfg.plan.history.v1`）一起清
+     * （用户明确要求）；清完立刻按今天重排一份，首页那张卡不会空着。
+     */
+    clearPlanData();
     state.currentSetIndex = 0;
     state.currentSetExerciseId = '';
+    buildTodayPlan({ llm: false });
     renderHistory();
     renderRecords();
     setCueLine(t('records.cleared'));
@@ -10287,6 +11065,8 @@ function boot() {
   const wantId = params.get('exercise') || routeExercise();
   const direct = !!wantId || params.has('autostart') || params.has('probe');
   selectExercise(wantId || state.settings.exerciseId || 'squat');
+  // 排课：今天还没有计划就排一份（模板同步上卡；LLM 微调在后台、失败静默回退模板）
+  try { ensureTodayPlan({ llm: true }); } catch { /* 排课失败不挡首屏 */ }
   if (direct) {
     showWorkout();
     setRoute(ROUTE_EX + state.exerciseId);
@@ -10525,6 +11305,21 @@ window.__mfg = {
   refreshMemory, applyMemoryData, memoryRequest, writeMemory,
   forgetMemoryField, clearAllMemory, openMemoryModal, closeMemoryModal, memoryModalOpen,
   renderMemoryPanel, getLastSession, continueLastSession, getTrainingSummary,
+  // 排课（每日单次计划）：首页卡 + 语音 + 执行
+  //   buildTodayPlan / makeTodayPlan : 排一份（make 是语音入口：今天练什么 / 换一个计划）
+  //   startTodayPlan / startPlan / startPlanBlock : 一键开始 / 从某一组开始
+  //   planAfterSet / runPlanRest / finishPlan : 每组结束后推进（休息 → 下一组 / 下一个动作 → 完成）
+  //   readPlan / savePlan / readPlanProgress / savePlanProgress / readPlanHistory / clearPlanData
+  //   renderPlanCard / planPrefs / planFarewellStats / refinePlanWithLlm（LLM 微调 + 校验 + 回退）
+  buildTodayPlan, makeTodayPlan, startTodayPlan, startPlan, startPlanBlock,
+  planAfterSet, runPlanRest, finishPlan, ensureTodayPlan, cancelPlanOnHome, clearPlanRest,
+  readPlan, savePlan, readPlanProgress, savePlanProgress, readPlanHistory, pushPlanHistory,
+  clearPlanData, renderPlanCard, planPrefs, planSummary, planSignature, planFarewellStats,
+  refinePlanWithLlm, getPlanRecent,
+  PLAN_GOALS, PLAN_GEAR, PLAN_HISTORY_MAX, PLAN_DEFAULT_MINUTES, PLAN_MIN_MINUTES, PLAN_MAX_MINUTES,
+  PLAN_GOAL_FACT_WORDS: GOAL_FACT_WORDS,
+  // 纯函数（src/voice/plan.js）也挂出来：测试可以直接拿「计划 → 队列 / 校验」对账
+  buildPlanTemplate, validatePlan, planToQueue,
   readLastSession, saveLastSession, clearLastSession, setIndexFor,
   // 画面右下角的「正在记录 x 帧」角标
   renderRecBadge,

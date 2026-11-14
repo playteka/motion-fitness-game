@@ -1,6 +1,6 @@
 # src/app.js — 应用主逻辑：把所有模块接成一台机器
 
-> 层：服务端外的**最顶层**（UI + 生命周期 + 接线） ｜ 10 548 行 ｜ 唯一大量直接操作 DOM 的文件
+> 层：服务端外的**最顶层**（UI + 生命周期 + 接线） ｜ 约 11 340 行 ｜ 唯一大量直接操作 DOM 的文件
 > 一句话：摄像头 → 姿态 → 指标 → 识别 → 事件 → （界面 / 音效 / 语音教练）；别的模块都是零件，这里是装配线。
 
 ## 1. 它解决什么问题（为什么需要它）
@@ -8,22 +8,23 @@
 `index.html` 只有一个入口脚本（`<script type="module" src="./src/app.js">`）。所有「谁调谁、
 什么时候开关摄像头、什么时候换动作、设置存哪里、语音教练怎么和训练联动」都在这里决定。
 它刻意**不实现判定算法**：判定在 `engines.js` / `exercises.js`，文案在 `locales`，
-音效在 `audio.js`，语音链路在 `voice/*`。
+音效在 `audio.js`，语音链路在 `voice/*`；**排课的算法也在 `voice/plan.js`**（这里只做存储 / 卡面 / 执行）。
 
 ## 2. 关键数据结构 / 常量（表）
 
 | 名称 | 位置 | 内容 | 说明 |
 |---|---|---|---|
-| `STORE` | L79 | `mfg.settings.v1` / `history` / `records` … | localStorage 键（都带版本号） |
+| `STORE` | L79 | `mfg.settings.v1` / `history` / `records` / `plan` / `planProgress` / `planHistory` … | localStorage 键（都带版本号） |
 | `SETTINGS_VERSION` | L109 | `3` | 设置结构版本（迁移用） |
-| `DEFAULT_SETTINGS` | L111 | 模型 / 镜像 / 语音 / 教练 / 音色 / 节奏 / **ruleSwitches** … | 首次启动的默认设置（R4 起含 `ruleSwitches: {rep:true, read:true}`） |
+| `DEFAULT_SETTINGS` | L111 | 模型 / 镜像 / 语音 / 教练 / 音色 / 节奏 / **ruleSwitches** / **planGoal·planMinutes·planGear·planInjuries** | 首次启动的默认设置 |
 | `REP_TARGETS` / `HOLD_TARGETS` / `TIME_TARGETS` | L205-L208 | 数组 | 目标预设（按动作 kind 选） |
 | `SET_REP_CHOICES` / `SET_SEC_CHOICES` | L228-L229 | 数组 | 每组次数 / 秒数可选值 |
 | 单例 | L252-L256 | `audio` / `engine` / `camera` / `renderer` / `smoother` | 五个长生命周期对象 |
-| `state` | L258 起 | 几十个字段 | 界面 / 会话 / 诊断状态（见 §3） |
-| `coachDiag` … `judge` | L401 / L409-L455 / L501 / L587 / L969 / L1070 | 语音链路单例 | 诊断 / ASR / TTS / 自检 / 弹幕 / 插话 / LLM / 事件总线 / 规则引擎 / 裁判 |
-| `voiceCommandCtx` | L472 | 回调集合 | 命令表 `run(ctx, args)` 的唯一依赖（见 `voice/commands.js`） |
-| 规则面板 | L751-L926 | `ruleCatalog` / `ruleSwitchOn` / `applyRuleSwitches` / `rulePanelRows` / `renderRulePanel` / `setRuleEnabled` / `resetRuleDefaults` / `setRuleChannelSwitch` / `syncRuleCount` | R4：设置页「当前生效的规则」+「报数 / 读秒」两个总开关；状态全在 `settings.ruleSwitches` |
+| `state` | L258 起 | 几十个字段 | 界面 / 会话 / 诊断状态；**排课执行游标**（`plan*` L346-L360）也在这里 |
+| `coachDiag` … `judge` | L401-L455 / L501 / L587 / L969 / L1070 | 语音链路单例 | 诊断 / ASR / TTS / 自检 / 弹幕 / 插话 / LLM / 事件总线 / 规则引擎 / 裁判 |
+| `voiceCommandCtx` | L486 | 回调集合 | 命令表 `run(ctx, args)` 的唯一依赖（含排课 `makeTodayPlan` / `startTodayPlan`） |
+| 规则面板 | L751-L926 | `ruleCatalog` / `ruleSwitchOn` / `applyRuleSwitches` / `rulePanelRows` / `renderRulePanel` / `setRuleEnabled` / `resetRuleDefaults` / `setRuleChannelSwitch` / `syncRuleCount` | R4：设置页「当前生效的规则」+「报数 / 读秒」两个总开关 |
+| 排课 | L2640-L3270 | `readPlan` / `savePlan` / `buildTodayPlan` / `refinePlanWithLlm` / `renderPlanCard` / `startPlanBlock` / `planAfterSet` / `finishPlan` / `planFarewellStats` | 每日单次计划（三件套 + 卡面 + 执行 + 告别数字） |
 
 `state.session` 的取值（L271）：`calibrating | ready | countdown | running | paused | idle`；
 `homeMode` / `menuMode` 与它正交（L272-L273）。
@@ -67,6 +68,24 @@
 开回 = 按 `builtinRules()` 的缺省定义 `add`；`resetRuleDefaults()`（L888）清用户 / LLM 规则并复位开关；
 `setRuleChannelSwitch()`（L911）切两个总开关（`ruleState()` 里的 `repOn` / `readOn`，L596）。
 
+**排课（每日单次计划，L2640-L3270）**：
+
+```
+① 存储三件套：readPlan / savePlan / readPlanProgress / savePlanProgress / readPlanHistory /
+   pushPlanHistory / clearPlanData（L2655-L2750）—— 「清除训练记录」时三件套一起清（L10580 附近）
+② buildTodayPlan（L2824）：planPrefs（目标 / 时长 / 器械 / 伤病，优先长期记忆 facts.goal / injuries）
+   → plan.js 的 buildPlanTemplate 同步出模板 → 存盘 + 重画卡 → 后台 refinePlanWithLlm（L2890）
+③ refinePlanWithLlm（L2890）：/llm {event:'plan-request'} → parsePlanJson → **validatePlan**
+   不合法 / 失败 → 保留模板 + 记 plan:llm {ok:false}；合法 → source='llm' 替换
+④ renderPlanCard（L2969）：首页卡片（标题 / 理由 / 每行动作 · 组数 × 目标 · 组间休息 / 汇总）
+⑤ startPlanBlock（L3067）：**走命令快车道同一套入口**（voiceCommandCtx 的 startGestureMode →
+   selectExercise → setTarget），并写进度
+⑥ planAfterSet（L3149）：在 stopSession 末尾调用；reason='goal' → doneSets+1 → 组间休息
+   （planRestThen L3050 → runPlanRest L3037）→ 下一组 / 下一个动作；全部做完 → finishPlan
+⑦ finishPlan（L3209）：写 planHistory + progress.done → showHome() → session-end
+   → 告别语里的 planFarewellStats（L3252）给出「今天 N 个动作 / 完成率」
+```
+
 ## 4. 对外接口
 
 - **没有 `export`**：这是浏览器 entry module，靠 DOM 事件与全局单例工作（`index.html` 里的
@@ -97,12 +116,20 @@
   单条规则 id 的 `false`。别在别处再记一份「关掉了哪些规则」；`applyRuleSwitches()` 只在启动时摘规则，
   `ensureDefaultRules()`（L655）补缺省规则时也要先看 `ruleSwitchOn`，否则用户关掉的规则会被重新打开。
 - 这里所有面向用户的字符串都必须走 `t()`；写死中文会被 `test-i18n` 抓到。
+- **排课的推进只挂在 `stopSession` 末尾**（L~7940 的 `planAfterSet(reason)`）：换动作 / 回主页
+  都不该被当成「完成一组」；`startPlanBlock` 里 `planActive` 也是**切完动作之后**才置 true，
+  否则 selectExercise → stopSession('switch') 会被误判成「用户手动停了计划」。
+- 计划的三件套（`mfg.plan.v1` / `.progress.v1` / `.history.v1`）只在这里读写；`plan.js` 保持纯函数。
+  告别语的计划数字来自 `state.planDone || readPlanProgress()`，所以 `showHome()` 里必须先
+  `cancelPlanOnHome()` 保存进度、再发 `session-end`。进度里的 `started` 只在**点过开始**后置 true：
+  仅仅在首页生成过计划（没开始练）时，告别语**不会**提「完成 0 个」。
 
 ## 7. 读代码建议（先看哪几行）
 
 1. L6-L70 import 清单（一眼看到全项目依赖关系）；
-2. L258-L315 `state` 字段（界面状态的全部词汇）；
-3. L8590-L8796 `loop()`（每帧顺序，读这一段比读 100 个函数有用）；
+2. L258-L370 `state` 字段（界面状态的全部词汇 + 排课执行游标）；
+3. L8590 起 `loop()`（每帧顺序，读这一段比读 100 个函数有用）；
 4. L401-L1070 语音链路接线（谁被包在谁外面）；
 5. L751-L926 R4 规则面板（开关 / 列表 / 一键恢复默认）；
-6. L10249 起 `boot()`（启动顺序）。
+6. L2640-L3270 排课（三件套 / 卡面 / 执行 / 完成）；
+7. L11017 起 `boot()`（启动顺序；排课在首屏前 `ensureTodayPlan()`）。

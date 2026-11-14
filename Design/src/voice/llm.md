@@ -1,6 +1,6 @@
 # src/voice/llm.js — 前端 LLM 客户端 + Agent 上下文构建
 
-> 层：语音（对话） ｜ 911 行 ｜ 纯逻辑 + 注入 fetch，Node 里可测
+> 层：语音（对话） ｜ 965 行 ｜ 纯逻辑 + 注入 fetch，Node 里可测
 > 一句话：把一句话 + 当前训练状态发给同源的 `POST /llm`，拿回 `{reply, actions}`；密钥永远在服务端。
 
 ## 1. 它解决什么问题（为什么需要它）
@@ -16,6 +16,7 @@ prompt 会越来越长、越来越贵。所以这里做两件事：
 |---|---|---|---|
 | `LLM_PATH` / `LLM_HEALTH_PATH` | L24 / L25 | `/llm` `/llm/health` | 与服务端常量同值 |
 | `LLM_EVENT_SESSION_START` / `END` | L31 / L38 | `session-start` / `session-end` | 自由文本事件 |
+| `LLM_EVENT_PLAN_REQUEST` | L49 | `plan-request` | 排课事件（模型回严格 JSON 计划；与服务端同值） |
 | `LLM_CLIENT_TIMEOUT_MS` | L44 | `9000` | 客户端超时（服务端 8s） |
 | `LLM_HISTORY_TURNS` | L47 | `10` | 对话记忆轮数（只在内存） |
 | `LLM_CLIENT_MAX_TEXT` | L50 | `500` | 单句上限 |
@@ -46,14 +47,20 @@ prompt 会越来越长、越来越贵。所以这里做两件事：
 返回。失败映射成 `LLM_CLIENT_ERRORS`（L532）里的稳定 code，由 `app.js` 回退到罐头回复并记
 `llm:fallback` 诊断。
 
-**裁判 / 告别**：本文件复用 `judge.js` 的 `JUDGE_TIMEOUT_MS` / `isJudgeAskEvent` / `parseJudgeReply`
+**裁判 / 告别 / 排课**：本文件复用 `judge.js` 的 `JUDGE_TIMEOUT_MS` / `isJudgeAskEvent` / `parseJudgeReply`
 （L21），所以「严格 JSON + 默认沉默」的口径只有一份。
+
+**排课（plan-request）**：`requestPlan({locale, context})`（L836）只是把
+`{event:'plan-request', text:'', context}` 发出去并原样返回 `text` —— 计划里的
+`{goal, minutes, gear, injuries, recent20, template}` 由 `src/voice/plan.js` 的
+`buildPlanRequest()` 组装；**解析 / 校验 / 回退模板都在调用方**（`app.js` 的 `refinePlanWithLlm`），
+本文件不做任何安全判定。失败语义与 `respond()` 相同（超时 / 503 / 429 抛 `{code}`）。
 
 ## 4. 对外接口
 
 | 导出 | 位置 | 签名 | 说明 |
 |---|---|---|---|
-| `createLlmClient({fetch, win, diag})` | L580 | → llm | `.reply(text, {context, history})` / `.health()` |
+| `createLlmClient({fetch, win, diag})` | L591 | → llm | `.reply(text, {context, history})` / `.judge()` / `.farewell()` / `.requestPlan()` / `.health()` |
 | `buildAgentContext(snapshot)` | L351 | → 对象 | 压缩后的上下文 |
 | `trimAgentContext(ctx, opts)` | L475 | → 对象 | 按字符上限裁剪 |
 | `normalizeActions(actions)` | L554 | → 数组 | 动作白名单 + 条数上限 |

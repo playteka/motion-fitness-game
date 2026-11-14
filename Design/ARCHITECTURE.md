@@ -29,7 +29,11 @@
         · src/voice/tts-volc.js     火山流式 TTS（MSE 播放 + 三段降级 + 插话打断）
         · src/voice/danmaku.js      弹幕（用户青 / 教练薄荷绿）
         · src/voice/diag.js         诊断快照（含 R4 的 lastSpeak / lastSkip → 面板两行「为什么说 / 没说」）
-        · index.html / style.css    光环头像、HUD、菜单、规则面板
+        · index.html / style.css    光环头像、HUD、菜单、规则面板、排课卡
+   ▼ ⑧ 排课（每日单次计划）
+        · src/voice/plan.js         模板（目标 / 时长 / 器械 / 伤病 / 最近训练）→ validatePlan → planToQueue
+        · app.js                    今天练什么卡 + 一键开始（依次 startWorkout → 组间休息 → session-end）
+        · /llm {event:'plan-request'}  可选 LLM 微调；不合法 / 失败**一律回退模板**
 ```
 
 ## 2. 三层输入
@@ -38,7 +42,7 @@
 |---|---|
 | **视觉**（动作/姿势） | pose-engine → metrics → 识别器 → 事件 |
 | **语音**（说话） | 火山流式 ASR（`/asr` 代理，100ms 帧、32KB/s）→ `src/voice/parse.js` |
-| **命令** | `parse.js` 快车道（25 类 intent / 292 说法）→ `commands.js` 执行 |
+| **命令** | `parse.js` 快车道（14 个 intent：6 类核心 + 零 LLM 口令一批）→ `commands.js` 执行 |
 
 ## 3. 声音输出的三条通道
 
@@ -54,7 +58,7 @@
 | 层 | 文件 | 内容 |
 |---|---|---|
 | 人设 | `SOUL.md` | 可可教练（Coach KK）：身份/性格/话术/红线 → 拼进 system prompt |
-| 工具 | `server/llm-tools.mjs` | 15 个工具（与命令表 1:1）+ system 规则 + 记忆注入 |
+| 工具 | `server/llm-tools.mjs` | 27 个工具（与命令表 33 条 intent 一一对应）+ system 规则 + 记忆注入 + 排课 schema |
 | 模型调用 | `server/llm-provider.mjs` | DeepSeek/豆包/OpenAI + 限流 + `/llm` 路由 |
 | 短时记忆 | 内存（`session.js` / `llm.js`） | 10 轮对话 · 教练最近 5 句 · **最近 60 秒事件** |
 | 中时记忆 | localStorage | 最近 20 次训练摘要 · 本周 vs 上周趋势 · `lastSession`（继续上次） |
@@ -69,7 +73,11 @@
 - 规则引擎（6 条内置）+ 口述建规则 + **R4 规则面板**（全部规则逐条开关 / 一键恢复默认 /
   「报数 / 读秒」两个总开关 / LLM 规则上限提示）+ LLM 裁判（8 触发点，默认沉默）
 - 三层记忆、SOUL 人设、进训练主动问候、极简光环头像、弹幕
-- 七套测试 **4465**（i18n / detectors / engines / specs / page / app / voice）
+- **排课（每日单次计划）**：首页「今天练什么」卡（动作 / 组数 / 时长 / 理由 + 开始 / 换一个）、
+  语音四条（今天练什么 / 换一个计划 / 就按这个开始 / 继续今天的计划）、
+  模板 + 可选 LLM 微调（不合法回退）、执行队列（组间休息 → 完成 → `session-end` 告别带「N 个动作 / 完成率」）、
+  localStorage 三件套（`mfg.plan.v1` / `.progress.v1` / `.history.v1`）
+- 七套测试 **4530**（i18n / detectors / engines / specs / page / app / voice）
 
 ## 6. 没做好 / 需要完善（按优先级）
 
@@ -79,7 +87,7 @@
 | **P0** | `session-end` 告别 + 结束后静默 | **已完成**（见 `src/app.js` 的告别段） | 保持回归测试 |
 | **P1** | **R4 规则面板** | **已完成**：`src/voice/rules.js` 出数据（来源 / 触发条件人话 / 频道），`src/app.js` L751-L926 渲染与开关，`settings.ruleSwitches` 持久化；诊断两行见 `src/voice/diag.js` L145-L146 + `coach.js` L60-L100 | 保持 `[41]` / `[55]` 回归；LLM 规则的**上限拦截**等真接上自动建规则时再加在 `addCoachRule` 入口 |
 | **P1** | 每 3 个 / 静止 / 出画 的频率整形 | 已实现节流，但**快节奏时仍偏密** ✗ | 「每 3 个且 ≥6s」；静止/出画 **退避 10→20→40s** |
-| **P1** | **训练计划 / 排课** | 无 ✗ | 「今天练什么」→ Agent 生成计划 + 一键开始（最像私教的能力） |
+| **P1** | **训练计划 / 排课** | **已完成**：`src/voice/plan.js`（模板 / 禁忌 / 预算 / `validatePlan` / `planToQueue`）+ `app.js` 的卡面与执行队列 + `/llm {event:'plan-request'}` 可选微调（不合法回退模板）；`test-voice [42]` / `test-app [56]` 回归 | 保持回归；周期化（4 周）明确**不做**（用户口径：只做每日单次） |
 | **P2** | 动作库覆盖 | 19 个 | 加：引体/划船/硬拉（需器械）、拉伸类（计时） |
 | **P2** | 多用户 / 登录 | 单机单用户 ✗ | `/memory` 已按 userId 分文件，接鉴权即可 |
 | **P2** | 语音唤醒词 | 可选支持 ✓ | 「可可」常驻唤醒（低功耗 VAD） |
@@ -89,7 +97,7 @@
 
 ## 7. 一句话结论
 
-**视觉 → 事实（角度/参数）→ 判据（门控/关键帧）→ 事件 → 分流（规则 / LLM）→ 说与显示** —— 这条链路已经打通且可测；下一步的重点不是「加更多规则」，而是 **① 姿势标准的显式判据**（塌腰/翘臀这类真问题）与 **② 排课能力**（真正把人带起来）。
+**视觉 → 事实（角度/参数）→ 判据（门控/关键帧）→ 事件 → 分流（规则 / LLM）→ 说与显示** —— 这条链路已经打通且可测；**排课（每日单次计划）**也已落地（模板 + 可选 LLM 微调 + 校验闸门 + 一键执行），下一步的重点是 **姿势标准的显式判据**（塌腰/翘臀这类真问题）。
 
 ## 8. 设计文档索引
 

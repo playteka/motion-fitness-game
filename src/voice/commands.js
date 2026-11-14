@@ -66,12 +66,16 @@ export const FAST_LANE_INTENTS = Object.freeze(
 );
 
 /**
- * 不在用户移除清单里的 4 个**零 LLM** 口令，继续留在快车道：
- * `continueLast`（继续上次）+ R2 口述规则三条（建 / 关 / 列）。
+ * 不在用户移除清单里的**零 LLM** 口令，继续留在快车道：
+ * `continueLast`（继续上次）+ R2 口述规则三条（建 / 关 / 列）+ 排课三条（今天练什么 / 换一个 / 开始）。
  * 帮助面板不列它们（只列 6 类），但说「每 10 个报一次」仍然本机执行、不联网。
+ *
+ * 排课三条为什么放零 LLM：**模板计划本来就是纯函数算的**（`src/voice/plan.js`），
+ * 「今天练什么」在断网 / 没配 LLM 时也必须能答、能开始 —— LLM 只是「可选微调」。
  */
 export const ZERO_LLM_INTENTS = Object.freeze([
   'continueLast', 'addRule', 'removeRule', 'listRules',
+  'makePlan', 'shufflePlan', 'startPlan',
 ]);
 
 /** `parseCommand()` 允许匹配的全部 intent（7 个核心 + 4 个零 LLM = 11 个） */
@@ -348,6 +352,47 @@ export const COMMANDS = Object.freeze([
         target: info.target,
         set: info.set,
         unit: info.unit || t('ui.repsUnit'),
+      });
+    },
+  }),
+
+  /* ---------------- 排课（每日单次计划） ----------------
+   *
+   * 「今天练什么」→ 模板计划（`src/voice/plan.js` 纯函数，零 LLM）+ 可选 LLM 微调；
+   * 「换一个计划」→ 换一套变体；「就按这个开始 / 继续今天的计划」→ 从上次停下的那一组开始。
+   *
+   * 这三条**只调注入的 ctx**（`makeTodayPlan` / `startTodayPlan`，见 app.js 的 voiceCommandCtx），
+   * 计划本体、校验、执行队列全在 `plan.js` 与 app 里，这里只把结果翻成一句确认。
+   */
+  command('makePlan', {
+    run(ctx) {
+      const info = ctx.makeTodayPlan?.({ llm: true });
+      if (!info || !info.actions) return ack('coach.cmdAck.planFailed');
+      return ack('coach.cmdAck.makePlan', {
+        actions: info.actions,
+        minutes: info.minutes,
+        title: info.title,
+      });
+    },
+  }),
+  command('shufflePlan', {
+    run(ctx) {
+      const info = ctx.makeTodayPlan?.({ shuffle: true, llm: true });
+      if (!info || !info.actions) return ack('coach.cmdAck.planFailed');
+      return ack('coach.cmdAck.shufflePlan', {
+        actions: info.actions,
+        minutes: info.minutes,
+      });
+    },
+  }),
+  command('startPlan', {
+    run(ctx) {
+      const info = ctx.startTodayPlan?.();
+      if (!info || info.ok === false) return ack('coach.cmdAck.planNone');
+      return ack('coach.cmdAck.startPlan', {
+        index: Number(info.index) + 1,
+        total: Number(info.total) || Number(info.actions) || 0,
+        name: info.name,
       });
     },
   }),

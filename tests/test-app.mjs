@@ -10946,8 +10946,9 @@ console.log('\n[54] session-end 告别：1 次 / 2 句 / 之后 0 次 /llm / 麦
     JSON.stringify({ coach: api.state.voice.coachText, fallbackEmpty,
       diag: api.coachDiag.snapshot().farewell }));
   ok('[54] 0 组也告别：一句「0 组 0 次」的告别语，不是不吭声',
-    fallbackEmpty.includes('0 组 0 次') && fallbackEmpty.includes('明天见')
-    && api.state.voice.coachText.includes('0 组'),
+    fallbackEmpty.includes('明天见')
+    && (fallbackEmpty.includes('0 组 0 次') || fallbackEmpty.includes('完成 0 个'))
+    && api.state.voice.coachText.includes('0'),
     fallbackEmpty);
   await finishSpeech();
 
@@ -11284,6 +11285,319 @@ console.log('\n[55] R4 规则面板：逐条开关 / 开回恢复默认 / 一键
   api.showHome();
   await api.setCoachEnabled(false);
   await flush();
+}
+
+/* ================================================================== *
+ * [56] 排课（每日单次计划）：首页卡 / 模板 → LLM 微调（不合法回退）/ 换一个 /
+ *      localStorage 三件套 / 依次 startWorkout + 组间休息 + 完成 → session-end / 清除记录
+ * ================================================================== */
+console.log('\n[56] 排课：今天练什么 → 首页卡 / LLM 微调与回退 / 一键开始 / 组间推进 / 三件套');
+{
+  const api = windowStub.__mfg;
+  const { t: tR } = await import('../src/i18n.js');
+  const flush = async () => {
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const readKey = (key, fallback = null) => {
+    const raw = store.get(key);
+    if (raw === undefined || raw === null) return fallback;
+    try { return JSON.parse(raw); } catch { return fallback; }
+  };
+  const cards = () => (elements.get('planList').innerHTML.match(/class="plan-item( |")/g) || []).length;
+
+  api.showHome();
+  api.state.settings.planMinutes = 20;
+  api.state.settings.planGoal = '';
+  api.state.settings.planInjuries = [];
+  const built = api.buildTodayPlan({ llm: false });
+  await flush();
+
+  /* ---------------- 56.1 首页卡片渲染 ---------------- */
+  ok('[56] 首页出现「今天练什么」卡片：标题 / 理由 / 动作列表 / 汇总 / 两个按钮',
+    elements.get('planCard').hidden === false
+    && String(elements.get('planTitle').textContent).length > 0
+    && String(elements.get('planReason').textContent).length > 0
+    && cards() === api.state.plan.blocks.length
+    && String(elements.get('planMeta').textContent).includes(String(api.state.plan.blocks.length))
+    && elements.get('btnPlanStart').disabled === false,
+    JSON.stringify({ hidden: elements.get('planCard').hidden, rows: cards(),
+      title: elements.get('planTitle').textContent }));
+  ok('[56] 卡片文案全部走词条（标题 = plan.title.*，汇总 = plan.meta，按钮 = plan.start / plan.shuffle）',
+    String(elements.get('planTitle').textContent).startsWith(tR('plan.badge').slice(0, 2))
+    && elements.get('btnPlanStart').getAttribute('data-i18n') === 'plan.start'
+    && elements.get('btnPlanShuffle').getAttribute('data-i18n') === 'plan.shuffle'
+    && elements.get('planMeta').textContent.includes(tR('plan.sourceTemplate')),
+    JSON.stringify({ title: elements.get('planTitle').textContent,
+      start: elements.get('btnPlanStart').getAttribute('data-i18n') }));
+  ok('[56] 计划写进 localStorage（mfg.plan.v1：source / createdAt / blocks 齐全）', (() => {
+    const saved = readKey('mfg.plan.v1');
+    return !!saved && saved.source === 'template' && Number(saved.createdAt) > 0
+      && Array.isArray(saved.blocks) && saved.blocks.length === api.state.plan.blocks.length
+      && saved.blocks.every((b) => b.exerciseId && b.sets && b.target >= 0 && b.restSec >= 0);
+  })(), JSON.stringify(readKey('mfg.plan.v1') && { source: readKey('mfg.plan.v1').source,
+    createdAt: readKey('mfg.plan.v1').createdAt }));
+
+  /* ---------------- 56.2 LLM 微调：不合法 → 回退模板；合法 → 采用 ---------------- */
+  {
+    /**
+     * 前面的用例可能关过自由对话 / 上一场告别封过麦：这里显式恢复，
+     * 并给 `/llm/health` 一个「已配置」的桩，让 `refinePlanWithLlm()` 真的走一次请求。
+     */
+    api.beginTrainingSession();          // 解封（上一场告别封的麦）
+    api.state.settings.freeChat = true;
+    let currentReply = '';
+    let requested = 0;
+    api.llmClient.setFetch(async (url, init = {}) => {
+      if ((init.method || 'POST') === 'GET') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, configured: true, provider: 'mock', model: 'mock' }),
+        };
+      }
+      requested += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, reply: currentReply, actions: [], provider: 'mock', model: 'mock' }),
+      };
+    });
+    await api.refreshLlmStatus();
+    const before = api.state.plan;
+    const beforeBlocks = JSON.stringify(before.blocks);
+
+    // ① 模型编了个动作库外的 id → parse 通过、validatePlan 拒 → 保留模板
+    const badPlan = {
+      title: 'AI 计划',
+      rationale: '随便排的',
+      blocks: [
+        { exerciseId: 'lungeJump', sets: 2, target: 10, restSec: 20 },
+        { exerciseId: 'squat', sets: 2, target: 10, restSec: 20 },
+      ],
+    };
+    currentReply = JSON.stringify(badPlan);
+    const gotBad = await api.refinePlanWithLlm(before);
+    await flush();
+    ok('[56] LLM 返回的计划里有动作库外的 id → validatePlan 拒 → **回退模板**（绝不交付不安全计划）',
+      gotBad === null && JSON.stringify(api.state.plan.blocks) === beforeBlocks
+      && api.state.plan.source === 'template' && requested === 1,
+      JSON.stringify({ got: gotBad, source: api.state.plan.source, requested }));
+
+    // ② 超时长的计划 → 也是回退
+    currentReply = JSON.stringify({
+      title: 'AI 计划',
+      blocks: [
+        { exerciseId: 'squat', sets: 4, target: 100, restSec: 180 },
+        { exerciseId: 'plank', sets: 4, target: 100, restSec: 180 },
+      ],
+    });
+    const gotLong = await api.refinePlanWithLlm(api.state.plan);
+    ok('[56] LLM 计划超过时长预算 → 同样回退模板（over-budget）',
+      gotLong === null && JSON.stringify(api.state.plan.blocks) === beforeBlocks,
+      JSON.stringify({ got: gotLong, source: api.state.plan.source }));
+
+    // ③ 合法计划 → 采用（source='llm'，动作 / 组数按模型给的，但仍必须过校验）
+    currentReply = JSON.stringify({
+      title: 'AI 微调计划',
+      rationale: '按你的状态',
+      blocks: [
+        { exerciseId: 'squatSumo', sets: 2, target: 12, restSec: 30 },
+        { exerciseId: 'plank', sets: 2, target: 30, restSec: 20 },
+      ],
+    });
+    const gotGood = await api.refinePlanWithLlm(api.state.plan);
+    await flush();
+    ok('[56] LLM 计划通过 validatePlan → 采用（source=llm、卡片重画）',
+      !!gotGood && api.state.plan.source === 'llm'
+      && api.state.plan.blocks.map((b) => b.exerciseId).join(',') === 'squatSumo,plank'
+      && cards() === 2
+      && String(elements.get('planMeta').textContent).includes(tR('plan.sourceLlm')),
+      JSON.stringify({ got: !!gotGood, source: api.state.plan.source,
+        ids: api.state.plan.blocks.map((b) => b.exerciseId), rows: cards() }));
+    ok('[56] LLM 微调后仍然写回 mfg.plan.v1（source=llm）',
+      readKey('mfg.plan.v1').source === 'llm', JSON.stringify(readKey('mfg.plan.v1') && readKey('mfg.plan.v1').source));
+    api.llmClient.setFetch(null);
+  }
+
+  /* ---------------- 56.3 「换一个」→ 换出不同计划并重置进度 ---------------- */
+  {
+    const prevSig = api.planSignature(api.state.plan);
+    const prevCreated = api.state.plan.createdAt;
+    await new Promise((r) => setTimeout(r, 5));
+    const summary = api.makeTodayPlan({ shuffle: true, llm: false });
+    ok('[56] 「换一个」：换出不同动作排列的计划（signature 变了），source 回到模板',
+      !!summary && api.planSignature(api.state.plan) !== prevSig
+      && api.state.plan.source === 'template' && api.state.plan.createdAt > prevCreated,
+      JSON.stringify({ prev: prevSig, next: api.planSignature(api.state.plan) }));
+    ok('[56] 「换一个」重置执行进度（mfg.plan.progress.v1 → index 0 / set 1 / doneSets 0）', (() => {
+      const p = readKey('mfg.plan.progress.v1');
+      return p && p.index === 0 && p.set === 1 && p.doneSets === 0 && p.done === false
+        && p.createdAt === api.state.plan.createdAt;
+    })(), JSON.stringify(readKey('mfg.plan.progress.v1')));
+  }
+
+  /* ---------------- 56.4 一键开始：依次 startWorkout（同一个入口）+ 组间休息 + 完成 ---------------- */
+  {
+    // 5 分钟 = 6 个动作 × 1 组，测试里跑得快，断言也清楚
+    api.state.settings.planMinutes = 5;
+    const plan = api.buildTodayPlan({ llm: false });
+    await flush();
+    const blockIds = api.state.plan.blocks.map((b) => b.exerciseId);
+    const calls = [];
+    const originals = {
+      startGestureMode: api.voiceCommandCtx.startGestureMode,
+      selectExercise: api.voiceCommandCtx.selectExercise,
+      setTarget: api.voiceCommandCtx.setTarget,
+    };
+    api.voiceCommandCtx.startGestureMode = (...args) => { calls.push('startGestureMode'); return originals.startGestureMode(...args); };
+    api.voiceCommandCtx.selectExercise = (id, ...rest) => { calls.push(`select:${id}`); return originals.selectExercise(id, ...rest); };
+    api.voiceCommandCtx.setTarget = (v, id, ...rest) => { calls.push(`target:${v}:${id}`); return originals.setTarget(v, id, ...rest); };
+
+    const started = api.startTodayPlan();
+    await flush();
+    ok('[56] 「开始」→ 从第一个动作开始：先 startGestureMode，再 selectExercise(第一个动作) + setTarget',
+      started.ok && calsFirst(calls, 'startGestureMode') === 0
+      && calsFirst(calls, `select:${blockIds[0]}`) > 0
+      && api.state.exerciseId === blockIds[0]
+      && api.state.planActive === true
+      && api.state.target === api.state.plan.blocks[0].target,
+      JSON.stringify({ calls: calls.slice(0, 4), ex: api.state.exerciseId,
+        target: api.state.target, planTarget: api.state.plan.blocks[0].target }));
+
+    // 模拟「这一组达标」→ 自动休息 → 下一组 / 下一个动作（走的是同一条 startWorkout 入口）
+    const total = api.state.plan.blocks.reduce((n, b) => n + Math.max(1, Number(b.sets) || 1), 0);
+    for (let i = 0; i < total; i += 1) {
+      api.state.session = 'running';
+      api.stopSession('goal');
+      if (i < total - 1) api.runPlanRest();
+    }
+    await flush();
+    ok('[56] 每一组达标后按计划顺序推进（selectExercise 依次收到计划里的全部动作）',
+      blockIds.every((id) => calls.includes(`select:${id}`))
+      && calls.filter((c) => c.startsWith('select:')).slice(0, blockIds.length).join(',')
+        === blockIds.map((id) => `select:${id}`).join(','),
+      JSON.stringify(calls.filter((c) => c.startsWith('select:'))));
+
+    ok('[56] 计划全部做完 → 完成汇总（动作数 / 组数 / 完成率 100%）+ 回首页走 session-end',
+      (() => {
+        const stats = api.planFarewellStats();
+        return stats && stats.actions === blockIds.length && stats.done === blockIds.length
+          && stats.rate === 100 && api.state.planActive === false
+          && api.state.homeMode === true;
+      })(), JSON.stringify(api.planFarewellStats()));
+    ok('[56] 完成进度写进 mfg.plan.progress.v1（done=true / doneSets=总组数）', (() => {
+      const p = readKey('mfg.plan.progress.v1');
+      return p && p.done === true && p.doneSets === total && p.doneBlocks === blockIds.length;
+    })(), JSON.stringify(readKey('mfg.plan.progress.v1')));
+    ok('[56] 完成的计划进 mfg.plan.history.v1（最近 10 个，含动作数 / 完成率）', (() => {
+      const list = readKey('mfg.plan.history.v1', []);
+      return Array.isArray(list) && list.length === 1
+        && list[0].rate === 100 && list[0].setsDone === total
+        && Array.isArray(list[0].blocks) && list[0].blocks.length === blockIds.length;
+    })(), JSON.stringify(readKey('mfg.plan.history.v1') && readKey('mfg.plan.history.v1').length));
+    ok('[56] 计划历史最多 10 个（多塞几条也只留最近的 10 条）', (() => {
+      for (let i = 0; i < 12; i += 1) api.pushPlanHistory({ createdAt: Date.now() + i, actions: 2, rate: i });
+      const list = readKey('mfg.plan.history.v1', []);
+      return list.length === api.PLAN_HISTORY_MAX && list[0].rate === 11;
+    })(), String(readKey('mfg.plan.history.v1', []).length));
+
+    // 告别语带「今天 N 个动作 / 完成率」（≤2 句、≤60 字：折进前两句，不另加一句）
+    const farewell = api.sessionFarewellFallbackText();
+    ok('[56] 告别语带上计划数字（今天 N 个动作 + 完成率），仍然 ≤60 字 / ≤2 句',
+      farewell.includes(String(blockIds.length))
+      && farewell.includes('100%')
+      && farewell.length <= 60
+      && (farewell.match(/[。！？]/g) || []).length <= 2,
+      JSON.stringify({ farewell, chars: farewell.length }));
+
+    // 中途手动停：进度保留（「继续今天的计划」能接上）
+    api.state.settings.planMinutes = 5;
+    api.buildTodayPlan({ llm: false });
+    api.startTodayPlan();
+    await flush();
+    api.state.session = 'running';
+    api.stopSession('goal');
+    api.runPlanRest();          // 进入第 2 个动作
+    api.state.session = 'running';
+    api.stopSession('user');    // 手动停
+    const savedProgress = api.readPlanProgress();
+    ok('[56] 手动停 → 不推进、但进度保留（下次「继续今天的计划」从当前动作接着练）',
+      savedProgress && savedProgress.done === false
+      && savedProgress.index === 1 && savedProgress.doneSets >= 1
+      && api.state.planActive === false,
+      JSON.stringify(savedProgress));
+    api.startTodayPlan();
+    ok('[56] 「继续今天的计划」从进度里那一组接着开始（不是从第一个动作重来）',
+      api.state.planActive === true && api.state.planBlockIndex === 1,
+      JSON.stringify({ index: api.state.planBlockIndex, set: api.state.planSetIndex }));
+
+    api.voiceCommandCtx.startGestureMode = originals.startGestureMode;
+    api.voiceCommandCtx.selectExercise = originals.selectExercise;
+    api.voiceCommandCtx.setTarget = originals.setTarget;
+    api.state.planActive = false;
+    api.clearPlanRest();
+    api.showHome();
+    await flush();
+  }
+
+  /* ---------------- 56.5 清除训练记录 → 排课三件套一起清（并立刻重排一份） ---------------- */
+  {
+    const before = api.readPlan();
+    const oldConfirm = globalThis.confirm;
+    globalThis.confirm = () => true;
+    elements.get('btnClearHistory').dispatch('click');
+    globalThis.confirm = oldConfirm;
+    await flush();
+    const progress = readKey('mfg.plan.progress.v1');
+    const history = readKey('mfg.plan.history.v1');
+    const saved = readKey('mfg.plan.v1');
+    ok('[56] 「清除训练记录」把计划三件套一起清：进度 / 历史没了，今天的计划重新排一份',
+      (progress === null || progress.doneSets === 0)
+      && (history === null || (Array.isArray(history) && history.length === 0))
+      && !!saved && Number(saved.createdAt) >= Number(before && before.createdAt)
+      && !!saved.blocks && saved.blocks.length >= 2,
+      JSON.stringify({ progress, history, createdAt: saved && saved.createdAt }));
+    ok('[56] clearPlanData() 直接清三个键（三件套都不残留）',
+      (() => {
+        api.clearPlanData();
+        return !store.has('mfg.plan.v1') && !store.has('mfg.plan.progress.v1')
+          && !store.has('mfg.plan.history.v1');
+      })(), JSON.stringify([...store.keys()].filter((k) => k.startsWith('mfg.plan'))));
+    api.buildTodayPlan({ llm: false });   // 恢复一份计划给后面的用例
+  }
+
+  /* ---------------- 56.6 语音：今天练什么 / 就按这个开始（零 LLM 快车道） ---------------- */
+  {
+    api.showHome();
+    await api.setCoachEnabled(true);
+    await flush();
+    const rec = coachStubs.recognitions.at(-1);
+    rec.emit('今天练什么');
+    await new Promise((r) => setTimeout(r, 120));   // 命令快车道的 thinkDelay
+    const said = elements.get('coachCoachText').textContent;
+    ok('[56] 语音「今天练什么」→ 报出今天的计划（动作数 / 时长 / 标题）',
+      said.includes(String(api.state.plan.blocks.length))
+      && said.includes(String(api.state.plan.minutes))
+      && said.includes(api.state.plan.title),
+      JSON.stringify({ said, title: api.state.plan.title }));
+    rec.emit('就按这个开始');
+    await new Promise((r) => setTimeout(r, 160));
+    ok('[56] 语音「就按这个开始」→ 真的开始计划（planActive + 第一个动作）',
+      api.state.planActive === true && api.state.exerciseId === api.state.plan.blocks[0].exerciseId,
+      JSON.stringify({ active: api.state.planActive, ex: api.state.exerciseId,
+        expect: api.state.plan.blocks[0].exerciseId }));
+    api.state.planActive = false;
+    api.clearPlanRest();
+    api.showHome();
+    await api.setCoachEnabled(false);
+    await flush();
+  }
+}
+
+/** 取某个字符串在数组里第一次出现的下标（找不到 = -1；[56] 的调用顺序断言用） */
+function calsFirst(list, value) {
+  return Array.isArray(list) ? list.indexOf(value) : -1;
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {
