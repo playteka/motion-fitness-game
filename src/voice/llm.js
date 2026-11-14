@@ -15,6 +15,8 @@
  */
 
 import { LOCALES } from '../i18n.js';
+// R1：事件口径（进 prompt 的那几类）只在 events.js 定义一次，这里不另抄一份
+import { AGENT_EVENT_TYPES } from './events.js';
 
 /** 服务端路由（和 server/llm-provider.mjs 的 LLM_PATH / LLM_HEALTH_PATH 一致） */
 export const LLM_PATH = '/llm';
@@ -77,8 +79,11 @@ export const AGENT_EVENTS_MAX = 60;
 export const AGENT_EVENTS_WINDOW_MS = 60 * 1000;
 /** 单条事件序列化上限（字符；超过就丢 data 字段，保持短） */
 export const AGENT_EVENT_MAX_CHARS = 60;
-/** 事件类型白名单（和 src/voice/session.js 的 EVENT_KINDS 同一份口径） */
-export const AGENT_EVENT_KINDS = Object.freeze(['rep', 'gate-fail', 'keyframe-hit', 'keyframe-miss']);
+/**
+ * 进 prompt 的事件类型白名单（**一处定义**：`src/voice/events.js` 的 `AGENT_EVENT_TYPES`；
+ * `session.js` 的 `EVENT_KINDS` 也是同一份数组）
+ */
+export const AGENT_EVENT_KINDS = AGENT_EVENT_TYPES;
 /** 周趋势的判定阈值：本周平均分比上周高 / 低这么多才算 improved / declined，否则 flat */
 export const TREND_WEEK_SCORE_DELTA = 3;
 /**

@@ -34,6 +34,10 @@
 import { t, getLang } from '../i18n.js';
 import { parseCommand, isConfirmText, isCancelText } from './parse.js';
 import { COMMANDS, COMMAND_CONFIRM_MS } from './commands.js';
+// R1：短时事件统一走事件总线（**一处定义**：session 的 recentEvents 与规则引擎读同一条总线）
+import {
+  createEventBus, EVENT_TYPES, EVENT_WINDOW_MS, EVENT_MAX_CHARS, AGENT_EVENT_TYPES,
+} from './events.js';
 
 export const VOICE_STATES = Object.freeze(['off', 'listening', 'thinking', 'speaking', 'error']);
 
@@ -119,14 +123,18 @@ export const VOICE_LLM_MAX_ACTIONS = 3;
 export const DIALOGUE_MAX_TURNS = 10;
 /** 教练最近说过几句（防复读；用户拍板：5 句） */
 export const COACH_LINES_MAX = 5;
-/** 最近事件最多几条（用户拍板：60 条，环形缓冲） */
+/** 最近事件最多几条（用户拍板：60 条；环形缓冲的容量是 events.js 的 EVENT_CAPACITY） */
 export const RECENT_EVENTS_MAX = 60;
 /** 最近事件只保留多久以内（用户拍板：60 秒） */
-export const RECENT_EVENTS_WINDOW_MS = 60 * 1000;
+export const RECENT_EVENTS_WINDOW_MS = EVENT_WINDOW_MS;
 /** 单条事件的序列化上限（字符；超过就丢掉 data 里的字段，**保持短**） */
-export const RECENT_EVENT_MAX_CHARS = 60;
-/** 事件类型白名单（和 src/voice/llm.js 的 AGENT_EVENT_KINDS 同一份口径） */
-export const EVENT_KINDS = Object.freeze(['rep', 'gate-fail', 'keyframe-hit', 'keyframe-miss']);
+export const RECENT_EVENT_MAX_CHARS = EVENT_MAX_CHARS;
+/**
+ * 事件类型白名单（**进 LLM prompt 的那 4 类**，和 src/voice/llm.js 的 `AGENT_EVENT_KINDS`
+ * 是 events.js 里的同一份数组）。总线本身认 14 类（`EVENT_TYPES`），
+ * 这 4 类之外的事件只给规则引擎用、不进 prompt。
+ */
+export const EVENT_KINDS = AGENT_EVENT_TYPES;
 
 /**
  * 发出去超过这么久还没回来 → 在底下显示一行小字「教练在想…」（用户要求 1.5 秒）。
@@ -183,6 +191,11 @@ export function createVoiceSession({
   thinkSlowMs = THINK_SLOW_MS,
   /** 注入时钟（短时事件的 60 秒窗口 / 相对秒；测试不依赖真实时间） */
   now = () => Date.now(),
+  /**
+   * 事件总线（`src/voice/events.js`）：app.js 注入**同一条**给规则引擎订阅；
+   * 不注入时自己建一条（Session 单测 / Node 里直接用）。
+   */
+  bus: busArg = null,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 } = {}) {
@@ -234,32 +247,56 @@ export function createVoiceSession({
    * 短时记忆（只在内存里；页面刷新 / destroy 即清）：
    *   dialogue  : 最近 10 轮（用户 + 教练各一条）
    *   coachLines: 教练最近 5 句（prompt 里给「不要重复这 5 句」）
-   *   events    : 最近 60 秒事件（≤60 条；data 只留标量）
+   *   bus       : 最近 60 秒事件（`src/voice/events.js` 的事件总线；
+   *               `recentEvents()` 从它读，规则引擎也订阅它 —— **一处定义**）
    */
   const dialogue = [];
   const coachLines = [];
-  const events = [];
   const clock = typeof now === 'function' ? now : () => Date.now();
+  /** 事件总线：app.js 会注入**同一条**（规则引擎订阅它）；不注入时自己建一条（Node 单测直接可用） */
+  const bus = busArg && typeof busArg.emit === 'function'
+    ? busArg
+    : createEventBus({ now: clock });
 
   /**
-   * 数据只留标量：数组 / 对象（关键点在里面）一律不进短时事件。
-   * 单条事件要短（≤60 字符），所以键最多 4 个、字符串值最多 20 字，超了就丢字段。
+   * 记一条**进 LLM prompt 的**短时事件（app.js 在计次 / 门控失败 / 关键帧命中时调用）。
+   * 只认那 4 类（`EVENT_KINDS`）；别的类型走 `emitEvent()`（规则引擎用，不进 prompt）。
+   *
+   * @param {'rep'|'gate-fail'|'keyframe-hit'|'keyframe-miss'} type
+   * @param {object} [data] 只保留标量字段（**绝不含原始关键点**）
+   * @returns {boolean} 是否收下（类型不在白名单 → false）
    */
-  function scalarData(data, type = '') {
-    const out = {};
-    const src = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-    let n = 0;
-    for (const [key, value] of Object.entries(src)) {
-      if (n >= 4) break;
-      if (typeof value === 'string') { out[key] = value.slice(0, 20); n += 1; }
-      else if (typeof value === 'number' && Number.isFinite(value)) { out[key] = value; n += 1; }
-      else if (typeof value === 'boolean') { out[key] = value; n += 1; }
-    }
-    // 序列化超长 → 从后往前丢 data 字段（类型本身不动；空 data 一定装得下）
-    while (Object.keys(out).length && JSON.stringify({ t: 0, type, data: out }).length > RECENT_EVENT_MAX_CHARS) {
-      delete out[Object.keys(out).pop()];
-    }
-    return out;
+  function recordEvent(type, data = {}) {
+    const kind = String(type || '');
+    if (!EVENT_KINDS.includes(kind)) return false;
+    bus.emit(kind, data);
+    return true;
+  }
+
+  /**
+   * 发一条任意白名单事件（R1 规则快车道用：`progress` / `tick` / `hold-tick` / `idle` …）。
+   * @param {string} type  `EVENT_TYPES` 里的 14 类之一（见 events.js）
+   * @param {object} [data]
+   * @returns {{seq:number,t:number,type:string,data:object}|null}
+   */
+  function emitEvent(type, data = {}) {
+    if (!EVENT_TYPES.includes(String(type || ''))) return null;
+    return bus.emit(type, data);
+  }
+
+  /** 读最近事件：`{t: 相对秒, type, data}`（最新的在后；只保留 60 秒内、最多 60 条、只有那 4 类） */
+  function recentEvents(limit = RECENT_EVENTS_MAX) {
+    const at = Number(clock()) || Date.now();
+    const n = Math.max(1, Math.floor(Number(limit) || RECENT_EVENTS_MAX));
+    return bus.recent({
+      sinceMs: RECENT_EVENTS_WINDOW_MS,
+      limit: n,
+      types: EVENT_KINDS,
+    }).map((ev) => ({
+      t: Math.round(((at - ev.t) / 1000) * 10) / 10,
+      type: ev.type,
+      data: { ...ev.data },
+    }));
   }
 
   function pushDialogue(role, text) {
@@ -277,38 +314,6 @@ export function createVoiceSession({
     if (at >= 0) coachLines.splice(at, 1);
     coachLines.push(body);
     while (coachLines.length > COACH_LINES_MAX) coachLines.shift();
-  }
-
-  /** 剪掉 60 秒窗外的事件（读 / 写都会剪：环形缓冲 + 时间窗两道限制） */
-  function trimEvents(at = clock()) {
-    const cutoff = Number(at) - RECENT_EVENTS_WINDOW_MS;
-    while (events.length && events[0].at < cutoff) events.shift();
-    while (events.length > RECENT_EVENTS_MAX) events.shift();
-  }
-
-  /**
-   * 记一条短时事件（app.js 在计次 / 门控失败 / 关键帧命中时调用）。
-   * @param {'rep'|'gate-fail'|'keyframe-hit'|'keyframe-miss'} type
-   * @param {object} [data] 只保留标量字段（**绝不含原始关键点**）
-   */
-  function recordEvent(type, data = {}) {
-    const kind = String(type || '');
-    if (!EVENT_KINDS.includes(kind)) return false;
-    const at = Number(clock()) || Date.now();
-    events.push({ type: kind, data: scalarData(data, kind), at });
-    trimEvents(at);
-    return true;
-  }
-
-  /** 读最近事件：`{t: 相对秒, type, data}`（最新的在后；只保留 60 秒内、最多 60 条） */
-  function recentEvents(limit = RECENT_EVENTS_MAX) {
-    const at = Number(clock()) || Date.now();
-    trimEvents(at);
-    return events.slice(-Math.max(1, Number(limit) || RECENT_EVENTS_MAX)).map((ev) => ({
-      t: Math.round(((at - ev.at) / 1000) * 10) / 10,
-      type: ev.type,
-      data: { ...ev.data },
-    }));
   }
 
   /** 记一条诊断（诊断出问题绝不能拖垮状态机） */
@@ -987,7 +992,7 @@ export function createVoiceSession({
     stop('destroy');
     dialogue.length = 0;
     coachLines.length = 0;
-    events.length = 0;
+    bus.clear();
     listeners.clear();
   }
 
@@ -1025,15 +1030,18 @@ export function createVoiceSession({
     interrupt,
     fail,
     setMuted,
-    /** 短时记忆：记一条事件 / 读最近事件 / 读教练最近 5 句 / 读最近 10 轮 */
+    /** 短时记忆：记一条事件 / 发任意事件（规则引擎）/ 读最近事件 / 读教练最近 5 句 / 读最近 10 轮 */
     recordEvent,
+    emitEvent,
     recentEvents,
+    /** 事件总线本体（app.js 的规则引擎订阅它；测试也可以直接 emit） */
+    bus,
     lastCoachLines: () => coachLines.slice(),
     recentTurns: () => dialogue.slice(),
     clearShortTerm() {
       dialogue.length = 0;
       coachLines.length = 0;
-      events.length = 0;
+      bus.clear();
       return emit();
     },
     setCommandCtx(ctx) {

@@ -2281,6 +2281,47 @@ console.log('\n[10] 对话弹幕：#danmakuLayer 在舞台内 / 不挡点击 / z
     /value="0\.8"/.test(rateSel) && /value="1"/.test(rateSel) && /value="1\.5"/.test(rateSel)
     && /ttsRate:\s*1/.test(app));
 
+  /* ---- R1 规则快车道：设置里的「教练话量：少 / 中 / 多」+ 事件总线 / 规则引擎接线 ---- */
+  const volumeSel = /<select id="coachVolumeSel">([\s\S]*?)<\/select>/.exec(html)?.[1] || '';
+  ok('设置里有「教练话量」下拉：low / mid / high 三档，默认 mid（写死在 HTML 的 selected）',
+    /value="low"/.test(volumeSel) && /value="mid"/.test(volumeSel) && /value="high"/.test(volumeSel)
+    && /<option value="mid"[^>]*\bselected\b/.test(volumeSel)
+    && /coachVolume:\s*DEFAULT_COACH_VOLUME/.test(app));
+  ok('「教练话量」三档的文案走 i18n（中英都有，不是写死的中文）',
+    /data-i18n="ui\.coachVolume"/.test(html)
+    && /data-i18n="ui\.coachVolumeLow"/.test(volumeSel)
+    && /data-i18n="ui\.coachVolumeMid"/.test(volumeSel)
+    && /data-i18n="ui\.coachVolumeHigh"/.test(volumeSel)
+    && ['coachVolume', 'coachVolumeLow', 'coachVolumeMid', 'coachVolumeHigh']
+      .every((k) => new RegExp(`\\b${k}:`).test(read('src/locales/zh.js'))
+        && new RegExp(`\\b${k}:`).test(read('src/locales/en.js')))
+    && /data-i18n="settings\.coachVolumeHint"/.test(html));
+  ok('话量只影响规则快车道（存 settings.coachVolume、立刻生效、随设置持久化）',
+    /function applyCoachVolume\(volume\)/.test(app)
+    && /state\.settings\.coachVolume = next;/.test(app)
+    && /saveSettings\(\);/.test(app)
+    && /volumeSel\.addEventListener\('change'/.test(app));
+
+  ok('事件总线 + 规则引擎是**两个独立模块**（纯 JS，不碰 DOM）',
+    /export function createEventBus/.test(read('src/voice/events.js'))
+    && /export function createRuleEngine/.test(read('src/voice/rules.js'))
+    && !/\bdocument\b/.test(read('src/voice/events.js'))
+    && !/\bdocument\b/.test(read('src/voice/rules.js'))
+    && !/\bwindow\b/.test(read('src/voice/events.js'))
+    && !/\bwindow\b/.test(read('src/voice/rules.js')));
+  ok('app.js：同一条总线既给 session（recentEvents）也给规则引擎（订阅 `*`）',
+    /const voiceBus = createEventBus\(\)/.test(app)
+    && /bus:\s*voiceBus/.test(app)
+    && /voiceBus\.on\('\*', runRulesForEvent\)/.test(app)
+    && /const ruleEngine = createRuleEngine\(\{ diag: coachDiag \}\)/.test(app)
+    && /for \(const rule of builtinRules\(\)\) ruleEngine\.add\(rule\)/.test(app));
+  ok('规则命中走**现有**教练通道（voice.onCoachText：弹幕 + TTS + 降级），另开一条路的地方没有',
+    /voice\.onCoachText\(result\.speak\.text, \{ source: 'rule' \}\)/.test(app)
+    && /syncRuleEvents\(now\)/.test(app)
+    && /emitVoiceEvent\('gate-ok'/.test(app)
+    && /emitVoiceEvent\('set-start'/.test(app)
+    && /emitVoiceEvent\('set-complete'/.test(app));
+
   /* ---- 接线：final → 弹幕、教练回复 → 弹幕、partial 只更新最近一句 ---- */
   ok('app.js 用 createDanmaku 接线弹幕层（layer / lastEl / settings）',
     /createDanmaku\(\{/.test(app) && /layer:\s*\$\('danmakuLayer'\)/.test(app)

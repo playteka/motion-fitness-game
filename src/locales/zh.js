@@ -49,6 +49,11 @@ export default {
     ttsSystem: '系统 TTS',
     ttsRate: '语速',
     ttsRateNormal: '1×（正常）',
+    // R1 规则快车道：教练话量三档（少 / 中 / 多）
+    coachVolume: '教练话量',
+    coachVolumeLow: '少（只纠正 + 最后 3 个）',
+    coachVolumeMid: '中（默认）',
+    coachVolumeHigh: '多（再加过半 / 每 5 个）',
     fullscreen: '全屏显示视频框',
     // 画面右下角「正在记录调试数据」的角标：数字 + 单位，鼠标移上去看这句话
     recUnit: '帧已记录',
@@ -983,6 +988,8 @@ export default {
     dialogueGroup: '对话显示与语音',
     dialogueLead: '教练的回答怎么显示：一句一条的弹幕（用户青色、教练薄荷绿），或者原来的两行字幕。',
     ttsHint: '教练说话默认走火山 TTS（本机 /tts/stream 流式代理，边收边播；同一句整段接口只合成一次并缓存）；超过 3 秒或失败会依次降级到整段 / 系统 TTS，不会哑掉。',
+    // R1 规则快车道：教练话量三档（少 = 只纠正 + 最后 3 个；中 = 默认；多 = 再加过半 / 每 5 个）
+    coachVolumeHint: '「话量」只影响**规则快车道**那几句话（报数 / 读秒 / 纠正 / 催促），全在本机算，不联网、不花钱。少 = 只纠正 + 最后 3 个；中 = 默认；多 = 再加过半 + 每 5 个。',
     // 教练声音性别：长期偏好（服务端 MD 的 prefs.voiceGender），只影响朗读音色
     voiceGender: '教练声音',
     voiceFemale: '女声',
@@ -1850,5 +1857,19 @@ export default {
       paused: '已暂停（切回页面自动恢复）',
       error: '出了点问题',
     },
+  },
+
+  /**
+   * R1 规则快车道：内置六条规则的台词（**只在这里定义**；规则表在 src/voice/rules.js）。
+   * 占位符：{n} 次数 / 还剩几个 / 秒数，{cue} 门控的具体口令（status.need.* 同一份文案）。
+   * 改台词只改这里，中英两份要一一对应（tests/test-i18n.mjs 会核对占位符）。
+   */
+  rule: {
+    repEvery5: '{n} 个，稳',
+    lastThree: '还剩 {n} 个',
+    halfway: '一半了，节奏别乱',
+    countdown: '{n}',
+    gateFail2: '{cue}（连着两次没到位，先摆好）',
+    idle8: '继续啊，我等你',
   },
 };

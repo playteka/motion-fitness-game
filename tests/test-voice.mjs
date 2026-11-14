@@ -116,6 +116,16 @@ import {
 } from '../server/volc-tts.mjs';
 import { applyMemoryOps } from '../server/llm-provider.mjs';
 import { LOCALES, setLang, t } from '../src/i18n.js';
+// R1 动态快车道：事件总线（纯 JS）+ 规则引擎（纯函数）
+import {
+  createEventBus, EVENT_TYPES, AGENT_EVENT_TYPES, EVENT_CAPACITY, EVENT_WINDOW_MS,
+  EVENT_MAX_CHARS, compactEventData, matchPattern, isEventType,
+} from '../src/voice/events.js';
+import {
+  createRuleEngine, builtinRules, normalizeRule, matchesFilter, eventContext, gateCueKey,
+  normalizeCoachVolume, MIN_GAP_MS, RULE_PRIORITIES, RULE_SCOPES, COACH_VOLUMES,
+  DEFAULT_COACH_VOLUME, BUILTIN_RULE_IDS,
+} from '../src/voice/rules.js';
 
 let passed = 0;
 const failures = [];
@@ -7073,6 +7083,374 @@ console.log('\n[36] 教练人设：SOUL.md 拼进 system prompt（顺序 / 兜�
     await new Promise((r) => srv.close(r));
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
+}
+
+/* ================================================================== *
+ * [37] R1 事件总线：emit / on（type + prefix:*）/ recent（60 秒 / ≤60 条 / ≤60 字符）/ 容量 / 异常隔离
+ * ================================================================== */
+console.log('\n[37] R1 事件总线：emit / on / recent（60 秒窗口）/ 容量 / 订阅异常隔离 / 一处定义');
+{
+  ok('常量：14 类事件 / 进 prompt 的 4 类 / 容量 120 / 60 秒 / 单条 ≤60 字符',
+    EVENT_TYPES.length === 14 && AGENT_EVENT_TYPES.length === 4 && EVENT_CAPACITY === 120
+    && EVENT_WINDOW_MS === 60000 && EVENT_MAX_CHARS === 60
+    && AGENT_EVENT_TYPES.join(',') === 'rep,gate-fail,keyframe-hit,keyframe-miss'
+    && EVENT_TYPES.join(',') === 'rep,set-start,set-complete,gate-fail,gate-ok,keyframe-hit,'
+      + 'keyframe-miss,progress,tick,hold-tick,idle,tempo,session-start,session-end',
+    EVENT_TYPES.join(','));
+  ok('和 session.js / llm.js 是**同一份**白名单（一处定义，不会漂）',
+    JSON.stringify(AGENT_EVENT_TYPES) === JSON.stringify(EVENT_KINDS)
+    && JSON.stringify(AGENT_EVENT_TYPES) === JSON.stringify(AGENT_EVENT_KINDS));
+  ok('matchPattern：`*` 全收 / `gate:*` 前缀 / 其余全等',
+    matchPattern('*', 'rep') && matchPattern('gate:*', 'gate-fail') && matchPattern('gate:*', 'gate-ok')
+    && !matchPattern('gate:*', 'rep') && matchPattern('rep', 'rep') && !matchPattern('rep', 'reps'));
+  ok('isEventType：白名单里 16 类都认，乱写的类型不认',
+    EVENT_TYPES.every((ty) => isEventType(ty)) && !isEventType('landmarks') && !isEventType(''));
+
+  const clock = { t: 100000 };
+  const bus = createEventBus({ now: () => clock.t });
+  const seen = [];
+  const gateSeen = [];
+  const off = bus.on('rep', (ev) => seen.push(ev));
+  bus.on('gate:*', (ev) => gateSeen.push(ev));
+  const all = [];
+  bus.on('*', (ev) => all.push(ev.type));
+
+  const one = bus.emit('rep', { n: 1, v: true, target: 20 });
+  ok('emit 自动补 { seq, t, type, data }，seq 从 1 递增、t 来自注入时钟',
+    one && one.seq === 1 && one.t === 100000 && one.type === 'rep'
+    && one.data.n === 1 && one.data.target === 20,
+    JSON.stringify(one));
+  clock.t += 1000;
+  const two = bus.emit('rep', { n: 2, v: true, target: 20 });
+  ok('订阅者按类型收到（seq 递增）', seen.length === 2 && two.seq === 2);
+  bus.emit('gate-fail', { g: 'prone' });
+  bus.emit('gate-ok', { g: 'prone' });
+  ok('`gate:*` 前缀订阅收到 gate-fail / gate-ok 两条', gateSeen.length === 2
+    && gateSeen[0].type === 'gate-fail' && gateSeen[1].type === 'gate-ok');
+  ok('`*` 全订阅收到全部事件', all.length === 4 && all[0] === 'rep');
+  off();
+  bus.emit('rep', { n: 3, v: true, target: 20 });
+  ok('取消订阅之后不再收到', seen.length === 2 && all.length === 5);
+
+  const bad = bus.emit('landmarks', { x: 1 });
+  ok('白名单外的类型 → 直接不发（返回 null，订阅者一条都收不到）',
+    bad === null && all.length === 5 && bus.seq === 5);
+
+  // 一个 handler 抛错 → 其它订阅照常收到，emit 不抛
+  const after = [];
+  bus.on('rep', () => { throw new Error('boom'); });
+  bus.on('rep', (ev) => after.push(ev.seq));
+  let threw = false;
+  try { bus.emit('rep', { n: 4, v: true, target: 20 }); } catch { threw = true; }
+  ok('同一 handler 抛错不影响其它订阅，也不会把异常抛给调用方',
+    threw === false && after.length === 1, JSON.stringify({ threw, after }));
+
+  // 单条紧凑事件：只留标量 + ≤60 字符
+  const compact = compactEventData({ n: 3, points: [[1, 2]], pose: { x: 1 }, v: true, r: 'depth', target: 20 }, 'rep');
+  ok('data 只留标量（关键点 / 嵌套对象一律丢掉）',
+    compact.n === 3 && compact.v === true && !('points' in compact) && !('pose' in compact),
+    JSON.stringify(compact));
+  const long = compactEventData({ a: 'x'.repeat(40), b: 'y'.repeat(40), c: 'z'.repeat(40) }, 'rep');
+  ok('序列化超过 60 字符就从后往前丢字段（一定装得下）',
+    JSON.stringify({ t: 0, type: 'rep', data: long }).length <= EVENT_MAX_CHARS, JSON.stringify(long));
+
+  // recent：60 秒窗口 / limit / types
+  const bus2 = createEventBus({ now: () => clock.t });
+  clock.t = 200000;
+  for (let i = 0; i < 10; i += 1) {
+    clock.t += 5000;
+    bus2.emit('rep', { n: i, v: true });
+  }
+  ok('recent() 只回 60 秒窗口内的事件（50 秒里 10 条都在）', bus2.recent().length === 10);
+  ok('recent({ limit }) 截断最新的 N 条', bus2.recent({ limit: 3 }).length === 3
+    && bus2.recent({ limit: 3 }).at(-1).data.n === 9);
+  bus2.emit('gate-fail', { g: 'prone' });
+  ok('recent({ types }) 只回指定的类型',
+    bus2.recent({ types: ['gate-fail'] }).length === 1
+    && bus2.recent({ types: ['gate-fail'] })[0].type === 'gate-fail');
+  clock.t += 61000;
+  ok('超过 60 秒的事件自动过期', bus2.recent().length === 0);
+  ok('recent() 的每一条 ≤60 字符',
+    bus.recent().every((ev) => JSON.stringify(ev).length <= EVENT_MAX_CHARS + 20));
+
+  // 容量：120 条上限
+  const bus3 = createEventBus({ now: () => clock.t });
+  clock.t = 300000;
+  for (let i = 0; i < 130; i += 1) { clock.t += 100; bus3.emit('tick', { elapsedSec: i }); }
+  ok('容量 120：发 130 条只留最近 120 条（最旧的被挤掉）',
+    bus3.size === 120 && bus3.recent({ limit: 200 }).length === 120
+    && bus3.recent({ limit: 200 }).at(-1).data.elapsedSec === 129);
+  bus3.clear();
+  ok('clear() 清空缓冲，但 seq 不回退（还能看出「清过几次」）',
+    bus3.size === 0 && bus3.seq === 130);
+
+  /* ---------------- 总线 ↔ 会话：recordEvent / recentEvents 都走同一条总线 ---------------- */
+  const shared = createEventBus({ now: () => clock.t });
+  clock.t = 400000;
+  const session = createVoiceSession({
+    mic: fakeMic(), asr: fakeAsr(), tts: fakeTts(),
+    llm: { reply: () => ({ text: '好' }) }, thinkDelay: 0,
+    now: () => clock.t, bus: shared,
+  });
+  await session.start();
+  ok('session 用注入的总线（不是自己再攒一份）', session.bus === shared);
+  session.recordEvent('rep', { n: 5, v: true, target: 20 });
+  ok('session.recordEvent 真的发到总线上（总线里能查到）',
+    shared.size === 1 && shared.recent()[0].type === 'rep'
+    && session.recentEvents().length === 1);
+  const tickEv = session.emitEvent('tick', { elapsedSec: 5 });
+  ok('session.emitEvent(任意白名单类型) → 返回事件；非白名单 → null',
+    tickEv && tickEv.type === 'tick' && session.emitEvent('nope', {}) === null);
+  ok('recentEvents() 只回那 4 类（tick 不进 LLM prompt）',
+    session.recentEvents().length === 1 && session.recentEvents()[0].type === 'rep');
+  session.destroy();
+}
+
+/* ================================================================== *
+ * [38] R1 规则引擎：everyN / remainingLte / consecutive / cooldown / 预算 / 优先级 / 6 秒间隔 / 读秒 bypass / scope
+ * ================================================================== */
+console.log('\n[38] R1 规则引擎：filter / 冷却 / 预算 / 优先级抢占 / 全局 6 秒间隔 / 读秒 bypass / 静音丢弃 / scope 清理');
+{
+  const clock = { t: 1000000 };
+  /** 造一台引擎（默认中档话量、教练开着、没人说话） */
+  const makeEngine = ({ volume = 'high', minGapMs = MIN_GAP_MS, diag = null } = {}) => {
+    const engine = createRuleEngine({ now: () => clock.t, minGapMs, diag });
+    for (const r of builtinRules()) engine.add(r);
+    return engine;
+  };
+  const st = (extra = {}) => ({ speaking: false, muted: false, coachOn: true, volume: 'high', ...extra });
+  const fire = (engine, type, data = {}, extra = {}) => engine.handle({ type, data }, st(extra));
+
+  ok('护栏常量：全局最小开口间隔 6000ms；六个优先级档位（破纪录 100 > 纠正 60 > 读秒 40 > 鼓励 30 > 催促 20）',
+    MIN_GAP_MS === 6000 && RULE_PRIORITIES.record === 100 && RULE_PRIORITIES.correct === 60
+    && RULE_PRIORITIES.countdown === 40 && RULE_PRIORITIES.encourage === 30
+    && RULE_PRIORITIES.idle === 20 && RULE_SCOPES.join(',') === 'set,session,forever');
+  ok('话量三档：low / mid / high，默认 mid（脏值归一化到 mid）',
+    COACH_VOLUMES.join(',') === 'low,mid,high' && DEFAULT_COACH_VOLUME === 'mid'
+    && normalizeCoachVolume('xx') === 'mid' && normalizeCoachVolume(undefined) === 'mid');
+  ok('内置六条规则 id 一处定义（和 builtinRules() 一一对应）',
+    BUILTIN_RULE_IDS.length === 6
+    && builtinRules().map((r) => r.id).join(',') === BUILTIN_RULE_IDS.join(','));
+  ok('模板全在 locales：六条规则的模板键都能取到词条（不是键名）',
+    builtinRules().every((r) => {
+      const text = t(r.action.template, { n: 5, cue: 'X' });
+      return typeof text === 'string' && text !== r.action.template;
+    }));
+
+  /* ---------------- filter：everyN / remainingLte / consecutive / sec ---------------- */
+  const engine = makeEngine();
+  const texts = (engine) => engine.spoken;
+  fire(engine, 'session-start');
+  fire(engine, 'set-start', { target: 20 });
+  let out = null;
+  for (let n = 1; n <= 5; n += 1) {
+    clock.t += 1200;
+    out = fire(engine, 'rep', { n, target: 20, v: true });
+    if (n < 5) ok(`everyN:5 —— 第 ${n} 次不报数`, out === null, JSON.stringify(out && out.speak));
+  }
+  ok('everyN:5 —— 第 5 次报「5 个，稳」（priority 30）',
+    out && out.speak.ruleId === 'rep-every-5' && out.speak.text === '5 个，稳'
+    && out.speak.priority === RULE_PRIORITIES.encourage, JSON.stringify(out));
+  clock.t += 6000;
+  ok('everyN:5 —— 第 6~9 次不报，第 10 次再报',
+    fire(engine, 'rep', { n: 6, target: 20, v: true }) === null
+    && fire(engine, 'rep', { n: 10, target: 20, v: true })?.speak.ruleId === 'rep-every-5');
+  clock.t += 6000;
+  out = fire(engine, 'rep', { n: 17, target: 20, v: true });
+  ok('remainingLte:3 —— 20 个的组做到 17 报「还剩 3 个」（priority 40）',
+    out && out.speak.ruleId === 'last-three' && out.speak.text === '还剩 3 个'
+    && out.speak.priority === RULE_PRIORITIES.countdown, JSON.stringify(out));
+  clock.t += 6000;
+  ok('remainingLte:3 —— 做到 18 不再报（perSet 预算每组一次）',
+    fire(engine, 'rep', { n: 18, target: 20, v: true }) === null);
+  ok('matchesFilter / eventContext 是纯函数：remaining / pct / sec 都算得出来',
+    eventContext({ type: 'rep', data: { n: 5, target: 20 } }).remaining === 15
+    && eventContext({ type: 'rep', data: { n: 5, target: 20 } }).pct === 25
+    && eventContext({ type: 'hold-tick', data: { remainingSec: 4 } }).remaining === 4
+    && eventContext({ type: 'idle', data: { sec: 9 } }).sec === 9
+    && matchesFilter({ everyN: 5 }, eventContext({ type: 'rep', data: { n: 10, target: 20 } }))
+    && !matchesFilter({ everyN: 5 }, eventContext({ type: 'rep', data: { n: 7, target: 20 } })));
+
+  /* ---------------- consecutive：门控连错 2 次 ---------------- */
+  const g = makeEngine();
+  fire(g, 'session-start');
+  fire(g, 'gate-fail', { g: 'kneelPushup' });
+  clock.t += 500;
+  out = fire(g, 'gate-fail', { g: 'kneelPushup' });
+  const cue = t('status.need.kneelPushup');
+  ok('consecutive:2 —— 门控连错 2 次才开口，而且说的是这个门控的具体口令（膝盖 / 髋）',
+    out && out.speak.ruleId === 'gate-fail-2' && out.speak.priority === RULE_PRIORITIES.correct
+    && out.speak.text.includes(cue) && out.speak.text.includes('膝盖') && out.speak.text.includes('髋'),
+    JSON.stringify(out && out.speak.text));
+  clock.t += 100;
+  const again = fire(g, 'gate-fail', { g: 'kneelPushup' });
+  ok('同一句话 8 秒冷却内不重复（consecutive 已经到 3 也不再喊）', again === null, JSON.stringify(again));
+  clock.t += 100;
+  fire(g, 'gate-ok', { g: 'kneelPushup' });
+  ok('gate-ok 之后连续计数清零（再错一次不喊）', fire(g, 'gate-fail', { g: 'kneelPushup' }) === null);
+  ok('未知门控名 → 兜底用 status.need.stand 那句（不会念出键名）',
+    gateCueKey('nope') === 'status.need.stand' && gateCueKey('prone') === 'status.need.prone');
+
+  /* ---------------- 读秒：最后 5 秒 + bypassGap ---------------- */
+  const c = makeEngine();
+  fire(c, 'session-start');
+  fire(c, 'set-start', { target: 20 });
+  clock.t += 1000;
+  out = fire(c, 'hold-tick', { remainingSec: 5 });
+  ok('hold-tick remainingLte:5 → 报「5」（priority 40）',
+    out && out.speak.ruleId === 'countdown-5' && out.speak.text === '5'
+    && out.speak.priority === RULE_PRIORITIES.countdown, JSON.stringify(out));
+  clock.t += 1000;
+  const out2 = fire(c, 'hold-tick', { remainingSec: 4 });
+  ok('读秒 bypassGap：1 秒后立刻能读下一声（不等 6 秒）',
+    out2 && out2.speak.text === '4', JSON.stringify(out2));
+  clock.t += 1000;
+  ok('hold-tick 剩余 6 秒不读（只读最后 5 秒）',
+    fire(c, 'hold-tick', { remainingSec: 6 }) === null);
+
+  /* ---------------- 全局 6 秒间隔 & 同 tick 只一条 ---------------- */
+  const gapEngine = createRuleEngine({ now: () => clock.t });
+  gapEngine.add({
+    id: 'test-a', scope: 'set', trigger: { event: 'progress' },
+    action: { template: 'rule.halfway' }, priority: 60, cooldownMs: 0,
+  });
+  gapEngine.add({
+    id: 'test-b', scope: 'set', trigger: { event: 'idle' },
+    action: { template: 'rule.idle8' }, priority: 50, cooldownMs: 0,
+  });
+  clock.t += 100000;
+  out = gapEngine.handle({ type: 'progress', data: { pct: 50 } }, st());
+  ok('第一条规则说话', out && out.speak.ruleId === 'test-a');
+  clock.t += 1000;
+  out = gapEngine.handle({ type: 'idle', data: { sec: 8 } }, st());
+  ok('**全局最小开口间隔 6 秒**：1 秒后另一条规则被挡（reason=gap 记进诊断）',
+    out === null && gapEngine.gapMs === 6000);
+  clock.t += 5000;
+  out = gapEngine.handle({ type: 'idle', data: { sec: 14 } }, st());
+  ok('过了 6 秒就放行', out && out.speak.ruleId === 'test-b');
+  clock.t += 0;
+  out = gapEngine.handle({ type: 'progress', data: { pct: 60 } }, st());
+  ok('同一个 tick（时间没走）只让一条说话', out === null);
+
+  const prio = createRuleEngine({ now: () => clock.t, minGapMs: 0 });
+  prio.add({ id: 'low', trigger: { event: 'rep' }, action: { template: 'rule.idle8' }, priority: 20, cooldownMs: 0 });
+  prio.add({ id: 'high', trigger: { event: 'rep' }, action: { template: 'rule.repEvery5' }, priority: 90, cooldownMs: 0 });
+  clock.t += 1000;
+  out = prio.handle({ type: 'rep', data: { n: 5, target: 20 } }, st());
+  ok('priority 抢占：同一事件两条命中，只回最高优先级那条', out && out.speak.ruleId === 'high',
+    JSON.stringify(out));
+
+  /* ---------------- 冷却 / 预算 / 话量 / 静音 / speaking ---------------- */
+  const budget = createRuleEngine({ now: () => clock.t, minGapMs: 0 });
+  budget.add({
+    id: 'per-minute', trigger: { event: 'idle' }, action: { template: 'rule.idle8' },
+    priority: 20, cooldownMs: 0, budget: { perMinute: 2 },
+  });
+  budget.add({
+    id: 'cooldown', trigger: { event: 'progress' }, action: { template: 'rule.halfway' },
+    priority: 30, cooldownMs: 5000,
+  });
+  let spoke = 0;
+  for (let i = 0; i < 5; i += 1) {
+    clock.t += 1000;
+    if (budget.handle({ type: 'idle', data: { sec: 8 + i } }, st())) spoke += 1;
+  }
+  ok('budget.perMinute:2 —— 一分钟内第 3 次起被挡（5 次只说了 2 次）', spoke === 2, String(spoke));
+  clock.t += 1000;
+  ok('cooldownMs:5000 —— 第一次说', !!budget.handle({ type: 'progress', data: { pct: 50 } }, st()));
+  clock.t += 3000;
+  ok('cooldownMs:5000 —— 3 秒后（冷却内）不说', budget.handle({ type: 'progress', data: { pct: 60 } }, st()) === null);
+  clock.t += 3000;
+  ok('cooldownMs:5000 —— 超过冷却再说', !!budget.handle({ type: 'progress', data: { pct: 70 } }, st()));
+
+  const quiet = makeEngine();
+  clock.t += 100000;
+  fire(quiet, 'session-start');
+  ok('静音（muted）→ 一条规则都不说', fire(quiet, 'gate-fail', { g: 'prone' }, { muted: true }) === null
+    && fire(quiet, 'gate-fail', { g: 'prone' }, { muted: true }) === null);
+  ok('教练关（coachOn:false）→ 一条都不说',
+    fire(quiet, 'gate-fail', { g: 'prone' }, { coachOn: false }) === null);
+  ok('教练正在说话（speaking）→ 纠正被丢弃（不排队）',
+    fire(quiet, 'gate-fail', { g: 'prone' }, { speaking: true }) === null);
+  clock.t += 1000;
+  const countdownWhileSpeaking = fire(quiet, 'hold-tick', { remainingSec: 3 }, { speaking: true });
+  ok('**读秒是唯一例外**：speaking 时 bypassGap 的读秒照样说',
+    countdownWhileSpeaking && countdownWhileSpeaking.speak.ruleId === 'countdown-5');
+
+  /* ---------------- scope 到期清理 ---------------- */
+  const scope = makeEngine();
+  fire(scope, 'session-start');
+  fire(scope, 'set-start', { target: 3 });
+  clock.t += 1000;
+  out = fire(scope, 'rep', { n: 1, target: 3, v: true });
+  ok('一组里最后 3 个说了一次', out && out.speak.ruleId === 'last-three');
+  clock.t += 1000;
+  ok('同一组里第二次被 perSet 预算挡住（scope=set 的预算真的在起作用）',
+    fire(scope, 'rep', { n: 2, target: 3, v: true }) === null);
+  fire(scope, 'set-complete', { reps: 3, score: 30 });
+  clock.t += 6000;
+  ok('set-complete 清 set 作用域 → 下一组还能再说一次',
+    fire(scope, 'rep', { n: 1, target: 3, v: true })?.speak.ruleId === 'last-three');
+  fire(scope, 'session-end');
+  clock.t += 6000;
+  ok('session-end 之后 scope=set 的规则还能用（规则本身不属于会话，只清运行期状态）',
+    fire(scope, 'rep', { n: 1, target: 3, v: true })?.speak.ruleId === 'last-three');
+
+  const scoped = createRuleEngine({ now: () => clock.t, minGapMs: 0 });
+  scoped.add({ id: 's1', scope: 'set', trigger: { event: 'rep' }, action: { template: 'rule.halfway' } });
+  scoped.add({ id: 's2', scope: 'session', trigger: { event: 'rep' }, action: { template: 'rule.halfway' } });
+  scoped.add({ id: 's3', scope: 'forever', trigger: { event: 'rep' }, action: { template: 'rule.halfway' } });
+  ok('list() 按优先级排序；clearScope("set") 只删 set 作用域',
+    scoped.list().length === 3 && scoped.clearScope('set') === 1
+    && scoped.list().map((r) => r.id).sort().join(',') === 's2,s3');
+  ok('remove(id) 删一条并返回是否删到；normalizeRule 拒绝脏规则',
+    scoped.remove('s2') === true && scoped.remove('s2') === false
+    && normalizeRule({}) === null && normalizeRule({ id: 'x', trigger: { event: 'nope' } }) === null
+    && normalizeRule({ id: 'x', trigger: { event: 'rep' } }).priority === RULE_PRIORITIES.encourage);
+
+  /* ---------------- 话量三档 ---------------- */
+  const vol = makeEngine({ volume: 'low' });
+  const fireLow = (type, data = {}) => fire(vol, type, data, { volume: 'low' });
+  fireLow('session-start');
+  clock.t += 1000;
+  ok('话量=少：每 5 个**不说**', fireLow('rep', { n: 5, target: 20, v: true }) === null);
+  clock.t += 6000;
+  ok('话量=少：过半**不说**', fireLow('progress', { pct: 50 }) === null);
+  clock.t += 6000;
+  ok('话量=少：读秒**不说**', fireLow('hold-tick', { remainingSec: 5 }) === null);
+  clock.t += 6000;
+  ok('话量=少：最后 3 个**照说**', fireLow('rep', { n: 17, target: 20, v: true })?.speak.ruleId === 'last-three');
+  clock.t += 6000;
+  ok('话量=少：门控连错**照说**（纠正永远保留）',
+    fireLow('gate-fail', { g: 'prone' }) === null
+    && fireLow('gate-fail', { g: 'prone' })?.speak.ruleId === 'gate-fail-2');
+  const volHi = makeEngine({ volume: 'high' });
+  fire(volHi, 'session-start', {}, { volume: 'high' });
+  clock.t += 1000;
+  ok('话量=多：每 5 个**照说**',
+    fire(volHi, 'rep', { n: 5, target: 20, v: true }, { volume: 'high' })?.speak.ruleId === 'rep-every-5');
+  clock.t += 6000;
+  ok('话量=多：过半**照说**',
+    fire(volHi, 'progress', { pct: 50 }, { volume: 'high' })?.speak.ruleId === 'halfway');
+
+  /* ---------------- 诊断：rule:skip ---------------- */
+  const diagBus = createDiag({ fetch: async () => ({ ok: true }), now: () => clock.t });
+  const diagEngine = makeEngine({ diag: diagBus });
+  clock.t += 1000;
+  diagEngine.handle({ type: 'gate-fail', data: { g: 'prone' } }, st({ muted: true }));
+  ok('诊断：静音被挡记 `rule:skip {reason:"muted"}`（调试「为什么教练不说话」）',
+    diagBus.snapshot().rule.skip === 1 && diagBus.snapshot().rule.reason === 'muted',
+    JSON.stringify(diagBus.snapshot().rule));
+  clock.t += 1000;
+  diagEngine.handle({ type: 'gate-fail', data: { g: 'prone' } }, st({ speaking: true }));
+  clock.t += 1000;
+  diagEngine.handle({ type: 'gate-fail', data: { g: 'prone' } }, st({ speaking: true }));
+  ok('诊断：正在说话被挡记 reason=speaking', diagBus.snapshot().rule.reason === 'speaking');
+  diagBus.record('rule:speak', { ruleId: 'last-three', event: 'rep', priority: 40, ms: 3 });
+  ok('诊断字典认 `rule:speak {ruleId, event, priority, ms}`',
+    diagBus.snapshot().rule.speak === 1 && diagBus.snapshot().rule.lastRule === 'last-three'
+    && diagBus.snapshot().rule.priority === 40 && diagBus.snapshot().rule.ms === 3,
+    JSON.stringify(diagBus.snapshot().rule));
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

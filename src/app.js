@@ -52,6 +52,12 @@ import { createSelfTest } from './voice/selftest.js';
 import { COMMANDS, commandHelpRows } from './voice/commands.js';
 // P3.3 自由对话：POST /llm 的客户端（密钥在服务端；这里只有同源的 /llm）
 import { createLlmClient, buildAgentContext } from './voice/llm.js';
+// R1 动态快车道：事件总线（一处定义的事件流）+ 规则引擎（确定性判断，**不发请求、不花钱**）
+import { createEventBus } from './voice/events.js';
+import {
+  createRuleEngine, builtinRules, normalizeCoachVolume, COACH_VOLUMES,
+  DEFAULT_COACH_VOLUME, MIN_GAP_MS,
+} from './voice/rules.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -158,6 +164,14 @@ const DEFAULT_SETTINGS = {
    * 适合「不想花钱 / 不想把话发到云端」的用户。
    */
   freeChat: true,
+  /**
+   * 教练话量（R1 规则快车道）：'low' 少 / 'mid' 中（默认）/ 'high' 多。
+   * 只影响**规则**那几句话（报数 / 读秒 / 纠正 / 催促），全在本机算，不联网。
+   *   low  = 纠正（门控连错）+ 最后 3 个；
+   *   mid  = 再加最后 5 秒读秒 + 8 秒没动的催促；
+   *   high = 再加过半 + 每 5 个报数。见 src/voice/rules.js 的 builtinRules()。
+   */
+  coachVolume: DEFAULT_COACH_VOLUME,
 };
 
 const REP_TARGETS = [8, 12, 15, 20, 30];
@@ -325,6 +339,13 @@ const state = {
   // ---- 计时类读秒（每 5 秒播报一次）----
   holdCountNext: 5,      // 下一个要读的秒数（5 / 10 / 15 …）
   holdCountAt: 0,        // 上一次读秒的时刻（用来让要领语音避让）
+  /* ---- R1 规则快车道：事件发射的去重游标（每帧循环里用，避免同一秒刷屏） ---- */
+  lastProgressPct: -1,   // 上一次发 progress 的整数百分比
+  lastTickSec: -1,       // 上一次发 tick 的整秒（每 5 秒一发）
+  lastHoldLeftSec: -1,   // 上一次发 hold-tick 的剩余秒（只在最后 5 秒发）
+  lastIdleSec: -1,       // 上一次发 idle 的秒数（每秒一发，8 秒没动就催）
+  lastActivityAt: 0,     // 上一次「有动作」的时刻（计次 / 开始一组；8 秒没动就看它）
+  tempoAt: 0,            // 上一次发 tempo 的时刻（每 10 秒一发）
   // ---- AI 语音教练（P3.0 基座）----
   voice: null,           // session.snapshot() 的最近一份（只在 coach.js 里渲染，app 不直接改）
 };
@@ -505,6 +526,70 @@ const voiceLlm = {
   },
 };
 
+/**
+ * ---------------- R1 动态快车道：事件总线 + 规则引擎 ----------------
+ *
+ * 用户原话：「除了命令快车道，还应该有**动态快车道**：用户要求每 5 秒读秒，
+ * 系统就订阅读秒事件，到点直接 TTS，**不请求 LLM**。」
+ *
+ * 三条通道各管一段（判断顺序就是下面的顺序）：
+ *   ① 命令快车道 — 说「暂停」「设成 30 次」→ 直接执行（不联网）；
+ *   ② 规则快车道 — 计次 / 门控 / 读秒 / 8 秒没动…→ 事件总线 → 规则引擎 → 直接 TTS（**R1，本文件**）；
+ *   ③ LLM 环路 — 其余的话 → POST /llm（花钱；R1 不碰）。
+ *
+ * 这里只做接线：识别结果 → `emitVoiceEvent()`；规则命中 → 现有 `voice.onCoachText()`（弹幕 + TTS）。
+ * 事件的**口径**在 src/voice/events.js、规则的**口径**在 src/voice/rules.js，这里不另定义一份。
+ */
+const voiceBus = createEventBus();
+
+/** 规则引擎（诊断也接进来：`rule:skip {reason}` 是「为什么教练不说话」的答案） */
+const ruleEngine = createRuleEngine({ diag: coachDiag });
+for (const rule of builtinRules()) ruleEngine.add(rule);
+
+/** 规则引擎要的那份只读状态（教练在说话 / 静音 / 关掉 / 话量） */
+function ruleState() {
+  const muted = !!coachMuted || !!voice.muted;
+  const coachOn = !!state.settings.coachEnabled && !!voice.enabled;
+  return {
+    speaking: voice.state === 'speaking',
+    muted,
+    coachOn,
+    volume: normalizeCoachVolume(state.settings.coachVolume),
+    tone: state.memory?.prefs?.tone || '',
+  };
+}
+
+/**
+ * 一条事件 → 规则引擎 → 有话说就借**现有**的教练通道念出来（弹幕 + TTS + 降级都在那条路上）。
+ * @returns {{speak?:object}|null} 规则引擎的原始结果（测试用）
+ */
+function runRulesForEvent(event) {
+  // 「最近一次有动作」在**判断之前**更新：每一帧计次都算活动（不管这句话有没有说出来），
+  // 否则「8 秒没动」会在一组做得正起劲的时候误报。
+  if (event.type === 'rep') state.lastActivityAt = Date.now();
+  const result = ruleEngine.handle(event, ruleState());
+  if (!result || !result.speak) return result;
+  const started = Date.now();
+  voice.onCoachText(result.speak.text, { source: 'rule' });
+  try {
+    coachDiag?.record?.('rule:speak', {
+      ruleId: result.speak.ruleId,
+      event: event.type,
+      priority: result.speak.priority,
+      ms: Math.max(0, Date.now() - started),
+    });
+  } catch { /* 诊断失败不该影响说话 */ }
+  return result;
+}
+
+// 总线是唯一入口：谁发事件都走同一条判断链（session.recordEvent / emitEvent 也一样）
+voiceBus.on('*', runRulesForEvent);
+
+/** 发一条规则事件（不传总线白名单的类型 → 不发，返回 null） */
+function emitVoiceEvent(type, data = {}) {
+  return voice.emitEvent(type, data);
+}
+
 const voice = createVoiceSession({
   mic: coachMic,
   asr: coachAsr,
@@ -517,6 +602,8 @@ const voice = createVoiceSession({
   diag: coachDiag,
   // P3.4：每个 partial（含教练说话时）都喂给插话打断；音量从 VU 实时读
   onInterim: (text) => bargeIn.onPartial(text, { level: coach.vuLevel }),
+  // R1：规则引擎订阅**同一条**总线（session 的 recentEvents 也从它读，事件只有一份）
+  bus: voiceBus,
 });
 /** 第一次打开才说自我介绍（同一次页面生命周期里不重复） */
 let coachIntroSaid = false;
@@ -698,6 +785,20 @@ function applyTtsSettings() {
   coachTts.setSource(state.settings.ttsSource);
   coachTts.setRate(state.settings.ttsRate);
   return { source: coachTts.source, rate: coachTts.rate };
+}
+
+/**
+ * 教练话量（R1 规则快车道）：少 / 中 / 多 → `settings.coachVolume`，立刻生效并持久化。
+ * 只影响规则快车道（报数 / 读秒 / 纠正 / 催促），不影响命令快车道和 LLM。
+ * @returns {'low'|'mid'|'high'} 归一化后的档位
+ */
+function applyCoachVolume(volume) {
+  const next = normalizeCoachVolume(volume);
+  state.settings.coachVolume = next;
+  saveSettings();
+  const sel = $('coachVolumeSel');
+  if (sel && sel.value !== next) sel.value = next;
+  return next;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1528,6 +1629,8 @@ function showHome({ syncRoute = true } = {}) {
   exitFullscreen();
   // 回首页 = 这次训练结束：下一次「开始体感训练」可以重新 greeted 一次（同一次训练里切动作不重复）
   resetSessionGreet();
+  // R1：一次训练结束 → 事件（规则引擎清 session 作用域；`set` 也一起清，免得下一组还被上一组限流）
+  emitVoiceEvent('session-end');
   // 主页上不校准也不计数：摄像头可以留着预热，但不能在浏览动作时偷偷开始一组
   state.homeMode = true;
   state.session = 'idle';
@@ -5071,6 +5174,8 @@ function startGestureMode() {
   // 会话开始问候：只有这条「点开始体感训练」的路径会 arm；从首页进来才重置「这次已经问候过」。
   // 同一次训练里反复调用（例如语音说「开始深蹲」）不会重复问候。
   if (state.homeMode) sessionGreetDone = false;
+  // R1：一次训练开始 → 事件（规则引擎清掉上一次训练残留的冷却 / 预算）
+  emitVoiceEvent('session-start');
   sessionGreetArmed = true;
   // ⚠️ 全屏必须在**这个点击手势的同步执行栈里**申请：先切视图（#stage 得可见）→ 申请全屏
   // → 再谈权限 / 开摄像头。一旦先 await 了 getUserMedia（可能弹授权框），手势就消耗掉了。
@@ -6324,6 +6429,9 @@ function beginCountdown() {
   state.lastTick = performance.now();
   // 新的一组：门控事件从「通过」重新算（否则上一组结尾的 false 会吞掉这一组的第一次失败）
   state.lastGateOk = true;
+  // R1：一组开始 → 事件（规则引擎据此清掉上一组的冷却 / 预算 / 连错计数）
+  resetRuleCursors();
+  emitVoiceEvent('set-start', { target: Math.max(0, Math.round(Number(state.target) || 0)) });
   /**
    * 中时记忆 · 每次进训练就更新一次 lastSession（localStorage）：
    * 哪怕这一组最后没做完，下次「继续上次」也知道是在哪个动作 / 第几组。
@@ -6443,6 +6551,8 @@ function stopSession(reason = 'user') {
   const timed = !!ex.timed;
   const value = isHold ? Math.round(det.holdMs / 1000) : det.validReps;
   const score = det.score;
+  // R1：一组结束 → 事件（规则引擎清 set 作用域的冷却 / 预算）
+  emitVoiceEvent('set-complete', { reps: Math.max(0, Math.round(Number(value) || 0)), score: Math.max(0, Math.round(Number(score) || 0)) });
   const steps = det.stepStatus();
   const doneCount = steps.filter((s) => s.done).length;
   const hasWork = value > 0 || det.partialReps > 0 || score > 0;
@@ -6967,6 +7077,8 @@ function handleEvents(events, now = performance.now()) {
           n: ev.valid ? det.validReps : det.partialReps,
           v: !!ev.valid,
           r: ev.reason || '',
+          // R1：规则要算「还剩几个」/ 进度，所以把这一组的目标一起记（标量，≤4 个字段）
+          target: Math.max(0, Math.round(Number(state.target) || 0)),
         });
         const steps = typeof det.stepStatus === 'function' ? det.stepStatus() : [];
         const missed = steps.filter((s) => !s.done);
@@ -7095,6 +7207,88 @@ function onGoalReached() {
 }
 
 /* ------------------------------------------------------------------ *
+ * R1 规则快车道：把一个「组内状态」翻译成事件
+ *
+ * 用户原话：「用户要求每 5 秒读秒，系统就订阅读秒事件，到点直接 TTS，不请求 LLM。」
+ * 这里就是那个「到点」：**每帧**把识别器 / 计时器的事实发成事件（去重后），规则引擎自己判断要不要开口。
+ * 事件类型 / 数据形状都是 src/voice/events.js 里写好的那 14 个，这里不新造信号。
+ *
+ * 发频率（都做了去重，不会每帧刷屏）：
+ *   progress   整数百分比变了才发（计数类按次数、计时类按秒）
+ *   tick       **每 5 秒**一发（`elapsedSec` 是 0/5/10…）
+ *   hold-tick  **只在最后 5 秒**每秒一发（`remainingSec` = 5…1；读秒规则只认 ≤5）
+ *   idle       每秒一发（`sec` = 距上一次计次多少秒；规则只认 ≥8）
+ *   tempo      每 10 秒一发（每分钟次数，R1 没有规则用它，先留着给 R3 的 `add_rule`）
+ * ------------------------------------------------------------------ */
+
+/** 一组结束 / 开始一组时把「去重游标」清零（下一组从 0% / 0 秒重新算） */
+function resetRuleCursors(now = performance.now()) {
+  state.lastProgressPct = -1;
+  state.lastTickSec = -1;
+  state.lastHoldLeftSec = -1;
+  state.lastIdleSec = -1;
+  state.lastActivityAt = Date.now();
+  state.tempoAt = now;
+}
+
+/**
+ * 每帧调用：把当前这一组的进度 / 计时 / 静止时间发成事件。
+ * 只在 `running` 时发（暂停 / 校准 / 主页都不发，免得规则在用户没练的时候开口）。
+ */
+function syncRuleEvents(now = performance.now()) {
+  const det = state.detector;
+  const ex = localizedExercise(state.exerciseId);
+  if (!det || !ex || state.session !== 'running') return;
+  const target = Math.max(1, Number(state.target) || 1);
+  const isTimed = !!ex.timed;
+  const isHold = ex.kind === 'hold';
+  const clock = Date.now();
+
+  // 进度百分比（计时类按秒、计数类按有效次数）
+  const done = (isTimed || isHold) ? Math.floor(state.elapsedMs / 1000) : (Number(det.validReps) || 0);
+  const pct = Math.max(0, Math.min(100, Math.round((done / target) * 100)));
+  if (pct !== state.lastProgressPct) {
+    state.lastProgressPct = pct;
+    emitVoiceEvent('progress', { pct });
+  }
+
+  // 计时：每 5 秒一发 tick（不是每帧）
+  const elapsedSec = Math.floor(state.elapsedMs / 1000);
+  if (elapsedSec !== state.lastTickSec && elapsedSec % 5 === 0) {
+    state.lastTickSec = elapsedSec;
+    emitVoiceEvent('tick', { elapsedSec });
+  }
+
+  // 读秒：只在最后 5 秒每秒一发（`{n}` = 还剩几秒）
+  if (isTimed || isHold) {
+    const leftMs = isHold ? (target * 1000 - (Number(det.holdMs) || 0)) : (target * 1000 - state.elapsedMs);
+    const left = Math.max(0, Math.ceil(leftMs / 1000));
+    if (left <= 5 && left > 0 && left !== state.lastHoldLeftSec) {
+      state.lastHoldLeftSec = left;
+      emitVoiceEvent('hold-tick', { remainingSec: left });
+    }
+  }
+
+  // 8 秒没动：每秒一发（从最后一次计次算起；一组刚开始也算「有活动」）
+  // ⚠️ 计时类（平板支撑这类「保持」）不算：撑着不动**就是**在练，这里催「继续啊」会莫名其妙；
+  //    真掉姿势了由门控（gate-fail）那条规则管。
+  if (!isHold) {
+    const idleSec = Math.max(0, Math.floor((clock - (state.lastActivityAt || clock)) / 1000));
+    if (idleSec !== state.lastIdleSec && idleSec > 0) {
+      state.lastIdleSec = idleSec;
+      emitVoiceEvent('idle', { sec: idleSec });
+    }
+  }
+
+  // 节奏（每分钟次数）：每 10 秒一发，R3 的自定义规则会用
+  if (now - (state.tempoAt || 0) >= 10000) {
+    state.tempoAt = now;
+    const elapsedMin = Math.max(1 / 60, state.elapsedMs / 60000);
+    emitVoiceEvent('tempo', { perMin: Math.round((Number(det.validReps) || 0) / elapsedMin) });
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 主循环
  * ------------------------------------------------------------------ */
 
@@ -7185,6 +7379,9 @@ function loop() {
         const gateNow = !detNow || detNow.gateOk !== false;
         if (!gateNow && state.lastGateOk !== false) {
           voice.recordEvent('gate-fail', { g: (detNow && detNow.gateName) || '' });
+        } else if (gateNow && state.lastGateOk === false) {
+          // 门控恢复（R1）：连错计数靠它清零，所以「好了」也要发一条事件
+          emitVoiceEvent('gate-ok', { g: (detNow && detNow.gateName) || '' });
         }
         state.lastGateOk = gateNow;
       } catch { /* ignore */ }
@@ -7193,6 +7390,11 @@ function loop() {
       // 限时计数：每隔一段报一次「还剩 N 秒」，最后 5 秒单独喊一句
       announceTimeLeft(localizedExercise(state.exerciseId), now);
       handleEvents(events, now);
+      /**
+       * R1 规则快车道：进度 / 计时 / 读秒 / 8 秒没动 → 事件（都去重过，不刷屏）。
+       * 放在计次之后：同一帧里「计次」比「鼓励 / 催促」重要，同一个 tick 只让最高优先级那条说话。
+       */
+      syncRuleEvents(now);
       updateCriteria(frame, events, now);
     } else {
       // 没在计数时也要跑一次：进度条要一直显示，并且按「有没有识别到人」切换灰/彩色
@@ -8163,6 +8365,12 @@ function bindUI() {
       });
     }
     applyTtsSettings();
+    // R1 规则快车道：教练话量三档（少 / 中 / 多），默认「中」，随设置持久化
+    const volumeSel = $('coachVolumeSel');
+    if (volumeSel) {
+      volumeSel.value = normalizeCoachVolume(state.settings.coachVolume);
+      volumeSel.addEventListener('change', (e) => applyCoachVolume(e.target.value));
+    }
     // P3.4 插话打断：默认开；点一下立刻生效并持久化（关掉后教练说话不再被截断）
     const bargeBtn = $('btnBargeIn');
     if (bargeBtn) {
@@ -8918,6 +9126,15 @@ window.__mfg = {
   getLlmContext, buildAgentContext, applyFreeChat, refreshLlmStatus, syncFreeChatToggle,
   // 会话开始事件（进入训练 → 主动问候）：触发 / 重置 / 内置兜底文案（测试与调试用）
   greetSessionStart, resetSessionGreet, sessionGreetFallbackText,
+  // R1 动态快车道（事件总线 + 规则引擎）：
+  //   voiceBus        : createEventBus() 的那条总线（emit / on / recent / clear）
+  //   ruleEngine      : 规则表 + handle()（add / remove / list / reset / spoken）
+  //   emitVoiceEvent  : 发一条规则事件（走同一条总线，规则引擎立刻判断）
+  //   syncRuleEvents  : 每帧把进度 / 计时 / 读秒 / 静止翻译成事件（主循环里调的就是它）
+  //   applyCoachVolume: 设置里「教练话量：少 / 中 / 多」的唯一入口（持久化 + 立刻生效）
+  voiceBus, ruleEngine, emitVoiceEvent, runRulesForEvent, syncRuleEvents, ruleState,
+  resetRuleCursors, applyCoachVolume,
+  COACH_VOLUMES, DEFAULT_COACH_VOLUME, MIN_GAP_MS,
   // 三层记忆（长时层在服务端 MD；中时层的「上次未完成 / 训练摘要」由这里同步）
   //   MEMORY_PATH / MEMORY_FORGET_PATH : 路由常量（和 preview-server.js 一致）
   //   getMemoryUserId / setMemoryUserId / resetMemoryUserId : userId 显示 / 修改 / 重置

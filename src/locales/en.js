@@ -49,6 +49,11 @@ export default {
     ttsSystem: 'System TTS',
     ttsRate: 'Speech rate',
     ttsRateNormal: '1x (normal)',
+    // R1 rule fast lane: coach talkativeness (low / mid / high)
+    coachVolume: 'Coach talkativeness',
+    coachVolumeLow: 'Low (corrections + last 3 only)',
+    coachVolumeMid: 'Mid (default)',
+    coachVolumeHigh: 'High (plus halfway / every 5)',
     fullscreen: 'Fullscreen video frame',
     // Recording badge in the bottom-right of the stage: number + unit, hover shows this line
     recUnit: 'frames logged',
@@ -990,6 +995,8 @@ export default {
     dialogueGroup: 'Dialogue & voice',
     dialogueLead: 'How coach replies are shown: one danmaku line per sentence (you in cyan, the coach in mint), or the original two-line subtitles.',
     ttsHint: 'Coach speech uses Volcengine TTS by default (through the local /tts/stream proxy, played as it arrives; the whole-sentence endpoint synthesizes each sentence once and caches it). If it fails or takes over 3 seconds, it degrades to the whole-sentence request and then to system TTS, so it never goes silent.',
+    // R1 rule fast lane: coach talkativeness (low = corrections + last 3; mid = default; high = plus halfway / every 5)
+    coachVolumeHint: 'Talkativeness only affects the rule fast lane (rep counts / countdown / corrections / nudges) — all computed locally, no network, no cost. Low = corrections + last 3 only; mid = default; high = also halfway + every 5.',
     // Coach voice gender: a long-term preference (prefs.voiceGender in the server MD), affects the spoken voice only
     voiceGender: 'Coach voice',
     voiceFemale: 'Female',
@@ -1853,5 +1860,20 @@ export default {
       paused: 'Paused (resumes when you come back)',
       error: 'Something went wrong',
     },
+  },
+
+  /**
+   * R1 rule fast lane: lines for the six built-in rules (defined only here;
+   * the rule table lives in src/voice/rules.js).
+   * Placeholders: {n} reps / remaining / seconds, {cue} the gate-specific instruction
+   * (same wording as status.need.*). Change the wording here only; the zh file must match.
+   */
+  rule: {
+    repEvery5: '{n} reps, nice and steady',
+    lastThree: '{n} to go',
+    halfway: 'Halfway there, keep the rhythm going',
+    countdown: '{n}',
+    gateFail2: '{cue} (missed it twice in a row — set up again)',
+    idle8: "Come on, I'm waiting",
   },
 };

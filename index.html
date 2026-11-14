@@ -694,6 +694,17 @@
               <option value="1.5">1.5×</option>
             </select>
           </label>
+          <!-- R1 规则快车道：教练话量三档（少 / 中 / 多），持久化到 settings.coachVolume；
+               只影响规则那几句话（报数 / 读秒 / 纠正 / 催促），不联网 -->
+          <label class="field wide">
+            <span data-i18n="ui.coachVolume"></span>
+            <select id="coachVolumeSel">
+              <option value="low" data-i18n="ui.coachVolumeLow"></option>
+              <option value="mid" data-i18n="ui.coachVolumeMid" selected></option>
+              <option value="high" data-i18n="ui.coachVolumeHigh"></option>
+            </select>
+          </label>
+          <p class="modal-hint" data-i18n="settings.coachVolumeHint"></p>
           <p class="modal-hint" data-i18n="settings.ttsHint"></p>
           <!-- P3.4 插话打断：默认开；关掉后教练说话时不会被打断（只影响打断，不影响聆听） -->
           <div class="toggle-grid">

@@ -121,7 +121,15 @@ function blankSnapshot() {
      *   ok / ms / fallback（LLM 不可用或失败 → 用了内置问候）
      *   skipped = 为什么没开口（speaking / thinking / disabled / muted / paused …）
      */
-    greet: { ok: false, ms: 0, fallback: false, skipped: '' },
+    /**
+     * 规则快车道（R1，`rule:speak` / `rule:skip`）：
+     *   speak / skip = 累计说过几句 / 被护栏挡掉几次（**调试「为什么教练不说话」必备**）
+     *   lastRule / event / priority = 最近一次真的说话的规则 / 事件 / 优先级
+     *   ms = 从规则命中到交给 TTS 的耗时
+     *   reason = 最近一次被挡的原因（muted / coach-off / speaking / cooldown / gap /
+     *            budget:set / budget:minute / same-tick / empty）
+     */
+    rule: { speak: 0, skip: 0, lastRule: '', event: '', priority: 0, ms: 0, reason: '', skipRule: '' },
   };
 }
 
@@ -170,6 +178,7 @@ export function createDiag({
       worklet: { ...state.worklet },
       tts: { ...state.tts },
       session: { ...state.session },
+      rule: { ...state.rule },
       asrError: state.asrError ? { ...state.asrError } : null,
     };
   }
@@ -341,6 +350,27 @@ export function createDiag({
           ms: Math.max(0, Number(entry.ms) || 0),
           fallback: entry.fallback === true,
           skipped: String(entry.skipped || ''),
+        };
+        break;
+      /* ---------------- 规则快车道（R1：rule:speak / rule:skip） ----------------
+       * 每次真的借规则说话记一条（ruleId / event / priority / ms）；
+       * 被护栏挡掉也留一条 reason —— 「为什么教练不说话」以后一眼看得出是哪道栏杆。 */
+      case 'rule:speak':
+        state.rule = {
+          ...state.rule,
+          speak: state.rule.speak + 1,
+          lastRule: String(entry.ruleId || ''),
+          event: String(entry.event || ''),
+          priority: Number(entry.priority) || 0,
+          ms: Math.max(0, Number(entry.ms) || 0),
+        };
+        break;
+      case 'rule:skip':
+        state.rule = {
+          ...state.rule,
+          skip: state.rule.skip + 1,
+          reason: String(entry.reason || ''),
+          skipRule: String(entry.ruleId || ''),
         };
         break;
       /* ---------------- 会话状态机（session:*） ----------------
