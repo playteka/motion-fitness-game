@@ -2434,6 +2434,82 @@ console.log('\n[记忆] 三层记忆面板 / 教练声音性别 / userId');
     && typeof LOCALES.en.coach.cmdAck.voiceGender === 'string');
 }
 
+/* ================================================================== *
+ * R4 规则面板（设置页：「当前生效的规则」+ 报数 / 读秒两个总开关 + 诊断两行）
+ * ================================================================== */
+console.log('\n[R4] 规则面板：逐条开关 / 报数·读秒 / 诊断两行 / 持久化');
+{
+  const page = read('index.html');
+  const app = read('src/app.js');
+  const rulesSrc = read('src/voice/rules.js');
+  const coachSrc = read('src/voice/coach.js');
+  const diagSrc = read('src/voice/diag.js');
+  const css = read('style.css');
+  const volAt = page.indexOf('data-i18n="settings.coachVolumeHint"');
+  const groupAt = page.indexOf('data-i18n="settings.rulesGroup"');
+  const toneAt = page.indexOf('id="coachToneSel"');
+  ok('设置页有「当前生效的规则」区块（在话量之后、语气之前）+ 列表容器 + 一键恢复默认 + 上限提示',
+    volAt > 0 && groupAt > volAt && toneAt > groupAt
+    && /<div class="rule-list" id="ruleList"><\/div>/.test(page)
+    && /id="btnRuleReset"[^>]*data-i18n="settings\.rulesReset"/.test(page)
+    && /id="ruleLimitHint"/.test(page)
+    && typeof LOCALES.zh.settings.rulesGroup === 'string'
+    && typeof LOCALES.en.settings.rulesGroup === 'string');
+  ok('两个总开关：报数 / 读秒（默认都开，data-i18n 中英齐全 + 一行组合说明）',
+    /id="btnRuleRep"[^>]*aria-pressed="true"[^>]*data-i18n="settings\.repToggle"/.test(page)
+    && /id="btnRuleRead"[^>]*aria-pressed="true"[^>]*data-i18n="settings\.readToggle"/.test(page)
+    && typeof LOCALES.zh.settings.repToggle === 'string'
+    && typeof LOCALES.en.settings.repToggle === 'string'
+    && typeof LOCALES.zh.settings.readToggle === 'string'
+    && typeof LOCALES.en.settings.readToggle === 'string'
+    && /data-i18n="settings\.ruleSwitchHint"/.test(page));
+  ok('诊断面板新增两行：「刚才那句为什么说」「为什么没说」（中英词条都在）',
+    /id="coachDiagWhySaid"/.test(page) && /id="coachDiagWhySkip"/.test(page)
+    && /data-i18n="coach\.diag\.whySaidLabel"/.test(page)
+    && /data-i18n="coach\.diag\.whySkipLabel"/.test(page)
+    && typeof LOCALES.zh.coach.diag.whySaidLabel === 'string'
+    && typeof LOCALES.en.coach.diag.whySaidLabel === 'string'
+    && typeof LOCALES.zh.coach.diag.whySkipLabel === 'string'
+    && typeof LOCALES.en.coach.diag.whySkipLabel === 'string');
+  ok('规则模块导出面板要用的纯函数（来源 / 触发条件人话 / 频道 / LLM 上限 8）',
+    /export function ruleSource/.test(rulesSrc)
+    && /export function ruleConditionText/.test(rulesSrc)
+    && /export function ruleChannelOf/.test(rulesSrc)
+    && /export const MAX_LLM_RULES = 8/.test(rulesSrc)
+    && /export const RULE_SOURCES/.test(rulesSrc)
+    && /source:\s*\{\s*\n\s*builtin:/.test(read('src/locales/zh.js')));
+  ok('app.js：面板数据来自规则引擎（条数 = size），逐条开关关掉即 remove、开回按缺省 add',
+    /function rulePanelRows\(/.test(app) && /function renderRulePanel\(/.test(app)
+    && /function setRuleEnabled\(/.test(app) && /function resetRuleDefaults\(/.test(app)
+    && /ruleEngine\.remove\(key\)/.test(app)
+    && /builtinRules\(\)\.find\(\(rule\) => rule\.id === key\)/.test(app)
+    && /state\.settings\.ruleSwitches/.test(app)
+    && /ruleSwitches:\s*\{\s*rep:\s*true,\s*read:\s*true\s*\}/.test(app));
+  ok('两个总开关进 ruleState（和话量一起交给引擎），引擎按频道拦（rep-off / read-off）',
+    /repOn:\s*ruleSwitchOn\('rep'\)/.test(app)
+    && /readOn:\s*ruleSwitchOn\('read'\)/.test(app)
+    && /isChannelBlocked\(channel, st\)/.test(rulesSrc)
+    && /reason:\s*`\$\{channel\}-off`/.test(rulesSrc));
+  ok('持久化：loadSettings 归一化 ruleSwitches（脏值当全开），启动时摘掉关掉的规则',
+    /function normalizeRuleSwitches/.test(app)
+    && /merged\.ruleSwitches = normalizeRuleSwitches/.test(app)
+    && /function applyRuleSwitches/.test(app) && /applyRuleSwitches\(\);/.test(app));
+  ok('诊断快照：lastSpeak / lastSkip（rule:speak / judge:ask / rule:skip / judge:skip）',
+    /lastSpeak:\s*\{\s*kind:/.test(diagSrc) && /lastSkip:\s*\{\s*kind:/.test(diagSrc)
+    && /state\.lastSpeak = \{/.test(diagSrc) && /state\.lastSkip = \{/.test(diagSrc)
+    && /case 'judge:ask'/.test(diagSrc) && /case 'judge:skip'/.test(diagSrc));
+  ok('界面层把原因码翻成人话，并在 renderDiag 里填那两行',
+    /DIAG_REASON_KEYS/.test(coachSrc) && /function whySaidText/.test(coachSrc)
+    && /function whySkipText/.test(coachSrc)
+    && /setText\('coachDiagWhySaid', whySaidText\(snap\)\)/.test(coachSrc)
+    && /setText\('coachDiagWhySkip', whySkipText\(snap\)\)/.test(coachSrc));
+  ok('样式：规则行是网格（名称 · 条件 · 徽标 · 开关），窄屏换两列',
+    /\.rule-list\s*\{/.test(css)
+    && /\.rule-row\s*\{[^}]*grid-template-columns/.test(css)
+    && /\.rule-badge\[data-source="user"\]/.test(css)
+    && /@media [^{]*560px[^{]*\{[\s\S]{0,400}?\.rule-row/.test(css));
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
 if (failures.length) {
   console.log('失败项：');

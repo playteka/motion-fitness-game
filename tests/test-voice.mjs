@@ -144,8 +144,13 @@ import {
   RULE_CHANNELS, DEFAULT_RULE_BY_CHANNEL, DEFAULT_READ_EVERY_SEC, ADAPTIVE_REP,
   strideForPace, adaptiveAllows, estimateSpeechMs, repRule, readRule,
   ruleNameKey, ruleEveryText, describeRule,
+  // R4：规则面板（来源徽标 / 触发条件人话 / 报数·读秒总开关）
+  RULE_SOURCES, MAX_LLM_RULES, USER_RULE_PREFIX, LLM_RULE_PREFIX,
+  ruleSource, ruleSourceKey, ruleConditionText, ruleChannelOf, isChannelBlocked,
 } from '../src/voice/rules.js';
 import { numberWord, zhNumber, enNumber } from '../src/voice/numerals.js';
+// R4：诊断面板两行的原因码 → 人话（界面层映射）
+import { DIAG_REASON_KEYS, diagReasonText } from '../src/voice/coach.js';
 
 let passed = 0;
 const failures = [];
@@ -8325,6 +8330,239 @@ console.log('\n[40] R3 LLM 裁判：8 个触发点口径 / 严格 JSON / 触发�
       && sp.said.length === 0 && diag.snapshot().judge.skip === 1
       && diag.snapshot().judge.reason === 'session-end',
       JSON.stringify({ run, said: sp.said, judge: diag.snapshot().judge }));
+  }
+}
+
+/* ================================================================== *
+ * [41] R4 规则面板：来源徽标 / 触发条件人话 / 报数·读秒总开关 / 诊断两行
+ *
+ * 全部纯逻辑 + 假时钟，不联网：
+ *   - 设置页列出的每一行都来自 `builtinRules()` 的真实定义（来源 / 条件都是现算的）；
+ *   - 两个总开关只是 `handle()` 多一道闸，规则本体不动（开回来立刻恢复）；
+ *   - 诊断快照里的 lastSpeak / lastSkip 就是面板那两行要显示的内容。
+ * ================================================================== */
+console.log('\n[41] R4 规则面板：来源徽标 / 触发条件人话 / 报数·读秒总开关 / 诊断两行');
+{
+  setLang('zh', { persist: false });
+  const clock = { t: 3000000 };
+  const st = (extra = {}) => ({ speaking: false, muted: false, coachOn: true, volume: 'high', ...extra });
+  const makeEngine = (diag = null) => {
+    const engine = createRuleEngine({ now: () => clock.t, minGapMs: 0, diag });
+    for (const rule of builtinRules()) engine.add(rule);
+    return engine;
+  };
+  const byId = Object.fromEntries(builtinRules().map((rule) => [rule.id, rule]));
+  const cond = (rule) => ruleConditionText(rule, t);
+
+  /* ---------------- ① 来源徽标：内置 / 口述 / LLM 一处定义 ---------------- */
+  ok('[41] 来源：内置规则全是 builtin，user-* 是 user，llm-* 是 llm（显式 source 优先），上限 8',
+    RULE_SOURCES.join(',') === 'builtin,user,llm'
+    && MAX_LLM_RULES === 8
+    && USER_RULE_PREFIX === 'user-' && LLM_RULE_PREFIX === 'llm-'
+    && builtinRules().every((rule) => ruleSource(rule) === 'builtin')
+    && ruleSource({ id: 'user-rep-10' }) === 'user'
+    && ruleSource({ id: 'llm-rep-5' }) === 'llm'
+    && ruleSource({ id: 'whatever', source: 'llm' }) === 'llm'
+    && ruleSource({ id: 'user-rep-10', source: 'builtin' }) === 'builtin'
+    && ruleSource(null) === 'builtin',
+    JSON.stringify({
+      sources: RULE_SOURCES, max: MAX_LLM_RULES,
+      sample: [ruleSource({ id: 'user-rep-10' }), ruleSource({ id: 'llm-rep-5' })],
+    }));
+  ok('[41] 来源徽标的词条键与中英词条都在（rule.source.builtin / user / llm）',
+    builtinRules().every((rule) => ruleSourceKey(rule) === 'rule.source.builtin')
+    && ['builtin', 'user', 'llm'].every((key) => flat.zh[`rule.source.${key}`] !== undefined
+      && flat.en[`rule.source.${key}`] !== undefined));
+
+  /* ---------------- ② 触发条件人话：用户点名的三种都在 ---------------- */
+  ok('[41] 触发条件人话：「每 3 个」「剩余 ≤5 秒」「剩余 ≤3 个」「静止 ≥8 秒」「进度 ≥50%」「每个都报」',
+    cond(repRule({ every: 3 })) === t('rule.cond.everyN', { n: 3 })
+    && cond(byId['countdown-5']) === t('rule.cond.remainingLteSec', { n: 5 })
+    && cond(byId['last-three']) === t('rule.cond.remainingLteCount', { n: 3 })
+    && cond(byId['idle-8']) === t('rule.cond.secGte', { n: 8 })
+    && cond(byId['halfway']) === t('rule.cond.pctGte', { n: 50 })
+    && cond(byId['rep-count']) === t('rule.cond.adaptive')
+    && cond(byId['hold-read-5']).includes(t('rule.cond.everySec', { n: 5 }))
+    && cond(byId['hold-read-5']).includes(t('rule.cond.remainingGtSec', { n: 5 })),
+    JSON.stringify({
+      every3: cond(repRule({ every: 3 })),
+      countdown: cond(byId['countdown-5']),
+      lastThree: cond(byId['last-three']),
+      read: cond(byId['hold-read-5']),
+    }));
+  ok('[41] 触发条件是**现算**的（同一个 filter 换 event 就换单位：剩余 ≤5 秒 / 剩余 ≤5 个）',
+    cond({ trigger: { event: 'hold-tick', filter: { remainingLte: 5 } } })
+      === t('rule.cond.remainingLteSec', { n: 5 })
+    && cond({ trigger: { event: 'rep', filter: { remainingLte: 5 } } })
+      === t('rule.cond.remainingLteCount', { n: 5 }));
+  setLang('en', { persist: false });
+  ok('[41] 英文一套：触发条件同样有人话、没有残留中文',
+    cond(byId['countdown-5']).includes('5') && !/[\u4e00-\u9fff]/.test(cond(byId['countdown-5']))
+    && !/[\u4e00-\u9fff]/.test(diagReasonText('cooldown')));
+  setLang('zh', { persist: false });
+
+  /* ---------------- ③ 频道归属：两个总开关按它判断 ---------------- */
+  ok('[41] 频道归属：报数（rep-count / last-three）与读秒（hold-read-5 / countdown-5）分开',
+    ruleChannelOf(byId['rep-count']) === 'rep'
+    && ruleChannelOf(byId['last-three']) === 'rep'
+    && ruleChannelOf(byId['hold-read-5']) === 'read'
+    && ruleChannelOf(byId['countdown-5']) === 'read'
+    && ruleChannelOf(byId['halfway']) === ''
+    && ruleChannelOf(byId['idle-8']) === ''
+    && isChannelBlocked('rep', { repOn: false }) === true
+    && isChannelBlocked('rep', {}) === false
+    && isChannelBlocked('read', { readOn: false }) === true
+    && isChannelBlocked('read', { readOn: true }) === false);
+
+  /* ---------------- ④ 关掉「报数」：3 次 rep 一声不响（用户点名要的行为） ---------------- */
+  {
+    const diag = createDiag({ timer: false });
+    const engine = makeEngine(diag);
+    const repOff = st({ repOn: false });
+    clock.t += 1000;
+    engine.handle({ type: 'session-start', data: {} }, repOff);
+    engine.handle({ type: 'set-start', data: { target: 20 } }, repOff);
+    const said = [];
+    for (let n = 1; n <= 3; n += 1) {
+      clock.t += 2000;
+      const out = engine.handle({ type: 'rep', data: { n, target: 20, valid: true } }, repOff);
+      if (out && out.speak) said.push(out.speak.text);
+    }
+    const snap = diag.snapshot();
+    ok('[41] 「报数」关掉：3 次 rep **一句都不播**（逐次报数 / 每 N 个都不说）',
+      said.length === 0, JSON.stringify(said));
+    ok('[41] 关掉报数时诊断记 rule:skip {reason:"rep-off"}（「为什么没说」有据可查）',
+      snap.rule.skip >= 3 && snap.lastSkip.kind === 'rule'
+      && snap.lastSkip.reason === 'rep-off' && snap.lastSkip.event === 'rep',
+      JSON.stringify(snap.lastSkip));
+    ok('[41] 关掉报数不影响「读秒」那一路（两个开关各自独立）',
+      (() => {
+        clock.t += 2000;
+        const out = engine.handle(
+          { type: 'tick', data: { sec: 5, elapsedSec: 5, remainingSec: 25, hold: 1 } },
+          repOff,
+        );
+        return out && out.speak && out.speak.ruleId === 'hold-read-5';
+      })());
+  }
+
+  /* ---------------- ⑤ 关掉「读秒」：每 5 秒读秒 + 最后 5 秒倒数都不播 ---------------- */
+  {
+    const diag = createDiag({ timer: false });
+    const engine = makeEngine(diag);
+    const readOff = st({ readOn: false });
+    clock.t += 1000;
+    engine.handle({ type: 'session-start', data: {} }, readOff);
+    engine.handle({ type: 'set-start', data: { target: 30 } }, readOff);
+    const reads = [];
+    for (const sec of [5, 10]) {
+      clock.t += 2000;
+      const out = engine.handle(
+        { type: 'tick', data: { sec, elapsedSec: sec, remainingSec: 30 - sec, hold: 1 } },
+        readOff,
+      );
+      if (out && out.speak) reads.push(out.speak.text);
+    }
+    clock.t += 2000;
+    const countdown = engine.handle(
+      { type: 'hold-tick', data: { remainingSec: 4, elapsedSec: 26, hold: 1 } },
+      readOff,
+    );
+    const snap = diag.snapshot();
+    ok('[41] 「读秒」关掉：每 5 秒读秒（5/10 秒）**都不播**',
+      reads.length === 0, JSON.stringify(reads));
+    ok('[41] 「读秒」关掉：最后 5 秒倒数（hold-tick）也不播',
+      !countdown || !countdown.speak, JSON.stringify(countdown));
+    ok('[41] 关掉读秒时诊断记 rule:skip {reason:"read-off"}',
+      snap.lastSkip.kind === 'rule' && snap.lastSkip.reason === 'read-off'
+      && snap.lastSkip.id === 'countdown-5',
+      JSON.stringify(snap.lastSkip));
+    ok('[41] 关掉读秒不影响「报数」：rep 事件照样逐次报「一」',
+      (() => {
+        clock.t += 2000;
+        const out = engine.handle({ type: 'rep', data: { n: 1, target: 20, valid: true } }, readOff);
+        return out && out.speak && out.speak.ruleId === 'rep-count' && out.speak.text === '一';
+      })());
+  }
+
+  /* ---------------- ⑥ 两个都关：纠正 / 催促仍然保留 ---------------- */
+  {
+    const engine = makeEngine();
+    const bothOff = st({ repOn: false, readOn: false });
+    clock.t += 1000;
+    engine.handle({ type: 'session-start', data: {} }, bothOff);
+    engine.handle({ type: 'set-start', data: { target: 20 } }, bothOff);
+    clock.t += 2000;
+    const idle = engine.handle({ type: 'idle', data: { sec: 9 } }, bothOff);
+    ok('[41] 两个都关：仍留着「8 秒没动」的催促（用户要求：不是全静音）',
+      idle && idle.speak && idle.speak.ruleId === 'idle-8',
+      JSON.stringify(idle && idle.speak));
+  }
+
+  /* ---------------- ⑦ 诊断两行：最近一次 rule:speak / judge:ask / rule:skip / judge:skip ---------------- */
+  {
+    const diag = createDiag({ timer: false });
+    const engine = makeEngine(diag);
+    const on = st();
+    clock.t += 1000;
+    engine.handle({ type: 'session-start', data: {} }, on);
+    engine.handle({ type: 'set-start', data: { target: 20 } }, on);
+    clock.t += 2000;
+    const spoke = engine.handle({ type: 'rep', data: { n: 1, target: 20, valid: true } }, on);
+    // rule:speak 由 app.js 在「真的交给 TTS」那一刻记（引擎只负责判断），这里补记同一个入口
+    if (spoke && spoke.speak) {
+      diag.record('rule:speak', {
+        ruleId: spoke.speak.ruleId, event: 'rep', priority: spoke.speak.priority, ms: 1,
+      });
+    }
+    const snapAfterRule = diag.snapshot();
+    ok('[41] 「刚才那句为什么说」：rule:speak → 规则 id + 事件 + 原因码 hit',
+      spoke && spoke.speak.text === '一'
+      && snapAfterRule.lastSpeak.kind === 'rule'
+      && snapAfterRule.lastSpeak.id === 'rep-count'
+      && snapAfterRule.lastSpeak.event === 'rep'
+      && snapAfterRule.lastSpeak.reason === 'hit',
+      JSON.stringify(snapAfterRule.lastSpeak));
+
+    diag.record('judge:ask', { event: 'rep-judge', ok: true, spoke: true, ms: 12 });
+    ok('[41] 裁判真的说了 → lastSpeak 换成 judge + reason=judge-spoke',
+      diag.snapshot().lastSpeak.kind === 'judge'
+      && diag.snapshot().lastSpeak.event === 'rep-judge'
+      && diag.snapshot().lastSpeak.reason === 'judge-spoke',
+      JSON.stringify(diag.snapshot().lastSpeak));
+    diag.record('judge:ask', { event: 'idle', ok: true, spoke: false, ms: 30 });
+    ok('[41] 裁判选择不说 → 原因码 judge-silent（不是「没有记录」）',
+      diag.snapshot().lastSpeak.reason === 'judge-silent',
+      JSON.stringify(diag.snapshot().lastSpeak));
+    diag.record('judge:ask', { event: 'gate-fail2', ok: false, spoke: true, code: 'timeout', ms: 8000 });
+    ok('[41] 裁判失败但念了兜底口令 → judge-fallback（失败也说得清）',
+      diag.snapshot().lastSpeak.reason === 'judge-fallback',
+      JSON.stringify(diag.snapshot().lastSpeak));
+
+    diag.record('rule:skip', { reason: 'cooldown', ruleId: 'idle-8', event: 'idle' });
+    const skipRule = diag.snapshot().lastSkip;
+    ok('[41] 「为什么没说」：rule:skip → 规则 id + 事件 + 原因码（面板再映射成人话）',
+      skipRule.kind === 'rule' && skipRule.id === 'idle-8'
+      && skipRule.event === 'idle' && skipRule.reason === 'cooldown',
+      JSON.stringify(skipRule));
+    diag.record('judge:skip', { reason: 'superseded', event: 'set-complete' });
+    ok('[41] 裁判被更高优先级抢占 → lastSkip 换成 judge + reason=superseded',
+      diag.snapshot().lastSkip.kind === 'judge'
+      && diag.snapshot().lastSkip.event === 'set-complete'
+      && diag.snapshot().lastSkip.reason === 'superseded',
+      JSON.stringify(diag.snapshot().lastSkip));
+
+    ok('[41] 诊断原因码 → 人话：已知码走词条，未知码原样显示（不会空白）',
+      diagReasonText('cooldown') === t('coach.diag.reason.cooldown')
+      && diagReasonText('budget:set') === t('coach.diag.reason.budgetSet')
+      && diagReasonText('some-new-code') === 'some-new-code'
+      && diagReasonText('') === t('coach.diag.none'),
+      JSON.stringify({ cooldown: diagReasonText('cooldown'), unknown: diagReasonText('x') }));
+    ok('[41] 面板两行的原因码**全部**有中英词条（加了新原因也不会露出裸码）',
+      Object.values(DIAG_REASON_KEYS).every((key) => flat.zh[key] !== undefined && flat.en[key] !== undefined),
+      Object.entries(DIAG_REASON_KEYS)
+        .filter(([, key]) => flat.zh[key] === undefined || flat.en[key] === undefined)
+        .map(([code]) => code).join(', '));
   }
 }
 

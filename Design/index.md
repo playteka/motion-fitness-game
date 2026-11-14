@@ -1,6 +1,6 @@
 # index.html — 单页应用骨架（静态 DOM + 所有弹窗 + WebGL/canvas 容器）
 
-> 层：界面（结构） ｜ 963 行 ｜ 无构建步骤，直接被浏览器加载
+> 层：界面（结构） ｜ 989 行 ｜ 无构建步骤，直接被浏览器加载
 > 一句话：`src/app.js` 需要的每一个 DOM 节点都在这里；id 是它俩之间的契约。
 
 ## 1. 它解决什么问题（为什么需要它）
@@ -20,6 +20,8 @@
 | 主页 / 动作库 | 中段 | 分类卡、动作卡、目标选择 | 由 `app.js` 动态渲染，容器在这里 |
 | HUD / 圆环 | 中段 | 右上进度圆环、左下退出圆环、手势圆环 | 尺寸来自 CSS `--ring-px` |
 | 弹窗 | 后段 | 设置 / 记录 / 最佳 / 运动设定 / 语音帮助 / 记忆 | `hidden` 属性控制显隐 |
+| R4 规则面板（在设置弹窗里） | L720-L740 | 报数 / 读秒两个 toggle、`#ruleList`（列表由 `app.js` 动态建）、`#btnRuleReset`、`#ruleLimitHint` | 行数不写死：`renderRulePanel()` 按规则表渲染 |
+| R4 诊断两行 | L286-L291 | `#coachDiagWhySaid` / `#coachDiagWhySkip` | 「刚才那句为什么说 / 为什么没说」 |
 | 脚本 | 末尾 | `<script type="module" src="./src/app.js">` | 唯一入口 |
 
 `data-i18n*` 五种属性（`data-i18n` / `-html` / `-title` / `-aria` / `-placeholder`）在这里大量使用，

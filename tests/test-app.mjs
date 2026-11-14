@@ -11003,6 +11003,289 @@ console.log('\n[54] session-end 告别：1 次 / 2 句 / 之后 0 次 /llm / 麦
   api.state.session = 'calibrating';
 }
 
+/* ================================================================== *
+ * [55] R4 规则面板：逐条开关 / 开回恢复默认 / 一键恢复默认 / 报数·读秒 / 诊断两行
+ *
+ * 全程真实 app.js + DOM 桩，不联网：
+ *   - 面板列表由规则引擎现算：条数 = 生效规则数，每条有名称 / 触发条件 / 来源 / 开关；
+ *   - 关掉一条 → 引擎里没有它、该规则不再触发；开回 → 缺省定义回来、立刻能说；
+ *   - 一键恢复默认 → 用户 / LLM 规则清空 + 开关全开；
+ *   - 报数 / 读秒两个总开关各自独立（关报数后 3 次 rep 无声）；
+ *   - 诊断面板两行显示最近一次「为什么说 / 为什么没说」。
+ * ================================================================== */
+console.log('\n[55] R4 规则面板：逐条开关 / 开回恢复默认 / 一键恢复默认 / 报数·读秒 / 诊断两行');
+{
+  const api = windowStub.__mfg;
+  const { t: tR } = await import('../src/i18n.js');
+  const flush = async (n = 12) => {
+    for (let i = 0; i < n; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const finishSpeech = async () => {
+    const u = coachStubs.utterances.at(-1);
+    if (u && typeof u.onend === 'function') u.onend();
+    await flush();
+  };
+  const ruleList = elements.get('ruleList');
+  const rowOf = (id) => ruleList.children.find((row) => row.dataset && row.dataset.ruleId === id);
+  const switchOf = (id) => {
+    const row = rowOf(id);
+    return row ? row.children.find((c) => String(c.className).includes('rule-switch')) : null;
+  };
+  const feedRep = (n) => {
+    api.state.detector.validReps = n;
+    api.handleEvents([{ type: 'rep', valid: true, index: n }]);
+  };
+
+  api.showHome();
+  await flush();
+  await api.setCoachEnabled(true);
+  await flush(14);
+  await finishSpeech();
+  await finishSpeech();
+
+  /* ---------------- ① 面板内容：条数 = 生效规则数；名称 · 条件 · 来源 · 开关 ---------------- */
+  api.openSettings();
+  await flush();
+  const rows = api.rulePanelRows();
+  ok('[55] 设置页打开 → 规则面板列出**全部生效规则**（条数 = ruleEngine.size = 6）',
+    elements.get('settingsModal').hidden === false
+    && ruleList.children.length === api.ruleEngine.size
+    && api.ruleEngine.size === 6
+    && rows.length === 6,
+    JSON.stringify({ rows: rows.length, size: api.ruleEngine.size, dom: ruleList.children.length }));
+  ok('[55] 每条都有名称 / 触发条件（人话）/ 来源徽标（内置）/ 开关',
+    rows.every((row) => row.name && row.condition && row.source === 'builtin' && row.enabled)
+    && rows.some((row) => row.id === 'rep-count' && row.condition.includes('每个都报'))
+    && rows.some((row) => row.id === 'hold-read-5' && row.condition.includes('每 5 秒'))
+    && rows.some((row) => row.id === 'last-three' && row.condition.includes('剩余 ≤3 个'))
+    && rows.some((row) => row.id === 'countdown-5' && row.condition.includes('剩余 ≤5 秒'))
+    && rows.some((row) => row.id === 'idle-8' && row.condition.includes('静止 ≥8 秒')),
+    JSON.stringify(rows));
+  ok('[55] DOM 行结构：名称 / 条件 / 徽标（内置）/ 开关，开关默认按着「开」',
+    rowOf('idle-8')
+    && switchOf('idle-8').getAttribute('aria-pressed') === 'true'
+    && switchOf('idle-8').textContent === tR('settings.rulesOn')
+    && rowOf('idle-8').children.some((c) => c.className === 'rule-badge'
+      && c.textContent === tR('rule.source.builtin'))
+    && rowOf('idle-8').children.some((c) => c.className === 'rule-name'
+      && c.textContent === tR('rule.name.idle')),
+    JSON.stringify(rowOf('idle-8') && rowOf('idle-8').children.map((c) => c.className)));
+  ok('[55] LLM 规则上限提示就在面板下面（≤8 条，当前 0 条）',
+    elements.get('ruleLimitHint').textContent === tR('settings.ruleLimit', { max: 8, count: 0 }),
+    elements.get('ruleLimitHint').textContent);
+
+  /* ---------------- ② 关掉一条：移出引擎 + 不再触发 + 面板仍列出（能开回） ---------------- */
+  switchOf('idle-8').dispatch('click');
+  await flush();
+  ok('[55] 点掉「催促」→ 规则从引擎移除、settings.ruleSwitches 记 false、写进 localStorage',
+    !api.listCoachRules().some((r) => r.id === 'idle-8')
+    && api.state.settings.ruleSwitches['idle-8'] === false
+    && api.ruleEngine.size === 5
+    && String(windowStub.localStorage.getItem(api.STORE.settings)).includes('"idle-8":false'),
+    JSON.stringify({ ids: api.listCoachRules().map((r) => r.id), switches: api.state.settings.ruleSwitches }));
+  ok('[55] 关掉的那条**仍然列在面板里**（否则没法开回来），开关显示「关」',
+    ruleList.children.length === 6 && !!rowOf('idle-8')
+    && switchOf('idle-8').getAttribute('aria-pressed') === 'false'
+    && switchOf('idle-8').textContent === tR('settings.rulesOff'),
+    JSON.stringify({ dom: ruleList.children.length, pressed: switchOf('idle-8') && switchOf('idle-8').getAttribute('aria-pressed') }));
+  api.openExercise('squat');
+  api.state.session = 'running';
+  api.state.target = 20;
+  api.ruleEngine.reset();
+  api.voice.emitEvent('set-start', { target: 20 });
+  const beforeIdle = api.state.voice.coachText;
+  api.state.lastActivityAt = Date.now() - 9000;
+  api.syncRuleEvents(performance.now());
+  await flush();
+  ok('[55] 关掉之后这条规则**不再触发**（8 秒没动也不再催）',
+    api.state.voice.coachText === beforeIdle, JSON.stringify(api.state.voice.coachText));
+  await finishSpeech();
+
+  /* ---------------- ③ 开回：恢复默认定义，立刻又能说 ---------------- */
+  switchOf('idle-8').dispatch('click');
+  await flush();
+  const restored = api.listCoachRules().find((r) => r.id === 'idle-8');
+  ok('[55] 点回「开」→ 缺省定义原样回来（冷却 15s / 每分钟 ≤2 次 / 模板同一份），开关记录清掉',
+    !!restored && restored.cooldownMs === 15000 && restored.budget.perMinute === 2
+    && restored.action.template === 'rule.idle8'
+    && api.state.settings.ruleSwitches['idle-8'] === undefined
+    && api.ruleEngine.size === 6,
+    JSON.stringify(restored && { cooldown: restored.cooldownMs, budget: restored.budget }));
+  api.ruleEngine.reset();
+  api.voice.emitEvent('set-start', { target: 20 });
+  api.resetRuleCursors();
+  api.state.lastActivityAt = Date.now() - 9000;   // 游标清零后再把「上次活动」拨回去
+  api.syncRuleEvents(performance.now());
+  await flush();
+  ok('[55] 开回之后立刻恢复：「继续啊，我等你」又能说出口',
+    api.state.voice.coachText === tR('rule.idle8'),
+    JSON.stringify(api.state.voice.coachText));
+  await finishSpeech();
+
+  /* ---------------- ④ 「报数」开关：关掉后 3 次 rep 无声，开回立刻恢复 ---------------- */
+  elements.get('btnRuleRep').dispatch('click');
+  await flush();
+  ok('[55] 「报数」关掉：按钮 aria-pressed=false、settings.ruleSwitches.rep=false（写进存储）',
+    elements.get('btnRuleRep').getAttribute('aria-pressed') === 'false'
+    && api.state.settings.ruleSwitches.rep === false
+    && String(windowStub.localStorage.getItem(api.STORE.settings)).includes('"rep":false'),
+    JSON.stringify({ pressed: elements.get('btnRuleRep').getAttribute('aria-pressed'),
+      switches: api.state.settings.ruleSwitches }));
+  api.openExercise('squat');
+  api.state.session = 'running';
+  api.state.target = 20;
+  api.ruleEngine.reset();
+  api.voice.emitEvent('set-start', { target: 20 });
+  const beforeReps = api.state.voice.coachText;
+  for (const n of [1, 2, 3]) {
+    feedRep(n);
+    await flush();
+  }
+  ok('[55] 关掉报数后 3 次 rep **一声不响**（逐次报数 / 每 N 个 / 还剩 3 个都不播）',
+    api.state.voice.coachText === beforeReps
+    && api.coachDiag.snapshot().rule.reason === 'rep-off',
+    JSON.stringify({ text: api.state.voice.coachText, rule: api.coachDiag.snapshot().rule }));
+  elements.get('btnRuleRep').dispatch('click');
+  await flush();
+  ok('[55] 「报数」开回：settings.rep=true，rep 事件立刻又报「一」',
+    api.state.settings.ruleSwitches.rep === true
+    && (() => {
+      api.ruleEngine.reset();
+      api.voice.emitEvent('set-start', { target: 20 });
+      feedRep(1);
+      return api.state.voice.coachText === '一';
+    })(),
+    JSON.stringify(api.state.voice.coachText));
+  await finishSpeech();
+
+  /* ---------------- ⑤ 「读秒」开关：每 5 秒读秒 + 最后 5 秒倒数都停 ---------------- */
+  api.openExercise('plank');
+  api.state.session = 'running';
+  api.state.target = 30;
+  api.ruleEngine.reset();
+  api.resetRuleCursors();
+  api.voice.emitEvent('set-start', { target: 30 });
+  api.setRuleChannelSwitch('read', false);
+  await flush();
+  const beforeRead = api.state.voice.coachText;
+  api.state.elapsedMs = 5000;
+  api.state.detector.holdMs = 5000;
+  api.syncRuleEvents(performance.now());
+  await flush();
+  ok('[55] 「读秒」关掉：计时类第 5 秒**不读秒**（诊断记 read-off）',
+    api.state.voice.coachText === beforeRead
+    && api.coachDiag.snapshot().lastSkip.reason === 'read-off',
+    JSON.stringify({ text: api.state.voice.coachText, skip: api.coachDiag.snapshot().lastSkip }));
+  api.setRuleChannelSwitch('read', true);
+  api.ruleEngine.reset();
+  api.resetRuleCursors();
+  api.voice.emitEvent('set-start', { target: 30 });
+  await wait(1100);
+  api.state.elapsedMs = 5000;
+  api.state.detector.holdMs = 5000;
+  api.syncRuleEvents(performance.now());
+  await flush();
+  ok('[55] 「读秒」开回：第 5 秒又说「五秒」',
+    api.state.voice.coachText === tR('rule.readSeconds', { word: '五' }),
+    JSON.stringify(api.state.voice.coachText));
+  await finishSpeech();
+
+  /* ---------------- ⑥ 口述规则 / LLM 规则的来源徽标 ---------------- */
+  api.addCoachRule({ kind: 'read', every: 30 });
+  api.ruleEngine.add({
+    id: 'llm-rep-3',
+    scope: 'session',
+    channel: 'rep',
+    label: 'rule.name.rep',
+    trigger: { event: 'rep', filter: { everyN: 3 } },
+    action: { template: 'rule.repCount', args: () => ({ n: 3, word: '三' }) },
+    priority: 35,
+  });
+  api.syncRuleCount();
+  await flush();
+  const sources = api.rulePanelRows().map((row) => row.id);
+  ok('[55] 口述规则（user-*）与 LLM 规则（llm-*）都列出来，来源徽标分别是「口述」「LLM」',
+    rowOf('user-read-30') && rowOf('llm-rep-3')
+    && rowOf('user-read-30').dataset.source === 'user'
+    && rowOf('llm-rep-3').dataset.source === 'llm'
+    && rowOf('user-read-30').children.some((c) => c.className === 'rule-badge'
+      && c.textContent === tR('rule.source.user'))
+    && rowOf('llm-rep-3').children.some((c) => c.className === 'rule-badge'
+      && c.textContent === tR('rule.source.llm')),
+    JSON.stringify(sources));
+  ok('[55] LLM 规则条数同步到上限提示（当前 1 条）',
+    elements.get('ruleLimitHint').textContent === tR('settings.ruleLimit', { max: 8, count: 1 }),
+    elements.get('ruleLimitHint').textContent);
+
+  /* ---------------- ⑦ 一键恢复默认：清用户 / LLM 规则 + 开关全开 ---------------- */
+  api.setRuleEnabled('halfway', false);
+  await flush();
+  ok('[55] 恢复默认之前：用户规则 / LLM 规则 / 关掉的内置规则都在（面板 7 行）',
+    rowOf('user-read-30') && rowOf('llm-rep-3') && rowOf('halfway')
+    && switchOf('halfway').getAttribute('aria-pressed') === 'false'
+    && ruleList.children.length === 7,
+    JSON.stringify({ dom: ruleList.children.length, ids: api.rulePanelRows().map((r) => r.id) }));
+  elements.get('btnRuleReset').dispatch('click');
+  await flush();
+  ok('[55] 一键恢复默认：用户 / LLM 规则清空、开关全开、回到 6 条缺省规则',
+    api.ruleEngine.size === 6
+    && !api.listCoachRules().some((r) => r.id.startsWith('user-') || r.id.startsWith('llm-'))
+    && api.listCoachRules().some((r) => r.id === 'halfway')
+    && api.state.settings.ruleSwitches.rep === true
+    && api.state.settings.ruleSwitches.read === true
+    && api.state.settings.ruleSwitches.halfway === undefined
+    && api.state.settings.ruleSwitches['user-read-30'] === undefined,
+    JSON.stringify({ ids: api.listCoachRules().map((r) => r.id), switches: api.state.settings.ruleSwitches }));
+  ok('[55] 恢复默认之后面板重画：6 行、全是内置、开关全开、提示里的 LLM 计数归零',
+    ruleList.children.length === 6
+    && api.rulePanelRows().every((row) => row.source === 'builtin' && row.enabled)
+    && elements.get('ruleLimitHint').textContent === tR('settings.ruleLimit', { max: 8, count: 0 }),
+    JSON.stringify({ dom: ruleList.children.length, hint: elements.get('ruleLimitHint').textContent }));
+
+  /* ---------------- ⑧ 诊断面板两行：刚才那句为什么说 / 为什么没说 ---------------- */
+  api.toggleCoachDiag();
+  await flush();
+  api.coachDiag.record('rule:speak', { ruleId: 'rep-count', event: 'rep', priority: 35, ms: 1 });
+  await flush();
+  ok('[55] 诊断「刚才那句为什么说」：规则 id + 事件 + 一句话原因（条件命中）',
+    elements.get('coachDiagWhySaid').textContent
+      === tR('coach.diag.whySaidRule', {
+        id: 'rep-count', event: 'rep', reason: tR('coach.diag.reason.hit'),
+      }),
+    elements.get('coachDiagWhySaid').textContent);
+  api.coachDiag.record('rule:skip', { reason: 'stride', ruleId: 'rep-count', event: 'rep' });
+  await flush();
+  ok('[55] 诊断「为什么没说」：规则 id + 事件 + 原因（自适应降频）',
+    elements.get('coachDiagWhySkip').textContent
+      === tR('coach.diag.whySkipRule', {
+        id: 'rep-count', event: 'rep', reason: tR('coach.diag.reason.stride'),
+      }),
+    elements.get('coachDiagWhySkip').textContent);
+  api.coachDiag.record('judge:ask', { event: 'idle', ok: true, spoke: false, ms: 20 });
+  api.coachDiag.record('judge:skip', { reason: 'cooldown', event: 'idle' });
+  await flush();
+  ok('[55] 裁判那一路也进这两行：judge 的事件 + 原因（模型选择不说 / 还在冷却）',
+    elements.get('coachDiagWhySaid').textContent
+      === tR('coach.diag.whySaidJudge', { event: 'idle', reason: tR('coach.diag.reason.judgeSilent') })
+    && elements.get('coachDiagWhySkip').textContent
+      === tR('coach.diag.whySkipJudge', { event: 'idle', reason: tR('coach.diag.reason.cooldown') }),
+    JSON.stringify({ said: elements.get('coachDiagWhySaid').textContent,
+      skip: elements.get('coachDiagWhySkip').textContent }));
+  api.toggleCoachDiag();
+  await flush();
+
+  /* ---------------- 收尾：还原 ---------------- */
+  api.resetRuleDefaults();
+  api.closeSettings();
+  api.state.session = 'calibrating';
+  api.llmClient.setFetch(null);
+  api.showHome();
+  await api.setCoachEnabled(false);
+  await flush();
+}
+
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {
   console.log('失败项：');
   for (const f of failures) console.log('  - ' + f);

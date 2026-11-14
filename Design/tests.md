@@ -17,9 +17,9 @@
 | `test-detectors.mjs` | 408 | 5 个手写识别器的标准 + 错误动作、要领得分、校准判定、勾腿跳多速度计次、跪姿俯卧撑真实几何、俯卧撑放宽线 |
 | `test-engines.mjs` | 228 | 通用引擎一次循环一次数、门控、跳跃离地、左右交替（含第二路证据）、死虫式/坐姿体前屈/卷腹判据、后箭步蹲门控掉帧回归 |
 | `test-specs.mjs` | 797 | 弹窗数字喂回识别器（必须落在它自己的计次线上）、门控与 `GATE_LIMITS` 同源、19 动作都有指标、图标角度 = 判据角度 |
-| `test-page.mjs` | 690 | `index.html` 结构、圆环布局与热区、`data-i18n` 完整性、无 emoji 图标、麦克风接线、运动设定两步弹窗 |
-| `test-app.mjs` | 1335 | 真实 DOM 桩里的整机流程：命令快车道（只留 6 类；已移出的说法交给 LLM）、全屏/权限、设置环翻页、HUD、记录、记忆面板、规则与裁判、告别 |
-| `test-voice.mjs` | 935 | 命令解析（6 类 7 个 intent 命中 + 19 个已移出 intent 一律 `unknown`）、会话状态机、ASR 适配器、火山代理/协议/降采样、TTS 降级、规则引擎、裁判、告别、诊断 |
+| `test-page.mjs` | 700 | `index.html` 结构、圆环布局与热区、`data-i18n` 完整性、无 emoji 图标、麦克风接线、运动设定两步弹窗、R4 规则面板 DOM / 词条 / 样式 |
+| `test-app.mjs` | 1357 | 真实 DOM 桩里的整机流程：命令快车道（只留 6 类；已移出的说法交给 LLM）、全屏/权限、设置环翻页、HUD、记录、记忆面板、规则与裁判、告别、R4 规则面板（逐条开关 / 开回恢复 / 一键恢复默认 / 报数·读秒） |
+| `test-voice.mjs` | 957 | 命令解析（6 类 7 个 intent 命中 + 19 个已移出 intent 一律 `unknown`）、会话状态机、ASR 适配器、火山代理/协议/降采样、TTS 降级、规则引擎、裁判、告别、诊断、R4 来源 / 触发条件人话 / 总开关 / `lastSpeak`·`lastSkip` |
 | `synthetic-pose.mjs` | — | **合成姿势生成器**：按关节角造 33 点（`foldShin()` 在公制空间折叠，折 X° = 膝角 180−X°） |
 | `preview-icons.mjs` | — | `npm run icons:preview`：把所有关键帧图标渲成一张预览 PNG（人工检查用，不是断言） |
 | `fixtures/lungeBack-right-leg-back.json` | — | 真实帧夹具（后箭步蹲右腿向后不计数那个 bug 的现场数据） |

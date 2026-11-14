@@ -95,6 +95,22 @@ export const DEFAULT_RULE_BY_CHANNEL = Object.freeze({
 /** 规则作用域：一组 / 一次训练 / 永久（内置规则没有 forever，留给以后的自定义规则） */
 export const RULE_SCOPES = Object.freeze(['set', 'session', 'forever']);
 
+/**
+ * 规则来源（R4 设置页的「来源徽标」）：
+ *   builtin = `builtinRules()` 的缺省规则；user = 口述 / 命令建的（`user-*`）；
+ *   llm     = 模型通过 `add_rule` 工具建的（`llm-*`；目前和口述走同一条 `addCoachRule`）。
+ */
+export const RULE_SOURCES = Object.freeze(['builtin', 'user', 'llm']);
+
+/** 口述 / 命令建的规则 id 前缀（`addCoachRule` 用） */
+export const USER_RULE_PREFIX = 'user-';
+
+/** 模型建的规则 id 前缀（预留给 `add_rule`；R4 起面板按这个前缀标来源） */
+export const LLM_RULE_PREFIX = 'llm-';
+
+/** LLM 创建的规则条数上限（设置页要提示「LLM 规则 ≤8 条」） */
+export const MAX_LLM_RULES = 8;
+
 /** 教练话量三档（设置里的「少 / 中 / 多」） */
 export const COACH_VOLUMES = Object.freeze(['low', 'mid', 'high']);
 export const DEFAULT_COACH_VOLUME = 'mid';
@@ -108,6 +124,31 @@ export function normalizeCoachVolume(value) {
 export function ruleVolumes(rule) {
   const list = rule && Array.isArray(rule.volumes) && rule.volumes.length ? rule.volumes : COACH_VOLUMES;
   return list.filter((v) => COACH_VOLUMES.includes(v));
+}
+
+/**
+ * 规则属于哪一路（R4 的「报数 / 读秒」两个总开关按它判断）：
+ *   - 规则自带 `channel`（内置 / 口述建的报数、读秒规则都有）；
+ *   - 没写 channel 的按触发事件推：`rep` → rep，`tick` / `hold-tick` → read，其它 → ''。
+ *
+ * 这样「最后 3 个」跟着**报数**走、「最后 5 秒倒数」跟着**读秒**走 —— 和用户听到的内容一致，
+ * 不会出现「关了报数却还在说还剩 3 个」「关了读秒却还在数 5 4 3」。
+ */
+export function ruleChannelOf(rule) {
+  if (!rule || typeof rule !== 'object') return '';
+  if (RULE_CHANNELS.includes(rule.channel)) return rule.channel;
+  const event = String(rule.trigger && rule.trigger.event || '');
+  if (event === 'rep') return 'rep';
+  if (event === 'tick' || event === 'hold-tick') return 'read';
+  return '';
+}
+
+/** 这一路总开关是不是关着（`state.repOn === false` / `state.readOn === false`；缺省 = 开） */
+export function isChannelBlocked(channel, state) {
+  const st = state && typeof state === 'object' ? state : {};
+  if (channel === 'rep') return st.repOn === false;
+  if (channel === 'read') return st.readOn === false;
+  return false;
 }
 
 /** 有限数字才算数（`undefined` / `NaN` / 字符串数字都按「没有」处理） */
@@ -527,6 +568,15 @@ export function createRuleEngine({
     for (const rule of rules.values()) {
       if (!rule.enabled) continue;
       if (rule.trigger.event !== type) continue;
+      /**
+       * R4：设置里的两个总开关（报数 / 读秒）—— 与话量三档**同时**生效（AND），
+       * 关掉只影响这一路，规则本体仍在表里（诊断会记 rep-off / read-off）。
+       */
+      const channel = ruleChannelOf(rule);
+      if (channel && isChannelBlocked(channel, st)) {
+        note('rule:skip', { reason: `${channel}-off`, ruleId: rule.id, event: type });
+        continue;
+      }
       if (!rule.volumes.includes(volume)) {
         note('rule:skip', { reason: 'volume', ruleId: rule.id, event: type });
         continue;
@@ -835,6 +885,73 @@ export function ruleEveryText(rule, translate = defaultTranslate) {
 }
 
 /**
+ * 规则的来源（R4 设置页的来源徽标）：`'builtin' | 'user' | 'llm'`。
+ *
+ * 优先看规则自己带的 `source`；否则按 id 前缀判断（`user-*` / `llm-*`），
+ * 都没有就是内置规则 —— **一处定义**，面板 / 测试 / 文档都读这一份。
+ */
+export function ruleSource(rule) {
+  if (!rule || typeof rule !== 'object') return 'builtin';
+  const explicit = String(rule.source || '');
+  if (RULE_SOURCES.includes(explicit)) return explicit;
+  const id = String(rule.id || '');
+  if (id.startsWith(LLM_RULE_PREFIX)) return 'llm';
+  if (id.startsWith(USER_RULE_PREFIX)) return 'user';
+  return 'builtin';
+}
+
+/** 来源徽标的词条键（`rule.source.builtin` / `rule.source.user` / `rule.source.llm`） */
+export function ruleSourceKey(rule) {
+  return `rule.source.${ruleSource(rule)}`;
+}
+
+/**
+ * 一条规则的「触发条件」人话（R4 设置页每行第二列）：`每 3 个` / `剩余 ≤5 秒` / `静止 ≥8 秒`…
+ *
+ * 全部由 `trigger.filter` 的字段拼出来（**不另抄一份规则表**），支持：
+ *   everyN / everySec / remainingLte / remainingGt / pctGte / secGte / consecutive，
+ * 都没有时按「自适应降频」或「一直生效」兜底。
+ *
+ * @param {object} rule
+ * @param {Function} [translate] 取词条（默认 i18n 的 t）
+ */
+export function ruleConditionText(rule, translate = defaultTranslate) {
+  const tr = typeof translate === 'function' ? translate : defaultTranslate;
+  const trigger = rule && rule.trigger && typeof rule.trigger === 'object' ? rule.trigger : {};
+  const filter = trigger.filter && typeof trigger.filter === 'object' ? trigger.filter : {};
+  const event = String(trigger.event || '');
+  /** 计时类事件（tick / hold-tick）的「剩余」单位是秒，计数类是「个」 */
+  const timed = event === 'tick' || event === 'hold-tick';
+  const parts = [];
+  const everyN = num(filter.everyN);
+  if (everyN !== null) parts.push(tr('rule.cond.everyN', { n: Math.round(everyN) }));
+  const everySec = num(filter.everySec);
+  if (everySec !== null) parts.push(tr('rule.cond.everySec', { n: Math.round(everySec) }));
+  const remainingLte = num(filter.remainingLte);
+  if (remainingLte !== null) {
+    parts.push(tr(timed ? 'rule.cond.remainingLteSec' : 'rule.cond.remainingLteCount', {
+      n: Math.round(remainingLte),
+    }));
+  }
+  const remainingGt = num(filter.remainingGt);
+  if (remainingGt !== null) {
+    parts.push(tr(timed ? 'rule.cond.remainingGtSec' : 'rule.cond.remainingGtCount', {
+      n: Math.round(remainingGt),
+    }));
+  }
+  const pctGte = num(filter.pctGte);
+  if (pctGte !== null) parts.push(tr('rule.cond.pctGte', { n: Math.round(pctGte) }));
+  const secGte = num(filter.secGte);
+  if (secGte !== null) parts.push(tr('rule.cond.secGte', { n: Math.round(secGte) }));
+  const consecutive = num(filter.consecutive);
+  if (consecutive !== null) parts.push(tr('rule.cond.consecutive', { n: Math.round(consecutive) }));
+  if (!parts.length) {
+    parts.push(rule && rule.adaptive ? tr('rule.cond.adaptive') : tr('rule.cond.always'));
+  }
+  return parts.join(tr('rule.condSep'));
+}
+
+/**
  * 一条规则的「人话」描述（`listRules` 口述 / 设置页将来用）：`报数间隔：每 10 个`。
  * @param {object} rule
  * @param {Function} [translate]
@@ -850,4 +967,6 @@ export default {
   DEFAULT_COACH_VOLUME, RULE_SCOPES, RULE_CHANNELS, DEFAULT_RULE_BY_CHANNEL,
   DEFAULT_READ_EVERY_SEC, ADAPTIVE_REP, strideForPace, adaptiveAllows, estimateSpeechMs,
   repRule, readRule, ruleNameKey, ruleEveryText, describeRule,
+  RULE_SOURCES, USER_RULE_PREFIX, LLM_RULE_PREFIX, MAX_LLM_RULES,
+  ruleChannelOf, isChannelBlocked, ruleSource, ruleSourceKey, ruleConditionText,
 };

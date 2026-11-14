@@ -1,6 +1,6 @@
 # src/locales/zh.js — 简体中文词条（唯一真源）
 
-> 层：文案数据 ｜ 约 1900 行 ｜ 纯对象字面量，`export default`
+> 层：文案数据 ｜ 2017 行 ｜ 纯对象字面量，`export default`
 > 一句话：全项目所有面向用户的中文都在这里；结构即契约，缺键会回退英文。
 
 ## 1. 它解决什么问题（为什么需要它）
@@ -25,14 +25,14 @@
 | `ex` | L502 | 每个动作的 `name / cameraHint / goal / howto / tips` |
 | `steps` | L627 | 要领步骤名（`steps.*`，对应 `steps.js` 的 `labelKey`） |
 | `cat` / `menu` / `home` / `exercise` | L875-L952 | 分类、菜单、主页、运动设定 |
-| `records` / `settings` / `memory` | L953 / L959 / L1036 | 记录、设置、教练记忆面板 |
+| `records` / `settings` / `memory` | L953 / L959 / L1036 | 记录、设置、教练记忆面板（R4 的 `settings.rulesGroup` / `rulesLead` / `rulesReset` / `rulesOn` / `rulesOff` / `ruleLimit` / `repToggle` / `readToggle` / `ruleSwitchHint` 也在这里） |
 | `judge` / `metric` / `spec` | L1070 / L1092 / L1137 | 判定依据、指标名、关键帧判据 |
 | `cue` / `cues` | L1388 / L1466 | 通用提示 / 动作专属提示（`cues.<动作>.<code>`） |
 | `fam` | L1409 | 「动作族」要领模板（`fam.<plan>.howto/tips`） |
 | `music` | L1446 | 四首 BGM 的曲名 |
 | `speech` | L1509 | 语音播报用语（报数 / 开始 / 鼓励） |
-| `coach` | L1547 | AI 教练（状态、命令说法、面板、自检…） |
-| `voice` / `rule` | L1888 / L1909 | 语音状态名 / 规则描述 |
+| `coach` | L1565 | AI 教练（状态、命令说法、面板、自检…；R4 诊断两行 `coach.diag.whySaid*` / `whySkip*` 与原因码 `coach.diag.reason.*` 也在这块） |
+| `voice` / `rule` | L1944 / L1965 | 语音状态名 / 规则描述（R4 的 `rule.source.*` / `rule.cond.*` 也在 `rule` 块） |
 
 ## 3. 算法与流程（步骤化）
 

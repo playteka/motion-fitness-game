@@ -57,7 +57,9 @@ import { createEventBus } from './voice/events.js';
 import {
   createRuleEngine, builtinRules, normalizeCoachVolume, COACH_VOLUMES,
   DEFAULT_COACH_VOLUME, MIN_GAP_MS, RULE_CHANNELS, DEFAULT_RULE_BY_CHANNEL,
+  RULE_SOURCES, MAX_LLM_RULES, USER_RULE_PREFIX, LLM_RULE_PREFIX,
   repRule, readRule, describeRule, estimateSpeechMs, gateCueKey,
+  ruleSource, ruleSourceKey, ruleConditionText, ruleNameKey, ruleChannelOf,
 } from './voice/rules.js';
 // R3：LLM 当「裁判」—— 事件触发，由模型判断要不要说一句（默认不说；口径全在 judge.js）
 import {
@@ -188,6 +190,16 @@ const DEFAULT_SETTINGS = {
    *   high = 再加过半 + 每 5 个报数。见 src/voice/rules.js 的 builtinRules()。
    */
   coachVolume: DEFAULT_COACH_VOLUME,
+  /**
+   * R4：规则开关（**一处存储**，沿用用户要求的字段名 `settings.ruleSwitches`）。
+   *
+   *   - `rep` / `read` = 两个总开关（报数 / 读秒），和话量三档**组合**生效（AND）；
+   *   - 其它键 = 单条规则的 id（`rep-count` / `idle-8` / `user-rep-10`…），值为 false 表示关掉；
+   *     关掉即从规则引擎移除，开回时按缺省定义恢复（内置规则重新 `builtinRules()` 取一份）。
+   *
+   * 缺省全开：不写某个 id 就是开（`ruleSwitchOn()` 只在值为 false 时返回 false）。
+   */
+  ruleSwitches: { rep: true, read: true },
 };
 
 const REP_TARGETS = [8, 12, 15, 20, 30];
@@ -574,6 +586,11 @@ const voiceBus = createEventBus();
 /** 规则引擎（诊断也接进来：`rule:skip {reason}` 是「为什么教练不说话」的答案） */
 const ruleEngine = createRuleEngine({ diag: coachDiag });
 for (const rule of builtinRules()) ruleEngine.add(rule);
+/**
+ * 上次在设置里关掉的规则（`settings.ruleSwitches[id] === false`）：启动时就别加进引擎。
+ * 注意这里是**先加后删**：缺省规则表仍然只有 `builtinRules()` 一份，关掉的 id 只是被摘掉。
+ */
+applyRuleSwitches();
 
 /** 规则引擎要的那份只读状态（教练在说话 / 静音 / 关掉 / 话量 / 还剩多少台词） */
 function ruleState() {
@@ -585,6 +602,9 @@ function ruleState() {
     coachOn,
     volume: normalizeCoachVolume(state.settings.coachVolume),
     tone: state.memory?.prefs?.tone || '',
+    // R4：两个总开关（报数 / 读秒）—— 与话量三档组合生效，缺省都开
+    repOn: ruleSwitchOn('rep'),
+    readOn: ruleSwitchOn('read'),
     // 计数规则据此判断「这一下要不要跳过」：剩余台词 >1.5s 就不报（不积压）
     speakLeftMs: coachSpeakLeftMs(),
   };
@@ -638,8 +658,24 @@ function ensureDefaultRules() {
   for (const channel of RULE_CHANNELS) {
     if (rules.some((rule) => rule.channel === channel)) continue;
     const def = defaults.find((rule) => rule.id === DEFAULT_RULE_BY_CHANNEL[channel]);
-    if (def) ruleEngine.add(def);
+    // R4：用户主动关掉的规则不要自动补回来（否则「逐条开关」活不过一次训练）
+    if (!def || !ruleSwitchOn(def.id)) continue;
+    ruleEngine.add(def);
   }
+  /**
+   * R4：口述 / LLM 规则只活一次训练 —— 引擎在 `session-end` 已经把 `scope: session` 的规则删了，
+   * 面板的「关掉后还能开回」名单与它们的开关记录也一起清掉（下次训练不留幽灵条目）。
+   */
+  let pruned = 0;
+  for (const [id, rule] of [...ruleCatalog.entries()]) {
+    if (rule.scope !== 'session') continue;
+    ruleCatalog.delete(id);
+    if (Object.prototype.hasOwnProperty.call(state.settings.ruleSwitches || {}, id)) {
+      delete state.settings.ruleSwitches[id];
+      pruned += 1;
+    }
+  }
+  if (pruned) saveSettings();
   syncRuleCount();
   return ruleEngine.size;
 }
@@ -655,13 +691,17 @@ function addCoachRule(args = {}) {
   if (!Number.isFinite(every) || every < 1) return null;
   const n = Math.max(1, Math.min(999, every));
   for (const rule of ruleEngine.list()) {
-    if (rule.channel === kind) ruleEngine.remove(rule.id);
+    if (rule.channel !== kind) continue;
+    ruleEngine.remove(rule.id);
+    if (ruleSource(rule) !== 'builtin') ruleCatalog.delete(rule.id);
   }
   const rule = kind === 'read'
     ? readRule({ every: n, id: `user-read-${n}`, scope: 'session', holdOnly: false })
     : repRule({ every: n, id: `user-rep-${n}`, scope: 'session' });
   const added = ruleEngine.add(rule);
   if (!added) return null;
+  // R4：登记一份定义 —— 面板上关掉之后还能按这一份「开回来」（作用域仍是 session）
+  ruleCatalog.set(added.id, added);
   try { coachDiag?.record?.('rule:add', { id: added.id, by: 'user' }); } catch { /* 诊断不影响规则 */ }
   syncRuleCount();
   return { id: added.id, kind, every: n };
@@ -690,11 +730,202 @@ function removeCoachRules(kind) {
 /** 现在生效的规则（「现在有什么规则」逐条报出来用；只读快照） */
 function listCoachRules() { return ruleEngine.list(); }
 
-/** 设置页「话量」下面那行：**只显示生效规则条数**（完整列表留给 R4） */
+/* ------------------------------------------------------------------ *
+ * R4：设置页「当前生效的规则」面板 + 「报数 / 读秒」两个总开关
+ *
+ * 用户原话：「列出所有规则（内置 / 用户口述 / LLM 创建），每条显示名称 · 触发条件 ·
+ * 来源徽标 · 开关；逐条开关（关掉即从引擎移除，开回即恢复默认），持久化到 settings.ruleSwitches；
+ * 一键恢复默认；LLM 规则 ≤8 条要提示。」
+ *
+ * 数据流只有一条：**规则引擎是唯一事实来源**。
+ *   - 面板行 = 引擎里的规则（开着的）+ `settings.ruleSwitches` 里关着的规则（用缺省定义补出来）；
+ *   - 关一条 = 从引擎 remove + 记 `false`；开回 = 删掉记录 + 按缺省定义 add（**恢复默认**）；
+ *   - 一键恢复默认 = 清空所有非内置规则 + 清空开关 + 重新加 `builtinRules()`。
+ * ------------------------------------------------------------------ */
+
+/**
+ * 本次训练里由口述 / 模型建的规则（id → 归一化规则）。
+ * 关掉的规则要从引擎移除，但面板还要能把它列出来「开回来」，所以这里留一份定义；
+ * 作用域是 `session` 的规则在一次训练结束（`session-end`）时随引擎一起清掉。
+ */
+const ruleCatalog = new Map();
+
+/** 这一项是不是开着（`settings.ruleSwitches` 缺省 = 开；只有显式 false 才算关） */
+function ruleSwitchOn(key) {
+  const switches = state.settings.ruleSwitches || {};
+  return switches[String(key || '')] !== false;
+}
+
+/** 启动时把「上次关掉的规则」从引擎摘掉（缺省规则已经由启动那段加进来） */
+function applyRuleSwitches() {
+  for (const rule of ruleEngine.list()) {
+    if (!ruleSwitchOn(rule.id)) ruleEngine.remove(rule.id);
+  }
+  return ruleEngine.size;
+}
+
+/**
+ * 面板要显示的行（**纯数据**，测试直接断言；DOM 渲染在 `renderRulePanel`）。
+ * 关着的规则也能列出来 —— 否则用户关掉之后就没有入口再开回去了。
+ */
+function rulePanelRows() {
+  const rows = [];
+  const seen = new Set();
+  const defaults = new Map(builtinRules().map((rule) => [rule.id, rule]));
+  const push = (rule, enabled) => {
+    if (!rule || !rule.id || seen.has(rule.id)) return;
+    seen.add(rule.id);
+    rows.push({
+      id: rule.id,
+      name: t(ruleNameKey(rule)),
+      condition: ruleConditionText(rule, t),
+      source: ruleSource(rule),
+      sourceLabel: t(ruleSourceKey(rule)),
+      channel: ruleChannelOf(rule),
+      enabled: !!enabled,
+    });
+  };
+  for (const rule of ruleEngine.list()) push(rule, true);
+  for (const [id, value] of Object.entries(state.settings.ruleSwitches || {})) {
+    if (value !== false) continue;
+    if (id === 'rep' || id === 'read') continue;      // 两个总开关不是「规则」
+    push(defaults.get(id) || ruleCatalog.get(id), false);
+  }
+  return rows;
+}
+
+/** 画「当前生效的规则」列表（返回行数；空列表显示一句「全部关掉了」） */
+function renderRulePanel() {
+  const box = $('ruleList');
+  if (!box) return 0;
+  box.innerHTML = '';
+  const rows = rulePanelRows();
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'modal-hint rule-empty';
+    empty.textContent = t('settings.rulesEmpty');
+    box.appendChild(empty);
+  }
+  for (const row of rows) {
+    const item = document.createElement('div');
+    item.className = 'rule-row';
+    item.dataset.ruleId = row.id;
+    item.dataset.source = row.source;
+    const name = document.createElement('span');
+    name.className = 'rule-name';
+    name.textContent = row.name;
+    const cond = document.createElement('span');
+    cond.className = 'rule-cond';
+    cond.textContent = row.condition;
+    const badge = document.createElement('span');
+    badge.className = 'rule-badge';
+    badge.dataset.source = row.source;
+    badge.textContent = row.sourceLabel;
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'toggle rule-switch';
+    toggle.dataset.ruleId = row.id;
+    toggle.setAttribute('aria-pressed', String(row.enabled));
+    toggle.textContent = row.enabled ? t('settings.rulesOn') : t('settings.rulesOff');
+    toggle.addEventListener('click', () => {
+      setRuleEnabled(row.id, toggle.getAttribute('aria-pressed') !== 'true');
+    });
+    item.appendChild(name);
+    item.appendChild(cond);
+    item.appendChild(badge);
+    item.appendChild(toggle);
+    box.appendChild(item);
+  }
+  const limit = $('ruleLimitHint');
+  if (limit) {
+    const llmCount = ruleEngine.list().filter((rule) => ruleSource(rule) === 'llm').length;
+    limit.textContent = t('settings.ruleLimit', { max: MAX_LLM_RULES, count: llmCount });
+  }
+  return rows.length;
+}
+
+/**
+ * 逐条开关（用户要求：关掉即从引擎移除，开回即恢复默认）。
+ * @param {string} id 规则 id
+ * @param {boolean} on
+ * @returns {boolean} 规则表有没有真的变（找不到定义时返回 false）
+ */
+function setRuleEnabled(id, on) {
+  const key = String(id || '');
+  if (!key) return false;
+  const switches = state.settings.ruleSwitches || (state.settings.ruleSwitches = {});
+  const active = ruleEngine.list().find((rule) => rule.id === key);
+  const definition = active
+    || builtinRules().find((rule) => rule.id === key)
+    || ruleCatalog.get(key)
+    || null;
+  if (!active && !definition) return false;
+  const name = t(ruleNameKey(definition || { id: key }));
+  if (on) {
+    delete switches[key];
+    /**
+     * 开回来 = **恢复默认**：内置规则重新取一份 `builtinRules()` 里的定义（不是缓存里改过的），
+     * 口述 / LLM 规则用本次训练登记的那一份。
+     */
+    if (!active) {
+      const def = builtinRules().find((rule) => rule.id === key) || ruleCatalog.get(key);
+      if (def) ruleEngine.add(def);
+    }
+  } else {
+    switches[key] = false;
+    ruleEngine.remove(key);
+  }
+  saveSettings();
+  syncRuleCount();
+  setCueLine(t(on ? 'settings.ruleOnCue' : 'settings.ruleOffCue', { name }), 'info');
+  return true;
+}
+
+/**
+ * 一键恢复默认（用户要求）：清掉所有用户 / LLM 规则 + 开关全开 + 缺省规则补回来。
+ * @returns {number} 恢复后的规则条数
+ */
+function resetRuleDefaults() {
+  for (const rule of [...ruleEngine.list()]) ruleEngine.remove(rule.id);
+  ruleCatalog.clear();
+  state.settings.ruleSwitches = { rep: true, read: true };
+  for (const def of builtinRules()) ruleEngine.add(def);
+  saveSettings();
+  syncRuleCount();
+  setCueLine(t('settings.rulesResetDone'), 'info');
+  return ruleEngine.size;
+}
+
+/** 两个总开关（报数 / 读秒）的按钮状态对齐（设置里 / 命令改完都走这里） */
+function syncRuleChannelSwitches() {
+  for (const [id, key] of [['btnRuleRep', 'rep'], ['btnRuleRead', 'read']]) {
+    const btn = $(id);
+    if (btn) btn.setAttribute('aria-pressed', String(ruleSwitchOn(key)));
+  }
+}
+
+/**
+ * 「报数」「读秒」两个总开关：只影响那一路的规则（`ruleChannelOf`），
+ * **和话量三档组合生效**（两关都成立才说）；规则本体不动，开回来立刻恢复。
+ */
+function setRuleChannelSwitch(channel, on) {
+  const key = channel === 'read' ? 'read' : 'rep';
+  const next = !!on;
+  state.settings.ruleSwitches[key] = next;
+  saveSettings();
+  syncRuleChannelSwitches();
+  setCueLine(t(next ? 'settings.ruleChannelOn' : 'settings.ruleChannelOff', {
+    name: t(key === 'rep' ? 'settings.repToggle' : 'settings.readToggle'),
+  }), 'info');
+  return next;
+}
+
+/** 设置页「话量」下面那行 + 规则面板 + 两个总开关按钮（任何一处变化都刷这一份） */
 function syncRuleCount() {
   const el = $('coachRuleCount');
-  if (!el) return ruleEngine.size;
-  el.textContent = t('ui.coachRuleCount', { count: ruleEngine.size });
+  if (el) el.textContent = t('ui.coachRuleCount', { count: ruleEngine.size });
+  renderRulePanel();
+  syncRuleChannelSwitches();
   return ruleEngine.size;
 }
 
@@ -1472,6 +1703,21 @@ function captureConsole() {
   }
 }
 
+/**
+ * 规则开关归一化（R4）：`settings.ruleSwitches` 只存两类键 ——
+ *   `rep` / `read` 两个总开关（缺省 true）+ 单条规则 id（**只记 false**，开的不占存储）。
+ * 脏值（数组 / 字符串 / null）一律当「全开」，不让一个坏存档把规则面板弄崩。
+ */
+function normalizeRuleSwitches(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const out = { rep: src.rep !== false, read: src.read !== false };
+  for (const [key, value] of Object.entries(src)) {
+    if (key === 'rep' || key === 'read') continue;
+    if (value === false) out[key] = false;
+  }
+  return out;
+}
+
 function loadSettings() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE.settings) || '{}');
@@ -1491,9 +1737,10 @@ function loadSettings() {
       if (!merged.poseDelegate) merged.poseDelegate = DEFAULT_SETTINGS.poseDelegate;
     }
     merged.settingsVersion = SETTINGS_VERSION;
+    merged.ruleSwitches = normalizeRuleSwitches(raw.ruleSwitches);
     return merged;
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, ruleSwitches: normalizeRuleSwitches(null) };
   }
 }
 function saveSettings() {
@@ -2654,6 +2901,8 @@ function openSettings() {
   syncCoachToggle(!!state.settings.coachEnabled);
   // 插话打断（P3.4）：同样按最新设置对齐一次
   syncBargeInToggle();
+  // R4：规则面板（开着的 + 关着的）与两个总开关按最新规则表重画一次
+  syncRuleCount();
   // 自由对话（P3.3）：开关 + 当前的 provider / model（health 是异步的，打开弹窗就刷一次）
   syncFreeChatToggle();
   refreshLlmStatus();
@@ -9421,7 +9670,23 @@ function bindUI() {
       volumeSel.value = normalizeCoachVolume(state.settings.coachVolume);
       volumeSel.addEventListener('change', (e) => applyCoachVolume(e.target.value));
     }
-    // R2：话量旁边只显示「当前生效规则条数」（完整规则列表留给 R4）
+    // R4：两个总开关（报数 / 读秒）—— 点一下立刻生效并写进 settings.ruleSwitches
+    const repBtn = $('btnRuleRep');
+    if (repBtn) {
+      repBtn.addEventListener('click', () => {
+        setRuleChannelSwitch('rep', repBtn.getAttribute('aria-pressed') !== 'true');
+      });
+    }
+    const readBtn = $('btnRuleRead');
+    if (readBtn) {
+      readBtn.addEventListener('click', () => {
+        setRuleChannelSwitch('read', readBtn.getAttribute('aria-pressed') !== 'true');
+      });
+    }
+    // R4：一键恢复默认（清用户 / LLM 规则 + 开关全开）
+    const ruleResetBtn = $('btnRuleReset');
+    if (ruleResetBtn) ruleResetBtn.addEventListener('click', () => resetRuleDefaults());
+    // R4：规则面板 = 生效规则列表 + 条数 + 两个总开关（三处永远同一份数据）
     syncRuleCount();
     // P3.5 收尾：教练语气（prefs.tone，写进服务端 MD；默认温和）
     const toneSel = $('coachToneSel');
@@ -10205,6 +10470,16 @@ window.__mfg = {
   // R2 口述建规则：规则增 / 删 / 查 + 缺省规则补回 + 设置页的「生效规则条数」
   addCoachRule, removeCoachRules, listCoachRules, ensureDefaultRules, syncRuleCount,
   RULE_CHANNELS, DEFAULT_RULE_BY_CHANNEL,
+  // R4 规则面板（用户要求）：所有规则逐条列出 + 来源徽标 + 逐条开关 + 一键恢复默认，
+  // 以及「报数 / 读秒」两个总开关；状态全在 settings.ruleSwitches（缺省全开）
+  //   rulePanelRows()      : 面板要显示的纯数据（开着 + 关着的规则，含名称 / 触发条件 / 来源）
+  //   renderRulePanel()    : 画进 #ruleList（返回行数）
+  //   setRuleEnabled()     : 逐条开关（关 = 移出引擎，开回 = 恢复缺省定义）
+  //   resetRuleDefaults()  : 清掉用户 / LLM 规则 + 开关全开（返回恢复后的条数）
+  //   setRuleChannelSwitch(): 报数 / 读秒总开关（和话量组合生效）
+  rulePanelRows, renderRulePanel, setRuleEnabled, resetRuleDefaults, applyRuleSwitches,
+  setRuleChannelSwitch, syncRuleChannelSwitches, ruleSwitchOn, normalizeRuleSwitches,
+  RULE_SOURCES, USER_RULE_PREFIX, LLM_RULE_PREFIX, MAX_LLM_RULES,
   // R3 LLM 裁判（事件触发；模型只回严格 JSON，**默认不说**）：
   //   judge           : createJudge() 实例（request / stats / silenceRate / inflight）
   //   askJudge        : 一条事件 → 问裁判（标准 Agent 快照 + judge 块）

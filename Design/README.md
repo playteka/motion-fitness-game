@@ -67,7 +67,7 @@
 | `src/voice/providers.js` | [src/voice/providers.md](src/voice/providers.md) | 适配器：麦克风 / ASR / 系统 TTS / VU |
 | `src/voice/parse.js` | [src/voice/parse.md](src/voice/parse.md) | 一句话 → `{intent, args}`（命令快车道解析） |
 | `src/voice/commands.js` | [src/voice/commands.md](src/voice/commands.md) | 命令表（intent + 中英说法 + `run(ctx,args)`） |
-| `src/voice/rules.js` | [src/voice/rules.md](src/voice/rules.md) | 规则快车道：确定性的话 + 一整套「别太吵」护栏 |
+| `src/voice/rules.js` | [src/voice/rules.md](src/voice/rules.md) | 规则快车道：确定性的话 + 一整套「别太吵」护栏 + R4 规则面板的数据（来源 / 触发条件人话 / 报数·读秒总开关） |
 | `src/voice/events.js` | [src/voice/events.md](src/voice/events.md) | 事件总线（14 类事件、60 秒窗口、紧凑副本） |
 | `src/voice/judge.js` | [src/voice/judge.md](src/voice/judge.md) | LLM 裁判：8 触发点、严格 JSON、默认沉默 |
 | `src/voice/llm.js` | [src/voice/llm.md](src/voice/llm.md) | 前端 `/llm` 客户端 + Agent 上下文构建 |

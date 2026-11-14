@@ -282,6 +282,13 @@
               <div class="coach-diag-row">
                 <dt data-i18n="coach.diag.ttsLabel"></dt><dd id="coachDiagTts"></dd>
               </div>
+              <!-- R4：最近一次「为什么说 / 为什么没说」（读 diag.snapshot() 的 lastSpeak / lastSkip） -->
+              <div class="coach-diag-row">
+                <dt data-i18n="coach.diag.whySaidLabel"></dt><dd id="coachDiagWhySaid"></dd>
+              </div>
+              <div class="coach-diag-row">
+                <dt data-i18n="coach.diag.whySkipLabel"></dt><dd id="coachDiagWhySkip"></dd>
+              </div>
             </dl>
             <div class="coach-diag-selftest">
               <button class="ghost-btn coach-diag-run" id="btnVoiceSelfTestPanel" type="button"
@@ -712,6 +719,24 @@
             </select>
           </label>
           <p class="modal-hint" data-i18n="settings.coachVolumeHint"></p>
+          <!-- R4：话量细化 —— 「报数」「读秒」两个总开关（和话量三档组合生效；关掉只是那一路不说话，规则本体还在） -->
+          <div class="toggle-grid">
+            <button class="toggle" id="btnRuleRep" type="button" aria-pressed="true"
+                    data-i18n="settings.repToggle"></button>
+            <button class="toggle" id="btnRuleRead" type="button" aria-pressed="true"
+                    data-i18n="settings.readToggle"></button>
+          </div>
+          <p class="modal-hint" data-i18n="settings.ruleSwitchHint"></p>
+          <!-- R4：当前生效的规则（内置 / 口述 / LLM 逐条开关 + 一键恢复默认）。
+               列表由 app.js 的 renderRulePanel() 按规则引擎的 **真实规则表** 建，不写死在 HTML 里。 -->
+          <h3 class="modal-group-title modal-group-title--sub" data-i18n="settings.rulesGroup"></h3>
+          <p class="modal-hint" data-i18n="settings.rulesLead"></p>
+          <div class="rule-list" id="ruleList"></div>
+          <div class="btn-row">
+            <button class="ghost-btn" id="btnRuleReset" type="button"
+                    data-i18n="settings.rulesReset"></button>
+          </div>
+          <p class="modal-hint" id="ruleLimitHint"></p>
           <!-- P3.5 收尾：教练语气（长期偏好 prefs.tone：warm 温和 / funny 温和幽默 / strict 严格），
                写进服务端 MD，和「教练记得什么」面板同步；只改怎么说，不改专业判断 -->
           <label class="field wide">

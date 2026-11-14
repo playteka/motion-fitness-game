@@ -21,12 +21,15 @@
    ▼ ④ src/voice/events.js          事件总线：rep / gate-fail / keyframe-hit·miss / progress / tick / idle / …
    ▼ ⑤ 分流
         ├─ src/voice/rules.js       规则引擎：确定性的话（报数、读秒、倒数、最后 3 个、过半、催促）→ 0 成本、≤80ms
+        │                           设置页的「当前生效的规则」面板也读它（R4：逐条开关 / 一键恢复默认 /
+        │                           「报数 / 读秒」两个总开关，状态存 settings.ruleSwitches）
         └─ src/voice/judge.js       LLM 裁判：8 个触发点 → 问模型「要不要说一句」→ 默认沉默
    ▼ ⑥ src/voice/session.js         会话状态机 off/listening/thinking/speaking/error + 命令快车道 + 确认机制
    ▼ ⑦ 输出
         · src/voice/tts-volc.js     火山流式 TTS（MSE 播放 + 三段降级 + 插话打断）
         · src/voice/danmaku.js      弹幕（用户青 / 教练薄荷绿）
-        · index.html / style.css    光环头像、HUD、菜单
+        · src/voice/diag.js         诊断快照（含 R4 的 lastSpeak / lastSkip → 面板两行「为什么说 / 没说」）
+        · index.html / style.css    光环头像、HUD、菜单、规则面板
 ```
 
 ## 2. 三层输入
@@ -63,17 +66,18 @@
 - 手势菜单、猫爪指针、圆环导航、全屏、成绩/记录/最佳
 - 火山流式 ASR（本机代理）、命令快车道、自由对话 + 工具调用
 - 火山流式 TTS（首字 ~0.4~1.3s）+ 插话打断（≤150ms）+ 三段降级
-- 规则引擎（8 条内置）+ 口述建规则 + LLM 裁判（8 触发点，默认沉默）
+- 规则引擎（6 条内置）+ 口述建规则 + **R4 规则面板**（全部规则逐条开关 / 一键恢复默认 /
+  「报数 / 读秒」两个总开关 / LLM 规则上限提示）+ LLM 裁判（8 触发点，默认沉默）
 - 三层记忆、SOUL 人设、进训练主动问候、极简光环头像、弹幕
-- 七套测试 **4372+**（i18n / detectors / engines / specs / page / app / voice）
+- 七套测试 **4465**（i18n / detectors / engines / specs / page / app / voice）
 
 ## 6. 没做好 / 需要完善（按优先级）
 
 | 优先级 | 缺口 | 现状 | 建议 |
 |---|---|---|---|
 | **P0** | **姿态「标准度」检测**（平板/俯卧撑的**塌腰、翘臀、身体不成直线**） | 只有门控 + 关键帧（蹲深/站直），**没有臀位/腰曲的显式判据** ✗ | 在 `metrics.js` 加 `hipSag`（髋相对肩-踝连线偏移）、`pelvisTilt`；在 `steps.js` 加判据 → 发 `posture-fault{type}` 事件 → 交给裁判说「腰别塌」 |
-| **P0** | `session-end` 告别 + 结束后静默 | **已完成**（R4，见 `src/app.js` 的告别段） | 保持回归测试 |
-| **P1** | **R4 规则面板** | 未做 ✗ | 列出规则（内置/口述/LLM）+ 逐条开关 + 一键恢复 + 诊断「为什么说/没说」 |
+| **P0** | `session-end` 告别 + 结束后静默 | **已完成**（见 `src/app.js` 的告别段） | 保持回归测试 |
+| **P1** | **R4 规则面板** | **已完成**：`src/voice/rules.js` 出数据（来源 / 触发条件人话 / 频道），`src/app.js` L751-L926 渲染与开关，`settings.ruleSwitches` 持久化；诊断两行见 `src/voice/diag.js` L145-L146 + `coach.js` L60-L100 | 保持 `[41]` / `[55]` 回归；LLM 规则的**上限拦截**等真接上自动建规则时再加在 `addCoachRule` 入口 |
 | **P1** | 每 3 个 / 静止 / 出画 的频率整形 | 已实现节流，但**快节奏时仍偏密** ✗ | 「每 3 个且 ≥6s」；静止/出画 **退避 10→20→40s** |
 | **P1** | **训练计划 / 排课** | 无 ✗ | 「今天练什么」→ Agent 生成计划 + 一键开始（最像私教的能力） |
 | **P2** | 动作库覆盖 | 19 个 | 加：引体/划船/硬拉（需器械）、拉伸类（计时） |

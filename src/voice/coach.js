@@ -22,7 +22,7 @@
  *   - 两种情况下都**不压住** HUD 左栏、右上角两颗圆环、判定进度条与左下状态环。
  */
 
-import { t } from '../i18n.js';
+import { t, hasKey } from '../i18n.js';
 import { libIconSVG } from '../icons.js';
 import { voiceErrorKey, voiceNoticeKey } from './session.js';
 import { createVuMeter, smoothLevel, levelToColor } from './providers.js';
@@ -49,6 +49,57 @@ export const COACH_ROUTE_KEYS = Object.freeze({
 
 /** 状态 → 是否显示字幕面板（off 时只留灰掉的状态环） */
 export const COACH_PANEL_STATES = Object.freeze(['listening', 'thinking', 'speaking', 'error']);
+
+/**
+ * 诊断面板「为什么说 / 为什么没说」的原因码 → 词条（R4）。
+ *
+ * `diag.js` 只存**稳定原因码**（`rule:skip {reason}` / `judge:skip {reason}`），
+ * 界面层在这里换成一句话；加了新原因码但忘了写词条时，面板会原样显示那个码（方便排障，
+ * 也不会因为漏翻一个词条就让整行变空）。
+ */
+export const DIAG_REASON_KEYS = Object.freeze({
+  // rule:speak / judge:ask 的「为什么说」
+  hit: 'coach.diag.reason.hit',
+  'judge-spoke': 'coach.diag.reason.judgeSpoke',
+  'judge-silent': 'coach.diag.reason.judgeSilent',
+  'judge-fallback': 'coach.diag.reason.judgeFallback',
+  'judge-failed': 'coach.diag.reason.judgeFailed',
+  // rule:skip 的护栏
+  'coach-off': 'coach.diag.reason.coachOff',
+  muted: 'coach.diag.reason.muted',
+  volume: 'coach.diag.reason.volume',
+  stride: 'coach.diag.reason.stride',
+  speaking: 'coach.diag.reason.speaking',
+  'speaking-long': 'coach.diag.reason.speakingLong',
+  'same-tick': 'coach.diag.reason.sameTick',
+  cooldown: 'coach.diag.reason.cooldown',
+  'budget:set': 'coach.diag.reason.budgetSet',
+  'budget:minute': 'coach.diag.reason.budgetMinute',
+  gap: 'coach.diag.reason.gap',
+  empty: 'coach.diag.reason.empty',
+  'rep-off': 'coach.diag.reason.repOff',
+  'read-off': 'coach.diag.reason.readOff',
+  // judge:skip 的护栏
+  busy: 'coach.diag.reason.busy',
+  superseded: 'coach.diag.reason.superseded',
+  duplicate: 'coach.diag.reason.duplicate',
+  'bad-event': 'coach.diag.reason.badEvent',
+  'no-client': 'coach.diag.reason.noClient',
+  sealed: 'coach.diag.reason.sealed',
+  'session-end': 'coach.diag.reason.cancelled',
+  cancelled: 'coach.diag.reason.cancelled',
+  timeout: 'coach.diag.reason.timeout',
+  'judge-error': 'coach.diag.reason.judgeError',
+});
+
+/** 原因码 → 人话（未知码原样返回；都为空时返回「无」） */
+export function diagReasonText(code) {
+  const raw = String(code || '');
+  if (!raw) return t('coach.diag.none');
+  const key = DIAG_REASON_KEYS[raw];
+  if (key && hasKey(key)) return t(key);
+  return raw;
+}
 
 /**
  * 版面常量：**和 style.css 的这几个值一一对应**（测试同时核对两处）。
@@ -220,7 +271,7 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
       'coachDiagRoute', 'coachDiagWs', 'coachDiagFrames', 'coachDiagRate', 'coachDiagResults',
       'coachDiagError', 'coachDiagMic', 'coachDiagWorklet', 'coachDiagTts', 'btnVoiceSelfTestPanel', 'coachSelfTestMic',
       'coachSelfTestWs', 'coachSelfTestSend', 'coachSelfTestResult', 'coachSelfTestVolume',
-      'coachSelfTestResultText']) {
+      'coachSelfTestResultText', 'coachDiagWhySaid', 'coachDiagWhySkip']) {
       el[id] = $(id);
     }
     if (el.coachAvatar) el.coachAvatar.innerHTML = libIconSVG('ui:coach', 'ui-icon coach-avatar-icon');
@@ -395,6 +446,34 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
     });
   }
 
+  /**
+   * R4 第一行「刚才那句为什么说」：最近一次 `rule:speak` / `judge:ask`
+   * → 规则 id 或裁判事件 + 一句原因（原因码 → 人话见 `diagReasonText`）。
+   */
+  function whySaidText(snap) {
+    const rec = (snap && snap.lastSpeak) || null;
+    if (!rec || !rec.kind) return t('coach.diag.none');
+    const reason = diagReasonText(rec.reason);
+    if (rec.kind === 'judge') {
+      return t('coach.diag.whySaidJudge', { event: rec.event || '?', reason });
+    }
+    return t('coach.diag.whySaidRule', { id: rec.id || '?', event: rec.event || '?', reason });
+  }
+
+  /**
+   * R4 第二行「为什么没说」：最近一次 `rule:skip` / `judge:skip`
+   * → 规则 id / 裁判事件 + 被哪道护栏挡住（`reason` 原样来自 diag）。
+   */
+  function whySkipText(snap) {
+    const rec = (snap && snap.lastSkip) || null;
+    if (!rec || !rec.kind) return t('coach.diag.none');
+    const reason = diagReasonText(rec.reason);
+    if (rec.kind === 'judge') {
+      return t('coach.diag.whySkipJudge', { event: rec.event || '?', reason });
+    }
+    return t('coach.diag.whySkipRule', { id: rec.id || '?', event: rec.event || '?', reason });
+  }
+
   function renderSelfTest(snap = {}) {
     const names = {
       mic: t('coach.selfTest.step.mic'),
@@ -478,6 +557,8 @@ export function createCoach({ doc = null, win = null, vuFactory = null, diag = n
       }));
       setText('coachDiagWorklet', workletText(snap));
       setText('coachDiagTts', ttsText(snap));
+      setText('coachDiagWhySaid', whySaidText(snap));
+      setText('coachDiagWhySkip', whySkipText(snap));
     }
     if (selfTest) renderSelfTest(selfTest.snapshot());
     return api;

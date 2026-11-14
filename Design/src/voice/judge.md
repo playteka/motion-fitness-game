@@ -41,6 +41,9 @@
      8s 超时 → 静默、不重试；LLM 失败 → 门控那条回退 R1 模板口令，其余静默
 ⑤ 真要说话 → 交给 app.js 现有的 voice.onCoachText()（弹幕 + TTS + 降级同一条路）
 ⑥ 诊断：judge:ask {event, ok, ms, spoke} / judge:skip {reason}
+      （R4 起 diag 还把它们折成 lastSpeak / lastSkip —— 设置页诊断面板的「刚才那句为什么说 /
+      为什么没说」两行；judge 那一路的 reason 由 ok / spoke 分成 judge-spoke / judge-silent /
+      judge-fallback / judge-failed，人话在 coach.js 的 DIAG_REASON_KEYS）
 ```
 
 **两种自由文本事件**不走裁判模式（文件头 L26-L29）：`session-start`（进场问候）与

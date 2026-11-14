@@ -135,6 +135,16 @@ function blankSnapshot() {
       added: 0, removed: 0, lastAdd: '', lastRemove: '', by: '',
     },
     /**
+     * R4「刚才那句为什么说 / 为什么没说」两行（诊断面板直接读）：
+     *   lastSpeak = 最近一次**真的开口**的来源（rule = 规则快车道 / judge = LLM 裁判）
+     *               `{kind, id, event, reason, at}`；rule 只有 id + 命中，judge 的 reason 说明
+     *               「模型说的 / 模型选择不说 / 模型失败兜底」。
+     *   lastSkip  = 最近一次被护栏挡掉的来源 + 原因码（`{kind, id, event, reason, at}`），
+     *               reason 的**人话**由界面层映射（diag 只存稳定的原因码，不存文案）。
+     */
+    lastSpeak: { kind: '', id: '', event: '', reason: '', at: 0 },
+    lastSkip: { kind: '', id: '', event: '', reason: '', at: 0 },
+    /**
      * R3 LLM 裁判（`judge:ask` / `judge:skip`）：
      *   ask    = 真的问出去几次；spoke = 其中出声几次；failed = 失败 / 超时几次
      *   event  = 最近一次问的是哪个事件；ms = 最近一次耗时
@@ -204,6 +214,8 @@ export function createDiag({
       session: { ...state.session },
       rule: { ...state.rule },
       judge: { ...state.judge },
+      lastSpeak: { ...state.lastSpeak },
+      lastSkip: { ...state.lastSkip },
       farewell: { ...state.farewell },
       asrError: state.asrError ? { ...state.asrError } : null,
     };
@@ -390,6 +402,13 @@ export function createDiag({
           priority: Number(entry.priority) || 0,
           ms: Math.max(0, Number(entry.ms) || 0),
         };
+        state.lastSpeak = {
+          kind: 'rule',
+          id: String(entry.ruleId || ''),
+          event: String(entry.event || ''),
+          reason: 'hit',
+          at: Math.max(0, Number(entry.t) || 0),
+        };
         break;
       case 'rule:skip':
         state.rule = {
@@ -397,6 +416,13 @@ export function createDiag({
           skip: state.rule.skip + 1,
           reason: String(entry.reason || ''),
           skipRule: String(entry.ruleId || ''),
+        };
+        state.lastSkip = {
+          kind: 'rule',
+          id: String(entry.ruleId || ''),
+          event: String(entry.event || ''),
+          reason: String(entry.reason || ''),
+          at: Math.max(0, Number(entry.t) || 0),
         };
         break;
       /* 口述建 / 删规则（R2）：`rule:add {id, by:'user'}` / `rule:remove {id, by:'user'}` */
@@ -417,24 +443,43 @@ export function createDiag({
         };
         break;
       /* R3 LLM 裁判（`judge:ask` / `judge:skip`）：问了几次 / 出声几次 / 挡掉几次 */
-      case 'judge:ask':
+      case 'judge:ask': {
+        const judgeSpoke = entry.spoke === true;
+        const judgeOk = entry.ok === true;
         state.judge = {
           ...state.judge,
           ask: state.judge.ask + 1,
-          spoke: state.judge.spoke + (entry.spoke === true ? 1 : 0),
-          failed: state.judge.failed + (entry.ok === true ? 0 : 1),
+          spoke: state.judge.spoke + (judgeSpoke ? 1 : 0),
+          failed: state.judge.failed + (judgeOk ? 0 : 1),
           event: String(entry.event || ''),
           ms: Math.max(0, Number(entry.ms) || 0),
-          ok: entry.ok === true,
+          ok: judgeOk,
           code: String(entry.code || ''),
         };
+        state.lastSpeak = {
+          kind: 'judge',
+          id: '',
+          event: String(entry.event || ''),
+          reason: judgeOk
+            ? (judgeSpoke ? 'judge-spoke' : 'judge-silent')
+            : (judgeSpoke ? 'judge-fallback' : 'judge-failed'),
+          at: Math.max(0, Number(entry.t) || 0),
+        };
         break;
+      }
       case 'judge:skip':
         state.judge = {
           ...state.judge,
           skip: state.judge.skip + 1,
           reason: String(entry.reason || ''),
           event: String(entry.event || state.judge.event || ''),
+        };
+        state.lastSkip = {
+          kind: 'judge',
+          id: '',
+          event: String(entry.event || ''),
+          reason: String(entry.reason || ''),
+          at: Math.max(0, Number(entry.t) || 0),
         };
         break;
       /* ---------------- 一次训练结束的告别（coach:farewell / coach:farewell-release） ----------------
