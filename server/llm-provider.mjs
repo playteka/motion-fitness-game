@@ -35,11 +35,13 @@ import { loadEnvFile, redactSecrets } from './env.mjs';
 import {
   EMPTY_REPLY,
   JUDGE_EVENT_TYPES,
+  LLM_EVENT_SESSION_END,
   LLM_EVENT_SESSION_START,
   LLM_TOOLS,
   actionsFromToolCalls,
   buildSystemPrompt,
   isJudgeAskEvent,
+  isJudgeFarewellEvent,
 } from './llm-tools.mjs';
 // 长期记忆（服务端 MD）：`/llm` 里工具要真的把 prefs / facts 写进去，
 // 并且把「用户记住了什么」带回前端 —— 白名单 / 路径安全全在 memory-store 里。
@@ -73,9 +75,9 @@ export const LLM_MAX_CONTEXT_CHARS = 6000;
  * 会话开始事件（`POST /llm {event:'session-start'}`）：唯一字符串定义在 `llm-tools.mjs`
  * （system prompt 的事件规则也要用它），这里 re-export 给路由 / 测试 / 前端对照。
  */
-export { LLM_EVENT_SESSION_START };
+export { LLM_EVENT_SESSION_START, LLM_EVENT_SESSION_END };
 /** R3 裁判事件口径（唯一来源 `src/voice/judge.js`；这里 re-export 给测试 / 前端对照） */
-export { JUDGE_EVENT_TYPES, isJudgeAskEvent };
+export { JUDGE_EVENT_TYPES, isJudgeAskEvent, isJudgeFarewellEvent };
 
 /** provider 元信息：默认地址 / 默认模型 / key 回退变量 */
 export const LLM_PROVIDER_SPECS = Object.freeze({
@@ -671,7 +673,87 @@ export function judgeEventMessage({ event = '', locale = 'zh', context = null } 
   return lang === 'en' ? `[Event] ${ev}` : `[事件] ${ev}`;
 }
 
-/** 组一次请求的 messages（system + 最近历史 + 这一句 / 一条 session-start 事件 / 一条裁判事件） */export function buildLlmMessages({
+/* ------------------------------------------------------------------ *
+ * 一次训练结束（session-end）→ 一条告别事件的 user 消息（中英各一套）
+ *
+ * 用户要求：「上下文：本次训练时长 / 组数 / 总次数 / 均分 / 最佳一组 / 与上次对比 →
+ * 模型给告别语 ≤2 句（肯定 + 具体数字 + 「明天见 / 动起来」）」。
+ * 所有数字都来自客户端算好的 `context.judge`（服务端不猜、不补数字）。
+ * ------------------------------------------------------------------ */
+
+/** 时长 → 「12 分钟」/「45 秒」（<1 分钟说秒，别把 40 秒说成 1 分钟） */
+function judgeDuration(sec, lang) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  if (s < 60) return lang === 'en' ? `${s}s` : `${s} 秒`;
+  const min = Math.round(s / 60);
+  return lang === 'en' ? `${min} min` : `${min} 分钟`;
+}
+
+/**
+ * `event: session-end` 的 user 消息（中英各一套）。
+ *
+ * 它不是「用户说的话」，而是一条**系统事件描述**：用户退出了训练（退出全屏 / 回主页），
+ * 模型据此说一句告别语。0 组（中途退出）也照样发 —— 这时不编成绩，只温柔收尾。
+ *
+ * @param {{locale?:string, context?:object}} [opts]
+ * @returns {string} 直接作为 messages 里那条 user 的内容
+ */
+export function sessionEndEventMessage({ locale = 'zh', context = null } = {}) {
+  const lang = locale === 'en' ? 'en' : 'zh';
+  const ctx = context && typeof context === 'object' ? context : {};
+  const j = ctx.judge && typeof ctx.judge === 'object' ? ctx.judge : {};
+  const num = judgeNum;
+  const unit = String(j.unit || '').slice(0, 8);
+  const sets = Math.max(0, Math.round(Number(j.sets) || 0));
+  const reps = Math.max(0, Math.round(Number(j.reps) || 0));
+  const durationSec = Math.max(0, Math.round(Number(j.durationSec) || 0));
+  const duration = judgeDuration(durationSec, lang);
+  const avgScore = Math.round(Number(j.avgScore) || 0);
+  const bestScore = Math.round(Number(j.bestScore) || 0);
+  const bestValue = Math.max(0, Math.round(Number(j.bestValue) || 0));
+  const prev = j.prev && typeof j.prev === 'object' ? j.prev : null;
+  const zero = sets === 0 && reps === 0;
+
+  if (lang === 'en') {
+    const unitText = unit ? ` ${unit}` : '';
+    const prevText = prev
+      ? `; last session=${Math.max(0, Math.round(Number(prev.sets) || 0))} sets, `
+        + `${Math.max(0, Math.round(Number(prev.reps) || 0))}${unitText}, `
+        + `average ${Math.round(Number(prev.avgScore) || 0)} points, best ${Math.round(Number(prev.bestScore) || 0)} points`
+        + `; change=reps ${signed(Number(j.deltaReps) || 0)}, average ${signed(Number(j.deltaScore) || 0)}`
+      : '; no previous session to compare';
+    return `[Event] Workout finished (the user left fullscreen and is going home): duration=${duration}, `
+      + `sets=${num(sets)}, total reps=${num(reps)}${unitText}, average score=${num(avgScore)}, `
+      + `best set=${num(bestScore)} points${bestValue > 0 ? ` (${num(bestValue)}${unitText})` : ''}`
+      + `${prevText}.`
+      + (zero
+        ? ' No set was completed this time (the user left early) — do not invent results.'
+        : '')
+      + ' Say goodbye in at most 2 sentences: first acknowledge the session with 1–2 of these real numbers,'
+      + ' then close with "see you tomorrow" or "let\u2019s move". Never ask questions.';
+  }
+  const prevText = prev
+    ? `；上一场=${Math.max(0, Math.round(Number(prev.sets) || 0))} 组、`
+      + `${Math.max(0, Math.round(Number(prev.reps) || 0))}${unit || ''}、`
+      + `均分 ${Math.round(Number(prev.avgScore) || 0)} 分、最佳 ${Math.round(Number(prev.bestScore) || 0)} 分，`
+      + `对比=总次数 ${signed(Number(j.deltaReps) || 0)}、均分 ${signed(Number(j.deltaScore) || 0)}`
+    : '；没有上一场可比';
+  return `[事件] 本次训练结束（用户退出全屏、准备回主页）：时长=${duration}，组数=${num(sets)} 组，`
+    + `总次数=${num(reps)}${unit || ''}，平均得分=${num(avgScore)} 分，`
+    + `最佳一组=${num(bestScore)} 分${bestValue > 0 ? `（${num(bestValue)}${unit || ''}）` : ''}`
+    + `${prevText}。`
+    + (zero ? '这次一组都没完成（中途退出）—— 不要编成绩。' : '')
+    + '请说一句告别语（最多 2 句）：先肯定这次训练、带 1~2 个上面的真实数字，'
+    + '再用「明天见」或「动起来」收尾；不要提问。';
+}
+
+/** `+15` / `-3` / `0`（给模型看的变化量，正负号要留着） */
+function signed(value) {
+  const n = Math.round(Number(value) || 0);
+  return n > 0 ? `+${n}` : String(n);
+}
+
+/** 组一次请求的 messages（system + 最近历史 + 这一句 / 一条 session-start / session-end / 裁判事件） */export function buildLlmMessages({
   text = '',
   locale = 'zh',
   context = null,
@@ -686,13 +768,16 @@ export function judgeEventMessage({ event = '', locale = 'zh', context = null } 
    * 三种 user 消息：
    *   ① `session-start` → 进场问候（P3.3 的事件描述，自由文本回复）；
    *   ② 裁判事件（8 个触发点）→ 服务端按事件生成的**事件描述**（模型只回严格 JSON）；
-   *   ③ 其余 → 用户说的那句话（原行为不变）。
+   *   ③ `session-end` → 离场告别（事件描述，自由文本、≤2 句）；
+   *   ④ 其余 → 用户说的那句话（原行为不变）。
    */
   const userContent = eventName === LLM_EVENT_SESSION_START
     ? sessionStartEventMessage({ locale: lang, context })
-    : (isJudgeAskEvent(eventName)
-      ? judgeEventMessage({ event: eventName, locale: lang, context })
-      : String(text).slice(0, LLM_MAX_TEXT));
+    : (eventName === LLM_EVENT_SESSION_END
+      ? sessionEndEventMessage({ locale: lang, context })
+      : (isJudgeAskEvent(eventName)
+        ? judgeEventMessage({ event: eventName, locale: lang, context })
+        : String(text).slice(0, LLM_MAX_TEXT)));
   return [
     { role: 'system', content: buildSystemPrompt({ locale: lang, context, maxContextChars, event }) },
     ...historyMessages(history, { maxTurns }),
@@ -825,14 +910,17 @@ export function createLlmRoutes({
       const data = parsed.data;
       const text = String(data.text == null ? '' : data.text).trim();
       /**
-       * 可选的 `event`：`session-start`（进训练后主动问候）+ R3 的 8 个裁判事件。
-       * 两类都允许 `text` 为空 —— user 消息由服务端按 context / 事件生成；
-       * 其它任何值都当普通对话，仍然要求有 text（旧客户端行为不变；未知事件名不放行空文本）。
+       * 可选的 `event`：`session-start`（进训练后主动问候）+ `session-end`（离场告别）
+       * + R3 的 8 个裁判事件。三类都允许 `text` 为空 —— user 消息由服务端按 context /
+       * 事件生成；其它任何值都当普通对话，仍然要求有 text（旧客户端行为不变；
+       * 未知事件名不放行空文本）。
        */
       const rawEvent = String(data.event == null ? '' : data.event);
       const event = JUDGE_EVENT_TYPES.includes(rawEvent) ? rawEvent : '';
       /** R3：裁判模式（严格 JSON + 默认 null）；`session-start` 不算，它还是普通问候 */
       const judgeMode = isJudgeAskEvent(event);
+      /** 告别模式（自由文本、必须说、≤2 句）：`session-end` */
+      const farewellMode = isJudgeFarewellEvent(event);
       if (!text && !event) {
         sendJson(res, 400, { ok: false, error: 'empty-text' });
         return;
@@ -881,8 +969,8 @@ export function createLlmRoutes({
         text,
         locale,
         context,
-        // 裁判是无状态的一条事件一条请求：不带对话历史（省 token，也不会被上一句带跑）
-        history: judgeMode ? [] : data.history,
+        // 裁判 / 告别都是无状态的一条事件一条请求：不带对话历史（省 token，也不会被上一句带跑）
+        history: (judgeMode || farewellMode) ? [] : data.history,
         event,
         maxTurns: maxHistoryTurns,
       });
@@ -902,6 +990,41 @@ export function createLlmRoutes({
           if (typeof logger === 'function') {
             try {
               logger('llm judge', {
+                provider: cfg.provider,
+                model: cfg.model,
+                ms: Date.now() - started,
+                prompt: usage.prompt,
+                completion: usage.completion,
+                chars: reply.length,
+                event,
+              });
+            } catch { /* ignore */ }
+          }
+          sendJson(res, 200, {
+            ok: true,
+            event,
+            reply,
+            actions: [],
+            refusals: [],
+            memoryOps: [],
+            memory: null,
+            usage,
+            provider: cfg.provider,
+            model: cfg.model,
+          });
+          return;
+        }
+        /**
+         * 告别模式（session-end）：模型回**自由文本**（≤2 句）。
+         * 和裁判模式一样**原样**交回客户端（由 app.js 用 `clampFarewellSpeak` 收敛到 2 句 / 60 字）：
+         *   - 不执行任何工具调用（告别这一刻不该再改界面）；不写记忆；
+         *   - 空输出 → 原样回空串，客户端用 locales 里的内置告别语兜底（绝不静默）。
+         */
+        if (farewellMode) {
+          const reply = String((out && out.text) || '').trim();
+          if (typeof logger === 'function') {
+            try {
+              logger('llm farewell', {
                 provider: cfg.provider,
                 model: cfg.model,
                 ms: Date.now() - started,
@@ -1019,9 +1142,11 @@ export default {
   LLM_RATE_WINDOW_MS,
   LLM_MAX_HISTORY_TURNS,
   LLM_EVENT_SESSION_START,
+  LLM_EVENT_SESSION_END,
   /** R3 裁判事件口径（唯一来源是 src/voice/judge.js；这里 re-export 给测试 / 前端对照） */
   JUDGE_EVENT_TYPES,
   isJudgeAskEvent,
+  isJudgeFarewellEvent,
   LLM_PROVIDERS,
   LLM_PROVIDER_SPECS,
   normalizeProviderName,
@@ -1036,6 +1161,7 @@ export default {
   createLlmRoutes,
   buildLlmMessages,
   sessionStartEventMessage,
+  sessionEndEventMessage,
   judgeEventMessage,
   historyMessages,
   applyMemoryOps,

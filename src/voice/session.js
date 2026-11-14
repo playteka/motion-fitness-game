@@ -927,6 +927,29 @@ export function createVoiceSession({
   }
 
   /**
+   * 停止聆听（**不打断正在念的那句，也不进 paused**）：一次训练结束的告别用。
+   *
+   * 用户要求：「告别之后不再语音交互（停止聆听；麦克风在告别播完后释放）」——
+   * 这里先停 ASR（不再收新的话）、清掉待处理的提问与看门狗，并停掉**上一句**残留的 TTS，
+   * 但**不进 paused**：`pause()` 会 `tts.cancel()`，而告别马上要用 TTS 念出来；
+   * 真正释放麦克风由调用方在告别**播完**之后调 `stop('farewell')` 完成（`mic.close`）。
+   *
+   * @param {string} [by] 诊断里的原因（默认 farewell）
+   */
+  function stopListening(by = 'farewell') {
+    if (!enabled || state === 'off' || state === 'error') return snapshot();
+    note('session:listen-off', { by: String(by), state });
+    epoch += 1;                     // 在飞的回复 / 残留的 TTS 回调一律失效
+    clearPending();
+    clearTimers();
+    clearSilence();
+    try { tts?.cancel?.(); } catch { /* ignore */ }
+    try { asr?.stop?.(String(by)); } catch { /* ignore */ }
+    state = 'listening';
+    return emit();
+  }
+
+  /**
    * 关闭：任意状态 → off；停 TTS、停识别、释放麦克风。
    *
    * `by` 只用于诊断（`user` = Ctrl+I / 设置里关掉、`pagehide` = 页面卸载、
@@ -1023,6 +1046,7 @@ export function createVoiceSession({
     VOICE_STATES,
     start,
     stop,
+    stopListening,
     pause,
     resume,
     onUserText,

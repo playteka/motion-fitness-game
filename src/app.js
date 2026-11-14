@@ -32,7 +32,7 @@ import {
 } from './i18n.js';
 // AI 语音教练（P3.0 基座）：会话状态机 + 适配器 + 界面层。
 // app.js 只做接线（热键 / 设置开关 / 生命周期 / 把 snapshot 交给 coach.render）。
-import { createVoiceSession, voiceErrorKey } from './voice/session.js';
+import { createVoiceSession, voiceErrorKey, speakHoldMs } from './voice/session.js';
 import { createMic, createAutoAsr, createLlm, createTts, createVuMeter } from './voice/providers.js';
 import { createCoach, coachLayout } from './voice/coach.js';
 // P3.6：对话弹幕（纯逻辑 + DOM 渲染分层）+ 火山 TTS 播放层（失败自动回退系统 TTS）
@@ -62,7 +62,7 @@ import {
 // R3：LLM 当「裁判」—— 事件触发，由模型判断要不要说一句（默认不说；口径全在 judge.js）
 import {
   createJudge, shouldJudgeRep, shouldJudgeHold, shouldJudgeIdle, shouldJudgeOutOfFrame,
-  parseGateDiagRow, worstGateCheck,
+  parseGateDiagRow, worstGateCheck, clampFarewellSpeak,
   JUDGE_EVENTS, REP_JUDGE_EVERY, HOLD_JUDGE_EVERY_SEC,
   IDLE_JUDGE_START_SEC, OUT_OF_FRAME_JUDGE_START_SEC,
   GATE_FAIL_JUDGE_STREAK, KEYFRAME_MISS_JUDGE_STREAK,
@@ -90,6 +90,12 @@ const STORE = {
    * 每次开始一组 / 一组结束 / 退出时更新；「继续上次」读它；清空训练记录时一起清。
    */
   lastSession: 'mfg.lastSession.v1',
+  /**
+   * 一次训练的汇总（告别用「与上次对比」的唯一来源）：
+   * `{at, sets, reps, avgScore, bestScore}` —— 每次训练结束（`session-end`）写一次，
+   * 0 组也如实记（0 组也是「上次」），这样下一场说「比上次多 N 次」才是真的。
+   */
+  lastTraining: 'mfg.lastTraining.v1',
 };
 
 /**
@@ -530,6 +536,11 @@ function getLlmContext(text = '') {
 const voiceLlm = {
   reply(text) {
     if (!state.settings.freeChat) return coachLlmMock.reply(text);
+    /**
+     * 告别之后本场不再与 LLM 通信：连罐头回复都不发请求（`llm-sealed` 是客户端那一层保险，
+     * 这里先挡一道，省得日志里出现一堆「被封麦」的失败记录）。
+     */
+    if (llmSealed) return coachLlmMock.reply(text);
     return coachLlmClient
       .respond(text, { locale: getLang(), context: getLlmContext(text) })
       .then((res) => {
@@ -866,6 +877,14 @@ function judgeContext(event, extra = {}) {
  * @param {{fallback?:string}} [opts] `fallback` = LLM 失败时念的兜底口令（只有门控那条传）
  */
 function askJudge(event, extra = {}, { fallback = '' } = {}) {
+  /**
+   * 告别之后本场**不再与 LLM 通信**（用户明确要求）：裁判请求一律在这里挡掉 ——
+   * 即使还有事件在响（静止 / 出画 / 门控），也不会有任何 `/llm`。
+   */
+  if (llmSealed) {
+    try { coachDiag?.record?.('judge:skip', { reason: 'sealed', event: String(event || '') }); } catch { /* ignore */ }
+    return Promise.resolve(null);
+  }
   state.judgeSeed = (state.judgeSeed || 0) + 1;
   try {
     return judge.request(event, { context: judgeContext(event, extra), fallback });
@@ -1036,7 +1055,405 @@ voiceBus.on('gate-ok', () => { state.gateFailStreak = 0; });
 voiceBus.on('keyframe-miss', (ev) => { judgeKeyframeEvent(ev); });
 voiceBus.on('set-start', () => { resetJudgeStreaks(); });
 voiceBus.on('session-start', () => { resetJudgeStreaks(); });
-voiceBus.on('session-end', () => { resetJudgeStreaks(); });
+voiceBus.on('session-end', () => {
+  resetJudgeStreaks();
+  startSessionFarewell();   // 一次训练结束 → 告别（每次训练只 1 次；0 组也告别）
+});
+
+/* ------------------------------------------------------------------ *
+ * session-end：一次训练结束的**告别**（退出全屏 / 即将回主页）
+ *
+ * 用户要求（已确定，只做这一件）：
+ *   ① 触发：退出全屏 / 即将回主页时 —— `showHome()` 里发 `session-end`（**每次训练 1 次**，
+ *      中途退出也算，**0 组也触发**）；
+ *   ② 上下文：本次训练时长 / 组数 / 总次数 / 均分 / 最佳一组 / 与上次对比 →
+ *      模型给告别语 **≤2 句**（肯定 + 具体数字 + 「明天见 / 动起来」）；
+ *   ③ 失败兜底：内置告别语模板（`coach.sessionEnd.fallback*`，**含数字**，中英都有），绝不静默；
+ *   ④ 告别之后：本场**不再与 LLM 通信**（客户端封麦 `llm-sealed`）、**不再语音交互**
+ *      （先停聆听；**麦克风在告别播完后**才释放；下一次进训练 `session-start` 恢复）；
+ *   ⑤ 诊断：`coach:farewell {ok,ms,fallback}` + `coach:farewell-release {by}`。
+ *
+ * 分工（和 R1 / R3 不抢活）：
+ *   - 事件口径 / 优先级 / 两句收敛全在 `src/voice/judge.js`（`isJudgeFarewellEvent` / `clampFarewellSpeak`）；
+ *   - user 消息（时长 / 组数 / 次数 / 均分 / 最佳 / 对比，中英各一套）由服务端
+ *     `sessionEndEventMessage` 按 context 生成，这里只负责**把数字算准**；
+ *   - 说出口仍走**同一条**教练通道（字幕 + 弹幕 + TTS），但**发声**由这里自己接（`coachTts.speak`），
+ *     这样「播完那一刻」有确定回调，麦克风才能真的等到播完再放 ✗ 不是拍脑袋延时。
+ *
+ * 时序（一次告别）：
+ *   `session-end` → 汇总本次训练（存 `mfg.lastTraining.v1`，下次「与上次对比」读它）
+ *   → 教练没开就只记一条 skipped（不发请求）→ 抢走通道（作废在飞的裁判请求）
+ *   → `voice.stopListening()`（**停止聆听**，麦克风先不释放）→ `POST /llm {event:'session-end'}`
+ *   → 封麦（之后 0 次 /llm）→ 字幕 + TTS 念出来
+ *   → TTS `onEnd`（或看门狗超时）→ `voice.stop('farewell')`（**这时才释放麦克风**）。
+ * ------------------------------------------------------------------ */
+
+/** 本次训练开始的时刻（训练时长 = now - 它；0 = 还没进过训练） */
+let sessionStartedAt = 0;
+/** 本次训练是否真的进过训练页（启动时 `showHome()` 也会发 session-end，那时不该告别） */
+let sessionFarewellArmed = false;
+/** 本次训练是否已经告别过（**每次训练只 1 次**） */
+let sessionFarewellDone = false;
+/** 告别的代数：下一次训练开始时 +1，上一场还没回来的告别结果直接丢弃 */
+let farewellEpoch = 0;
+/** 告别之后本场不再与 LLM 通信（封麦；`/llm` 客户端连 fetch 都不发起） */
+let llmSealed = false;
+/** 上一场告别把语音会话关掉了 → 下一次进训练要恢复聆听 */
+let coachStoppedByFarewell = false;
+/** 告别已经交给 TTS / 麦克风已经放掉（两个都要在下一场开始时复位） */
+let farewellDelivered = false;
+let farewellReleased = false;
+/** 告别播放的看门狗（TTS 的 onEnd 没回来也要放麦克风，绝不把麦留到下一次训练） */
+let farewellTimer = null;
+
+/** 上一场训练的汇总（`mfg.lastTraining.v1`；告别里「与上次对比」的唯一来源） */
+function readLastTraining() {
+  try {
+    const raw = localStorage.getItem(STORE.lastTraining);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== 'object') return null;
+    return {
+      at: Math.max(0, Number(data.at) || 0),
+      sets: Math.max(0, Math.round(Number(data.sets) || 0)),
+      reps: Math.max(0, Math.round(Number(data.reps) || 0)),
+      avgScore: Math.max(0, Math.round(Number(data.avgScore) || 0)),
+      bestScore: Math.max(0, Math.round(Number(data.bestScore) || 0)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 存这一场的汇总（下次训练的「与上次对比」就是它；0 组也如实记，别假装练过） */
+function saveLastTraining(summary = {}) {
+  const data = {
+    at: Math.max(0, Number(summary.at) || Date.now()),
+    sets: Math.max(0, Math.round(Number(summary.sets) || 0)),
+    reps: Math.max(0, Math.round(Number(summary.reps) || 0)),
+    avgScore: Math.max(0, Math.round(Number(summary.avgScore) || 0)),
+    bestScore: Math.max(0, Math.round(Number(summary.bestScore) || 0)),
+  };
+  try { localStorage.setItem(STORE.lastTraining, JSON.stringify(data)); } catch { /* 存不下就算了 */ }
+  return data;
+}
+
+/**
+ * 本次训练的汇总（告别语的全部数字；**只算这一场**）。
+ *
+ * 「这一场」= `beginTrainingSession()` 之后存进 history 的组（`at >= sessionStartedAt`）。
+ * 结果里同时带上「上次训练的同一份汇总」和两个差值（总次数 / 均分），
+ * 模型据此说「比上次多 15 次、高 3 分」。
+ *
+ * @returns {{at:number,durationSec:number,sets:number,reps:number,avgScore:number,
+ *            bestScore:number,bestValue:number,prev:object|null,deltaReps:number,deltaScore:number}}
+ */
+function sessionFarewellStats() {
+  const started = Number(sessionStartedAt) || 0;
+  let list = [];
+  try { list = loadList(STORE.history).filter((h) => h && (Number(h.at) || 0) >= started); } catch { list = []; }
+  let reps = 0;
+  let scoreSum = 0;
+  let bestScore = 0;
+  let bestValue = 0;
+  for (const item of list) {
+    const value = Math.max(0, Math.round(Number(item.value) || 0));
+    const score = Math.max(0, Math.round(Number(item.score) || 0));
+    reps += value;
+    scoreSum += score;
+    if (score >= bestScore) { bestScore = score; bestValue = value; }
+  }
+  const sets = list.length;
+  const avgScore = sets ? Math.round(scoreSum / sets) : 0;
+  const prev = readLastTraining();
+  const durationSec = started ? Math.max(0, Math.round((Date.now() - started) / 1000)) : 0;
+  return {
+    at: Date.now(),
+    durationSec,
+    sets,
+    reps,
+    avgScore,
+    bestScore,
+    bestValue,
+    prev,
+    deltaReps: prev ? reps - prev.reps : 0,
+    deltaScore: prev ? avgScore - prev.avgScore : 0,
+  };
+}
+
+/** 时长文案（<1 分钟说秒，别把 45 秒说成 1 分钟；词条在 locales 里一处定义） */
+function farewellDurationText(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  if (s < 60) return t('coach.sessionEnd.seconds', { sec: s });
+  return t('coach.sessionEnd.minutes', { min: Math.round(s / 60) });
+}
+
+/** 内置告别语（LLM 未配置 / 失败 / 超时；**含真实数字**，中英词条，绝不静默） */
+function sessionFarewellFallbackText(stats = sessionFarewellStats()) {
+  const duration = farewellDurationText(stats.durationSec);
+  if (!stats.sets) return t('coach.sessionEnd.fallbackEmpty', { duration });
+  return t('coach.sessionEnd.fallback', {
+    duration,
+    sets: stats.sets,
+    reps: stats.reps,
+    avg: stats.avgScore,
+    best: stats.bestScore,
+  });
+}
+
+/** 一条告别事件的 context：标准 Agent 快照 + `judge` 块（数字全在这里算好，服务端只翻译成事件描述） */
+function farewellContext(stats) {
+  let base = {};
+  try { base = getLlmContext(''); } catch { base = {}; }
+  return {
+    ...base,
+    judge: {
+      event: 'session-end',
+      unit: judgeUnit(),
+      durationSec: stats.durationSec,
+      sets: stats.sets,
+      reps: stats.reps,
+      avgScore: stats.avgScore,
+      bestScore: stats.bestScore,
+      bestValue: stats.bestValue,
+      prev: stats.prev
+        ? {
+          sets: stats.prev.sets,
+          reps: stats.prev.reps,
+          avgScore: stats.prev.avgScore,
+          bestScore: stats.prev.bestScore,
+        }
+        : null,
+      deltaReps: stats.deltaReps,
+      deltaScore: stats.deltaScore,
+    },
+  };
+}
+
+/** 封麦：本场到此为止，`/llm` 客户端之后一个请求都不发 */
+function sealSessionLlm() {
+  llmSealed = true;
+  try { coachLlmClient.setSealed(true); } catch { /* 老客户端没有封麦也拦得住（askJudge / voiceLlm 都看 llmSealed） */ }
+}
+
+/** 告别能不能说（教练关着 / 语音没开 → 只记一条 skipped，不发请求、不放麦） */
+function farewellBlockedReason() {
+  if (!state.settings.coachEnabled || !voice.enabled) return 'disabled';
+  if (voice.state === 'off' || voice.state === 'error') return 'disabled';
+  return '';
+}
+
+/** 停聆听（麦克风**先不释放**，等告别播完）：只停 ASR + 清掉在飞的回复，不动 TTS 状态机 */
+function stopListeningForFarewell() {
+  if (voice.state === 'off' || voice.state === 'error') return false;
+  try { voice.stopListening('farewell'); return true; } catch { return false; }
+}
+
+/** 清掉告别的看门狗（幂等） */
+function clearFarewellTimer() {
+  if (farewellTimer === null) return;
+  try { clearTimeout(farewellTimer); } catch { /* ignore */ }
+  farewellTimer = null;
+}
+
+/**
+ * 告别播完之后：**这时才**停会话 + 释放麦克风（用户明确要求）。
+ *
+ * 幂等 + 按代数过滤：TTS 的 `onEnd` / 看门狗 / 下一场训练的「掐掉」都可能来叫它，
+ * 但只有**当前这一场**的回调算数（`epoch` 对不上 = 上一场告别 / 上一句残留，直接忽略）。
+ * @param {string} by 触发原因（tts-end / tts-error / no-tts / muted / timeout / new-session）
+ * @param {number|null} [epoch] 发起这次告别时的代数（null = 当前这一场）
+ */
+function finishFarewellRelease(by = 'tts-end', epoch = null) {
+  if (epoch !== null && epoch !== farewellEpoch) return false;
+  if (farewellReleased) return false;
+  farewellReleased = true;
+  clearFarewellTimer();
+  const wasOn = voice.state !== 'off';
+  if (wasOn) {
+    coachStoppedByFarewell = !!state.settings.coachEnabled;
+    try { coach.stopVu(); } catch { /* ignore */ }
+    try { voice.stop('farewell'); } catch { /* ignore */ }
+  }
+  try { coachDiag?.record?.('coach:farewell-release', { by: String(by), state: voice.state }); } catch { /* ignore */ }
+  return wasOn;
+}
+
+/** 给告别这一句挂看门狗（onEnd 一直不回来也要放麦；时长口径和会话层的说话看门狗同源） */
+function armFarewellTimer(body, epoch = farewellEpoch) {
+  clearFarewellTimer();
+  const hold = speakHoldMs(String(body || ''), { min: 6000, max: 20000 }) + 800;
+  farewellTimer = setTimeout(() => {
+    farewellTimer = null;
+    if (epoch !== farewellEpoch) return;   // 上一场的残留看门狗：什么都不做
+    try { coachTts.cancel(); } catch { /* ignore */ }
+    finishFarewellRelease('timeout', epoch);
+  }, hold);
+  if (farewellTimer && typeof farewellTimer.unref === 'function') {
+    try { farewellTimer.unref(); } catch { /* ignore */ }
+  }
+  return hold;
+}
+
+/**
+ * 把告别语说出去：**字幕 / 弹幕**走现有教练通道（`voice.onCoachText(..., speak:false)`），
+ * **发声**由这里直接调 TTS（这样「播完」有确定回调）。
+ *
+ * 静音（只出字幕）→ 没有声音要等，直接放麦；TTS 接不下这一句 → 也直接放麦。
+ *
+ * @param {string} text
+ * @param {{fallback?:boolean}} [opts]
+ * @returns {{spoke:boolean,text:string}}
+ */
+function deliverFarewell(text, { fallback = false } = {}) {
+  const body = clampFarewellSpeak(text);
+  if (!body) return { spoke: false, text: '' };
+  const myEpoch = farewellEpoch;   // 这一句的代数：上一场 / 上一句的残留回调一律不认
+  farewellDelivered = true;
+  // ① 字幕 + 弹幕 + 短时记忆：仍走**同一条**教练通道（只上字幕，不发声）
+  try {
+    voice.onCoachText(body, { speak: false, source: fallback ? 'farewell-fallback' : 'farewell' });
+  } catch { /* 字幕失败不影响念 */ }
+  // ② 真的念：静音时只出字幕（用户拍板的「别说话」语义），没有声音就不用等
+  const shouldSpeak = !coachMuted && !voice.muted;
+  if (!shouldSpeak) {
+    finishFarewellRelease('muted', myEpoch);
+    return { spoke: false, text: body };
+  }
+  let started = false;
+  try {
+    started = coachTts.speak(body, {
+      onEnd: () => finishFarewellRelease('tts-end', myEpoch),
+      onError: () => finishFarewellRelease('tts-error', myEpoch),
+    });
+  } catch {
+    started = false;
+  }
+  if (!started) finishFarewellRelease('no-tts', myEpoch);
+  else armFarewellTimer(body, myEpoch);
+  return { spoke: started, text: body };
+}
+
+/**
+ * 一次训练结束 → 告别（**每次训练最多 1 次**）。
+ *
+ * @returns {Promise<{ok:boolean, asked:boolean, spoke:boolean, fallback:boolean,
+ *                    text?:string, skipped?:string, stats?:object}>|null}
+ *          null = 这次不该告别（还没进过训练 / 已经告别过 / 教练没开）
+ */
+function startSessionFarewell() {
+  if (!sessionFarewellArmed || sessionFarewellDone) return null;
+  sessionFarewellDone = true;
+  const stats = sessionFarewellStats();
+  // 先把这一场记下来（下次训练的「与上次对比」读它；0 组也如实记）
+  saveLastTraining(stats);
+
+  const blocked = farewellBlockedReason();
+  if (blocked) {
+    try { coachDiag?.record?.('coach:farewell', { ok: false, ms: 0, fallback: false, skipped: blocked }); } catch { /* ignore */ }
+    return null;
+  }
+
+  // 告别是这场训练的**最后一句话**：作废在飞的裁判请求，抢走唯一的那条通道
+  try { judge.cancel('session-end'); } catch { /* ignore */ }
+  stopListeningForFarewell();
+  farewellEpoch += 1;
+  const myEpoch = farewellEpoch;
+  farewellDelivered = false;
+  farewellReleased = false;
+  const started = Date.now();
+  const fallbackText = () => sessionFarewellFallbackText(stats);
+  const settle = (text, { ok, fallback }) => {
+    if (myEpoch !== farewellEpoch) {
+      return { ok: false, asked: true, spoke: false, fallback: false, skipped: 'superseded' };
+    }
+    const delivered = deliverFarewell(text, { fallback });
+    try {
+      coachDiag?.record?.('coach:farewell', {
+        ok,
+        ms: Math.max(0, Date.now() - started),
+        fallback,
+      });
+    } catch { /* 诊断失败不影响告别 */ }
+    return { ok, asked: true, spoke: delivered.spoke, fallback, text: delivered.text, stats };
+  };
+
+  // 本场不再有「用户对话 / 裁判」请求：从告别这一刻起封麦（告别这一条已经放行）
+  llmSealed = true;
+
+  // 自由对话关着 / 明确没配置 LLM → 直接内置告别语，**一个请求都不发**
+  if (!state.settings.freeChat || llmConfiguredCache === false) {
+    sealSessionLlm();
+    return Promise.resolve(settle(fallbackText(), { ok: true, fallback: true }));
+  }
+
+  /**
+   * 发请求 → **立刻封麦**（`farewell()` 是同步把 fetch 发出去的，封麦只拦之后的新请求）。
+   * 失败 / 空回复 / 超时 → 内置告别语兜底（`coach:farewell {ok:false, fallback:true}`）。
+   */
+  const request = coachLlmClient.farewell({ locale: getLang(), context: farewellContext(stats) });
+  sealSessionLlm();
+  return Promise.resolve(request)
+    .then((res) => {
+      if (myEpoch !== farewellEpoch) {
+        return { ok: false, asked: true, spoke: false, fallback: false, skipped: 'superseded' };
+      }
+      const text = clampFarewellSpeak(res && res.text);
+      if (text) return settle(text, { ok: true, fallback: false });
+      return settle(fallbackText(), { ok: false, fallback: true });
+    })
+    .catch(() => settle(fallbackText(), { ok: false, fallback: true }));
+}
+
+/**
+ * 进入一次新的训练（主页 → 动作页，含点「开始体感训练」/ 点动作卡）：
+ *   ① 记下开始时间（训练时长口径）；② 这一场可以告别了（只 1 次）；
+ *   ③ 解封 `/llm`（上一场告别封的）；④ 上一场告别还在播就掐掉，并恢复聆听。
+ *
+ * 同一场训练里的重复调用（换动作 / 语音说「开始深蹲」）不会重置任何东西。
+ *
+ * @returns {boolean} 这次是否真的开了新的一场训练
+ */
+function beginTrainingSession() {
+  if (!state.homeMode && sessionFarewellArmed) return false;
+  // 上一场的告别如果还在播 / 还没放麦：用户已经回来训练了，直接收尾（不能挡住进场问候）
+  if (sessionFarewellArmed && (farewellDelivered || farewellReleased)) {
+    try { coachTts.cancel(); } catch { /* ignore */ }
+    finishFarewellRelease('new-session');
+  }
+  sessionFarewellArmed = true;
+  sessionFarewellDone = false;
+  sessionStartedAt = Date.now();
+  farewellEpoch += 1;
+  farewellDelivered = false;
+  farewellReleased = false;
+  clearFarewellTimer();
+  llmSealed = false;
+  try { coachLlmClient.setSealed(false); } catch { /* ignore */ }
+  restoreCoachAfterFarewell();
+  return true;
+}
+
+/**
+ * 上一场告别把语音会话关掉了 → 这一次进训练**恢复聆听**（用户要求：下次 session-start 恢复）。
+ *
+ * `voice.start()` 会重新要麦克风（权限已授权时浏览器不再弹框）；
+ * 失败也绝不打断训练（状态环 / 提示条会显示原因）。
+ */
+async function restoreCoachAfterFarewell() {
+  if (!coachStoppedByFarewell) return false;
+  coachStoppedByFarewell = false;
+  if (!state.settings.coachEnabled) return false;
+  if (voice.state !== 'off') return false;
+  let snap = null;
+  try { snap = await voice.start(); } catch { return false; }
+  if (snap && snap.state === 'listening') {
+    try { coach.startVu(); } catch { /* 音量表拿不到就静默降级 */ }
+  }
+  try { coachDiag?.record?.('coach:farewell-resume', { state: voice.state }); } catch { /* ignore */ }
+  return !!(snap && snap.state === 'listening');
+}
+
 
 /** 一次动作完成后，进度条保持「空的」多久（让清零看得见） */
 const CRITERIA_CLEAR_MS = 650;
@@ -1118,6 +1535,13 @@ async function setCoachEnabled(on, { silent = false } = {}) {
   syncCoachToggle(next);
 
   if (next) {
+    /**
+     * 重新打开教练 = 用户**明确要继续交互**：上一场告别封的麦在这里解掉
+     * （下一次点「开始体感训练」时 `beginTrainingSession()` 也会解一次）。
+     * 不解的话，主页上手动按 Ctrl+I 打开教练也只出字幕、一个字都不发 /llm。
+     */
+    llmSealed = false;
+    try { coachLlmClient.setSealed(false); } catch { /* ignore */ }
     const snap = await voice.start();
     if (!snap.enabled || snap.state === 'off') return snap;   // 等权限时被关掉了
     if (snap.state === 'error') {
@@ -2148,6 +2572,9 @@ function showHome({ syncRoute = true } = {}) {
 
 /** 切到动作页 */
 function showWorkout() {
+  // 「主页 → 动作页」= 一次新的训练：记下开始时刻（告别要说「今天练了多久」）
+  // 同一场训练里换动作 / 再进全屏都不会重置（见 beginTrainingSession 的守卫）
+  beginTrainingSession();
   state.homeMode = false;
   applyMusic();          // 回到动作页再把背景音乐接上（用户选择保留着）
   resumeCameraFromHome(); // 摄像头之前被主页关掉了就自动重开
@@ -9789,6 +10216,23 @@ window.__mfg = {
   judgeSetComplete, judgePr, judgeRepTick, judgeHoldTick, judgeIdleTick, judgeOutOfFrameTick,
   judgeGateEvent, judgeKeyframeEvent, firstMissedKeyframe, resetJudgeStreaks,
   JUDGE_EVENTS, JUDGE_COOLDOWN_MS, JUDGE_DEDUPE_MS,
+  // session-end 告别（退出全屏 / 回主页时，每次训练只 1 次）：
+  //   startSessionFarewell     : 触发一次告别（返回 Promise；测试 await 它拿模型原文）
+  //   sessionFarewellStats     : 本次训练的汇总（时长 / 组数 / 次数 / 均分 / 最佳 / 与上次对比）
+  //   sessionFarewellFallbackText: 内置告别语（含真实数字，中英词条）
+  //   farewellContext          : 发给服务端的那份 context（judge 块里的数字就是告别语用的数字）
+  //   farewellState            : 只读快照（armed / done / sealed / delivered / released）
+  startSessionFarewell, sessionFarewellStats, sessionFarewellFallbackText, farewellContext,
+  readLastTraining, saveLastTraining, beginTrainingSession,
+  farewellState: () => ({
+    armed: sessionFarewellArmed,
+    done: sessionFarewellDone,
+    sealed: llmSealed,
+    delivered: farewellDelivered,
+    released: farewellReleased,
+    coachStopped: coachStoppedByFarewell,
+    startedAt: sessionStartedAt,
+  }),
   REP_JUDGE_EVERY, HOLD_JUDGE_EVERY_SEC, IDLE_JUDGE_START_SEC, OUT_OF_FRAME_JUDGE_START_SEC,
   GATE_FAIL_JUDGE_STREAK, KEYFRAME_MISS_JUDGE_STREAK,
   shouldJudgeRep, shouldJudgeHold, shouldJudgeIdle, shouldJudgeOutOfFrame,

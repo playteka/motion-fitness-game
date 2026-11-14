@@ -31,6 +31,13 @@ export const LLM_HEALTH_PATH = '/llm/health';
 export const LLM_EVENT_SESSION_START = 'session-start';
 
 /**
+ * 一次训练结束的**告别**事件（和服务端 `LLM_EVENT_SESSION_END` 同一个字符串）。
+ * 带这个事件时 `text` 为空：user 消息由服务端按 context 里的本次训练数字生成；
+ * 模型回**自由文本**（≤2 句），不是裁判那种 JSON。
+ */
+export const LLM_EVENT_SESSION_END = 'session-end';
+
+/**
  * 客户端等多久（服务端自己 8s 超时，这里留 1s 余量：
  * 正常一定是服务端先返回 503，客户端这个只是兜底，避免请求永远挂着）。
  */
@@ -529,6 +536,11 @@ export const LLM_CLIENT_ERRORS = Object.freeze({
   'llm-network': 'network',
   'llm-bad-json': 'bad-json',
   'llm-empty': 'empty',
+  /**
+   * 本场训练已经告别过了 → 不再与 LLM 通信（用户明确要求）。
+   * 这不是「错误」，是**封麦**：`/llm` 客户端在 `setSealed(true)` 之后连 fetch 都不发起。
+   */
+  'llm-sealed': 'sealed',
 });
 
 export function llmClientError(code, detail = '') {
@@ -583,6 +595,13 @@ export function createLlmClient({
   const history = [];
   /** 最近一次成功回复的元信息（测试 / 诊断面板看；不含文本） */
   let last = null;
+  /**
+   * 封麦（用户明确要求：「告别之后本场不再与 LLM 通信」）。
+   *
+   * 封上之后 `respond` / `judge` / `farewell` **连 fetch 都不发起**，直接抛 `llm-sealed` ——
+   * 「0 次 /llm」是硬保证，不靠调用方自觉。下一次训练开始时由 app 调 `setSealed(false)` 解封。
+   */
+  let sealed = false;
 
   const record = (event, fields) => {
     try { diag?.record?.(event, fields); } catch { /* 诊断坏掉不影响对话 */ }
@@ -614,6 +633,8 @@ export function createLlmClient({
   async function postJson(payload, wait = waitMs) {
     const f = resolveFetch();
     if (!f) throw llmClientError('llm-network', 'fetch unavailable');
+    /** 封麦之后一个请求都不发（不消耗额度、也不碰模型） */
+    if (sealed) throw llmClientError('llm-sealed');
     const waitValue = Math.max(1, Number(wait) || waitMs);
     const controller = new AbortController();
     let timedOut = false;
@@ -753,6 +774,45 @@ export function createLlmClient({
     }
   }
 
+  /**
+   * 一次训练结束的**告别**：`POST /llm {event:'session-end', context}` → 模型回自由文本（≤2 句）。
+   *
+   * 和 `judge()` 的区别：不解析 JSON、不抛「空回复」以外的失败语义 ——
+   * 空文本按失败抛 `llm-bad-json`，由 app.js 用 locales 里的内置告别语兜底（绝不静默）。
+   *
+   * @param {{locale?:string, context?:object}} [opts]
+   * @returns {Promise<{text:string, ms:number, provider:string, model:string}>}
+   */
+  async function farewell({ locale = 'zh', context = null } = {}) {
+    const payload = {
+      event: LLM_EVENT_SESSION_END,
+      text: '',
+      locale: locale === 'en' ? 'en' : 'zh',
+      context: context && typeof context === 'object' ? context : null,
+      user: String(typeof userId === 'function' ? userId() : userId || 'default').slice(0, 32) || 'default',
+    };
+    const started = now();
+    try {
+      const data = await postJson(payload, Math.min(waitMs, JUDGE_TIMEOUT_MS));
+      const text = String(data.reply || '').trim();
+      const ms = Math.max(0, Number(now()) - Number(started));
+      if (!text) throw llmClientError('llm-bad-json', 'empty farewell');
+      last = { ms, actions: 0, provider: data.provider || '', model: data.model || '', farewell: true };
+      record('llm:reply', { ms, actions: 0, farewell: true });
+      return {
+        text,
+        ms,
+        provider: String(data.provider || ''),
+        model: String(data.model || ''),
+      };
+    } catch (err) {
+      const code = (err && err.code) || 'llm-network';
+      record('llm:fail', { code, ms: Math.max(0, Number(now()) - Number(started)) });
+      if (err && err.code) throw err;
+      throw llmClientError(code, String((err && err.message) || err));
+    }
+  }
+
   /** 问服务端「配没配 / 谁 / 哪个模型」（设置面板显示用）；失败返回 null，不抛 */
   async function health() {
     const f = resolveFetch();
@@ -787,6 +847,7 @@ export function createLlmClient({
     historyTurns: turns,
     respond,
     judge,
+    farewell,
     health,
     /** 清空对话记忆（刷新页面也会清；这是给「清空对话」/ 测试用的） */
     reset() {
@@ -794,6 +855,15 @@ export function createLlmClient({
       last = null;
       return this;
     },
+    /**
+     * 封麦 / 解封（用户要求：「告别之后本场不再与 LLM 通信」，下一次进训练恢复）。
+     * 封上之后所有请求直接抛 `llm-sealed`，**一个 fetch 都不发起**。
+     */
+    setSealed(on) {
+      sealed = !!on;
+      return sealed;
+    },
+    get sealed() { return sealed; },
     get history() { return history.map((m) => ({ ...m })); },
     get last() { return last ? { ...last } : null; },
     setFetch(fn) {
@@ -810,6 +880,7 @@ export default {
   LLM_HISTORY_TURNS,
   LLM_CLIENT_MAX_TEXT,
   LLM_EVENT_SESSION_START,
+  LLM_EVENT_SESSION_END,
   LLM_CLIENT_ERRORS,
   AGENT_CONTEXT_MAX_CHARS,
   AGENT_HISTORY_MAX,

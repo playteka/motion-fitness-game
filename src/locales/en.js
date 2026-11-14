@@ -1553,6 +1553,18 @@ export default {
       fallback: "Let's start: {name} {target} {unit}. I'm watching your form.",
       generic: "Let's get going — I'm right here with you. Let's move!",
     },
+    /**
+     * The farewell when a workout ends (`event:'session-end'`, leaving fullscreen / going home):
+     * the model says at most 2 sentences (acknowledgement + real numbers + see you tomorrow / let's move);
+     * `fallback` / `fallbackEmpty` are the built-in lines when the LLM is not configured / fails / times out
+     * (they always carry the real numbers — never silent). `minutes` / `seconds` keep short sessions honest.
+     */
+    sessionEnd: {
+      fallback: 'Today: {duration}, {sets} sets, {reps} reps in total, average {avg} points, best set {best}. Great work — see you tomorrow, let\'s move!',
+      fallbackEmpty: 'Today: {duration}, 0 sets and 0 reps. Showing up already counts — see you tomorrow!',
+      minutes: '{min} min',
+      seconds: '{sec}s',
+    },
     listeningHint: 'Speak into the microphone; your words and my answer will appear here.',
     hint: 'Press Ctrl+I to turn it off',
     // P3.3: the small line next to the ring when a request takes longer than 1.5s

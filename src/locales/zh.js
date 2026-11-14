@@ -1558,6 +1558,18 @@ export default {
       fallback: '开始吧，{name} {target} {unit}，我在这儿盯着你的动作。',
       generic: '开始吧，我在这儿陪着你，动起来！',
     },
+    /**
+     * 一次训练结束的**告别**（`event:'session-end'`，退出全屏 / 回主页时）：
+     * 模型说 ≤2 句（肯定 + 具体数字 + 明天见 / 动起来）；`fallback` / `fallbackEmpty`
+     * 是 LLM 未配置 / 失败 / 超时时的内置告别语（**含真实数字**，绝不静默）。
+     * `minutes` / `seconds` 只按时长长短二选一（40 秒别被说成 1 分钟）。
+     */
+    sessionEnd: {
+      fallback: '今天练了 {duration}、{sets} 组、一共 {reps} 次，平均 {avg} 分，最佳一组 {best} 分。辛苦了，明天见，动起来！',
+      fallbackEmpty: '今天练了 {duration}，0 组 0 次。来了就好，明天见！',
+      minutes: '{min} 分钟',
+      seconds: '{sec} 秒',
+    },
     listeningHint: '对着麦克风说话，这里会出现你的话和我的回答。',
     hint: '按 Ctrl+I 关闭',
     // P3.3：请求发出去 1.5 秒还没回来时，状态环旁边那行小字

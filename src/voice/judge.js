@@ -23,11 +23,22 @@
  * 事件口径只在这里定义一次：服务端（`server/llm-provider.mjs`）也 import 本文件，
  * 所以前端 / 服务端 / 测试读的是同一份 `JUDGE_EVENTS`。
  *
+ * 两种「自由文本」事件复用同一条口径、但**不走**裁判模式：
+ *   - `session-start`：进场问候（P3.3）；
+ *   - `session-end`：离场告别（≤2 句，肯定 + 具体数字 + 「明天见 / 动起来」；
+ *     服务端另生成 user 消息，失败时用 locales 里的内置告别语兜底）。
+ *
  * ⚠️ 本文件里的字符串一律英文（i18n 自检会扫 src/ 下的中文字面量）；
  *    给用户看的文案全部来自 `src/locales/*.js` 或模型。
  */
 
-/** 裁判事件（8 个触发点；`session-start` 复用 P3.3 已有的进场问候） */
+/**
+ * 教练开口的事件口径（**唯一来源**：前端 / 服务端 / 测试都读这一份）。
+ *
+ *   · 8 个裁判触发点 → 走**裁判模式**（严格 JSON，默认 null）；
+ *   · `session-start` → 复用 P3.3 已有的进场问候（自由文本）；
+ *   · `session-end`   → 一次训练的**告别**（自由文本，≤2 句，必须说 —— 见 `isJudgeFarewellEvent`）。
+ */
 export const JUDGE_EVENTS = Object.freeze([
   /** 一组结束：复盘这组（分数 / 对比上组） */
   'set-complete',
@@ -47,14 +58,22 @@ export const JUDGE_EVENTS = Object.freeze([
   'keyframe-miss2',
   /** 进入训练：复用已有的主动问候（不是裁判模式，仍旧自由文本） */
   'session-start',
+  /**
+   * 退出训练（退出全屏 / 回主页）：**告别**（不是裁判模式，自由文本；每次训练只 1 次）。
+   * 它和 `session-start` 正好一对：进场问候、离场告别；中间 8 个才是「要不要说一句」的裁判。
+   */
+  'session-end',
 ]);
 
-/** 走裁判模式（严格 JSON）的事件：除 `session-start` 以外的 8 个 */
+/** 走裁判模式（严格 JSON）的事件：除 `session-start` / `session-end` 以外的 8 个 */
 export const JUDGE_ASK_EVENTS = Object.freeze(
-  JUDGE_EVENTS.filter((event) => event !== 'session-start'),
+  JUDGE_EVENTS.filter((event) => event !== 'session-start' && event !== 'session-end'),
 );
 
-/** 事件是否属于裁判口径（`session-start` 也算，但它走普通问候） */
+/** 走告别模式的事件（自由文本，必须说；`session-end`） */
+export const JUDGE_FAREWELL_EVENTS = Object.freeze(['session-end']);
+
+/** 事件是否属于裁判口径（`session-start` / `session-end` 也算，但它们走自由文本） */
 export function isJudgeEvent(event) {
   return JUDGE_EVENTS.includes(String(event || ''));
 }
@@ -62,6 +81,11 @@ export function isJudgeEvent(event) {
 /** 是否走裁判模式（严格 JSON + 默认 null） */
 export function isJudgeAskEvent(event) {
   return JUDGE_ASK_EVENTS.includes(String(event || ''));
+}
+
+/** 是否走告别模式（自由文本 + ≤2 句；`session-end`） */
+export function isJudgeFarewellEvent(event) {
+  return JUDGE_FAREWELL_EVENTS.includes(String(event || ''));
 }
 
 /* ------------------------------------------------------------------ *
@@ -76,6 +100,14 @@ export const JUDGE_COOLDOWN_MS = 8000;
 export const JUDGE_DEDUPE_MS = 15000;
 /** 一句话最多多少字（用户拍板：≤40 字；模型超了就截断，绝不念长文） */
 export const JUDGE_MAX_CHARS = 40;
+/**
+ * 告别语的上限（用户要求「告别语 ≤2 句」）：
+ *   - 最多 2 句（句末标点：。！？!?；; 以及英文句点）；
+ *   - 最多 60 字（两句各带一个数字刚好够，再长 TTS 就要念十几秒）。
+ * 和裁判那句 40 字分开：告别是「训练结束的最后一句话」，可以有两个短句。
+ */
+export const FAREWELL_MAX_CHARS = 60;
+export const FAREWELL_MAX_SENTENCES = 2;
 
 /** 每 3 个动作问一次裁判 */
 export const REP_JUDGE_EVERY = 3;
@@ -93,9 +125,15 @@ export const KEYFRAME_MISS_JUDGE_STREAK = 2;
 
 /**
  * 触发优先级（并发 1 时「新触发取消旧的」；优先级更高的一定能抢占）：
- *   破纪录 > 门控 / 关键帧纠正 > 一组结束复盘 > 进场 > 每 3 个 / 每 10 秒 > 出画 > 静止
+ *   告别 > 破纪录 > 门控 / 关键帧纠正 > 一组结束复盘 > 进场 > 每 3 个 / 每 10 秒 > 出画 > 静止
  */
 export const JUDGE_PRIORITY = Object.freeze({
+  /**
+   * 告别优先级最高：它是这场训练的**最后一句话** ——
+   * 一组结束的复盘 / 破纪录都还没回来时，被它抢占（旧结果直接丢弃），
+   * 这样「告别之后一句都不许再说」才真的成立。
+   */
+  'session-end': 120,
   pr: 100,
   'gate-fail2': 80,
   'keyframe-miss2': 80,
@@ -177,6 +215,51 @@ export function clampJudgeSpeak(value, max = JUDGE_MAX_CHARS) {
   const chars = [...text];
   const limit = Math.max(1, Math.round(Number(max) || JUDGE_MAX_CHARS));
   if (chars.length > limit) text = chars.slice(0, limit).join('');
+  return text.trim();
+}
+
+/**
+ * 告别语收敛（纯函数）：**最多 2 句**、最多 `maxChars` 字。
+ *
+ * 用户要求：「模型给告别语 ≤2 句（肯定 + 具体数字 + 明天见 / 动起来）」——
+ * 模型偶尔会多说一句（「辛苦了。明天见。记得拉伸。」），这里按句末标点截到第 2 句，
+ * 再按码点截断（emoji / 中文都不会被切一半），最后去掉首尾空白。
+ *
+ * 句末标点：。！？!?；; 一律算；英文句点只有后面是空白或结尾时才算
+ * （否则 `8.5` / `82.5 分` 会被当成一句话说完）。
+ *
+ * @param {*} value
+ * @param {{maxChars?:number, maxSentences?:number}} [opts]
+ * @returns {string}
+ */
+export function clampFarewellSpeak(value, {
+  maxChars = FAREWELL_MAX_CHARS,
+  maxSentences = FAREWELL_MAX_SENTENCES,
+} = {}) {
+  let text = String(value == null ? '' : value)
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  // 模型偶尔会包一层 ``` 围栏 / 成对引号（「"今天不错。"」）→ 去掉
+  text = text.replace(/^```[a-z]*\s*/i, '').replace(/```$/g, '').trim();
+  if (/^["'“”].*["'“”]$/.test(text) && text.length > 1) text = text.slice(1, -1).trim();
+  if (!text) return '';
+  const limit = Math.max(1, Math.round(Number(maxSentences) || FAREWELL_MAX_SENTENCES));
+  const hard = new Set(['。', '！', '？', '；', '!', '?', ';']);
+  let seen = 0;
+  let cut = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const dot = ch === '.' && (i === text.length - 1 || /\s/.test(text[i + 1] || ''));
+    if (!hard.has(ch) && !dot) continue;
+    seen += 1;
+    if (seen >= limit) { cut = i + 1; break; }
+  }
+  if (cut > 0 && cut < text.length) text = text.slice(0, cut).trim();
+  const chars = [...text];
+  const max = Math.max(1, Math.round(Number(maxChars) || FAREWELL_MAX_CHARS));
+  if (chars.length > max) text = chars.slice(0, max).join('').trim();
   return text.trim();
 }
 
@@ -516,9 +599,27 @@ export function createJudge({
     return stats;
   }
 
+  /**
+   * 取消正在飞的那一条（**不出声**，结果回来也丢掉）。
+   *
+   * 用途：一次训练结束 → 告别要占用唯一的那条通道，先礼让：
+   * 正在飞的「一组结束复盘 / 破纪录」直接作废，保证整场只留告别这一句。
+   *
+   * @param {string} [reason] 诊断里的原因（默认 `cancelled`）
+   * @returns {boolean} 是否真的取消了一条
+   */
+  function cancel(reason = 'cancelled') {
+    if (!inflight) return false;
+    note('judge:skip', { reason: String(reason || 'cancelled'), event: inflight.event });
+    inflight = null;
+    epoch += 1;
+    return true;
+  }
+
   return {
     request,
     reset,
+    cancel,
     /** 当前是否有一条在飞（测试断言并发 1 用） */
     get inflight() { return inflight ? { ...inflight } : null; },
     /** 统计：`{asked, spoke, skipped, failed, silenced}`（silenced = 问了但没出声） */
@@ -535,12 +636,16 @@ export function createJudge({
 export default {
   JUDGE_EVENTS,
   JUDGE_ASK_EVENTS,
+  JUDGE_FAREWELL_EVENTS,
   isJudgeEvent,
   isJudgeAskEvent,
+  isJudgeFarewellEvent,
   JUDGE_TIMEOUT_MS,
   JUDGE_COOLDOWN_MS,
   JUDGE_DEDUPE_MS,
   JUDGE_MAX_CHARS,
+  FAREWELL_MAX_CHARS,
+  FAREWELL_MAX_SENTENCES,
   REP_JUDGE_EVERY,
   HOLD_JUDGE_EVERY_SEC,
   IDLE_JUDGE_START_SEC,
@@ -556,6 +661,7 @@ export default {
   shouldJudgeIdle,
   shouldJudgeOutOfFrame,
   clampJudgeSpeak,
+  clampFarewellSpeak,
   extractJsonObject,
   parseJudgeReply,
   normalizeJudgeObject,

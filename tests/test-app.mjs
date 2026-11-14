@@ -9130,6 +9130,11 @@ console.log('\n[19] P3.2 命令快车道：喂一句话 → 界面真的变了')
 
   /* ---- ⑩ 胡话：状态不变 + 提示（走 mockLlm 兜底） ---- */
   api.showHome();
+  await flush();   // 回主页会先发一次告别（本场 1 次）：等它落定，别和这一句抢通道
+  // 告别播完会关掉会话（用户要求「告别后不再语音交互」）：这里模拟用户再按一次 Ctrl+I 叫回来
+  await api.setCoachEnabled(false);
+  await api.setCoachEnabled(true);
+  await flush();
   const before = {
     menuMode: api.state.menuMode, homeMode: api.state.homeMode,
     exercise: api.state.exerciseId, session: api.state.session, target: api.state.target,
@@ -9378,6 +9383,11 @@ console.log('\n[20] P3.3 自由对话：/llm → 工具调用真的改界面（�
   /* ---------------- ③ LLM 503 → 回退罐头回复，不崩 ---------------- */
   {
     api.showHome();
+    await flush();   // 回主页会先发一次告别：等它落定（它只影响这一场，不影响下一条测试请求）
+    // 告别播完会关掉会话：这里模拟用户再按一次 Ctrl+I 叫回来（= 明确的「继续交互」）
+    await api.setCoachEnabled(false);
+    await api.setCoachEnabled(true);
+    await flush();
     mode = 'fail';
     await feed('烤面包');
     ok('LLM 503 → 回退原来的罐头回复（「没听清…能说什么」），界面状态不变、不崩',
@@ -10715,6 +10725,257 @@ console.log('\n[53] R3 LLM 裁判（事件触发 / 静默优先）+ 语气档 + 
   await api.setCoachEnabled(false);
   await flush();
   api.judge.reset();
+  api.state.session = 'calibrating';
+}
+
+/* ================================================================== *
+ * [54] session-end 告别（退出全屏 / 回主页）：
+ *   每次训练只 1 次（中途退出也算、0 组也触发）→ 带本次训练的数字问模型 → ≤2 句告别；
+ *   之后本场 0 次 /llm、不再语音交互；麦克风**在告别播完后**才释放；下一次进训练恢复。
+ * ================================================================== */
+console.log('\n[54] session-end 告别：1 次 / 2 句 / 之后 0 次 /llm / 麦克风播完才释放');
+{
+  const api = windowStub.__mfg;
+  const flush = async (n = 14) => {
+    for (let i = 0; i < n; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const finishSpeech = () => {
+    const u = coachStubs.utterances.at(-1);
+    if (u && typeof u.onend === 'function') u.onend();
+    return flush();
+  };
+
+  /** 假的 /llm：记下每个请求体；session-end 回一句告别语（自由文本），其余回普通回复 */
+  const posts = [];
+  let mode = 'ok';
+  let farewellReply = '今天 3 组 45 次，均分 82 分，比上次多 15 次。辛苦了，明天见！';
+  api.llmClient.setFetch(async (url, init = {}) => {
+    if ((init.method || 'GET') !== 'POST') {
+      return { ok: true, status: 200, json: async () => ({ ok: true, configured: true, provider: 'deepseek', model: 'deepseek-chat' }) };
+    }
+    let body = null;
+    try { body = JSON.parse(init.body); } catch { body = null; }
+    posts.push({ url: String(url), body });
+    if (mode === 'fail') return { ok: false, status: 503, json: async () => ({ ok: false, error: 'not-configured' }) };
+    const reply = body && body.event === 'session-end' ? farewellReply : '收到。';
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, reply, actions: [], provider: 'deepseek', model: 'deepseek-chat' }),
+    };
+  });
+  const farewellPosts = () => posts.filter((p) => p.body && p.body.event === 'session-end');
+  /** 直接写一份「这一场的训练记录」（告别按 at >= 本次训练开始时刻统计） */
+  const seedHistory = (rows) => {
+    const at = Date.now();
+    const data = rows.map((row) => ({
+      at,
+      exerciseId: 'squat',
+      kind: 'reps',
+      unitKey: 'reps',
+      target: 20,
+      partial: 0,
+      seconds: 0,
+      durationMs: 20000,
+      reached: true,
+      ...row,
+    }));
+    windowStub.localStorage.setItem('mfg.history.v1', JSON.stringify(data));
+    return data;
+  };
+
+  /* ---------------- 起点：主页 → 进入训练（新的一场） ---------------- */
+  api.showHome();
+  await flush();
+  await api.setCoachEnabled(true);
+  await flush();
+  api.state.engineReady = true;
+  api.openExercise('squat');
+  await flush();
+  ok('[54] 进入训练 → 这一场可以告别（armed=true / done=false / 没封麦）',
+    api.farewellState().armed === true && api.farewellState().done === false
+    && api.farewellState().sealed === false,
+    JSON.stringify(api.farewellState()));
+
+  /* ---------------- 上下文：时长 / 组数 / 总次数 / 均分 / 最佳一组 / 与上次对比 ---------------- */
+  seedHistory([{ value: 18, score: 95 }, { value: 15, score: 76 }, { value: 12, score: 75 }]);
+  windowStub.localStorage.setItem('mfg.lastTraining.v1', JSON.stringify({
+    at: Date.now() - 86400000, sets: 2, reps: 30, avgScore: 79, bestScore: 90,
+  }));
+  const stats = api.sessionFarewellStats();
+  ok('[54] 本次训练的汇总：3 组 / 45 次 / 均分 82 / 最佳 95（18 次）/ 时长有数',
+    stats.sets === 3 && stats.reps === 45 && stats.avgScore === 82
+    && stats.bestScore === 95 && stats.bestValue === 18 && stats.durationSec >= 0,
+    JSON.stringify(stats));
+  ok('[54] 与上次对比：上次 2 组 30 次、均分 79 → 多 15 次、高 3 分',
+    !!stats.prev && stats.prev.reps === 30 && stats.prev.avgScore === 79
+    && stats.deltaReps === 15 && stats.deltaScore === 3,
+    JSON.stringify({ prev: stats.prev, dReps: stats.deltaReps, dScore: stats.deltaScore }));
+
+  /* ---------------- 退出全屏 / 回主页 → 只发 1 次告别请求 ---------------- */
+  const rec = coachStubs.recognitions.at(-1);
+  const stoppedBefore = rec ? rec.stopped : -1;
+  const postsBefore = posts.length;
+  const utterBefore = coachStubs.utterances.length;
+  api.showHome();
+  await flush();
+  const sends = posts.slice(postsBefore).filter((p) => p.url.endsWith('/llm'));
+  const send = sends[0];
+  ok('[54] 回主页 → **只发 1 次** /llm，且 event === "session-end"（text 为空）',
+    sends.length === 1 && send && send.body.event === 'session-end' && send.body.text === ''
+    && !Array.isArray(send.body.history),
+    JSON.stringify(sends.map((p) => ({ event: p.body && p.body.event, text: p.body && p.body.text }))));
+  ok('[54] 告别请求带的是这一场的真实数字（judge 块：组数 / 次数 / 均分 / 最佳 / 对比）',
+    (() => {
+      const j = send && send.body && send.body.context && send.body.context.judge;
+      return !!j && j.event === 'session-end' && j.sets === 3 && j.reps === 45
+        && j.avgScore === 82 && j.bestScore === 95 && j.bestValue === 18
+        && !!j.prev && j.prev.reps === 30 && j.deltaReps === 15 && j.deltaScore === 3;
+    })(),
+    JSON.stringify((send && send.body && send.body.context && send.body.context.judge) || null));
+  ok('[54] 模型的话原样念出来（≤2 句）：字幕 + TTS + 弹幕',
+    api.state.voice.coachText === farewellReply
+    && coachStubs.utterances.slice(utterBefore).some((u) => u.text === farewellReply),
+    JSON.stringify({ coach: api.state.voice.coachText,
+      said: coachStubs.utterances.slice(utterBefore).map((u) => u.text) }));
+  ok('[54] 诊断：coach:farewell {ok:true, ms≥0, fallback:false}',
+    api.coachDiag.snapshot().farewell.ok === true
+    && api.coachDiag.snapshot().farewell.fallback === false,
+    JSON.stringify(api.coachDiag.snapshot().farewell));
+
+  /* ---------------- 告别播完之后才释放麦克风 ---------------- */
+  ok('[54] 告别正在播：**聆听已停**（ASR 被 stop）、但麦克风还没放（会话仍 enabled）',
+    rec && rec.stopped > stoppedBefore
+    && api.state.voice.enabled === true && api.state.voice.state !== 'off'
+    && api.farewellState().released === false,
+    JSON.stringify({ stopped: rec && rec.stopped, state: api.state.voice.state,
+      enabled: api.state.voice.enabled, farewell: api.farewellState() }));
+  await finishSpeech();
+  ok('[54] 播完那一刻才关会话：session:stop {by:"farewell"} + 麦克风释放（enabled=false）',
+    api.state.voice.state === 'off' && api.state.voice.enabled === false
+    && api.coachDiag.snapshot().session.stopBy === 'farewell'
+    && api.coachDiag.snapshot().farewell.releasedBy === 'tts-end'
+    && api.farewellState().released === true,
+    JSON.stringify({ state: api.state.voice.state, stopBy: api.coachDiag.snapshot().session.stopBy,
+      farewell: api.coachDiag.snapshot().farewell }));
+
+  /* ---------------- 告别之后：本场 0 次 /llm、不再语音交互 ---------------- */
+  const sealedFrom = posts.length;
+  await api.askJudge('rep-judge', {});
+  api.voice.onUserText('暂停');
+  await flush();
+  let sealedCode = '';
+  try {
+    await api.llmClient.respond('再说一句');
+  } catch (err) {
+    sealedCode = String((err && err.code) || '');
+  }
+  await flush();
+  ok('[54] 告别之后 **0 次 /llm**（裁判 / 对话 / 语音都被挡住；客户端回 llm-sealed）',
+    posts.length === sealedFrom && sealedCode === 'llm-sealed',
+    JSON.stringify({ posts: posts.length - sealedFrom, code: sealedCode }));
+  ok('[54] 告别之后不再语音交互（会话已关：onUserText 不处理）',
+    api.state.voice.enabled === false && api.state.voice.state === 'off'
+    && api.state.voice.state !== 'listening',
+    JSON.stringify({ state: api.state.voice.state, enabled: api.state.voice.enabled }));
+
+  /* ---------------- 同一场只告别一次（再回主页不再发） ---------------- */
+  const farewellCount = farewellPosts().length;
+  api.showHome();
+  await flush();
+  api.showHome();
+  await flush();
+  ok('[54] 同一场训练再回主页 → **不再告别**（session-end 一共只 1 次）',
+    farewellPosts().length === farewellCount && farewellCount === 1
+    && api.farewellState().done === true,
+    JSON.stringify({ count: farewellPosts().length, state: api.farewellState() }));
+
+  /* ---------------- 下一次进训练：恢复聆听 + 解封 /llm ---------------- */
+  api.openExercise('squat');
+  await wait(30);
+  await flush();
+  ok('[54] 下一次进训练（session-start 恢复）：重新聆听 + 解封 /llm + 可以再告别',
+    api.state.voice.enabled === true && api.state.voice.state === 'listening'
+    && api.farewellState().sealed === false && api.farewellState().done === false
+    && api.farewellState().armed === true,
+    JSON.stringify({ state: api.state.voice.state, enabled: api.state.voice.enabled,
+      farewell: api.farewellState() }));
+  const resumedFrom = posts.length;
+  await api.llmClient.respond('你好');
+  ok('[54] 恢复之后 /llm 又能真发出去（没有被上一场的封麦卡住）',
+    posts.slice(resumedFrom).some((p) => p.body && p.body.text === '你好'),
+    JSON.stringify(posts.slice(resumedFrom).map((p) => p.body)));
+
+  /* ---------------- 失败兜底：内置告别语（含数字） ---------------- */
+  windowStub.localStorage.setItem('mfg.history.v1', JSON.stringify([]));
+  mode = 'fail';
+  api.showHome();
+  await flush();
+  const fallbackEmpty = api.sessionFarewellFallbackText();
+  ok('[54] LLM 503 → 内置告别语兜底（绝不静默；词条里带真实数字）',
+    api.state.voice.coachText === fallbackEmpty
+    && /\d/.test(fallbackEmpty)
+    && api.coachDiag.snapshot().farewell.fallback === true
+    && api.coachDiag.snapshot().farewell.ok === false,
+    JSON.stringify({ coach: api.state.voice.coachText, fallbackEmpty,
+      diag: api.coachDiag.snapshot().farewell }));
+  ok('[54] 0 组也告别：一句「0 组 0 次」的告别语，不是不吭声',
+    fallbackEmpty.includes('0 组 0 次') && fallbackEmpty.includes('明天见')
+    && api.state.voice.coachText.includes('0 组'),
+    fallbackEmpty);
+  await finishSpeech();
+
+  /* ---------------- 模型多说了第 3 句 → 只保留 2 句 ---------------- */
+  mode = 'ok';
+  farewellReply = '这组 12 次，平均 76 分。明天见！第三句不该出现。';
+  api.openExercise('squat');
+  await flush();
+  seedHistory([{ value: 12, score: 76 }]);
+  api.showHome();
+  await flush();
+  ok('[54] 模型超过 2 句 → 只留前 2 句（用户要求：告别语 ≤2 句）',
+    api.state.voice.coachText === '这组 12 次，平均 76 分。明天见！'
+    && !api.state.voice.coachText.includes('第三句'),
+    JSON.stringify(api.state.voice.coachText));
+  await finishSpeech();
+
+  /* ---------------- 0 组的「与上次对比」：如实变小，不编 ---------------- */
+  api.openExercise('squat');
+  await flush();
+  // 上一场记成「3 组 45 次、均分 82」：0 组这一场要如实说 -45，不许编成绩
+  windowStub.localStorage.setItem('mfg.lastTraining.v1', JSON.stringify({
+    at: Date.now() - 3600000, sets: 3, reps: 45, avgScore: 82, bestScore: 95,
+  }));
+  windowStub.localStorage.setItem('mfg.history.v1', JSON.stringify([]));
+  api.showHome();
+  await flush();
+  const zeroSend = farewellPosts().at(-1);
+  const zeroJudge = zeroSend && zeroSend.body && zeroSend.body.context && zeroSend.body.context.judge;
+  ok('[54] 0 组的告别：组数 0 / 次数 0，和上次（3 组 45 次）对比是 −45（不编成绩）',
+    !!zeroJudge && zeroJudge.sets === 0 && zeroJudge.reps === 0
+    && !!zeroJudge.prev && zeroJudge.prev.sets === 3 && zeroJudge.deltaReps === -45,
+    JSON.stringify(zeroJudge || null));
+  await finishSpeech();
+
+  /* ---------------- 中途退出（进了训练没做任何一组）也算 ---------------- */
+  api.openExercise('squat');
+  await flush();
+  api.state.session = 'running';   // 已经开始一组，但一次都没计
+  const midBefore = farewellPosts().length;
+  api.showHome();                  // 中途退出（还没结算任何一组）
+  await flush();
+  ok('[54] 中途退出也算一次告别（训练中直接回主页 → 发 1 次 session-end）',
+    farewellPosts().length === midBefore + 1,
+    JSON.stringify({ before: midBefore, after: farewellPosts().length }));
+  await finishSpeech();
+
+  /* ---------------- 收尾 ---------------- */
+  api.llmClient.setFetch(null);
+  api.showHome();
+  await api.setCoachEnabled(false);
+  await flush();
   api.state.session = 'calibrating';
 }
 

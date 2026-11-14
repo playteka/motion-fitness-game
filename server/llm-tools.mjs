@@ -27,7 +27,7 @@ import { COMMANDS } from '../src/voice/commands.js';
 import { RULE_CHANNELS } from '../src/voice/rules.js';
 import { EXERCISES, EXERCISE_MAP } from '../src/catalog.js';
 // R3 裁判事件口径（一处定义：前端 `src/voice/judge.js`；这里只读，不另抄）
-import { JUDGE_EVENTS, isJudgeAskEvent } from '../src/voice/judge.js';
+import { JUDGE_EVENTS, isJudgeAskEvent, isJudgeFarewellEvent } from '../src/voice/judge.js';
 // 记忆白名单只在一处定义（server/memory-store.mjs）：工具能写哪些字段、字段取值范围，
 // 都由那边说了算，这里只负责把模型的参数翻译成「记忆操作」。
 import { PREFS_FIELDS, FACTS_FIELDS } from './memory-store.mjs';
@@ -55,14 +55,25 @@ export const EXERCISE_IDS = Object.freeze(EXERCISES.map((e) => e.id));
 export const LLM_EVENT_SESSION_START = 'session-start';
 
 /**
+ * 会话结束事件（**告别**）：唯一字符串定义同样来自 `src/voice/judge.js` 的 `JUDGE_EVENTS`，
+ * 这里只起一个语义化的别名给路由 / 测试用。
+ *
+ * 带这个事件时 `POST /llm` 的 `text` 可以为空 —— user 消息由服务端按 context 里的
+ * 本次训练数字生成一条系统事件描述；system prompt 里另有一条告别规则（见 buildSystemPrompt 第 18 条）。
+ * 和裁判模式**不同**：它回**自由文本**（不是 JSON）、**必须说**（不是默认不说），最多 2 句。
+ */
+export const LLM_EVENT_SESSION_END = 'session-end';
+
+/**
  * R3：裁判事件（**8 个触发点**，口径唯一来源是 `src/voice/judge.js` 的 `JUDGE_EVENTS`）。
  *
  * 这些事件走 `/llm {event, context}`：user 消息由服务端按事件生成（不是用户说的话），
  * 模型只回严格 JSON（`{"speak": string|null, "actions": [...]?}`）—— 见 `buildSystemPrompt` 第 17 条。
- * `session-start` 虽然也在 `JUDGE_EVENTS` 里，但它复用 P3.3 的普通问候（自由文本），不是裁判模式。
+ * `session-start` / `session-end` 虽然也在 `JUDGE_EVENTS` 里，但它们复用 P3.3 的普通文本
+ * （进场问候 / 离场告别），不是裁判模式。
  */
 export const JUDGE_EVENT_TYPES = JUDGE_EVENTS;
-export { isJudgeAskEvent };
+export { isJudgeAskEvent, isJudgeFarewellEvent };
 
 /** 一次回答里最多执行几个工具（护栏：防止模型一口气把界面拆了） */
 export const MAX_TOOL_CALLS = 3;
@@ -822,9 +833,28 @@ export function buildSystemPrompt({ locale = 'zh', context = null, maxContextCha
       '    Prefer silence; never say empty filler like "keep going"; never ask questions; never invent numbers;'
         + ' use actions only when you really need to change state, and output nothing outside the JSON object.',
     ] : []),
+    /**
+     * 会话结束事件（session-end）：用户退出全屏 / 回主页，这次训练到此为止。
+     * 用户要求：「告别语 ≤2 句（肯定 + 具体数字 + 明天见 / 动起来）」。
+     * 和裁判模式的最大区别：**必须说**，而且回自由文本（不是 JSON）、只说 2 句以内。
+     */
+    ...(isJudgeFarewellEvent(event) ? [
+      '18. **告别模式（session-end 事件）**：这次不是用户在说话，而是一次训练结束了（用户退出全屏 / 回主页）。',
+      '    只回**纯文本**（不是 JSON、没有花括号），最多 **2 句**、≤60 字：',
+      '    - 第 1 句：肯定这次训练，并带上 judge 块里的**真实数字**（时长 / 组数 / 总次数 / 均分 / 最佳一组，挑 1~2 个说清）；',
+      '    - 第 2 句：用「明天见」或「动起来」收尾（和已有风格一致，不要两句都硬塞）。',
+      '    - 说了什么就说什么：组数是 0 也不要编成绩，温柔地说「今天先到这儿 / 来了就好」，同样带一个真实数字；',
+      '      不要提问、不要 Markdown / emoji / 换行、不要念工具调用，数字只能用 judge 块里给的。',
+      '    **Farewell mode (session-end)**: the workout just ended (the user left fullscreen / went home).'
+        + ' Reply in PLAIN TEXT only (not JSON), at most 2 sentences / 60 characters:'
+        + ' (1) acknowledge the session with 1–2 real numbers from the judge block (duration / sets / reps / average'
+        + ' score / best set); (2) close with "see you tomorrow" or "let\u2019s move". Even when sets = 0, do not invent'
+        + ' results — be kind ("you showed up"), still quote a real number, never ask questions,'
+        + ' no markdown / emoji / newlines, and use only the numbers given in the judge block.',
+    ] : []),
   ];
 
-  if (!introSeen && !isJudgeAskEvent(event)) {
+  if (!introSeen && !isJudgeAskEvent(event) && !isJudgeFarewellEvent(event)) {
     lines.push(
       /**
        * 首次见面 + 这次是「进入训练」的主动问候：自报家门必须压成一句短的，
@@ -856,8 +886,10 @@ export default {
   LLM_TOOL_DEFS,
   LLM_TOOLS,
   LLM_EVENT_SESSION_START,
+  LLM_EVENT_SESSION_END,
   JUDGE_EVENT_TYPES,
   isJudgeAskEvent,
+  isJudgeFarewellEvent,
   TOOL_BY_NAME,
   TOOL_INTENT_MAP,
   TOOLED_INTENTS,

@@ -144,6 +144,16 @@ function blankSnapshot() {
     judge: {
       ask: 0, spoke: 0, failed: 0, skip: 0, event: '', ms: 0, reason: '', ok: false, code: '',
     },
+    /**
+     * 一次训练结束的**告别**（`coach:farewell` / `coach:farewell-release`）：
+     *   ok / ms / fallback = 模型说了没有 / 耗时 / 是不是用了内置告别语
+     *   skipped = 为什么没说（disabled / muted / no-voice / already …）
+     *   releasedBy = 麦克风是什么时候放掉的（tts-end / tts-error / no-tts / muted / timeout）
+     * 用户要求「告别之后不再语音交互、麦克风在告别播完后释放」，这两行就是证据。
+     */
+    farewell: {
+      ok: false, ms: 0, fallback: false, skipped: '', releasedBy: '', at: 0, releasedAt: 0,
+    },
   };
 }
 
@@ -194,6 +204,7 @@ export function createDiag({
       session: { ...state.session },
       rule: { ...state.rule },
       judge: { ...state.judge },
+      farewell: { ...state.farewell },
       asrError: state.asrError ? { ...state.asrError } : null,
     };
   }
@@ -424,6 +435,26 @@ export function createDiag({
           skip: state.judge.skip + 1,
           reason: String(entry.reason || ''),
           event: String(entry.event || state.judge.event || ''),
+        };
+        break;
+      /* ---------------- 一次训练结束的告别（coach:farewell / coach:farewell-release） ----------------
+       * 用户要求「告别之后不再语音交互；麦克风在告别播完后释放」：
+       * 前一行说明「模型说了没有、是不是兜底」，后一行说明「麦克风是什么时候放掉的」。 */
+      case 'coach:farewell':
+        state.farewell = {
+          ...state.farewell,
+          ok: entry.ok === true,
+          ms: Math.max(0, Number(entry.ms) || 0),
+          fallback: entry.fallback === true,
+          skipped: String(entry.skipped || ''),
+          at: Math.max(0, Number(entry.t) || 0),
+        };
+        break;
+      case 'coach:farewell-release':
+        state.farewell = {
+          ...state.farewell,
+          releasedBy: String(entry.by || ''),
+          releasedAt: Math.max(0, Number(entry.t) || 0),
         };
         break;
       /* ---------------- 会话状态机（session:*） ----------------

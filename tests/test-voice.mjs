@@ -60,9 +60,10 @@ import {
   TTS_HEALTH_PATH, TTS_MAX_TEXT, TTS_STREAM_FIRST_MS,
   createVolcMessageParser, volcAudioBytes, unwrapVolcAudio,
 } from '../server/volc-tts.mjs';
-// R3：LLM 裁判（触发口径 / 严格 JSON / 护栏）
+// R3：LLM 裁判（触发口径 / 严格 JSON / 护栏）+ session-end 告别
 import {
   createJudge, JUDGE_EVENTS, JUDGE_ASK_EVENTS, isJudgeEvent, isJudgeAskEvent, judgePriority,
+  isJudgeFarewellEvent, clampFarewellSpeak, FAREWELL_MAX_CHARS, FAREWELL_MAX_SENTENCES,
   shouldJudgeRep, shouldJudgeHold, shouldJudgeIdle, shouldJudgeOutOfFrame,
   parseJudgeReply, clampJudgeSpeak, parseGateDiagRow, worstGateCheck,
   JUDGE_TIMEOUT_MS, JUDGE_COOLDOWN_MS, JUDGE_DEDUPE_MS, JUDGE_MAX_CHARS,
@@ -93,6 +94,7 @@ import {
   normalizeActions as normalizeLlmActions,
   LLM_PATH as LLM_CLIENT_PATH, LLM_CLIENT_TIMEOUT_MS, LLM_HISTORY_TURNS,
   LLM_EVENT_SESSION_START as LLM_CLIENT_EVENT,
+  LLM_EVENT_SESSION_END as LLM_CLIENT_EVENT_END,
   AGENT_CONTEXT_MAX_CHARS, AGENT_EVENTS_MAX, AGENT_EVENTS_WINDOW_MS, AGENT_EVENT_MAX_CHARS,
   AGENT_MEMORY_PREF_FIELDS, AGENT_MEMORY_FACT_FIELDS,
   weekTrend, startOfLocalWeek, normalizeRecentEvents, lastSessionForContext, memoryForContext,
@@ -100,12 +102,13 @@ import {
 } from '../src/voice/llm.js';
 import {
   LLM_PATH, LLM_HEALTH_PATH, LLM_TIMEOUT_MS, LLM_MAX_TOKENS, LLM_RATE_LIMIT,
-  LLM_RATE_WINDOW_MS, LLM_MAX_HISTORY_TURNS, LLM_EVENT_SESSION_START,
+  LLM_RATE_WINDOW_MS, LLM_MAX_HISTORY_TURNS, LLM_EVENT_SESSION_START, LLM_EVENT_SESSION_END,
   loadLlmConfig, createLlmGuard, createLlmProvider, createMockLlmProvider,
-  createLlmRoutes, buildLlmMessages, sessionStartEventMessage, historyMessages,
+  createLlmRoutes, buildLlmMessages, sessionStartEventMessage, sessionEndEventMessage, historyMessages,
   normalizeProviderName, llmHttpCode,
   // R3：裁判事件口径 + 按事件生成 user 消息（服务端）
   JUDGE_EVENT_TYPES, judgeEventMessage, isJudgeAskEvent as isJudgeAskEventServer,
+  isJudgeFarewellEvent as isJudgeFarewellEventServer,
 } from '../server/llm-provider.mjs';
 import {
   LLM_TOOLS, LLM_TOOL_DEFS, TOOL_INTENT_MAP, TOOLED_INTENTS, UNCOVERED_INTENTS,
@@ -7801,22 +7804,37 @@ console.log('\n[40] R3 LLM 裁判：8 个触发点口径 / 严格 JSON / 触发�
   };
 
   /* ---------------- 口径：一处定义（前端 / 服务端 / 测试同一份） ---------------- */
-  ok('[40] 裁判口径一处定义：9 个事件（8 个触发点 + 复用 session-start）',
-    JUDGE_EVENTS.length === 9
-    && JUDGE_EVENTS.join(',') === 'set-complete,pr,rep-judge,hold-judge,idle,out-of-frame,gate-fail2,keyframe-miss2,session-start'
-    && JUDGE_ASK_EVENTS.length === 8 && !JUDGE_ASK_EVENTS.includes('session-start'),
+  ok('[40] 裁判口径一处定义：10 个事件（8 个触发点 + 复用 session-start + 告别 session-end）',
+    JUDGE_EVENTS.length === 10
+    && JUDGE_EVENTS.join(',') === 'set-complete,pr,rep-judge,hold-judge,idle,out-of-frame,gate-fail2,keyframe-miss2,session-start,session-end'
+    && JUDGE_ASK_EVENTS.length === 8
+    && !JUDGE_ASK_EVENTS.includes('session-start') && !JUDGE_ASK_EVENTS.includes('session-end'),
     JSON.stringify(JUDGE_EVENTS));
   ok('[40] 服务端读的是同一份 JUDGE_EVENTS（JUDGE_EVENT_TYPES === JUDGE_EVENTS）',
     Array.isArray(JUDGE_EVENT_TYPES) && JUDGE_EVENT_TYPES.join(',') === JUDGE_EVENTS.join(','));
-  ok('[40] isJudgeEvent / isJudgeAskEvent：session-start 算事件但**不走**裁判模式',
+  ok('[40] isJudgeEvent / isJudgeAskEvent / isJudgeFarewellEvent：session-start 与 session-end 都不走裁判模式',
     isJudgeEvent('session-start') && !isJudgeAskEvent('session-start')
+    && isJudgeEvent('session-end') && !isJudgeAskEvent('session-end')
+    && isJudgeFarewellEvent('session-end') && !isJudgeFarewellEvent('session-start')
     && isJudgeEvent('rep-judge') && isJudgeAskEvent('rep-judge')
     && !isJudgeEvent('nope') && !isJudgeAskEvent(''));
-  ok('[40] 触发优先级：破纪录最高（可抢占），静止最低',
-    judgePriority('pr') === 100 && judgePriority('gate-fail2') === 80
+  ok('[40] 触发优先级：告别最高（最后一句话，可抢占破纪录），静止最低',
+    judgePriority('session-end') === 120 && judgePriority('session-end') > judgePriority('pr')
+    && judgePriority('pr') === 100 && judgePriority('gate-fail2') === 80
     && judgePriority('set-complete') === 60 && judgePriority('rep-judge') === 40
     && judgePriority('out-of-frame') === 30 && judgePriority('idle') === 20
     && judgePriority('nope') === 0);
+  ok('[40] 告别语 ≤2 句 / ≤60 字：第 3 句被截掉、小数点不算句末、换行压成空格',
+    FAREWELL_MAX_CHARS === 60 && FAREWELL_MAX_SENTENCES === 2
+    && clampFarewellSpeak('这组 12 次，平均 76.5 分。明天见！第三句不该出现。')
+      === '这组 12 次，平均 76.5 分。明天见！'
+    && clampFarewellSpeak('第一句。第二句！第三句。') === '第一句。第二句！'
+    && clampFarewellSpeak('  ') === ''
+    && [...clampFarewellSpeak('啊'.repeat(120))].length === FAREWELL_MAX_CHARS,
+    JSON.stringify({
+      two: clampFarewellSpeak('这组 12 次，平均 76.5 分。明天见！第三句不该出现。'),
+      three: clampFarewellSpeak('第一句。第二句！第三句。'),
+    }));
 
   /* ---------------- 触发次数（假时钟 / 假计数） ---------------- */
   const countRep = (max) => {
@@ -8176,6 +8194,141 @@ console.log('\n[40] R3 LLM 裁判：8 个触发点口径 / 严格 JSON / 触发�
       const sys = buildLlmMessages({ event: 'rep-judge', locale: 'zh', context: ctx })[0].content;
       return !sys.includes('先说一次自报家门') && !sys.includes('这是首次对话');
     })());
+
+  /* ================================================================== *
+   * session-end 告别（退出全屏 / 回主页 → ≤2 句；之后本场不再与 LLM 通信）
+   * ================================================================== */
+
+  /* ---------------- ① 服务端：告别事件的 user 消息（中英各一套，数字全来自 context） ---------------- */
+  const farewellCtx = {
+    session: { name: '自重深蹲', exerciseId: 'squat', kind: 'reps', target: 20, reps: 3 },
+    judge: {
+      event: 'session-end',
+      unit: '次',
+      durationSec: 740,
+      sets: 3,
+      reps: 45,
+      avgScore: 82,
+      bestScore: 95,
+      bestValue: 18,
+      prev: { sets: 2, reps: 30, avgScore: 79, bestScore: 90 },
+      deltaReps: 15,
+      deltaScore: 3,
+    },
+  };
+  const farewellZh = sessionEndEventMessage({ locale: 'zh', context: farewellCtx });
+  /** 英文环境下动作名 / 单位都由客户端按语言给英文（见 buildAgentContext），这里照做 */
+  const farewellCtxEn = JSON.parse(JSON.stringify(farewellCtx));
+  farewellCtxEn.judge.unit = 'reps';
+  const farewellEn = sessionEndEventMessage({ locale: 'en', context: farewellCtxEn });
+  ok('[40] session-end：中文事件描述带齐时长 / 组数 / 次数 / 均分 / 最佳 / 与上次对比',
+    farewellZh.startsWith('[事件] 本次训练结束')
+    && farewellZh.includes('12 分钟') && farewellZh.includes('3 组')
+    && farewellZh.includes('45') && farewellZh.includes('82 分')
+    && farewellZh.includes('95 分') && farewellZh.includes('18')
+    && farewellZh.includes('30') && farewellZh.includes('+15') && farewellZh.includes('+3')
+    && farewellZh.includes('明天见') && farewellZh.includes('最多 2 句'),
+    farewellZh);
+  ok('[40] session-end：英文另一套（[Event] 开头、没有残留中文、数字一致）',
+    farewellEn.startsWith('[Event] Workout finished') && !/[\u4e00-\u9fff]/.test(farewellEn)
+    && farewellEn.includes('12 min') && farewellEn.includes('45') && farewellEn.includes('+15'),
+    farewellEn);
+  ok('[40] session-end：0 组（中途退出）也发事件，并明确「不要编成绩」',
+    (() => {
+      const zero = sessionEndEventMessage({
+        locale: 'zh',
+        context: { judge: { event: 'session-end', durationSec: 40, sets: 0, reps: 0, avgScore: 0, bestScore: 0, prev: null } },
+      });
+      return zero.includes('组数=0') && zero.includes('总次数=0') && zero.includes('不要编成绩')
+        && zero.includes('没有上一场可比') && zero.includes('40 秒');
+    })());
+  ok('[40] buildLlmMessages：session-end 的 user 消息就是那句告别事件（不是空 text）',
+    buildLlmMessages({ event: 'session-end', locale: 'zh', context: farewellCtx }).at(-1).content === farewellZh
+    && buildLlmMessages({ event: 'session-end', locale: 'en', context: farewellCtxEn }).at(-1).content === farewellEn);
+  ok('[40] 告别 mode 的 system prompt：纯文本 / 最多 2 句 / 真实数字 / 明天见或动起来 / 不提问',
+    (() => {
+      const sys = buildLlmMessages({ event: 'session-end', locale: 'zh', context: farewellCtx })[0].content;
+      return sys.includes('告别模式') && sys.includes('纯文本') && sys.includes('最多 **2 句**')
+        && sys.includes('明天见') && sys.includes('不要提问')
+        && !sys.includes('默认 speak = null') && !sys.includes('先说一次自报家门');
+    })());
+  ok('[40] 告别不带对话历史（一条事件一条请求），也不加「首次自报家门」',
+    (() => {
+      const msgs = buildLlmMessages({
+        event: 'session-end', locale: 'zh', context: farewellCtx,
+        history: [{ role: 'user', content: '上一句' }, { role: 'assistant', content: '上一答' }],
+      });
+      // 「告别不带历史」由路由决定（history: judgeMode || farewellMode ? [] : …）
+      return msgs.at(-1).content === farewellZh
+        && !msgs[0].content.includes('这是首次对话');
+    })());
+  ok('[40] 服务端读的是同一份告别口径（session-end 不算裁判，但算告别）',
+    LLM_EVENT_SESSION_END === 'session-end' && LLM_CLIENT_EVENT_END === 'session-end'
+    && isJudgeFarewellEventServer('session-end') && !isJudgeAskEventServer('session-end'));
+
+  /* ---------------- ② 客户端：farewell() 发 {event:'session-end', text:''}，读回自由文本 ---------------- */
+  {
+    const calls = [];
+    const client = createLlmClient({
+      fetchImpl: async (url, init = {}) => {
+        calls.push({ url: String(url), body: JSON.parse(init.body) });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, reply: '今天 3 组 45 次，均分 82 分。明天见！', actions: [], provider: 'deepseek', model: 'deepseek-chat' }),
+        };
+      },
+    });
+    const out = await client.farewell({ locale: 'zh', context: farewellCtx });
+    ok('[40] 客户端 farewell()：POST /llm {event:"session-end", text:""}，回自由文本（不解析 JSON）',
+      calls.length === 1 && calls[0].url.endsWith('/llm')
+      && calls[0].body.event === 'session-end' && calls[0].body.text === ''
+      && !!calls[0].body.context && calls[0].body.context.judge.event === 'session-end'
+      && out.text === '今天 3 组 45 次，均分 82 分。明天见！' && out.ms >= 0,
+      JSON.stringify({ calls, out }));
+    let sealedCode = '';
+    client.setSealed(true);
+    try { await client.farewell({ locale: 'zh', context: farewellCtx }); } catch (err) { sealedCode = String((err && err.code) || ''); }
+    let respondCode = '';
+    try { await client.respond('你好'); } catch (err) { respondCode = String((err && err.code) || ''); }
+    let judgeCode = '';
+    try { await client.judge('rep-judge', { context: farewellCtx }); } catch (err) { judgeCode = String((err && err.code) || ''); }
+    ok('[40] 封麦（告别之后）：farewell / respond / judge 全部 llm-sealed，**一个 fetch 都不发**',
+      sealedCode === 'llm-sealed' && respondCode === 'llm-sealed' && judgeCode === 'llm-sealed'
+      && client.sealed === true && calls.length === 1,
+      JSON.stringify({ sealedCode, respondCode, judgeCode, sealed: client.sealed, calls: calls.length }));
+    client.setSealed(false);
+    const again = await client.farewell({ locale: 'zh', context: farewellCtx });
+    ok('[40] 下一次训练解封 → 又能发出去', client.sealed === false && calls.length === 2 && !!again.text);
+  }
+
+  /* ---------------- ③ 控制器：cancel() 作废在飞的一条（告别抢占唯一通道） ---------------- */
+  {
+    const sp = makeSpeaker();
+    const diag = makeDiag();
+    let release = null;
+    const judge = createJudge({
+      ask: (event) => (event === 'rep-judge'
+        ? new Promise((resolve) => { release = resolve; })
+        : Promise.resolve({ speak: '破纪录了' })),
+      speak: sp.speak,
+      diag,
+      now: () => clock.t,
+    });
+    const pending = judge.request('rep-judge');
+    await Promise.resolve();
+    ok('[40] cancel() 之前：有一条在飞（可以抢占）', !!judge.inflight);
+    const cancelled = judge.cancel('session-end');
+    // 作废之后，那条迟到的结果回来了 → 只丢（await 它拿到 superseded，不用等 8s 超时）
+    if (typeof release === 'function') release({ speak: '这条已经晚了' });
+    const run = await pending;
+    await Promise.resolve();
+    ok('[40] cancel()：在飞的那条作废（不出声、结果回来也只丢），诊断记 judge:skip',
+      cancelled === true && run.spoke === false && run.skipped === 'superseded'
+      && sp.said.length === 0 && diag.snapshot().judge.skip === 1
+      && diag.snapshot().judge.reason === 'session-end',
+      JSON.stringify({ run, said: sp.said, judge: diag.snapshot().judge }));
+  }
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);
