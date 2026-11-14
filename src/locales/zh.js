@@ -49,11 +49,12 @@ export default {
     ttsSystem: '系统 TTS',
     ttsRate: '语速',
     ttsRateNormal: '1×（正常）',
-    // R1 规则快车道：教练话量三档（少 / 中 / 多）
+    // R1 / R2 规则快车道：教练话量三档（少 / 中 / 多）+ 生效规则条数
     coachVolume: '教练话量',
-    coachVolumeLow: '少（只纠正 + 最后 3 个）',
-    coachVolumeMid: '中（默认）',
-    coachVolumeHigh: '多（再加过半 / 每 5 个）',
+    coachVolumeLow: '少（只报每 5 个）',
+    coachVolumeMid: '中（默认：逐次报数 + 每 5 秒读秒）',
+    coachVolumeHigh: '多（再加过半提醒）',
+    coachRuleCount: '当前生效规则 {count} 条',
     fullscreen: '全屏显示视频框',
     // 画面右下角「正在记录调试数据」的角标：数字 + 单位，鼠标移上去看这句话
     recUnit: '帧已记录',
@@ -988,8 +989,8 @@ export default {
     dialogueGroup: '对话显示与语音',
     dialogueLead: '教练的回答怎么显示：一句一条的弹幕（用户青色、教练薄荷绿），或者原来的两行字幕。',
     ttsHint: '教练说话默认走火山 TTS（本机 /tts/stream 流式代理，边收边播；同一句整段接口只合成一次并缓存）；超过 3 秒或失败会依次降级到整段 / 系统 TTS，不会哑掉。',
-    // R1 规则快车道：教练话量三档（少 = 只纠正 + 最后 3 个；中 = 默认；多 = 再加过半 / 每 5 个）
-    coachVolumeHint: '「话量」只影响**规则快车道**那几句话（报数 / 读秒 / 纠正 / 催促），全在本机算，不联网、不花钱。少 = 只纠正 + 最后 3 个；中 = 默认；多 = 再加过半 + 每 5 个。',
+    // R1 / R2 规则快车道：话量三档 + 「口述建规则」只影响规则那几句话
+    coachVolumeHint: '「话量」只影响**规则快车道**那几句话（报数 / 读秒 / 纠正 / 催促），全在本机算，不联网、不花钱。中（默认）像私教一样**每个都报**，节奏快时自动降频（每 2 个 / 每 3 个），计时类**每 5 秒读秒**并在最后 5 秒逐秒倒数；少 = 只报每 5 个；多 = 再加过半。说「每 10 个报一次」「别报数了」「有什么规则」还能现场改，规则只活到这次训练结束。',
     // 教练声音性别：长期偏好（服务端 MD 的 prefs.voiceGender），只影响朗读音色
     voiceGender: '教练声音',
     voiceFemale: '女声',
@@ -1722,6 +1723,10 @@ export default {
       setVoiceGender: ['换个女声', '换女声', '用女声', '女声吧', '换个男声', '换男声', '用男声', '男声吧',
         '换个女教练', '换女教练', '女教练吧', '换个男教练', '换男教练', '男教练吧'],
       reportProgress: ['我做了几个', '做了几个', '我做了多少次', '做了多少次', '现在多少分', '多少分', '成绩怎么样', '多少个'],
+      // R2 口述建规则：说法里的数字会被换成槽位（「每 10 个」→ every=10），中英两份行数要一致
+      addRule: ['每 10 个报一次', '每 5 个报一次', '每隔 5 个报一次', '每 30 秒报时', '每 10 秒读秒', '每 5 分钟报时'],
+      removeRule: ['别报数了', '不报数了', '关掉报数', '别读秒了', '关掉报时', '关掉读秒'],
+      listRules: ['现在有什么规则', '有什么规则', '有哪些规则', '现在的规则', '规则列表', '现在哪些规则'],
     },
 
     /** 帮助面板「作用」那一列（commands.js 的表项只存 key，渲染时按当前语言取） */
@@ -1753,6 +1758,9 @@ export default {
       switchLang: '切换语言（「说英文」「说中文」）',
       setVoiceGender: '换教练声音：男声 / 女声（只影响朗读音色）',
       reportProgress: '读出当前这一组的次数与分数',
+      addRule: '口述建规则（作用到这次训练结束）：「每 10 个报一次」→ 报数间隔；「每 30 秒报时」→ 读秒间隔',
+      removeRule: '口述关掉规则：「别报数了」关掉报数，「别读秒了」关掉读秒',
+      listRules: '逐条报出现在生效的规则（规则名 + 间隔，最多说 3 条）',
     },
 
     /** 快车道执行后的**一句短确认**（run 返回 key，session 用 t() 翻成字幕） */
@@ -1800,6 +1808,17 @@ export default {
       progressIdle: '现在还没在训练：目标是 {target} {unit}，已有 {reps} 个、{score} 分。',
       notInMenu: '现在不在菜单里，先说「菜单」。',
       unknownCategory: '没听清要哪个分类，说「上肢 / 下肢 / 核心 / 全身 / 拉伸」。',
+      // R2 口述建规则 / 关规则 / 报规则
+      addRepRule: '好的，每 {every} 个报一次。',
+      addTimeRule: '好的，每 {every} 秒读一次秒。',
+      removeRepRule: '好的，不报数了。',
+      removeTimeRule: '好的，不读秒了。',
+      ruleNone: '这条规则现在没开着。',
+      ruleUnknown: '没听清要关哪条，说「别报数了」或「别读秒了」。',
+      ruleFailed: '这条规则没建成，再说一次数字（比如「每 10 个报一次」）。',
+      rulesEmpty: '现在一条规则都没有。',
+      listRules: '现在有 {count} 条规则：{items}。',
+      rulesMore: '，还有 {n} 条',
       failed: '这个操作没做成，再试一次。',
       done: '好的。',
     },
@@ -1860,16 +1879,39 @@ export default {
   },
 
   /**
-   * R1 规则快车道：内置六条规则的台词（**只在这里定义**；规则表在 src/voice/rules.js）。
-   * 占位符：{n} 次数 / 还剩几个 / 秒数，{cue} 门控的具体口令（status.need.* 同一份文案）。
+   * 规则快车道：内置规则的台词（**只在这里定义**；规则表在 src/voice/rules.js）。
+   * 占位符：{n} 次数 / 还剩几个 / 秒数，{word} 数词（一 / 二 / 五 …，由 numerals.js 换好再念），
+   * {cue} 门控的具体口令（status.need.* 同一份文案），{name} / {every} 规则名与间隔（listRules 用）。
    * 改台词只改这里，中英两份要一一对应（tests/test-i18n.mjs 会核对占位符）。
    */
   rule: {
-    repEvery5: '{n} 个，稳',
+    // 报数（R2 缺省规则，像私人教练数数）：每个都报，第 5 / 10 个换成整句
+    repCount: '{word}',
+    repFive: '{word}个了',
+    repTen: '{word}个了，稳住',
+    // 读秒（R2 缺省规则：计时类每 5 秒读一次已经过了几秒）
+    readSeconds: '{word}秒',
     lastThree: '还剩 {n} 个',
     halfway: '一半了，节奏别乱',
     countdown: '{n}',
     gateFail2: '{cue}（连着两次没到位，先摆好）',
     idle8: '继续啊，我等你',
+    // 规则名 + 间隔（「现在有什么规则」逐条报出来，设置页只显示条数）
+    name: {
+      rep: '报数间隔',
+      read: '读秒间隔',
+      lastThree: '最后三个',
+      halfway: '过半提醒',
+      countdown: '最后五秒倒数',
+      gateFail: '门控纠正',
+      idle: '催促',
+      other: '其他规则',
+    },
+    listItem: '{name}：{every}',
+    listSep: '；',
+    everyReps: '每 {n} 个报一次',
+    everySeconds: '每 {n} 秒读一次',
+    everyRep: '每个都报，节奏快时自动降频',
+    everyAlways: '一直生效',
   },
 };

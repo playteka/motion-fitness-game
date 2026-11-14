@@ -705,6 +705,8 @@
             </select>
           </label>
           <p class="modal-hint" data-i18n="settings.coachVolumeHint"></p>
+          <!-- R2 口述建规则：这里**只显示生效规则条数**（完整列表留给 R4），文字由 syncRuleCount() 填 -->
+          <p class="modal-hint" id="coachRuleCount"></p>
           <p class="modal-hint" data-i18n="settings.ttsHint"></p>
           <!-- P3.4 插话打断：默认开；关掉后教练说话时不会被打断（只影响打断，不影响聆听） -->
           <div class="toggle-grid">

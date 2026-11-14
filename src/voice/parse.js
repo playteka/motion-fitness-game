@@ -7,9 +7,12 @@
  *   1) 归一化：全角 → 半角、去标点、大小写不敏感、合并空白；
  *   2) 唤醒词（**可选**）：开头是「可可 / 教练 / coach」就去掉并置 `usedWake = true`，
  *      没有唤醒词也照常解析（快车道不强制唤醒）；
- *   3) 抽槽位：数量 + 单位（次 / 个 / 下 / 秒 / 分钟）、动作名、分类、序数（「第三个」）、
- *      语言（「说英文」）；中文数字会先换成数值（二十 → 20、一分钟 → 60 秒）；
+ *   3) 抽槽位：数量 + 单位（次 / 个 / 下 / 秒 / 分钟）、**间隔（每 N 个 / 每 N 秒）**、
+ *      规则频道（报数 / 读秒）、动作名、分类、序数（「第三个」）、语言（「说英文」）；
+ *      中文数字会先换成数值（二十 → 20、一分钟 → 60 秒）；
  *   4) 拿 `commands.js` 的说法表做最长匹配（中英两套都参与，所以界面是英文时说中文也认）；
+ *      标了 `numeric: true` 的命令（口述建规则）匹配前会抹掉两边的数字，所以「每 10 个报一次」
+ *      的说法表项能命中「每 3 个报一次」；
  *   5) 匹配不上 → `{ intent: 'unknown' }`（**不猜**）。
  *
  * 说法表 / 命令含义 / 帮助文案都在 `commands.js` 与 `src/locales/*.js` 里，
@@ -77,6 +80,28 @@ const AMOUNT_RE = new RegExp(
   + '|minutes?|mins?|seconds?|secs?|reps?|times?)',
   'i',
 );
+
+/**
+ * 「每 N 个 / 每隔 N 个 / every N reps」这种**间隔**（R2 口述建规则用）：
+ * 和 `readAmount` 分开抽 —— 同一句「每 10 个报一次」里的「10 个」是间隔，不是目标次数。
+ */
+const INTERVAL_RE = new RegExp(
+  `(?:\\u6bcf\\u9694?|every)\\s*(${NUM_PATTERN})\\s*`
+  + '(\\u4e2a|\\u6b21|\\u4e0b|\\u79d2\\u949f|\\u79d2|\\u5206\\u949f|\\u5206'
+  + '|reps?|times?|seconds?|secs?|minutes?|mins?)',
+  'i',
+);
+
+/**
+ * 「报数 / 读秒」这两个频道的词（口述建规则 / 关规则只认这两个）。
+ * 中文用 `\u` 转义（源码里不留写死的中文），英文用小写比较。
+ */
+const RULE_KIND_WORDS = {
+  // 报数 数数 计数 counting count reps
+  rep: ['\u62a5\u6570', '\u6570\u6570', '\u8ba1\u6570', 'counting', 'count', 'reps'],
+  // 读秒 报时 读时 倒计时 countdown the time clock
+  read: ['\u8bfb\u79d2', '\u62a5\u65f6', '\u8bfb\u65f6', '\u5012\u8ba1\u65f6', 'countdown', 'the time', 'clock'],
+};
 
 /* 中文序数「第 N」；裸数字兜底时要先把它拿掉，免得把「第三个」当成 3 次 */
 const CN_ORDINAL_RE = new RegExp(`\\u7b2c\\s*(${NUM_PATTERN})`, 'g');
@@ -191,6 +216,48 @@ function readAmount(spaced) {
     if (Number.isFinite(value)) return { value, unit: null };
   }
   return null;
+}
+
+/**
+ * 「每 N 个 / 每 N 秒」→ `{ value, unit: 'reps'|'seconds' }`（R2 口述建规则的间隔槽位）。
+ *
+ * - 「每 10 个报一次」→ `{value:10, unit:'reps'}`；「每 30 秒报时」→ `{value:30, unit:'seconds'}`；
+ * - 分钟换算成秒（「每 2 分钟」→ 120 秒）；中文数字走 `cnToInt`（「每十个」→ 10）；
+ * - 没有「每 / 每隔 / every」或没有数字 → `null`（**绝不猜**）。
+ */
+function readInterval(spaced) {
+  const m = INTERVAL_RE.exec(spaced);
+  if (!m) return null;
+  const value = numberValue(m[1]);
+  if (!Number.isFinite(value) || value < 1) return null;
+  const unit = m[2].toLowerCase();
+  if (MINUTE_UNITS.has(unit)) return { value: Math.round(value * 60), unit: 'seconds' };
+  if (SECOND_UNITS.has(unit)) return { value: Math.round(value), unit: 'seconds' };
+  if (REP_UNITS.has(unit)) return { value: Math.round(value), unit: 'reps' };
+  return null;
+}
+
+/**
+ * 「别报数了 / 别读秒了」要关掉哪个频道 → `'rep'` / `'read'` / `''`。
+ * 取句子里**最后出现**的那个词；同一个位置命中两个词时取更长的
+ * （`countdown` 里的 `count` 不会被当成「报数」）。
+ */
+function readRuleKind(spaced) {
+  const text = ` ${normalizeText(spaced)} `;
+  let best = { kind: '', end: -1, len: 0 };
+  for (const [kind, words] of Object.entries(RULE_KIND_WORDS)) {
+    for (const raw of words) {
+      const word = normalizeText(raw);
+      if (!word) continue;
+      const at = text.lastIndexOf(word);
+      if (at < 0) continue;
+      const end = at + word.length;
+      if (end > best.end || (end === best.end && word.length > best.len)) {
+        best = { kind, end, len: word.length };
+      }
+    }
+  }
+  return best.kind;
 }
 
 /** 序数：「第三个 / 第 3 个 / third one / number three」→ 3（找不到返回 0） */
@@ -324,6 +391,24 @@ function isExact(spaced, compact, phrase) {
   return spaced === p;
 }
 
+/**
+ * 口述规则那种「说法里带数字」的命令：匹配前把**两边**的数字都抹掉再比
+ * （「每 10 个报一次」的说法表项是 `每 10 个报一次`，用户说「每 3 个报一次」也得命中）。
+ * 只有 `cmd.numeric === true` 的命令走这条路，其余命令仍然逐字匹配。
+ */
+const NUMERIC_STRIP_RE = new RegExp(`[0-9${NUM_CHARS}]`, 'g');
+
+function numericForm(text) {
+  return compactText(normalizeText(text)).replace(NUMERIC_STRIP_RE, '');
+}
+
+function numericScore(spaced, phrase) {
+  const p = numericForm(phrase);
+  if (!p) return 0;
+  const body = numericForm(spaced);
+  return body.includes(p) ? p.length : 0;
+}
+
 /** 这条命令要求的槽位有没有抽到（抽不到就不参与匹配，避免「目标」空喊） */
 function slotReady(intent, slots) {
   if (intent === 'setTarget' || intent === 'adjustTarget') return !!slots.amount;
@@ -331,6 +416,9 @@ function slotReady(intent, slots) {
   if (intent === 'category') return !!slots.category;
   if (intent === 'switchLang') return !!slots.lang;
   if (intent === 'setVoiceGender') return !!slots.gender;
+  // 口述建规则必须有「每 N 个 / 每 N 秒」；关规则必须说清是报数还是读秒
+  if (intent === 'addRule') return !!slots.interval;
+  if (intent === 'removeRule') return !!slots.ruleKind;
   return true;
 }
 
@@ -356,6 +444,12 @@ function argsFor(intent, slots) {
     args.lang = slots.lang;
   } else if (intent === 'setVoiceGender' && slots.gender) {
     args.gender = slots.gender;
+  } else if (intent === 'addRule' && slots.interval) {
+    // 单位决定频道：个 / 次 → 报数间隔；秒 → 读秒间隔
+    args.kind = slots.interval.unit === 'seconds' ? 'read' : 'rep';
+    args.every = slots.interval.value;
+  } else if (intent === 'removeRule') {
+    args.kind = slots.ruleKind || 'rep';
   }
   return args;
 }
@@ -421,14 +515,19 @@ export function parseCommand(text, locale = 'zh') {
   const exerciseId = readExercise(body, compact);
   const lang = readLang(body);
   const gender = readVoiceGender(body);
-  const slots = { spaced: body, compact, amount, ordinal, category, exerciseId, lang, gender };
+  // R2 口述建 / 关规则：间隔（每 10 个 / 每 30 秒）+ 频道（报数 / 读秒）
+  const interval = readInterval(body);
+  const ruleKind = readRuleKind(body);
+  const slots = {
+    spaced: body, compact, amount, ordinal, category, exerciseId, lang, gender, interval, ruleKind,
+  };
 
   let best = null;
   for (const cmd of COMMANDS) {
     if (!slotReady(cmd.intent, slots)) continue;
     for (const key of ['zh', 'en']) {
       for (const phrase of cmd[key] || []) {
-        const score = phraseScore(body, compact, phrase);
+        const score = cmd.numeric ? numericScore(body, phrase) : phraseScore(body, compact, phrase);
         if (!score) continue;
         if (!best || score > best.score) best = { cmd, phrase, score };
       }

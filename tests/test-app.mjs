@@ -9856,47 +9856,104 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
     && api.state.settings.coachVolume === 'mid',
     JSON.stringify({ state: api.state.voice.state, volume: api.state.settings.coachVolume }));
 
-  /* ---------------- ① 话量=多：每 5 个报数 ---------------- */
-  api.applyCoachVolume('high');
+  /* ---------------- ① 默认（中档）：像私人教练一样**逐次报数** ---------------- */
+  api.applyCoachVolume('mid');
   api.ruleEngine.reset();
   api.voice.emitEvent('set-start', { target: 20 });
   const utterBefore = coachStubs.utterances.length;
-  const beforeSpeak = api.state.voice.coachText;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  /** 喂一次有效计次（注意：det 可能被 openExercise 换掉，所以每次都取当前识别器） */
   const feedRep = (n) => {
-    det.validReps = n;
+    api.state.detector.validReps = n;
     api.handleEvents([{ type: 'rep', valid: true, index: n }]);
   };
-  for (let n = 1; n <= 4; n += 1) feedRep(n);
+  feedRep(1);
   await flush();
-  ok('[51] 每 5 个：第 1~4 个不说话（不打扰报数节奏）',
-    api.state.voice.coachText === beforeSpeak, JSON.stringify(api.state.voice.coachText));
+  ok('[51] 默认（中档）第一个 rep 就报「一」——缺省规则像私教一样帮你计次',
+    api.state.voice.coachText === '一' && api.voice.lastCoachLines().includes('一'),
+    JSON.stringify(api.state.voice.coachText));
+  ok('[51] 走的是现有教练通道：TTS 那条路也收到了同一句（弹幕 + TTS 一条路）',
+    coachStubs.utterances.slice(utterBefore).some((u) => u.text === '一'),
+    JSON.stringify(coachStubs.utterances.slice(utterBefore).map((u) => u.text).slice(0, 3)));
+  // 正常节奏（>1.5s 一个）→ 每个都报；比这更快才降频（见 test-voice [38] 的 0.7s / 1.2s 用例）
+  await wait(1700);
+  feedRep(2);
+  await flush();
+  ok('[51] 第二下报「二」（逐次报数，不是每 5 个才说）',
+    api.state.voice.coachText === '二', JSON.stringify(api.state.voice.coachText));
+  await wait(1700);
+  feedRep(3);
+  await flush();
+  ok('[51] 第三下报「三」', api.state.voice.coachText === '三',
+    JSON.stringify(api.state.voice.coachText));
+  await wait(1700);
   feedRep(5);
   await flush();
-  ok('[51] 每 5 个：喂 5 次 rep → 说出「5 个，稳」（弹幕 + TTS 走现有通道）',
-    api.state.voice.coachText === '5 个，稳'
-    && api.voice.lastCoachLines().includes('5 个，稳'),
-    JSON.stringify({ coach: api.state.voice.coachText, lines: api.voice.lastCoachLines() }));
-  ok('[51] 走上现有的教练通道：最后一句台词里就有它，TTS 那条路也收到了同一句',
-    api.voice.lastCoachLines().at(-1) === '5 个，稳'
-    && coachStubs.utterances.slice(utterBefore).some((u) => u.text === '5 个，稳'),
-    JSON.stringify({ lines: api.voice.lastCoachLines().slice(-2),
-      said: coachStubs.utterances.slice(utterBefore).map((u) => u.text).slice(0, 3) }));
+  ok('[51] 第 5 个换成整句鼓励「五个了」（念的是中文数词，不是阿拉伯数字）',
+    api.state.voice.coachText === '五个了' && api.voice.lastCoachLines().includes('五个了')
+    && !/[0-9]/.test(api.state.voice.coachText),
+    JSON.stringify(api.state.voice.coachText));
+  ok('[51] 诊断：rule:speak {ruleId:"rep-count", event:"rep", priority:35}',
+    api.coachDiag.snapshot().rule.lastRule === 'rep-count'
+    && api.coachDiag.snapshot().rule.event === 'rep'
+    && api.coachDiag.snapshot().rule.priority === 35,
+    JSON.stringify(api.coachDiag.snapshot().rule));
   ok('[51] **没有发 /llm**：这一组规则话一条请求都没有（fetch 只可能有 /tts）',
     llmPosts.length === 0 && allFetches.every((u) => !u.includes('/llm')),
     JSON.stringify({ llm: llmPosts.length, fetches: allFetches.slice(0, 5) }));
-  ok('[51] 诊断：rule:speak {ruleId:"rep-every-5", event:"rep", priority:30}',
-    api.coachDiag.snapshot().rule.speak === 1
-    && api.coachDiag.snapshot().rule.lastRule === 'rep-every-5'
-    && api.coachDiag.snapshot().rule.event === 'rep'
-    && api.coachDiag.snapshot().rule.priority === 30,
-    JSON.stringify(api.coachDiag.snapshot().rule));
   await finishSpeech();
-  feedRep(9);
-  await flush();
-  ok('[51] 第 9 个不报（everyN:5）', api.state.voice.coachText === '5 个，稳');
 
-  /* ---------------- ② 最后 3 个 ---------------- */
+  /* ---------------- ② 计时类：每 5 秒读秒（缺省 5 秒）+ 最后 5 秒逐秒倒数 ---------------- */
+  const savedHoldEx = api.state.exerciseId;
+  api.openExercise('plank');
+  api.state.session = 'running';
+  api.state.target = 60;
+  const plankDet = api.state.detector;
   api.ruleEngine.reset();
+  api.resetRuleCursors();
+  api.voice.emitEvent('set-start', { target: 60 });
+  await wait(1100);
+  api.state.elapsedMs = 5000;
+  plankDet.holdMs = 5000;
+  api.syncRuleEvents(performance.now());
+  await flush();
+  ok('[51] 计时类**每 5 秒读秒**：5 秒 → 说出「五秒」',
+    api.state.voice.coachText === '五秒' && api.voice.lastCoachLines().includes('五秒'),
+    JSON.stringify(api.state.voice.coachText));
+  await finishSpeech();
+  await wait(1100);
+  api.state.elapsedMs = 10000;
+  plankDet.holdMs = 10000;
+  api.syncRuleEvents(performance.now());
+  await flush();
+  ok('[51] 10 秒 → 「十秒」（每隔 5 秒一次的缺省间隔）',
+    api.state.voice.coachText === '十秒', JSON.stringify(api.state.voice.coachText));
+  await finishSpeech();
+  await wait(1100);
+  const beforeSix = api.state.voice.coachText;
+  api.state.elapsedMs = 6000;
+  plankDet.holdMs = 6000;
+  api.syncRuleEvents(performance.now());
+  await flush();
+  ok('[51] 不是 5 的整数秒（6 秒）不读（everySec:5 真的在起作用）',
+    api.state.voice.coachText === beforeSix, JSON.stringify(api.state.voice.coachText));
+  await wait(1100);
+  api.state.elapsedMs = 55000;
+  plankDet.holdMs = 55000;
+  api.syncRuleEvents(performance.now());
+  await flush();
+  ok('[51] 最后 5 秒交给逐秒倒数（55/60 → 「5」，不是「五十五秒」）',
+    api.state.voice.coachText === '5', JSON.stringify(api.state.voice.coachText));
+  ok('[51] 到这里仍然**一个 /llm 请求都没发**', llmPosts.length === 0, JSON.stringify(llmPosts));
+  await finishSpeech();
+  api.openExercise(savedHoldEx);
+  api.state.session = 'running';
+  api.state.target = 20;
+
+  /* ---------------- ③ 最后 3 个（和逐次报数共存） ---------------- */
+  api.ruleEngine.reset();
+  api.voice.emitEvent('set-start', { target: 20 });
+  await wait(1100);
   feedRep(17);
   await flush();
   ok('[51] 最后 3 个：做到 17/20 → 「还剩 3 个」',
@@ -9904,11 +9961,13 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
     && api.voice.lastCoachLines().includes('还剩 3 个'),
     JSON.stringify(api.state.voice.coachText));
   await finishSpeech();
+  await wait(1100);
   feedRep(18);
   await flush();
-  ok('[51] 最后 3 个每组只说一次（18/20 不再重复）',
-    api.state.voice.coachText === '还剩 3 个'
-    && api.voice.lastCoachLines().filter((x) => x === '还剩 3 个').length === 1);
+  ok('[51] 最后 3 个每组只说一次；下一拍继续报数「十八」（不会因为倒数就停下来）',
+    api.state.voice.coachText === '十八'
+    && api.voice.lastCoachLines().filter((x) => x === '还剩 3 个').length === 1,
+    JSON.stringify(api.state.voice.coachText));
   await finishSpeech();
   ok('[51] 到这里仍然**一个 /llm 请求都没发**', llmPosts.length === 0, JSON.stringify(llmPosts));
 
@@ -9926,7 +9985,7 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
     && api.state.voice.coachText.includes('膝盖') && api.state.voice.coachText.includes('髋')
     && api.voice.lastCoachLines().at(-1) === api.state.voice.coachText,
     JSON.stringify(api.state.voice.coachText));
-  ok('[51] 第一次门控失败不说什么（连错才纠正）', firstGateCoach === '还剩 3 个', firstGateCoach);
+  ok('[51] 第一次门控失败不说什么（连错才纠正）', firstGateCoach === '十八', firstGateCoach);
   await finishSpeech();
   const gateSpeaksBefore = api.coachDiag.snapshot().rule.speak;
   api.voice.emitEvent('gate-ok', { g: 'kneelPushup' });
@@ -9954,6 +10013,8 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
   const savedEx = api.state.exerciseId;
   api.openExercise('plank');
   api.state.session = 'running';
+  api.state.elapsedMs = 0;          // 计时归零：tick / 倒数都不会插话
+  api.state.detector.holdMs = 0;
   api.ruleEngine.reset();
   api.voice.emitEvent('set-start', { target: 30 });
   api.state.lastActivityAt = Date.now() - 12000;
@@ -9975,15 +10036,16 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
   api.ruleEngine.reset();
   api.voice.emitEvent('set-start', { target: 20 });
   liveDet.validReps = 5;
-  const liveSpeaks = api.coachDiag.snapshot().rule.speak;
   api.handleEvents([{ type: 'rep', valid: true, index: 5 }]);
   api.syncRuleEvents(performance.now());
   await flush();
   ok('[51] 刚计过次就不会被催「继续啊」（计次即活动，跟这句有没有说出来无关）',
     api.state.lastActivityAt > Date.now() - 1500
-    && api.coachDiag.snapshot().rule.speak === liveSpeaks,
+    && api.state.voice.coachText !== '继续啊，我等你'
+    && api.coachDiag.snapshot().rule.lastRule !== 'idle-8',
     JSON.stringify({ idle: Date.now() - api.state.lastActivityAt,
-      speaks: [liveSpeaks, api.coachDiag.snapshot().rule.speak] }));
+      text: api.state.voice.coachText, lastRule: api.coachDiag.snapshot().rule.lastRule }));
+  await finishSpeech();
   api.openExercise(savedEx);
   api.state.session = 'running';
 
@@ -9992,9 +10054,10 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
   api.state.session = 'running';
   api.state.target = 30;
   api.state.elapsedMs = 26000;   // 还剩 4 秒
-  const plankDet = api.state.detector;
-  plankDet.holdMs = 26000;
+  const plankDet5 = api.state.detector;
+  plankDet5.holdMs = 26000;
   api.ruleEngine.reset();
+  api.resetRuleCursors();
   api.voice.emitEvent('set-start', { target: 30 });
   api.voice.onCoachText('教练正在说一句很长的话', { source: 'llm' });
   await flush();
@@ -10004,7 +10067,7 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
     api.state.voice.coachText === '4', JSON.stringify(api.state.voice.coachText));
   await finishSpeech();
 
-  /* ---------------- ⑥ 话量=少：每 5 个不说，纠正 + 最后 3 个照说 ---------------- */
+  /* ---------------- ⑥ 话量=少：只报每 5 个；最后 3 个 + 纠正照说 ---------------- */
   api.openExercise('squat');
   api.state.session = 'running';
   api.state.target = 20;
@@ -10018,15 +10081,26 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
     JSON.stringify({ low, sel: elements.get('coachVolumeSel').value }));
   api.ruleEngine.reset();
   api.voice.emitEvent('set-start', { target: 20 });
-  for (let n = 1; n <= 5; n += 1) { det2.validReps = n; api.handleEvents([{ type: 'rep', valid: true, index: n }]); }
+  for (const n of [1, 4]) {
+    det2.validReps = n;
+    api.handleEvents([{ type: 'rep', valid: true, index: n }]);
+  }
   await flush();
-  ok('[51] 话量=少：喂 5 次 rep **不说话**（每 5 个只在高话量出现）',
+  ok('[51] 话量=少：第 1~4 个**不说**（不是每一下都报）',
     api.state.voice.coachText === savedVolumeText,
     JSON.stringify({ now: api.state.voice.coachText, before: savedVolumeText }));
-  ok('[51] 诊断：被挡掉的原因记下来了（reason=volume）',
+  ok('[51] 诊断：被挡掉的原因记下来了（reason=stride）',
     api.coachDiag.snapshot().rule.skip > 0
-    && ['volume', 'gap', 'same-tick'].includes(api.coachDiag.snapshot().rule.reason),
+    && ['stride', 'volume', 'gap', 'same-tick'].includes(api.coachDiag.snapshot().rule.reason),
     JSON.stringify(api.coachDiag.snapshot().rule));
+  await wait(1100);
+  det2.validReps = 5;
+  api.handleEvents([{ type: 'rep', valid: true, index: 5 }]);
+  await flush();
+  ok('[51] 话量=少：**只报每 5 个**（第 5 个说「五个了」）',
+    api.state.voice.coachText === '五个了', JSON.stringify(api.state.voice.coachText));
+  await finishSpeech();
+  await wait(1100);
   det2.validReps = 17;
   api.handleEvents([{ type: 'rep', valid: true, index: 17 }]);
   await flush();
@@ -10035,6 +10109,12 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
   await finishSpeech();
   api.applyCoachVolume('mid');
   ok('[51] 话量恢复「中」（默认档）', api.state.settings.coachVolume === 'mid');
+
+  /* ---------------- ⑥b 设置页只显示「生效规则条数」 ---------------- */
+  ok('[51] 设置页话量旁边显示生效规则条数（缺省 7 条）',
+    elements.get('coachRuleCount').textContent === tL('ui.coachRuleCount', { count: api.ruleEngine.size })
+    && api.ruleEngine.size >= 7,
+    JSON.stringify({ text: elements.get('coachRuleCount').textContent, size: api.ruleEngine.size }));
 
   /* ---------------- ⑦ 事件总线一份：recentEvents 从总线读 ---------------- */
   const recent = api.voice.recentEvents();
@@ -10056,6 +10136,184 @@ console.log('\n[51] R1 规则快车道：每 5 个 / 最后 3 个 / 门控连错
   await flush();
   ok('[51] 全程 **没有一次 /llm 请求**（规则快车道完全不联网、不花钱）',
     llmPosts.length === 0, JSON.stringify(llmPosts));
+}
+
+/* ================================================================== *
+ * [52] R2 口述建规则（零 LLM）：说「每 10 个报一次」「别报数了」「现在有什么规则」
+ * 走真实路径：voice.onUserText → parseCommand → COMMANDS[].run(ctx) → 规则表 / 教练台词。
+ * ================================================================== */
+console.log('\n[52] R2 口述建规则：每 10 个报一次 / 别报数了 / 现在有什么规则（全程 0 次 /llm）');
+{
+  const api = windowStub.__mfg;
+  const { t: tR } = await import('../src/i18n.js');
+  const flush = async (n = 12) => {
+    for (let i = 0; i < n; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const finishSpeech = () => {
+    const u = coachStubs.utterances.at(-1);
+    if (u && typeof u.onend === 'function') u.onend();
+  };
+  /** 数「真的发出去的 /llm 请求」（教练 TTS 也走 fetch，这里只数 /llm 的 POST） */
+  const llmPosts = [];
+  const allFetches = [];
+  const origFetch52 = windowStub.fetch;
+  windowStub.fetch = async (url, init = {}) => {
+    const target = String(url);
+    allFetches.push(target);
+    if (target.includes('/llm') && (init.method || 'GET') === 'POST') llmPosts.push(target);
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  api.llmClient.setFetch(null);
+
+  api.showHome();
+  await api.setCoachEnabled(true);
+  await flush();
+  finishSpeech();
+  api.openExercise('squat');
+  api.state.session = 'running';
+  api.state.target = 20;
+  api.applyCoachVolume('mid');
+  const det = api.state.detector;
+  const feedRep = (n) => {
+    api.state.detector.validReps = n;
+    api.handleEvents([{ type: 'rep', valid: true, index: n }]);
+  };
+  /** 说一句话（走真实的命令快车道），返回教练的确认语 */
+  const say = async (text) => {
+    api.voice.onUserText(text);
+    await flush();
+    return api.state.voice.coachText;
+  };
+  const repRules = () => api.listCoachRules().filter((r) => r.channel === 'rep');
+  const readRules = () => api.listCoachRules().filter((r) => r.channel === 'read');
+
+  ok('[52] 起点：缺省规则在（报数 + 读秒各一条）',
+    repRules().length === 1 && repRules()[0].id === 'rep-count'
+    && readRules().length === 1 && readRules()[0].id === 'hold-read-5'
+    && api.ruleEngine.size === 7,
+    JSON.stringify(api.listCoachRules().map((r) => r.id)));
+
+  /* ---------------- ① 「每 10 个报一次」→ 建规则 + 确认 ---------------- */
+  ok('[52] 说「每 10 个报一次」→ 教练确认「好的，每 10 个报一次。」',
+    (await say('每 10 个报一次')) === tR('coach.cmdAck.addRepRule', { every: 10 }),
+    JSON.stringify(api.state.voice.coachText));
+  const userRep = repRules()[0];
+  ok('[52] 规则表：rep 频道换成用户规则（id=user-rep-10 / 每 10 个 / scope=session）',
+    repRules().length === 1 && userRep && userRep.id === 'user-rep-10'
+    && userRep.scope === 'session' && userRep.trigger.filter.everyN === 10,
+    JSON.stringify(userRep && { id: userRep.id, every: userRep.trigger.filter }));
+  ok('[52] 诊断：rule:add {id:"user-rep-10", by:"user"}',
+    api.coachDiag.snapshot().rule.added >= 1
+    && api.coachDiag.snapshot().rule.lastAdd === 'user-rep-10'
+    && api.coachDiag.snapshot().rule.by === 'user',
+    JSON.stringify(api.coachDiag.snapshot().rule));
+  ok('[52] 设置页的「生效规则条数」跟着变（还是 7 条：换了一条，不是加一条）',
+    elements.get('coachRuleCount').textContent === tR('ui.coachRuleCount', { count: 7 }),
+    elements.get('coachRuleCount').textContent);
+
+  /* ---------------- ② 之后只在第 10 个说 ---------------- */
+  finishSpeech();
+  api.ruleEngine.reset();
+  api.voice.emitEvent('set-start', { target: 20 });
+  const ackText = api.state.voice.coachText;
+  await wait(1100);
+  for (let n = 1; n <= 9; n += 1) feedRep(n);
+  await flush();
+  ok('[52] 说了「每 10 个报一次」之后：第 1~9 个**都不报**（默认的逐次报数已经换掉了）',
+    api.state.voice.coachText === ackText, JSON.stringify(api.state.voice.coachText));
+  await wait(1100);
+  feedRep(10);
+  await flush();
+  ok('[52] 第 10 个才报：「十个了，稳住」',
+    api.state.voice.coachText === '十个了，稳住'
+    && api.voice.lastCoachLines().includes('十个了，稳住'),
+    JSON.stringify(api.state.voice.coachText));
+
+  /* ---------------- ③ 「别报数了」→ 删掉报数规则 ---------------- */
+  finishSpeech();
+  ok('[52] 说「别报数了」→ 教练确认「好的，不报数了。」',
+    (await say('别报数了')) === tR('coach.cmdAck.removeRepRule'),
+    JSON.stringify(api.state.voice.coachText));
+  ok('[52] 规则表里 rep 频道**一条都没有了**（内置那条也删了）',
+    repRules().length === 0 && readRules().length === 1,
+    JSON.stringify(api.listCoachRules().map((r) => r.id)));
+  ok('[52] 诊断：rule:remove {by:"user"} 记下来了',
+    api.coachDiag.snapshot().rule.removed >= 1
+    && api.coachDiag.snapshot().rule.lastRemove === 'user-rep-10',
+    JSON.stringify(api.coachDiag.snapshot().rule));
+  finishSpeech();
+  api.ruleEngine.reset();
+  api.voice.emitEvent('set-start', { target: 20 });
+  const afterRemove = api.state.voice.coachText;
+  await wait(1100);
+  // 10 / 12 / 14 个（剩下的次数还远多于 3，所以「最后 3 个」那条固定规则也不会插话）
+  for (const n of [10, 12, 14]) feedRep(n);
+  await flush();
+  ok('[52] 「别报数了」之后**不再报数**（第 10/12/14 个都沉默）',
+    api.state.voice.coachText === afterRemove, JSON.stringify(api.state.voice.coachText));
+
+  /* ---------------- ④ 「现在有什么规则」→ 逐条报出来 ---------------- */
+  const listAck = await say('现在有什么规则');
+  const ruleCount = api.ruleEngine.size;
+  ok('[52] 说「现在有什么规则」→ 逐条报出规则名 + 间隔（≤3 条 + 「还有 N 条」）',
+    listAck.includes(String(ruleCount))
+    && listAck.includes(tR('rule.name.read'))
+    && listAck.includes(tR('rule.name.gateFail'))
+    && listAck.startsWith(tR('coach.cmdAck.listRules', { count: ruleCount, items: '' }).slice(0, 4)),
+    JSON.stringify(listAck));
+  ok('[52] 报规则这句话不超过 3 个分号分出来的条目（不会一口气念 7 条）',
+    listAck.split(tR('rule.listSep')).length <= 4, JSON.stringify(listAck));
+
+  /* ---------------- ⑤ 「每 30 秒报时」→ 读秒规则 ---------------- */
+  finishSpeech();
+  ok('[52] 说「每 30 秒报时」→ 教练确认「好的，每 30 秒读一次秒。」',
+    (await say('每 30 秒报时')) === tR('coach.cmdAck.addTimeRule', { every: 30 }),
+    JSON.stringify(api.state.voice.coachText));
+  const userRead = readRules()[0];
+  ok('[52] 规则表：read 频道换成用户规则（每 30 秒 / 不限计时类 / scope=session）',
+    readRules().length === 1 && userRead && userRead.id === 'user-read-30'
+    && userRead.scope === 'session' && userRead.trigger.filter.everySec === 30
+    && !userRead.trigger.filter.hold,
+    JSON.stringify(userRead && { id: userRead.id, filter: userRead.trigger.filter }));
+  finishSpeech();
+  api.ruleEngine.reset();
+  api.voice.emitEvent('set-start', { target: 60 });
+  const beforeRead = api.state.voice.coachText;
+  await wait(50);
+  api.voice.emitEvent('tick', { elapsedSec: 10 });
+  await flush();
+  ok('[52] 「每 30 秒报时」：10 秒不报', api.state.voice.coachText === beforeRead,
+    JSON.stringify(api.state.voice.coachText));
+  await wait(50);
+  api.voice.emitEvent('tick', { elapsedSec: 30 });
+  await flush();
+  ok('[52] 30 秒报时：「三十秒」', api.state.voice.coachText === '三十秒',
+    JSON.stringify(api.state.voice.coachText));
+
+  /* ---------------- ⑥ session-end：口述规则自动清 + 缺省规则补回 ---------------- */
+  finishSpeech();
+  api.voice.emitEvent('session-end');
+  await flush();
+  ok('[52] 一次训练结束（session-end）→ 口述规则被清、缺省规则补回来（还是 7 条）',
+    api.ruleEngine.size === 7
+    && repRules().length === 1 && repRules()[0].id === 'rep-count'
+    && readRules().length === 1 && readRules()[0].id === 'hold-read-5'
+    && !api.listCoachRules().some((r) => r.id.startsWith('user-')),
+    JSON.stringify(api.listCoachRules().map((r) => r.id)));
+
+  /* ---------------- 收尾：0 次 /llm ---------------- */
+  ok('[52] 全程 **没有一次 /llm 请求**（口述建规则是纯本机：解析 → 规则表 → TTS）',
+    llmPosts.length === 0 && allFetches.every((u) => !u.includes('/llm')),
+    JSON.stringify({ llm: llmPosts.length, fetches: allFetches.slice(0, 5) }));
+  windowStub.fetch = origFetch52;
+  api.llmClient.setFetch(null);
+  api.voiceBus.clear();
+  api.ruleEngine.reset();
+  api.state.session = 'calibrating';
+  await api.setCoachEnabled(false);
+  await flush();
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);if (failures.length) {

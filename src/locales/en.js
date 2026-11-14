@@ -51,9 +51,10 @@ export default {
     ttsRateNormal: '1x (normal)',
     // R1 rule fast lane: coach talkativeness (low / mid / high)
     coachVolume: 'Coach talkativeness',
-    coachVolumeLow: 'Low (corrections + last 3 only)',
-    coachVolumeMid: 'Mid (default)',
-    coachVolumeHigh: 'High (plus halfway / every 5)',
+    coachVolumeLow: 'Low (only every 5 reps)',
+    coachVolumeMid: 'Mid (default: every rep + read out every 5s)',
+    coachVolumeHigh: 'High (plus the halfway nudge)',
+    coachRuleCount: 'Active rules right now: {count}',
     fullscreen: 'Fullscreen video frame',
     // Recording badge in the bottom-right of the stage: number + unit, hover shows this line
     recUnit: 'frames logged',
@@ -995,8 +996,8 @@ export default {
     dialogueGroup: 'Dialogue & voice',
     dialogueLead: 'How coach replies are shown: one danmaku line per sentence (you in cyan, the coach in mint), or the original two-line subtitles.',
     ttsHint: 'Coach speech uses Volcengine TTS by default (through the local /tts/stream proxy, played as it arrives; the whole-sentence endpoint synthesizes each sentence once and caches it). If it fails or takes over 3 seconds, it degrades to the whole-sentence request and then to system TTS, so it never goes silent.',
-    // R1 rule fast lane: coach talkativeness (low = corrections + last 3; mid = default; high = plus halfway / every 5)
-    coachVolumeHint: 'Talkativeness only affects the rule fast lane (rep counts / countdown / corrections / nudges) — all computed locally, no network, no cost. Low = corrections + last 3 only; mid = default; high = also halfway + every 5.',
+    // Rule fast lane: talkativeness + spoken rule editing affect only the rule lane
+    coachVolumeHint: 'Talkativeness only affects the rule fast lane (rep counts / countdown / corrections / nudges) — all computed locally, no network, no cost. Mid (default) counts **every rep** like a personal trainer, thinning automatically when the pace is fast (every 2nd / every 3rd rep); timed moves **read out every 5 seconds** and count down the final five one by one. Low = only every 5 reps; high = plus the halfway nudge. You can also say "every 10 reps", "stop counting" or "what rules are on" — those rules live until this workout ends.',
     // Coach voice gender: a long-term preference (prefs.voiceGender in the server MD), affects the spoken voice only
     voiceGender: 'Coach voice',
     voiceFemale: 'Female',
@@ -1725,6 +1726,14 @@ export default {
         'i want a female voice', 'i want a male voice'],
       reportProgress: ['how many did i do', 'how many reps', 'what is my score', 'whats my score',
         'what is the score', 'my score', 'how am i doing', 'how many'],
+      // R2 spoken rule editing: numbers inside the phrase become slots ("every 10 reps" -> every=10);
+      // the zh and en arrays must have the same length.
+      addRule: ['report every 10 reps', 'count every 5 reps', 'report every 20 reps',
+        'read the time every 30 seconds', 'read every 10 seconds', 'report the time every 5 minutes'],
+      removeRule: ['stop counting', 'no more counting', "don't count",
+        'stop reading the time', 'stop the countdown', 'stop reading the clock'],
+      listRules: ['what rules are on', 'what rules', 'list rules', 'which rules',
+        'what rules do i have', 'show rules'],
     },
 
     /** The "what it does" column of the help panel */
@@ -1756,6 +1765,9 @@ export default {
       switchLang: 'Switch the language ("speak English", "speak Chinese")',
       setVoiceGender: 'Switch the coach voice: male / female (spoken voice only)',
       reportProgress: 'Read out the reps and score of this set',
+      addRule: 'Build a rule by voice (lasts until this workout ends): "every 10 reps" -> rep counting interval; "every 30 seconds" -> time read-aloud interval',
+      removeRule: 'Turn a rule off by voice: "stop counting" / "stop reading the time"',
+      listRules: 'Read out the active rules (name + interval, at most 3 of them)',
     },
 
     /** One short confirmation after a fast-lane command (run returns a key, session translates it) */
@@ -1803,6 +1815,17 @@ export default {
       progressIdle: 'No workout yet: the target is {target} {unit}, with {reps} reps and {score} points so far.',
       notInMenu: 'You are not in the menu — say "menu" first.',
       unknownCategory: 'I did not catch the category — say "upper", "lower", "core", "full" or "stretch".',
+      // R2 spoken rule editing
+      addRepRule: 'Okay — count every {every} reps.',
+      addTimeRule: 'Okay — read out the time every {every} seconds.',
+      removeRepRule: 'Okay, no more counting.',
+      removeTimeRule: 'Okay, no more time read-outs.',
+      ruleNone: 'That rule is not on right now.',
+      ruleUnknown: 'I did not catch which rule to turn off — say "stop counting" or "stop reading the time".',
+      ruleFailed: 'I could not build that rule — say the number again (e.g. "every 10 reps").',
+      rulesEmpty: 'There are no rules right now.',
+      listRules: 'There are {count} rules: {items}.',
+      rulesMore: ', plus {n} more',
       failed: 'That did not work — try again.',
       done: 'Okay.',
     },
@@ -1863,17 +1886,41 @@ export default {
   },
 
   /**
-   * R1 rule fast lane: lines for the six built-in rules (defined only here;
+   * Rule fast lane: lines for the built-in rules (defined only here;
    * the rule table lives in src/voice/rules.js).
-   * Placeholders: {n} reps / remaining / seconds, {cue} the gate-specific instruction
-   * (same wording as status.need.*). Change the wording here only; the zh file must match.
+   * Placeholders: {n} reps / remaining / seconds, {word} the spoken number
+   * (one / two / five … converted by numerals.js first), {cue} the gate-specific
+   * instruction (same wording as status.need.*), {name} / {every} rule name and
+   * interval (used by listRules). Change the wording here only; the zh file must match.
    */
   rule: {
-    repEvery5: '{n} reps, nice and steady',
+    // Rep counting (R2 default rule, like a personal trainer counting out loud)
+    repCount: '{word}',
+    repFive: '{word} reps',
+    repTen: "{word} reps, that's it",
+    // Read-aloud (R2 default rule: holds report elapsed seconds every 5 seconds)
+    readSeconds: '{word} seconds',
     lastThree: '{n} to go',
     halfway: 'Halfway there, keep the rhythm going',
     countdown: '{n}',
     gateFail2: '{cue} (missed it twice in a row — set up again)',
     idle8: "Come on, I'm waiting",
+    // Rule names + intervals (used by "what rules are on"; settings shows only the count)
+    name: {
+      rep: 'rep counting',
+      read: 'time read-aloud',
+      lastThree: 'last three',
+      halfway: 'halfway nudge',
+      countdown: 'final five countdown',
+      gateFail: 'form correction',
+      idle: 'nudge',
+      other: 'other rule',
+    },
+    listItem: '{name}: {every}',
+    listSep: '; ',
+    everyReps: 'every {n} reps',
+    everySeconds: 'every {n} seconds',
+    everyRep: 'every rep (auto-thinned when fast)',
+    everyAlways: 'always on',
   },
 };

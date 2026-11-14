@@ -20,6 +20,7 @@
 
 import { t, LOCALES } from '../i18n.js';
 import { EXERCISES, EXERCISE_MAP } from '../catalog.js';
+import { describeRule } from './rules.js';
 
 /** 等待「确认 / 取消」的最长时间：8 秒没回应自动取消（用户要求） */
 export const COMMAND_CONFIRM_MS = 8000;
@@ -406,6 +407,48 @@ export const COMMANDS = Object.freeze([
         });
       }
       return ack('coach.cmdAck.progress', { reps: Number(s.reps) || 0, score });
+    },
+  }),
+
+  /* ---------------- R2 口述建规则（零 LLM） ----------------
+   *
+   * 用户原话：「每 10 个报一次」→ 建 / 改报数间隔规则；「每 30 秒报时」→ 读秒间隔规则；
+   * 「别报数了」→ 删掉对应规则；「现在有什么规则」→ 逐条报出来（≤3 句）。
+   *
+   * 这三条**只调注入的 ctx**（`addCoachRule` / `removeCoachRules` / `listCoachRules`），
+   * 自己不改 state；建出来的规则和内置规则走**同一套引擎与护栏**（`src/voice/rules.js`），
+   * 作用域是 `scope: session` —— 一次训练结束就清掉。
+   */
+  command('addRule', {
+    args: 'rule',
+    numeric: true,
+    run(ctx, args) {
+      const info = ctx.addCoachRule?.(args || {});
+      if (!info) return ack('coach.cmdAck.ruleFailed');
+      return ack(
+        info.kind === 'read' ? 'coach.cmdAck.addTimeRule' : 'coach.cmdAck.addRepRule',
+        { every: info.every },
+      );
+    },
+  }),
+  command('removeRule', {
+    args: 'ruleKind',
+    run(ctx, args) {
+      const kind = (args && args.kind) || '';
+      if (!kind) return ack('coach.cmdAck.ruleUnknown');
+      const gone = ctx.removeCoachRules?.(kind);
+      if (!gone) return ack('coach.cmdAck.ruleNone');
+      return ack(gone.kind === 'read' ? 'coach.cmdAck.removeTimeRule' : 'coach.cmdAck.removeRepRule');
+    },
+  }),
+  command('listRules', {
+    run(ctx) {
+      const rows = ctx.listCoachRules?.() || [];
+      if (!rows.length) return ack('coach.cmdAck.rulesEmpty');
+      // 最多报 3 条（用户要求 ≤3 句，别把 7 条规则一口气念完）
+      const items = rows.slice(0, 3).map((rule) => describeRule(rule)).join(t('rule.listSep'));
+      const more = rows.length > 3 ? t('coach.cmdAck.rulesMore', { n: rows.length - 3 }) : '';
+      return ack('coach.cmdAck.listRules', { count: rows.length, items: `${items}${more}` });
     },
   }),
 ]);

@@ -23,6 +23,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { COMMANDS } from '../src/voice/commands.js';
+// 规则频道（rep 报数 / read 读秒）只在 src/voice/rules.js 定义一处，工具的枚举也读它
+import { RULE_CHANNELS } from '../src/voice/rules.js';
 import { EXERCISES, EXERCISE_MAP } from '../src/catalog.js';
 // 记忆白名单只在一处定义（server/memory-store.mjs）：工具能写哪些字段、字段取值范围，
 // 都由那边说了算，这里只负责把模型的参数翻译成「记忆操作」。
@@ -33,6 +35,8 @@ export const NAV_DESTS = Object.freeze(['home', 'menu', 'back', 'next', 'prev'])
 export const PANEL_WHICH = Object.freeze(['settings', 'records', 'best', 'exerciseSettings']);
 export const CATEGORY_IDS = Object.freeze(['upper', 'lower', 'core', 'full', 'stretch']);
 export const LANGS = Object.freeze(['zh', 'en']);
+/** 规则频道（rep 报数间隔 / read 读秒间隔）—— 直接来自规则引擎的 `RULE_CHANNELS` */
+export const RULE_KINDS = Object.freeze([...RULE_CHANNELS]);
 
 /** 动作 id 列表（工具 schema 的枚举；来自动作库，不另抄） */
 export const EXERCISE_IDS = Object.freeze(EXERCISES.map((e) => e.id));
@@ -364,6 +368,48 @@ export const LLM_TOOL_DEFS = Object.freeze([
     en: 'Open the list of voice commands the coach understands.',
     parameters: schema(),
     map: () => ({ intent: 'help', args: {} }),
+  }),
+
+  /* ---------------- R2 口述建规则（规则增删查；和命令表同一套 intent） ----------------
+   * 「零 LLM」指的是**口述那条快车道**不联网：说「每 10 个报一次」直接改规则表。
+   * 这三个工具只是让「模型也能做同样的事」，执行仍然是 COMMANDS[].run（同一套护栏）。
+   */
+  Object.freeze({
+    name: 'add_rule',
+    intents: ['addRule'],
+    zh: '口述建一条规则：kind=rep 每 N 个报一次数；kind=read 每 N 秒读一次秒（只活到这次训练结束）。',
+    en: 'Build a rule: kind=rep counts every N reps; kind=read reads the time every N seconds '
+      + '(lasts until this workout ends).',
+    parameters: schema({
+      kind: oneOf('哪一类规则 / which kind of rule', RULE_KINDS),
+      every: int('间隔：N 个 / N 秒 / interval (N reps or N seconds)', { minimum: 1, maximum: 999 }),
+    }, ['kind', 'every']),
+    map(args) {
+      const kind = String(args.kind || '');
+      const every = toInt(args.every);
+      if (!RULE_KINDS.includes(kind) || every === null || every < 1) return { refused: 'bad-args' };
+      return { intent: 'addRule', args: { kind, every } };
+    },
+  }),
+  Object.freeze({
+    name: 'remove_rule',
+    intents: ['removeRule'],
+    zh: '关掉一类规则：kind=rep 不再报数；kind=read 不再读秒。',
+    en: 'Turn a rule off: kind=rep stops counting; kind=read stops the time read-outs.',
+    parameters: schema({ kind: oneOf('哪一类规则 / which kind of rule', RULE_KINDS) }, ['kind']),
+    map(args) {
+      const kind = String(args.kind || '');
+      if (!RULE_KINDS.includes(kind)) return { refused: 'bad-args' };
+      return { intent: 'removeRule', args: { kind } };
+    },
+  }),
+  Object.freeze({
+    name: 'list_rules',
+    intents: ['listRules'],
+    zh: '把现在生效的规则**念给用户听**（规则名 + 间隔）。',
+    en: 'Read out the active rules (name + interval) **aloud**.',
+    parameters: schema(),
+    map: () => ({ intent: 'listRules', args: {} }),
   }),
 
   /* ---------------- 菜单里的分类 / 序号（快车道剩下的两条也覆盖上） ---------------- */
@@ -765,6 +811,7 @@ export default {
   UNCOVERED_INTENTS,
   UNKNOWN_TOOLED_INTENTS,
   MAX_TOOL_CALLS,
+  RULE_KINDS,
   ACTION_REPLY,
   EMPTY_REPLY,
   DEFAULT_SOUL_PATH,

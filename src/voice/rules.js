@@ -1,45 +1,95 @@
 /**
- * 规则快车道（R1「动态快车道」的引擎，**纯函数 / 不碰 DOM**）。
+ * 规则快车道（R1「动态快车道」的引擎 + R2「私人教练式缺省规则」，**纯函数 / 不碰 DOM**）。
  *
  * 用户原话：「除了命令快车道，还应该有**动态快车道**：用户要求每 5 秒读秒，系统就订阅读秒事件，
  * 到点直接 TTS，**不请求 LLM**。」
+ * 用户原话（R2）：「缺省情况下要帮客户计次；计时的运动要每 5 秒读秒一次。」
  *
  * 这一层 = 事件总线（`events.js`）+ 规则表：每条规则是
- *   `{ id, scope, trigger:{event, filter, resetOn}, action:{template, args}, cooldownMs,
- *      priority, budget:{perSet, perMinute}, bypassGap, volumes, enabled }`
+ *   `{ id, scope, channel, label, trigger:{event, filter, resetOn}, action:{template, args},
+ *      cooldownMs, priority, budget:{perSet, perMinute}, adaptive, bypassGap, volumes, enabled }`
  * 命中就返回一句要念的话，**一个网络请求都不发**（也就一分钱不花）。
  *
  * 本模块只做判断，不念话：真正开口的是 app.js 里现有的 `voice.onCoachText()`（弹幕 + TTS）。
  *
  * 护栏（缺一条都会变成「教练很吵」）：
  *   - 同一条规则 `cooldownMs` 内不再开口；
- *   - **全局最小开口间隔 `MIN_GAP_MS = 6000`**（读秒类规则带 `bypassGap:true`，单独放行）；
+ *   - **全局最小开口间隔 `MIN_GAP_MS = 6000`**（计数 / 读秒类规则带 `bypassGap:true`，单独放行）；
  *   - 每条规则自己的 `budget.perSet` / `budget.perMinute`；
+ *   - 计数规则还有**自适应降频**：按当前节奏 1/2/3 个报一次 + 两次报数至少隔 1 秒（每秒最多 1 次）；
  *   - 同一个 tick（同一毫秒 / 同一帧）**只让最高优先级的那一条说话**；
- *   - 教练正在说话（`state.speaking`）→ 除 `bypassGap` 的读秒外**一律丢弃**（不排队、不叠音）；
+ *   - 教练正在说话（`state.speaking`）→ 除 `bypassGap` 的计数 / 读秒外**一律丢弃**（不排队、不叠音）；
+ *     计数通道再细一层：剩余台词 >1.5s（`state.speakLeftMs`）就跳过这一下；
  *   - 静音 / 教练关 → **全部丢弃**；
- *   - `scope` 到期自动清：`set-complete` 清 `set` 规则、`session-end` 清 `session` 规则。
+ *   - `scope` 到期自动清：`set-complete` 清 `set` 规则的运行期状态、
+ *     `session-end` **删掉** `session` 规则（口述建的规则只活一次训练）。
  */
 
-import { t as defaultTranslate, hasKey } from '../i18n.js';
+import { t as defaultTranslate, hasKey, getLang } from '../i18n.js';
 import { GATE_HINT } from '../engines.js';
 import { EVENT_TYPES } from './events.js';
+import { numberWord } from './numerals.js';
 
-/** 全局最小开口间隔（毫秒）：两条规则话之间至少隔这么久，读秒类除外 */
+/** 全局最小开口间隔（毫秒）：两条规则话之间至少隔这么久，读秒类的 `bypassGap` 规则除外 */
 export const MIN_GAP_MS = 6000;
 
-/** 优先级（数字大的先说话；用户拍板的档位：破纪录 > 纠正 > 读秒 > 鼓励） */
+/**
+ * 计时类动作（hold / 限时）默认每 5 秒读一次秒（用户原话：「计时的运动要每 5 秒读秒一次」）。
+ * 这也是「读秒间隔」规则缺省值：`hold-read-5` 的 `filter.everySec`。
+ */
+export const DEFAULT_READ_EVERY_SEC = 5;
+
+/**
+ * 计次类动作的「自适应降频」参数（R2 用户原话：
+ * 「目标每秒最多 1 次播报；节奏快时（<1.5s 一个）改成每 2 个 / 每 3 个，避免 TTS 追不上排队」）。
+ *
+ *   fastMs          一个动作间隔 ≥1.5s → 每个都报（`stride = 1`）
+ *   midMs           1.0~1.5s → 每 2 个报一次
+ *   maxStride       更快（<1s 一个）→ 最多降到每 3 个（再稀就听不出在计数了）
+ *   minStepMs       两次报数之间至少 1 秒 → **每秒最多 1 次播报**
+ *   milestoneEvery  每 5 个那一下是「五个了」的整句鼓励，**允许越过 stride**（但仍在 minStep 之内）
+ *   lowVolumeStride 话量=少 → 只报每 5 个
+ *   skipWhileSpeakingMs 教练正在说话时，剩余台词 >1.5s 就跳过这一下（不积压）
+ */
+export const ADAPTIVE_REP = Object.freeze({
+  fastMs: 1500,
+  midMs: 1000,
+  maxStride: 3,
+  minStepMs: 1000,
+  milestoneEvery: 5,
+  lowVolumeStride: 5,
+  skipWhileSpeakingMs: 1500,
+});
+
+/** 优先级（数字大的先说话；用户拍板的档位：破纪录 > 纠正 > 读秒 > 计数 > 鼓励） */
 export const RULE_PRIORITIES = Object.freeze({
   /** 破纪录（R3 的 `add_rule` 之后会用到；先占住最高档，别让纠正抢在报喜前面） */
   record: 100,
   /** 纠正（门控连错 / 姿势没到位） */
   correct: 60,
+  /** 读秒（最后 5 秒倒数 / 每 5 秒读一次秒） */
+  read: 45,
   /** 读秒（最后 5 秒 / 最后 3 个） */
   countdown: 40,
-  /** 鼓励（每 5 个 / 过半） */
+  /** 计数（每做一个报一个 —— 私人教练的数数声，压过鼓励但让位给读秒 / 纠正） */
+  count: 35,
+  /** 鼓励（过半） */
   encourage: 30,
   /** 催促（8 秒没动） */
   idle: 20,
+});
+
+/**
+ * 两条「频道」规则（口述建 / 删规则只在这两个频道里替换，见 `addCoachRule`）：
+ *   rep  —— 报数间隔（缺省 `rep-count`：每个都报 + 自适应降频）
+ *   read —— 读秒间隔（缺省 `hold-read-5`：计时类每 5 秒报一次已经过了几秒）
+ */
+export const RULE_CHANNELS = Object.freeze(['rep', 'read']);
+
+/** 每个频道的缺省规则 id（一处定义：内置规则表 / 恢复默认 / 测试都读它） */
+export const DEFAULT_RULE_BY_CHANNEL = Object.freeze({
+  rep: 'rep-count',
+  read: 'hold-read-5',
 });
 
 /** 规则作用域：一组 / 一次训练 / 永久（内置规则没有 forever，留给以后的自定义规则） */
@@ -76,7 +126,7 @@ export function eventContext(event, streak = 0) {
   const d = event && event.data && typeof event.data === 'object' ? event.data : {};
   const n = num(d.n);
   const target = num(d.target);
-  // 「还剩多少」：计次类给 remaining / 由 n、target 推；读秒类（hold-tick）给的是 remainingSec
+  // 「还剩多少」：计次类给 remaining / 由 n、target 推；读秒类（hold-tick / tick）给的是 remainingSec
   const remaining = num(d.remaining) ?? num(d.remainingSec)
     ?? (n !== null && target ? target - n : null);
   const pct = num(d.pct) ?? (n !== null && target ? (n / target) * 100 : null);
@@ -90,6 +140,9 @@ export function eventContext(event, streak = 0) {
     streak: Math.max(0, Math.round(Number(streak) || 0)),
     gate: String(d.g ?? d.gate ?? ''),
     id: String(d.id ?? d.k ?? ''),
+    /** 计时类动作（平板支撑 / 靠墙静蹲…）发出来的 tick 带 hold:1；限时计数类带 timed:1 */
+    hold: d.hold === true || d.hold === 1,
+    timed: d.timed === true || d.timed === 1,
     raw: d,
   };
 }
@@ -97,8 +150,10 @@ export function eventContext(event, streak = 0) {
 /**
  * filter 是否命中（纯函数）。
  *
- * 支持：`everyN`（每 N 次）· `remainingLte`（还剩 ≤N）· `pctGte`（进度 ≥N%）·
- *       `consecutive`（连续 N 次）· `secLte` / `secGte`（秒数）。
+ * 支持：`everyN`（每 N 次）· `everySec`（每 N 秒，`n > 0` 才命中 —— 0 秒不报）·
+ *       `remainingLte` / `remainingGt`（还剩 ≤N / >N）· `pctGte`（进度 ≥N%）·
+ *       `consecutive`（连续 N 次）· `secLte` / `secGte`（秒数）·
+ *       `hold` / `timed`（只要计时类 / 限时类的 tick）。
  * 不给 filter（或空对象）= 只要事件类型对上就命中（冷却 / 预算 / 间隔仍生效）。
  */
 export function matchesFilter(filter, ctx, { ignoreConsecutive = false } = {}) {
@@ -108,10 +163,21 @@ export function matchesFilter(filter, ctx, { ignoreConsecutive = false } = {}) {
   if (everyN !== null) {
     if (!(ctx.n > 0) || ctx.n % everyN !== 0) return false;
   }
+  const everySec = num(f.everySec);
+  if (everySec !== null) {
+    // `sec` 是计时事件（tick / hold-tick）里的秒数；0 秒不报（一开始就喊「0 秒」很吵）
+    if (ctx.sec === null || !(ctx.sec > 0) || ctx.sec % everySec !== 0) return false;
+  }
   const remainingLte = num(f.remainingLte);
   if (remainingLte !== null) {
     if (ctx.remaining === null || ctx.remaining > remainingLte) return false;
   }
+  const remainingGt = num(f.remainingGt);
+  if (remainingGt !== null) {
+    if (ctx.remaining === null || !(ctx.remaining > remainingGt)) return false;
+  }
+  if (f.hold === true && ctx.hold !== true) return false;
+  if (f.timed === true && ctx.timed !== true) return false;
   const pctGte = num(f.pctGte);
   if (pctGte !== null) {
     if (ctx.pct === null || !(ctx.pct >= pctGte)) return false;
@@ -142,9 +208,17 @@ export function normalizeRule(rule) {
   const priority = num(r.priority);
   const cooldownMs = num(r.cooldownMs);
   const budget = r.budget && typeof r.budget === 'object' ? r.budget : {};
+  const channel = RULE_CHANNELS.includes(r.channel) ? r.channel : '';
+  const adaptive = r.adaptive && typeof r.adaptive === 'object' && Object.keys(r.adaptive).length
+    ? { ...r.adaptive }
+    : null;
   return {
     id,
     scope: RULE_SCOPES.includes(r.scope) ? r.scope : 'session',
+    /** 频道：rep（报数间隔）/ read（读秒间隔）/ ''（R1 那几条固定规则） */
+    channel,
+    /** 规则名（`rule.name.*` 词条键；`listRules` / 设置页用它说人话） */
+    label: String(r.label || ''),
     trigger: {
       event,
       filter: trigger.filter && typeof trigger.filter === 'object' ? { ...trigger.filter } : null,
@@ -157,11 +231,68 @@ export function normalizeRule(rule) {
       perSet: Math.max(0, num(budget.perSet) || 0),
       perMinute: Math.max(0, num(budget.perMinute) || 0),
     },
+    /** 自适应降频参数（只有「计数」这一条带；见 ADAPTIVE_REP） */
+    adaptive,
     bypassGap: r.bypassGap === true,
     volumes: ruleVolumes(r),
     enabled: r.enabled !== false,
   };
 }
+
+/**
+ * 「这一次该不该报数」—— 自适应降频的核心（纯函数，测试直接喂数字）。
+ *
+ * 用户原话：「按当前节奏自动降频 —— 目标每秒最多 1 次播报；节奏快时（<1.5s 一个）
+ * 改成每 2 个 / 每 3 个，避免 TTS 追不上排队。」
+ *
+ * @param {number} paceMs 相邻两次动作的间隔（毫秒；0 / 非数字 = 还没样本 → 每个都报）
+ * @param {object} [opts] 覆盖 ADAPTIVE_REP 的任意字段
+ * @returns {number} 1 / 2 / 3（话量=少的 5 不在这里，见 `adaptiveAllows`）
+ */
+export function strideForPace(paceMs, opts = {}) {
+  const o = { ...ADAPTIVE_REP, ...(opts && typeof opts === 'object' ? opts : {}) };
+  const pace = Number(paceMs);
+  if (!Number.isFinite(pace) || pace <= 0) return 1;
+  if (pace >= o.fastMs) return 1;
+  if (pace >= o.midMs) return 2;
+  return Math.max(1, Math.round(Number(o.maxStride) || 1));
+}
+
+/**
+ * 带 `adaptive` 的规则这一次能不能开口（纯函数）。
+ *
+ * 依次要求：次数 > 0 → 命中 stride（「每 5 个」那种整句可以越过 stride）→ 距上一次报数
+ * 至少 `minStepMs`（**每秒最多 1 次播报**）。话量=少直接把 stride 换成 `lowVolumeStride`。
+ *
+ * @param {object} rule   归一化后的规则（要有 `adaptive`）
+ * @param {object} rt     运行期状态（`lastAt` / `paceMs`）
+ * @param {object} ctx    eventContext()
+ * @param {string} volume 当前话量档位
+ * @param {number} at     事件时刻（毫秒）
+ */
+export function adaptiveAllows(rule, rt, ctx, volume, at) {
+  const a = rule && rule.adaptive ? rule.adaptive : null;
+  if (!a) return true;
+  const n = Number(ctx && ctx.n);
+  if (!Number.isFinite(n) || n <= 0) return false;
+  const lowStride = num(a.lowVolumeStride) ?? ADAPTIVE_REP.lowVolumeStride;
+  const stride = String(volume) === 'low' ? lowStride : strideForPace(rt && rt.paceMs, a);
+  const milestoneEvery = num(a.milestoneEvery) ?? 0;
+  const milestone = milestoneEvery > 0 && n % milestoneEvery === 0;
+  if (!milestone && n % Math.max(1, stride) !== 0) return false;
+  const minStep = num(a.minStepMs) ?? ADAPTIVE_REP.minStepMs;
+  const lastAt = rt && Number.isFinite(Number(rt.lastAt)) ? Number(rt.lastAt) : -Infinity;
+  if (lastAt > -Infinity && Number(at) - lastAt < minStep) return false;
+  return true;
+}
+
+/** 一句话大约要念多久（毫秒）：给「教练正在说话时还剩多少」用（偏保守，宁可多算） */
+export function estimateSpeechMs(text, { charMs = 200, minMs = 600, maxMs = 12000 } = {}) {
+  const chars = [...String(text == null ? '' : text)].length;
+  const ms = Math.round(Math.max(0, chars) * Math.max(1, Number(charMs) || 200));
+  return Math.max(Number(minMs) || 0, Math.min(Number(maxMs) || 12000, ms));
+}
+
 
 /**
  * 创建规则引擎。
@@ -193,10 +324,19 @@ export function createRuleEngine({
     try { diag?.record?.(type, data); } catch { /* 诊断永远不能拖垮规则 */ }
   }
 
+  /** 一条规则的运行期状态（冷却 / 预算 / 连续次数 / 节奏） */
+  function blankRuntime() {
+    return {
+      lastAt: -Infinity, setCount: 0, spokenAt: [], streak: 0,
+      /** 上一次触发这条规则的事件时刻（算「节奏」用） */
+      lastTriggerAt: -Infinity,
+      /** 平滑后的相邻两次触发间隔（毫秒；0 = 还没有样本） */
+      paceMs: 0,
+    };
+  }
+
   function runtimeOf(id) {
-    if (!runtime.has(id)) {
-      runtime.set(id, { lastAt: -Infinity, setCount: 0, spokenAt: [], streak: 0 });
-    }
+    if (!runtime.has(id)) runtime.set(id, blankRuntime());
     return runtime.get(id);
   }
 
@@ -205,7 +345,7 @@ export function createRuleEngine({
     const r = normalizeRule(rule);
     if (!r) return null;
     rules.set(r.id, r);
-    runtime.set(r.id, { lastAt: -Infinity, setCount: 0, spokenAt: [], streak: 0 });
+    runtime.set(r.id, blankRuntime());
     return r;
   }
 
@@ -243,6 +383,8 @@ export function createRuleEngine({
       rt.setCount = 0;
       rt.spokenAt = [];
       rt.streak = 0;
+      rt.lastTriggerAt = -Infinity;
+      rt.paceMs = 0;
     }
   }
 
@@ -257,11 +399,8 @@ export function createRuleEngine({
 
   /** 只清运行期状态（规则表保留）：调试 / 测试里「换一组成立」时用 */
   function reset() {
-    for (const rt of runtime.values()) {
-      rt.lastAt = -Infinity;
-      rt.setCount = 0;
-      rt.spokenAt = [];
-      rt.streak = 0;
+    for (const [id] of runtime.entries()) {
+      runtime.set(id, blankRuntime());
     }
     lastSpeakAt = -Infinity;
     lastGapAt = -Infinity;
@@ -274,10 +413,18 @@ export function createRuleEngine({
     return keep.length;
   }
 
-  /** 把 action 渲染成一句话（模板走 i18n；args 可以是函数，按事件现算） */
+  /** 把 action 渲染成一句话（模板走 i18n；args / template 都可以是函数，按事件现算） */
   function renderAction(action, ctx, event) {
     const act = action || {};
-    const key = String(act.template || '');
+    let key = '';
+    try {
+      // 计数规则按「第几个」换句子（第 5 个说「五个了」），所以模板允许是函数
+      key = typeof act.template === 'function'
+        ? String(act.template(ctx, event) || '')
+        : String(act.template || '');
+    } catch {
+      key = '';
+    }
     if (!key || !hasKey(key)) return '';
     let args = {};
     try {
@@ -338,16 +485,27 @@ export function createRuleEngine({
     } else if (type === 'session-end') {
       resetScope('session');
       resetScope('set');
+      // 口述建的规则是 `scope: session` 的 —— 一次训练结束就**真的删掉**（下次训练回到缺省规则，
+      // 由 app.js 的 `ensureDefaultRules()` 补回来；用户不需要记住自己上次说过什么）。
+      clearScope('session');
     }
 
-    /* ② 连续次数：先按「这一次事件」更新每条规则的 streak（含 resetOn） */
+    /* ② 连续次数 + 节奏：先按「这一次事件」更新每条规则的 streak / pace（含 resetOn） */
     for (const rule of rules.values()) {
       const rt = runtimeOf(rule.id);
       if (rule.trigger.resetOn.includes(type)) {
         rt.streak = 0;
+        rt.lastTriggerAt = -Infinity;
+        rt.paceMs = 0;
         continue;
       }
       if (rule.trigger.event !== type) continue;
+      // 自适应降频要「当前节奏」：取相邻两次触发的间隔做一次指数平滑（0.5 权重，抗抖动）
+      if (rule.adaptive && rt.lastTriggerAt > -Infinity && at > rt.lastTriggerAt) {
+        const dt = at - rt.lastTriggerAt;
+        rt.paceMs = rt.paceMs > 0 ? Math.round(rt.paceMs * 0.5 + dt * 0.5) : dt;
+      }
+      rt.lastTriggerAt = at;
       const ctx = eventContext(ev, rt.streak + 1);
       rt.streak = matchesFilter(rule.trigger.filter, ctx, { ignoreConsecutive: true })
         ? rt.streak + 1 : 0;
@@ -383,9 +541,29 @@ export function createRuleEngine({
 
     /* ⑤ 护栏：从上往下试，谁先过谁说话（同一个 tick 只出一条） */
     for (const { rule, rt, ctx } of candidates) {
-      if (st.speaking && !rule.bypassGap) {
-        note('rule:skip', { reason: 'speaking', ruleId: rule.id, event: type });
+      if (rule.adaptive && !adaptiveAllows(rule, rt, ctx, volume, at)) {
+        note('rule:skip', { reason: 'stride', ruleId: rule.id, event: type });
         continue;
+      }
+      if (st.speaking) {
+        /**
+         * 教练正在说话时：普通规则**一律丢弃**（不排队、不叠音）；
+         * `bypassGap` 的读秒类照样说，但**计数**这条还有个更细的条件（R2 用户原话）：
+         * 「教练正在说话时仍然：若剩余台词 >1.5s 就跳过这一下」—— 计时器走完之前那一下
+         * 就不要了，绝不把数字排到队尾。
+         */
+        const left = num(st.speakLeftMs) ?? 0;
+        const limit = rule.adaptive
+          ? (num(rule.adaptive.skipWhileSpeakingMs) ?? ADAPTIVE_REP.skipWhileSpeakingMs)
+          : null;
+        if (!rule.bypassGap || (limit !== null && left > limit)) {
+          note('rule:skip', {
+            reason: limit !== null && left > limit ? 'speaking-long' : 'speaking',
+            ruleId: rule.id,
+            event: type,
+          });
+          continue;
+        }
       }
       if (at <= lastSpeakAt) {
         note('rule:skip', { reason: 'same-tick', ruleId: rule.id, event: type });
@@ -455,38 +633,129 @@ export function gateCueKey(gate) {
 }
 
 /**
- * 内置六条规则（R1）。
+ * 「报数」规则（计次类，缺省规则 `rep-count`）。
+ *
+ * 用户原话（R2）：「缺省情况下要帮客户计次……要像私人教练一样主动帮用户计数，要有陪伴感」。
+ *
+ *   - 每做一个就报一个（「一」「二」「三」…）；第 5 / 10 个换成整句鼓励（「五个了」「十个了，稳住」）；
+ *   - `adaptive` 让它按节奏自动降频：≥1.5s 一个 → 每个都报；1~1.5s → 每 2 个；更快 → 每 3 个；
+ *     **两次报数至少隔 1 秒**（每秒最多 1 次播报）；
+ *   - `bypassGap: true` → 计数通道不走「全局 6 秒间隔」（每一下都要报）；
+ *     但教练正在说话时，剩余台词 >1.5s 仍然跳过这一下（不积压、不叠音）；
+ *   - 话量=少 → 只报每 5 个（`lowVolumeStride`）。
+ *
+ * @param {object} [opts]
+ * @param {number} [opts.every] 固定间隔（口述「每 10 个报一次」时传 10；不传 = 自适应逐次）
+ * @param {string} [opts.id]    规则 id（缺省 `rep-count`）
+ * @param {string} [opts.scope] 作用域（缺省 `set`；口述规则用 `session`）
+ */
+export function repRule({ every = 0, id = 'rep-count', scope = 'set' } = {}) {
+  const n = Math.round(Number(every) || 0);
+  const fixed = Number.isFinite(n) && n > 1;
+  const rule = {
+    id,
+    scope,
+    channel: 'rep',
+    label: 'rule.name.rep',
+    trigger: {
+      event: 'rep',
+      filter: fixed ? { everyN: n } : null,
+      resetOn: ['set-start', 'session-start'],
+    },
+    action: {
+      // 第 5 / 10 个换成整句（「五个了」「十个了，稳住」），其余就是数数声
+      template: (ctx) => {
+        const at = Number(ctx && ctx.n) || 0;
+        if (at > 0 && at % 10 === 0) return 'rule.repTen';
+        if (at > 0 && at % 5 === 0) return 'rule.repFive';
+        return 'rule.repCount';
+      },
+      args: (ev) => {
+        const count = eventContext(ev).n;
+        return { n: count, word: numberWord(count, getLang()) };
+      },
+    },
+    cooldownMs: 0,
+    priority: RULE_PRIORITIES.count,
+    bypassGap: true,
+    volumes: ['low', 'mid', 'high'],
+  };
+  // 固定间隔的规则不需要降频：它本来就「每 N 个才说一次」（话量=少也照用户的数）
+  if (!fixed) rule.adaptive = { ...ADAPTIVE_REP };
+  return rule;
+}
+
+/**
+ * 「读秒」规则（计时类，缺省规则 `hold-read-5`）：每 N 秒报一次已经过了几秒（「5 秒」「10 秒」…）。
+ *
+ * 用户原话（R2）：「计时的运动要每 5 秒读秒一次」。
+ *
+ * @param {object} [opts]
+ * @param {number} [opts.every] 间隔秒数（缺省 DEFAULT_READ_EVERY_SEC = 5）
+ * @param {string} [opts.id]    规则 id（缺省 `hold-read-5`）
+ * @param {string} [opts.scope] 作用域（缺省 `set`；口述规则用 `session`）
+ * @param {boolean} [opts.holdOnly] 只认计时类动作（`tick` 带 hold:1）——缺省规则是 true，
+ *        口述的「每 30 秒报时」是 false（计数类也报时）
+ */
+export function readRule({
+  every = DEFAULT_READ_EVERY_SEC,
+  id = 'hold-read-5',
+  scope = 'set',
+  holdOnly = true,
+} = {}) {
+  const n = Math.max(1, Math.round(Number(every) || DEFAULT_READ_EVERY_SEC));
+  return {
+    id,
+    scope,
+    channel: 'read',
+    label: 'rule.name.read',
+    trigger: {
+      event: 'tick',
+      // 缺省那条同时要求 remainingGt:5 —— 最后 5 秒交给逐秒倒数，别两句撞在同一秒
+      filter: holdOnly ? { everySec: n, hold: true, remainingGt: 5 } : { everySec: n },
+      resetOn: ['set-start', 'session-start'],
+    },
+    action: {
+      template: 'rule.readSeconds',
+      args: (ev) => {
+        const sec = eventContext(ev).sec;
+        return { n: sec, word: numberWord(sec, getLang()) };
+      },
+    },
+    cooldownMs: 0,
+    priority: RULE_PRIORITIES.read,
+    bypassGap: true,
+    volumes: ['low', 'mid', 'high'],
+  };
+}
+
+/**
+ * 内置规则（R1 的四条 + R2 的两条缺省规则）。
  *
  * | 规则 | 触发 | 说法 | 优先级 |
  * |---|---|---|---|
- * | 每 5 个报数 | rep + everyN:5 | 「{n} 个，稳」 | 30（话量=多） |
+ * | 逐次报数 | rep（自适应每 1/2/3 个；话量=少每 5 个） | 「一」「二」…「五个了」 | 35（计数，bypassGap） |
+ * | 每 5 秒读秒 | tick + everySec:5 + hold | 「5 秒」「10 秒」… | 45（读秒，bypassGap） |
  * | 最后 3 个 | rep + remainingLte:3 | 「还剩 {n} 个」 | 40 |
  * | 过半 | progress + pctGte:50（每组一次） | 「一半了，节奏别乱」 | 30（话量=多） |
- * | 读秒（最后 5 秒） | hold-tick + remainingLte:5 | 「{n}」 | 40（bypassGap） |
+ * | 读秒（最后 5 秒） | hold-tick + remainingLte:5 | 「5」「4」「3」… | 40（bypassGap） |
  * | 门控连错 2 次 | gate-fail + consecutive:2 | 按 gate 名的具体口令 | 60 |
  * | 8 秒没动 | idle + secGte:8 | 「继续啊，我等你」 | 20 |
  *
  * 话量三档（设置里的「少 / 中 / 多」）：
- *   少 = 纠正 + 最后 3 个；
- *   中 = 再加读秒 + 催促（默认）；
- *   多 = 再加过半 + 每 5 个。
+ *   少 = 只报每 5 个 + 读秒 + 最后 3 个 + 纠正；
+ *   中 = 再加每个都报 + 最后 5 秒倒数 + 催促（默认）；
+ *   多 = 再加过半。
  */
 export function builtinRules({ t = defaultTranslate } = {}) {
   const translate = typeof t === 'function' ? t : defaultTranslate;
   return [
-    {
-      id: 'rep-every-5',
-      scope: 'set',
-      trigger: { event: 'rep', filter: { everyN: 5 }, resetOn: ['set-start', 'session-start'] },
-      action: { template: 'rule.repEvery5', args: (ev) => ({ n: eventContext(ev).n }) },
-      cooldownMs: 3000,
-      priority: RULE_PRIORITIES.encourage,
-      budget: { perSet: 0, perMinute: 4 },
-      volumes: ['high'],
-    },
+    repRule(),
+    readRule(),
     {
       id: 'last-three',
       scope: 'set',
+      label: 'rule.name.lastThree',
       trigger: { event: 'rep', filter: { remainingLte: 3 }, resetOn: ['set-start', 'session-start'] },
       action: { template: 'rule.lastThree', args: (ev) => ({ n: eventContext(ev).remaining }) },
       cooldownMs: 0,
@@ -497,6 +766,7 @@ export function builtinRules({ t = defaultTranslate } = {}) {
     {
       id: 'halfway',
       scope: 'set',
+      label: 'rule.name.halfway',
       trigger: { event: 'progress', filter: { pctGte: 50 }, resetOn: ['set-start', 'session-start'] },
       action: { template: 'rule.halfway', args: (ev) => ({}) },
       cooldownMs: 0,
@@ -507,6 +777,7 @@ export function builtinRules({ t = defaultTranslate } = {}) {
     {
       id: 'countdown-5',
       scope: 'set',
+      label: 'rule.name.countdown',
       trigger: { event: 'hold-tick', filter: { remainingLte: 5 } },
       action: { template: 'rule.countdown', args: (ev) => ({ n: eventContext(ev).sec }) },
       cooldownMs: 0,
@@ -519,6 +790,7 @@ export function builtinRules({ t = defaultTranslate } = {}) {
     {
       id: 'gate-fail-2',
       scope: 'set',
+      label: 'rule.name.gateFail',
       trigger: {
         event: 'gate-fail',
         filter: { consecutive: 2 },
@@ -536,6 +808,7 @@ export function builtinRules({ t = defaultTranslate } = {}) {
     {
       id: 'idle-8',
       scope: 'set',
+      label: 'rule.name.idle',
       trigger: { event: 'idle', filter: { secGte: 8 }, resetOn: ['set-start', 'session-start'] },
       action: { template: 'rule.idle8', args: () => ({}) },
       cooldownMs: 15000,
@@ -546,13 +819,45 @@ export function builtinRules({ t = defaultTranslate } = {}) {
   ];
 }
 
-/** 内置规则的 id（测试 / 文档一处定义） */
+/** 内置规则的 id（测试 / 文档一处定义；顺序 = builtinRules() 的顺序） */
 export const BUILTIN_RULE_IDS = Object.freeze([
-  'rep-every-5', 'last-three', 'halfway', 'countdown-5', 'gate-fail-2', 'idle-8',
+  'rep-count', 'hold-read-5', 'last-three', 'halfway', 'countdown-5', 'gate-fail-2', 'idle-8',
 ]);
+
+/** 规则名（`rule.name.*` 词条键；没写 label 的规则说「其他规则」） */
+export function ruleNameKey(rule) {
+  const key = String(rule && rule.label ? rule.label : '');
+  return key || 'rule.name.other';
+}
+
+/**
+ * 规则的间隔短语（**已本地化**）：每 10 个 / 每 30 秒 / 每个都报（节奏快时自动降频）。
+ * @param {object} rule
+ * @param {Function} [translate] 取词条（默认 i18n 的 t）
+ */
+export function ruleEveryText(rule, translate = defaultTranslate) {
+  const tr = typeof translate === 'function' ? translate : defaultTranslate;
+  const filter = rule && rule.trigger && rule.trigger.filter ? rule.trigger.filter : {};
+  if (num(filter.everyN) !== null) return tr('rule.everyReps', { n: Math.round(num(filter.everyN)) });
+  if (num(filter.everySec) !== null) return tr('rule.everySeconds', { n: Math.round(num(filter.everySec)) });
+  if (rule && rule.adaptive) return tr('rule.everyRep');
+  return tr('rule.everyAlways');
+}
+
+/**
+ * 一条规则的「人话」描述（`listRules` 口述 / 设置页将来用）：`报数间隔：每 10 个`。
+ * @param {object} rule
+ * @param {Function} [translate]
+ */
+export function describeRule(rule, translate = defaultTranslate) {
+  const tr = typeof translate === 'function' ? translate : defaultTranslate;
+  return tr('rule.listItem', { name: tr(ruleNameKey(rule)), every: ruleEveryText(rule, tr) });
+}
 
 export default {
   createRuleEngine, builtinRules, normalizeRule, matchesFilter, eventContext,
   normalizeCoachVolume, gateCueKey, MIN_GAP_MS, RULE_PRIORITIES, COACH_VOLUMES,
-  DEFAULT_COACH_VOLUME, RULE_SCOPES,
+  DEFAULT_COACH_VOLUME, RULE_SCOPES, RULE_CHANNELS, DEFAULT_RULE_BY_CHANNEL,
+  DEFAULT_READ_EVERY_SEC, ADAPTIVE_REP, strideForPace, adaptiveAllows, estimateSpeechMs,
+  repRule, readRule, ruleNameKey, ruleEveryText, describeRule,
 };

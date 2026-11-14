@@ -125,7 +125,12 @@ import {
   createRuleEngine, builtinRules, normalizeRule, matchesFilter, eventContext, gateCueKey,
   normalizeCoachVolume, MIN_GAP_MS, RULE_PRIORITIES, RULE_SCOPES, COACH_VOLUMES,
   DEFAULT_COACH_VOLUME, BUILTIN_RULE_IDS,
+  // R2：私人教练式缺省规则 + 口述建规则
+  RULE_CHANNELS, DEFAULT_RULE_BY_CHANNEL, DEFAULT_READ_EVERY_SEC, ADAPTIVE_REP,
+  strideForPace, adaptiveAllows, estimateSpeechMs, repRule, readRule,
+  ruleNameKey, ruleEveryText, describeRule,
 } from '../src/voice/rules.js';
+import { numberWord, zhNumber, enNumber } from '../src/voice/numerals.js';
 
 let passed = 0;
 const failures = [];
@@ -2305,6 +2310,10 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
     switchLang: ['说英文', 'speak english'],
     setVoiceGender: ['用男声', 'use a male voice'],
     reportProgress: ['我做了几个', 'how many did i do'],
+    // R2 口述建规则（零 LLM）：数字会被换成槽位
+    addRule: ['每 10 个报一次', 'report every 10 reps'],
+    removeRule: ['别报数了', 'stop counting'],
+    listRules: ['现在有什么规则', 'what rules are on'],
   };
 
   ok(`命令表共 ${COMMANDS.length} 条 intent，每条都有中英测试样例`,
@@ -2377,6 +2386,59 @@ console.log('\n[22] P3.2 命令解析：说法表 / 数字归一化 / 唤醒词 
     return a.intent === 'switchLang' && a.args.lang === 'en'
       && b.intent === 'switchLang' && b.args.lang === 'zh';
   })());
+
+  /* ---------------- R2 口述建规则：间隔槽位 / 频道 / 同义说法 ---------------- */
+  const ruleParse = (text, locale = 'zh') => parseCommand(text, locale);
+  ok('「每 10 个报一次」→ addRule {kind:"rep", every:10}（数字是槽位，不是写死的说法）', (() => {
+    const p = ruleParse('每 10 个报一次');
+    return p.intent === 'addRule' && p.args.kind === 'rep' && p.args.every === 10;
+  })(), JSON.stringify(ruleParse('每 10 个报一次')));
+  ok('「每 3 个报一次」→ every:3（说法表里写的是 10，照样认）', (() => {
+    const p = ruleParse('每 3 个报一次');
+    return p.intent === 'addRule' && p.args.kind === 'rep' && p.args.every === 3;
+  })(), JSON.stringify(ruleParse('每 3 个报一次')));
+  ok('「每 30 秒报时」→ addRule {kind:"read", every:30}；「每 10 秒读秒」→ 10 秒', (() => {
+    const a = ruleParse('每 30 秒报时');
+    const b = ruleParse('每 10 秒读秒');
+    return a.intent === 'addRule' && a.args.kind === 'read' && a.args.every === 30
+      && b.intent === 'addRule' && b.args.kind === 'read' && b.args.every === 10;
+  })(), JSON.stringify([ruleParse('每 30 秒报时'), ruleParse('每 10 秒读秒')]));
+  ok('中文数字 / 分钟换算：「每十个报一次」→ 10；「每两分钟报时」→ 120 秒', (() => {
+    const a = ruleParse('每十个报一次');
+    const b = ruleParse('每两分钟报时');
+    return a.intent === 'addRule' && a.args.every === 10 && a.args.kind === 'rep'
+      && b.intent === 'addRule' && b.args.every === 120 && b.args.kind === 'read';
+  })(), JSON.stringify([ruleParse('每十个报一次'), ruleParse('每两分钟报时')]));
+  ok('「别报数了」→ removeRule kind=rep；「别读秒了」「关掉报时」→ read', (() => {
+    const a = ruleParse('别报数了');
+    const b = ruleParse('别读秒了');
+    const c = ruleParse('关掉报时');
+    return a.intent === 'removeRule' && a.args.kind === 'rep'
+      && b.intent === 'removeRule' && b.args.kind === 'read'
+      && c.intent === 'removeRule' && c.args.kind === 'read';
+  })(), JSON.stringify([ruleParse('别报数了'), ruleParse('别读秒了'), ruleParse('关掉报时')]));
+  ok('「现在有什么规则」「有哪些规则」→ listRules', (() => {
+    const a = ruleParse('现在有什么规则');
+    const b = ruleParse('有哪些规则');
+    return a.intent === 'listRules' && b.intent === 'listRules';
+  })(), JSON.stringify([ruleParse('现在有什么规则'), ruleParse('有哪些规则')]));
+  ok('英文同义：「report every 10 reps」/「stop counting」/「stop the countdown」/「what rules are on」', (() => {
+    const a = ruleParse('report every 10 reps', 'en');
+    const b = ruleParse('stop counting', 'en');
+    const c = ruleParse('stop the countdown', 'en');
+    const d = ruleParse('what rules are on', 'en');
+    const e = ruleParse('read the time every 30 seconds', 'en');
+    return a.intent === 'addRule' && a.args.kind === 'rep' && a.args.every === 10
+      && e.intent === 'addRule' && e.args.kind === 'read' && e.args.every === 30
+      && b.intent === 'removeRule' && b.args.kind === 'rep'
+      && c.intent === 'removeRule' && c.args.kind === 'read'
+      && d.intent === 'listRules';
+  })(), JSON.stringify([ruleParse('report every 10 reps', 'en'), ruleParse('stop counting', 'en')]));
+  ok('只带「每」没有间隔的句子**不算**建规则（「每天练多久」→ unknown，不瞎猜）',
+    ruleParse('每天练多久').intent === 'unknown', JSON.stringify(ruleParse('每天练多久')));
+  ok('建规则没匹配到数字时也不误伤老命令（「再来一组」仍然是 retrySet）',
+    ruleParse('再来一组').intent === 'retrySet' && ruleParse('暂停').intent === 'pause');
+
 
   // 唤醒词：有就去掉并置 usedWake；没有也照常解析
   ok('「可可，暂停」→ pause，usedWake=true（唤醒词被去掉）', (() => {
@@ -3900,6 +3962,8 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
       set_voice: ['mute', 'unmute'], switch_language: ['switchLang'],
       set_voice_gender: ['setVoiceGender'],
       report_progress: ['reportProgress'], help: ['help'],
+      // R2 口述建规则（零 LLM：快车道不联网，但这三条也让模型能触发同一套 run()）
+      add_rule: ['addRule'], remove_rule: ['removeRule'], list_rules: ['listRules'],
       pick_category: ['category'], pick_index: ['pick'], stop_listening: ['stopListening'],
       // 长期记忆：服务端副作用，没有 client intent
       remember: [], remember_fact: [], forget: [],
@@ -3909,7 +3973,7 @@ console.log('\n[28] 火山 TTS 服务端：缓存命中 / 超时 502 / health �
       return Array.isArray(got) && got.length === intents.length
         && intents.every((i) => got.includes(i));
     });
-    ok('22 个工具 → 27 条 intent 的映射与命令表一致（含 navigate / open_panel / set_voice 三对多 + 3 个记忆工具）',
+    ok('25 个工具 → 30 条 intent 的映射与命令表一致（含 navigate / open_panel / set_voice 三对多 + 3 个记忆工具 + 3 个规则工具）',
       mapOk && Object.keys(TOOL_INTENT_MAP).length === Object.keys(expectMap).length,
       JSON.stringify(TOOL_INTENT_MAP));
     // OpenAI 风格的 function calling：tools 是 [{type:'function', function:{name,description,parameters}}]
@@ -7209,67 +7273,187 @@ console.log('\n[37] R1 事件总线：emit / on / recent（60 秒窗口）/ 容�
 /* ================================================================== *
  * [38] R1 规则引擎：everyN / remainingLte / consecutive / cooldown / 预算 / 优先级 / 6 秒间隔 / 读秒 bypass / scope
  * ================================================================== */
-console.log('\n[38] R1 规则引擎：filter / 冷却 / 预算 / 优先级抢占 / 全局 6 秒间隔 / 读秒 bypass / 静音丢弃 / scope 清理');
+console.log('\n[38] R1/R2 规则引擎：filter / 冷却 / 预算 / 优先级抢占 / 全局 6 秒间隔 / 读秒 bypass / 静音丢弃 / scope 清理 / 逐次报数自适应');
 {
   const clock = { t: 1000000 };
-  /** 造一台引擎（默认中档话量、教练开着、没人说话） */
-  const makeEngine = ({ volume = 'high', minGapMs = MIN_GAP_MS, diag = null } = {}) => {
+  /** 造一台引擎（默认中档话量、教练开着、没人说话）；`only` 可以只要某几个频道 */
+  const makeEngine = ({ volume = 'high', minGapMs = MIN_GAP_MS, diag = null, channels = null } = {}) => {
     const engine = createRuleEngine({ now: () => clock.t, minGapMs, diag });
-    for (const r of builtinRules()) engine.add(r);
+    for (const r of builtinRules()) {
+      const ch = r.channel || '';
+      if (channels && !channels.includes(ch)) continue;
+      engine.add(r);
+    }
     return engine;
   };
   const st = (extra = {}) => ({ speaking: false, muted: false, coachOn: true, volume: 'high', ...extra });
   const fire = (engine, type, data = {}, extra = {}) => engine.handle({ type, data }, st(extra));
+  /** 后面几个小节共用的一次结果（`out = fire(...)`） */
+  let out = null;
 
-  ok('护栏常量：全局最小开口间隔 6000ms；六个优先级档位（破纪录 100 > 纠正 60 > 读秒 40 > 鼓励 30 > 催促 20）',
+  ok('护栏常量：全局最小开口间隔 6000ms；七个优先级档位（破纪录 100 > 纠正 60 > 读秒 45 > 倒数 40 > 计数 35 > 鼓励 30 > 催促 20）',
     MIN_GAP_MS === 6000 && RULE_PRIORITIES.record === 100 && RULE_PRIORITIES.correct === 60
-    && RULE_PRIORITIES.countdown === 40 && RULE_PRIORITIES.encourage === 30
+    && RULE_PRIORITIES.read === 45 && RULE_PRIORITIES.countdown === 40
+    && RULE_PRIORITIES.count === 35 && RULE_PRIORITIES.encourage === 30
     && RULE_PRIORITIES.idle === 20 && RULE_SCOPES.join(',') === 'set,session,forever');
   ok('话量三档：low / mid / high，默认 mid（脏值归一化到 mid）',
     COACH_VOLUMES.join(',') === 'low,mid,high' && DEFAULT_COACH_VOLUME === 'mid'
     && normalizeCoachVolume('xx') === 'mid' && normalizeCoachVolume(undefined) === 'mid');
-  ok('内置六条规则 id 一处定义（和 builtinRules() 一一对应）',
-    BUILTIN_RULE_IDS.length === 6
+  ok('内置七条规则 id 一处定义（和 builtinRules() 一一对应）',
+    BUILTIN_RULE_IDS.length === 7
     && builtinRules().map((r) => r.id).join(',') === BUILTIN_RULE_IDS.join(','));
-  ok('模板全在 locales：六条规则的模板键都能取到词条（不是键名）',
+  ok('两条「频道」规则：rep 报数 / read 读秒，缺省规则 id 一处定义（每 5 秒读秒是缺省）',
+    RULE_CHANNELS.join(',') === 'rep,read'
+    && DEFAULT_RULE_BY_CHANNEL.rep === 'rep-count' && DEFAULT_RULE_BY_CHANNEL.read === 'hold-read-5'
+    && DEFAULT_READ_EVERY_SEC === 5);
+  ok('模板全在 locales：七条规则的模板键都能取到词条（模板是函数的也能取）',
     builtinRules().every((r) => {
-      const text = t(r.action.template, { n: 5, cue: 'X' });
-      return typeof text === 'string' && text !== r.action.template;
+      const keys = typeof r.action.template === 'function'
+        ? [1, 5, 10].map((n) => r.action.template({ n }))
+        : [r.action.template];
+      return keys.every((key) => {
+        const text = t(key, { n: 5, cue: 'X', word: 'X' });
+        return typeof text === 'string' && text !== key;
+      });
     }));
 
-  /* ---------------- filter：everyN / remainingLte / consecutive / sec ---------------- */
-  const engine = makeEngine();
-  const texts = (engine) => engine.spoken;
-  fire(engine, 'session-start');
-  fire(engine, 'set-start', { target: 20 });
-  let out = null;
-  for (let n = 1; n <= 5; n += 1) {
-    clock.t += 1200;
-    out = fire(engine, 'rep', { n, target: 20, v: true });
-    if (n < 5) ok(`everyN:5 —— 第 ${n} 次不报数`, out === null, JSON.stringify(out && out.speak));
+  /* ---------------- R2 缺省规则①：逐次报数（像私教）+ 五个了 + 自适应降频 ---------------- */
+  const counter = makeEngine();
+  const said = [];
+  const pump = (engine, n, gap, extra = {}) => {
+    clock.t += gap;
+    const out = fire(engine, 'rep', { n, target: 20, v: true }, extra);
+    if (out) said.push(out.speak);
+    return out;
+  };
+  fire(counter, 'session-start');
+  fire(counter, 'set-start', { target: 20 });
+  for (let n = 1; n <= 3; n += 1) pump(counter, n, 2000);
+  ok('默认（中档）计次类**逐次报数**：3 次 rep → 说出「一」「二」「三」（不是每 5 个才说）',
+    said.map((s) => s.text).join(',') === '一,二,三'
+    && said.every((s) => s.ruleId === 'rep-count' && s.priority === RULE_PRIORITIES.count),
+    JSON.stringify(said));
+  ok('第 4 个（普通数）仍报「四」', pump(counter, 4, 2000)?.speak.text === '四');
+  const five = pump(counter, 5, 2000);
+  ok('第 5 个换成整句鼓励：「五个了」（中文数词，不是阿拉伯数字 5）',
+    five && five.speak.text === '五个了' && !/[0-9]/.test(five.speak.text),
+    JSON.stringify(five && five.speak));
+  const ten = pump(counter, 10, 5000);
+  ok('第 10 个再加一句鼓励：「十个了，稳住」', ten && ten.speak.text === '十个了，稳住',
+    JSON.stringify(ten && ten.speak));
+  ok('计数通道走 bypassGap：全局 6 秒间隔管不住它（1 秒一个也照报）',
+    pump(counter, 11, 1000)?.speak.text === '十一');
+
+  // 话量=少 → 只报每 5 个
+  const lowCounter = makeEngine({ volume: 'low' });
+  const lowSaid = [];
+  fire(lowCounter, 'session-start');
+  fire(lowCounter, 'set-start', { target: 20 });
+  for (let n = 1; n <= 10; n += 1) {
+    clock.t += 2000;
+    const out = fire(lowCounter, 'rep', { n, target: 20, v: true }, { volume: 'low' });
+    if (out) lowSaid.push(out.speak.text);
   }
-  ok('everyN:5 —— 第 5 次报「5 个，稳」（priority 30）',
-    out && out.speak.ruleId === 'rep-every-5' && out.speak.text === '5 个，稳'
-    && out.speak.priority === RULE_PRIORITIES.encourage, JSON.stringify(out));
-  clock.t += 6000;
-  ok('everyN:5 —— 第 6~9 次不报，第 10 次再报',
-    fire(engine, 'rep', { n: 6, target: 20, v: true }) === null
-    && fire(engine, 'rep', { n: 10, target: 20, v: true })?.speak.ruleId === 'rep-every-5');
-  clock.t += 6000;
-  out = fire(engine, 'rep', { n: 17, target: 20, v: true });
-  ok('remainingLte:3 —— 20 个的组做到 17 报「还剩 3 个」（priority 40）',
-    out && out.speak.ruleId === 'last-three' && out.speak.text === '还剩 3 个'
-    && out.speak.priority === RULE_PRIORITIES.countdown, JSON.stringify(out));
-  clock.t += 6000;
-  ok('remainingLte:3 —— 做到 18 不再报（perSet 预算每组一次）',
-    fire(engine, 'rep', { n: 18, target: 20, v: true }) === null);
-  ok('matchesFilter / eventContext 是纯函数：remaining / pct / sec 都算得出来',
+  ok('话量=少 → **只报每 5 个**（1~4 与 6~9 都不说）', lowSaid.join(',') === '五个了,十个了，稳住',
+    JSON.stringify(lowSaid));
+
+  // 节奏快 → 每 2 个 / 每 3 个（避免 TTS 排队）
+  const fast = makeEngine();
+  const fastSaid = [];
+  fire(fast, 'session-start');
+  fire(fast, 'set-start', { target: 20 });
+  for (let n = 1; n <= 12; n += 1) {
+    clock.t += 700;   // <1s 一个
+    const out = fire(fast, 'rep', { n, target: 20, v: true });
+    if (out) fastSaid.push(out.speak.text);
+  }
+  ok('节奏很快（0.7s 一个）→ 自动降频到每 3 个（12 次里最多 4~5 句，绝不是 12 句）',
+    fastSaid.length <= 6, JSON.stringify(fastSaid));
+  ok('降频也保住「五个了」这一句（整句鼓励允许越过 stride）',
+    fastSaid.includes('五个了'), JSON.stringify(fastSaid));
+  const mid = makeEngine();
+  const midSaid = [];
+  fire(mid, 'session-start');
+  fire(mid, 'set-start', { target: 20 });
+  for (let n = 1; n <= 8; n += 1) {
+    clock.t += 1200;   // 1~1.5s 一个
+    const out = fire(mid, 'rep', { n, target: 20, v: true });
+    if (out) midSaid.push(out.speak.text);
+  }
+  ok('节奏中等（1.2s 一个）→ 每 2 个报一次（8 次里 4~5 句）',
+    midSaid.length <= 6 && midSaid.includes('五个了'), JSON.stringify(midSaid));
+  ok('strideForPace：≥1.5s → 1；1~1.5s → 2；更快 → 3（上限 3；没样本也报 1）',
+    strideForPace(2000) === 1 && strideForPace(1500) === 1 && strideForPace(1200) === 2
+    && strideForPace(700) === 3 && strideForPace(120) === 3 && strideForPace(0) === 1,
+    JSON.stringify([2000, 1500, 1200, 700, 0].map((ms) => strideForPace(ms))));
+  ok('自适应参数一处定义：每秒最多 1 次播报 + 话量=少每 5 个 + 教练说话剩余 >1.5s 跳过',
+    ADAPTIVE_REP.minStepMs === 1000 && ADAPTIVE_REP.lowVolumeStride === 5
+    && ADAPTIVE_REP.fastMs === 1500 && ADAPTIVE_REP.skipWhileSpeakingMs === 1500);
+  ok('adaptiveAllows：两次报数之间 <1 秒的直接跳过（每秒最多 1 次）',
+    adaptiveAllows({ adaptive: { ...ADAPTIVE_REP } }, { lastAt: 1000, paceMs: 2000 },
+      eventContext({ type: 'rep', data: { n: 4, target: 20 } }), 'mid', 1500) === false);
+
+  /* ---------------- R2 缺省规则②：计时类每 5 秒读秒 ---------------- */
+  const reader = makeEngine();
+  const readSaid = [];
+  fire(reader, 'session-start');
+  fire(reader, 'set-start', { target: 60 });
+  for (let sec = 1; sec <= 20; sec += 1) {
+    clock.t += 1000;
+    const out = fire(reader, 'tick', { elapsedSec: sec, hold: 1, remainingSec: 60 - sec });
+    if (out) readSaid.push(out.speak.text);
+  }
+  ok('计时类**每 5 秒读秒**：5/10/15/20 秒各说一句（「五秒」「十秒」…）',
+    readSaid.join(',') === '五秒,十秒,十五秒,二十秒', JSON.stringify(readSaid));
+  ok('计数类动作的 tick 不带 hold → 默认那条读秒规则不开口（用户口述的「报时」才管所有动作）',
+    fire(reader, 'tick', { elapsedSec: 25 }) === null);
+  const lastFive = fire(reader, 'tick', { elapsedSec: 55, hold: 1, remainingSec: 5 });
+  ok('读数规则把**最后 5 秒让给逐秒倒数**（remainingGt:5，别两句撞在同一秒）', lastFive === null,
+    JSON.stringify(lastFive && lastFive.speak));
+  const holdCountdown = (() => { clock.t += 1000; return fire(reader, 'hold-tick', { remainingSec: 5 }); })();
+  ok('最后 5 秒仍然是逐秒倒数（「5」）', holdCountdown && holdCountdown.speak.text === '5',
+    JSON.stringify(holdCountdown && holdCountdown.speak));
+
+  /* ---------------- 教练正在说话：计数通道剩余台词 >1.5s 就跳过这一下 ---------------- */
+  const talky = makeEngine();
+  fire(talky, 'session-start');
+  fire(talky, 'set-start', { target: 20 });
+  clock.t += 5000;
+  ok('教练正在说话 + 剩余台词 >1.5s → **跳过这一下**（不积压、不叠音）',
+    fire(talky, 'rep', { n: 1, target: 20 }, { speaking: true, speakLeftMs: 2500 }) === null);
+  clock.t += 5000;
+  const shortLeft = fire(talky, 'rep', { n: 2, target: 20 }, { speaking: true, speakLeftMs: 400 });
+  ok('教练马上说完了（剩余 <1.5s）→ 这一下照报（计数通道 bypassGap）',
+    shortLeft && shortLeft.speak.text === '二', JSON.stringify(shortLeft && shortLeft.speak));
+  ok('estimateSpeechMs 是纯函数：字数 × 200ms，最短 600ms',
+    estimateSpeechMs('') === 600 && estimateSpeechMs('一二三') === 600
+    && estimateSpeechMs('一二三四五') === 1000);
+
+  /* ---------------- 计数与「最后 3 个」共存：优先说「还剩 3 个」，下一拍继续数 ---------------- */
+  const mixed = makeEngine();
+  fire(mixed, 'session-start');
+  fire(mixed, 'set-start', { target: 20 });
+  clock.t += 2000;
+  const l3 = fire(mixed, 'rep', { n: 17, target: 20, v: true });
+  ok('remainingLte:3 —— 做到 17/20 优先说「还剩 3 个」（priority 40 > 计数 35）',
+    l3 && l3.speak.ruleId === 'last-three' && l3.speak.text === '还剩 3 个'
+    && l3.speak.priority === RULE_PRIORITIES.countdown, JSON.stringify(l3));
+  clock.t += 2000;
+  const next18 = fire(mixed, 'rep', { n: 18, target: 20, v: true });
+  ok('最后 3 个每组只说一次；下一拍**继续报数**（18 → 「十八」，不会因为倒数就停下来）',
+    next18 && next18.speak.ruleId === 'rep-count' && next18.speak.text === '十八',
+    JSON.stringify(next18 && next18.speak));
+  ok('matchesFilter / eventContext 是纯函数：remaining / pct / sec / everySec / hold 都算得出来',
     eventContext({ type: 'rep', data: { n: 5, target: 20 } }).remaining === 15
     && eventContext({ type: 'rep', data: { n: 5, target: 20 } }).pct === 25
     && eventContext({ type: 'hold-tick', data: { remainingSec: 4 } }).remaining === 4
     && eventContext({ type: 'idle', data: { sec: 9 } }).sec === 9
     && matchesFilter({ everyN: 5 }, eventContext({ type: 'rep', data: { n: 10, target: 20 } }))
-    && !matchesFilter({ everyN: 5 }, eventContext({ type: 'rep', data: { n: 7, target: 20 } })));
+    && !matchesFilter({ everyN: 5 }, eventContext({ type: 'rep', data: { n: 7, target: 20 } }))
+    && matchesFilter({ everySec: 5 }, eventContext({ type: 'tick', data: { elapsedSec: 15 } }))
+    && !matchesFilter({ everySec: 5 }, eventContext({ type: 'tick', data: { elapsedSec: 0 } }))
+    && eventContext({ type: 'tick', data: { elapsedSec: 5, hold: 1 } }).hold === true
+    && !matchesFilter({ hold: true }, eventContext({ type: 'tick', data: { elapsedSec: 5 } })));
 
   /* ---------------- consecutive：门控连错 2 次 ---------------- */
   const g = makeEngine();
@@ -7334,7 +7518,7 @@ console.log('\n[38] R1 规则引擎：filter / 冷却 / 预算 / 优先级抢占
 
   const prio = createRuleEngine({ now: () => clock.t, minGapMs: 0 });
   prio.add({ id: 'low', trigger: { event: 'rep' }, action: { template: 'rule.idle8' }, priority: 20, cooldownMs: 0 });
-  prio.add({ id: 'high', trigger: { event: 'rep' }, action: { template: 'rule.repEvery5' }, priority: 90, cooldownMs: 0 });
+  prio.add({ id: 'high', trigger: { event: 'rep' }, action: { template: 'rule.repCount' }, priority: 90, cooldownMs: 0 });
   clock.t += 1000;
   out = prio.handle({ type: 'rep', data: { n: 5, target: 20 } }, st());
   ok('priority 抢占：同一事件两条命中，只回最高优先级那条', out && out.speak.ruleId === 'high',
@@ -7377,8 +7561,8 @@ console.log('\n[38] R1 规则引擎：filter / 冷却 / 预算 / 优先级抢占
   ok('**读秒是唯一例外**：speaking 时 bypassGap 的读秒照样说',
     countdownWhileSpeaking && countdownWhileSpeaking.speak.ruleId === 'countdown-5');
 
-  /* ---------------- scope 到期清理 ---------------- */
-  const scope = makeEngine();
+  /* ---------------- scope 到期清理（只留固定规则：把预算断言从「逐次报数」里隔离出来） ---------------- */
+  const scope = makeEngine({ channels: [''] });
   fire(scope, 'session-start');
   fire(scope, 'set-start', { target: 3 });
   clock.t += 1000;
@@ -7396,6 +7580,20 @@ console.log('\n[38] R1 规则引擎：filter / 冷却 / 预算 / 优先级抢占
   ok('session-end 之后 scope=set 的规则还能用（规则本身不属于会话，只清运行期状态）',
     fire(scope, 'rep', { n: 1, target: 3, v: true })?.speak.ruleId === 'last-three');
 
+  /* ---------------- 口述建的规则是 scope: session：session-end 真的删掉 ---------------- */
+  const sessionRules = createRuleEngine({ now: () => clock.t, minGapMs: 0 });
+  for (const r of builtinRules()) sessionRules.add(r);
+  const userRule = sessionRules.add(repRule({ every: 4, id: 'user-rep-4', scope: 'session' }));
+  ok('口述规则进表：scope=session、channel=rep、filter.everyN=4',
+    userRule && userRule.scope === 'session' && userRule.channel === 'rep'
+    && userRule.trigger.filter.everyN === 4, JSON.stringify(userRule && userRule.trigger.filter));
+  clock.t += 1000;
+  sessionRules.handle({ type: 'session-end', data: {} }, st());
+  ok('session-end 把 scope=session 的口述规则**删掉**（内置 set 规则还在）',
+    !sessionRules.list().some((r) => r.id === 'user-rep-4')
+    && sessionRules.list().some((r) => r.id === 'rep-count'),
+    sessionRules.list().map((r) => r.id).join(','));
+
   const scoped = createRuleEngine({ now: () => clock.t, minGapMs: 0 });
   scoped.add({ id: 's1', scope: 'set', trigger: { event: 'rep' }, action: { template: 'rule.halfway' } });
   scoped.add({ id: 's2', scope: 'session', trigger: { event: 'rep' }, action: { template: 'rule.halfway' } });
@@ -7408,16 +7606,23 @@ console.log('\n[38] R1 规则引擎：filter / 冷却 / 预算 / 优先级抢占
     && normalizeRule({}) === null && normalizeRule({ id: 'x', trigger: { event: 'nope' } }) === null
     && normalizeRule({ id: 'x', trigger: { event: 'rep' } }).priority === RULE_PRIORITIES.encourage);
 
-  /* ---------------- 话量三档 ---------------- */
+  /* ---------------- 话量三档（少 = 只报每 5 个） ---------------- */
   const vol = makeEngine({ volume: 'low' });
   const fireLow = (type, data = {}) => fire(vol, type, data, { volume: 'low' });
   fireLow('session-start');
   clock.t += 1000;
-  ok('话量=少：每 5 个**不说**', fireLow('rep', { n: 5, target: 20, v: true }) === null);
+  ok('话量=少：第 1~4 个**不说**（不是每一下都报）',
+    fireLow('rep', { n: 1, target: 20, v: true }) === null
+    && fireLow('rep', { n: 4, target: 20, v: true }) === null);
+  clock.t += 2000;
+  out = fireLow('rep', { n: 5, target: 20, v: true });
+  ok('话量=少：只报每 5 个（第 5 个说「五个了」）',
+    out && out.speak.ruleId === 'rep-count' && out.speak.text === '五个了',
+    JSON.stringify(out && out.speak));
   clock.t += 6000;
   ok('话量=少：过半**不说**', fireLow('progress', { pct: 50 }) === null);
   clock.t += 6000;
-  ok('话量=少：读秒**不说**', fireLow('hold-tick', { remainingSec: 5 }) === null);
+  ok('话量=少：最后 5 秒倒数**不说**', fireLow('hold-tick', { remainingSec: 5 }) === null);
   clock.t += 6000;
   ok('话量=少：最后 3 个**照说**', fireLow('rep', { n: 17, target: 20, v: true })?.speak.ruleId === 'last-three');
   clock.t += 6000;
@@ -7427,8 +7632,8 @@ console.log('\n[38] R1 规则引擎：filter / 冷却 / 预算 / 优先级抢占
   const volHi = makeEngine({ volume: 'high' });
   fire(volHi, 'session-start', {}, { volume: 'high' });
   clock.t += 1000;
-  ok('话量=多：每 5 个**照说**',
-    fire(volHi, 'rep', { n: 5, target: 20, v: true }, { volume: 'high' })?.speak.ruleId === 'rep-every-5');
+  ok('话量=多：第 5 个照说「五个了」',
+    fire(volHi, 'rep', { n: 5, target: 20, v: true }, { volume: 'high' })?.speak.text === '五个了');
   clock.t += 6000;
   ok('话量=多：过半**照说**',
     fire(volHi, 'progress', { pct: 50 }, { volume: 'high' })?.speak.ruleId === 'halfway');
@@ -7451,6 +7656,111 @@ console.log('\n[38] R1 规则引擎：filter / 冷却 / 预算 / 优先级抢占
     diagBus.snapshot().rule.speak === 1 && diagBus.snapshot().rule.lastRule === 'last-three'
     && diagBus.snapshot().rule.priority === 40 && diagBus.snapshot().rule.ms === 3,
     JSON.stringify(diagBus.snapshot().rule));
+}
+
+/* ================================================================== *
+ * [39] R2 私人教练式缺省规则 + 口述建规则：数词 / 规则工厂 / 描述 / 用户规则只在自己那一步说
+ * ================================================================== */
+console.log('\n[39] R2：数词（一/二/五）· repRule / readRule 工厂 · describeRule · 口述规则只在自己的间隔说');
+{
+  setLang('zh', { persist: false });
+  const clock = { t: 5000000 };
+  const st = (extra = {}) => ({ speaking: false, muted: false, coachOn: true, volume: 'mid', ...extra });
+  const makeEngine = (rules) => {
+    const engine = createRuleEngine({ now: () => clock.t, minGapMs: 0 });
+    for (const r of rules) engine.add(r);
+    return engine;
+  };
+
+  /* ---------------- 数词（给 TTS 念的不是阿拉伯数字） ---------------- */
+  ok('中文数词：1~10 / 十几 / 几十 / 一百零五',
+    zhNumber(1) === '一' && zhNumber(5) === '五' && zhNumber(10) === '十'
+    && zhNumber(15) === '十五' && zhNumber(20) === '二十' && zhNumber(21) === '二十一'
+    && zhNumber(99) === '九十九' && zhNumber(105) === '一百零五'
+    && zhNumber(100) === '一百',
+    JSON.stringify([1, 5, 10, 15, 20, 21, 99, 105, 100].map((n) => zhNumber(n))));
+  ok('英文数词：one / ten / twenty-one（二十几带连字符）',
+    enNumber(1) === 'one' && enNumber(10) === 'ten' && enNumber(21) === 'twenty-one'
+    && enNumber(120) === 'one hundred twenty',
+    JSON.stringify([1, 10, 21, 120].map((n) => enNumber(n))));
+  ok('numberWord(n, lang)：中文走数词，其余语言走英文数词；超范围不编（回阿拉伯数字）',
+    numberWord(5, 'zh') === '五' && numberWord(5, 'en') === 'five'
+    && numberWord(5) === '五' && numberWord(1000, 'zh') === '1000');
+
+  /* ---------------- 规则工厂 ---------------- */
+  const defRep = normalizeRule(repRule());
+  ok('repRule() 缺省 = 逐次报数：rep 事件 / channel=rep / priority 35 / bypassGap / 自适应参数齐全',
+    defRep.id === 'rep-count' && defRep.scope === 'set' && defRep.channel === 'rep'
+    && defRep.priority === RULE_PRIORITIES.count && defRep.bypassGap === true
+    && defRep.adaptive && defRep.adaptive.minStepMs === 1000
+    && defRep.adaptive.lowVolumeStride === 5 && defRep.trigger.filter === null,
+    JSON.stringify(defRep.adaptive));
+  const fixedRep = normalizeRule(repRule({ every: 10, id: 'user-rep-10', scope: 'session' }));
+  ok('repRule({every:10}) = 固定间隔：filter.everyN=10 / scope=session / 没有自适应（不再降频）',
+    fixedRep.trigger.filter.everyN === 10 && fixedRep.scope === 'session'
+    && fixedRep.adaptive === null && fixedRep.channel === 'rep');
+  const defRead = normalizeRule(readRule());
+  ok('readRule() 缺省 = 计时类每 5 秒读秒：tick + everySec:5 + hold + remainingGt:5 / priority 45',
+    defRead.id === 'hold-read-5' && defRead.channel === 'read'
+    && defRead.trigger.filter.everySec === 5 && defRead.trigger.filter.hold === true
+    && defRead.trigger.filter.remainingGt === 5
+    && defRead.priority === RULE_PRIORITIES.read && defRead.bypassGap === true);
+  const userRead = normalizeRule(readRule({ every: 30, id: 'user-read-30', scope: 'session', holdOnly: false }));
+  ok('readRule({every:30, holdOnly:false}) = 报时规则：everySec=30、不限计时类（计数类也报）',
+    userRead.trigger.filter.everySec === 30 && !userRead.trigger.filter.hold
+    && !('remainingGt' in userRead.trigger.filter) && userRead.scope === 'session');
+
+  /* ---------------- describeRule（「现在有什么规则」逐条报出来用） ---------------- */
+  ok('describeRule：规则名 + 间隔都走词条（报数 / 读秒 / 固定间隔 / 自适应）',
+    describeRule(defRep) === '报数间隔：每个都报，节奏快时自动降频'
+    && describeRule(fixedRep) === '报数间隔：每 10 个报一次'
+    && describeRule(defRead) === '读秒间隔：每 5 秒读一次'
+    && describeRule(userRead) === '读秒间隔：每 30 秒读一次',
+    JSON.stringify([describeRule(defRep), describeRule(fixedRep), describeRule(defRead), describeRule(userRead)]));
+  ok('ruleNameKey / ruleEveryText 是纯函数（没写 label 的规则兜底「其他规则」）',
+    ruleNameKey(defRep) === 'rule.name.rep'
+    && ruleNameKey({}) === 'rule.name.other'
+    && ruleEveryText(fixedRep) === '每 10 个报一次');
+
+  /* ---------------- 口述「每 10 个报一次」→ 只在第 10 个说 ---------------- */
+  const rep10 = makeEngine([repRule({ every: 10, id: 'user-rep-10', scope: 'session' })]);
+  const said = [];
+  let out = null;
+  for (let n = 1; n <= 20; n += 1) {
+    clock.t += 1500;
+    out = rep10.handle({ type: 'rep', data: { n, target: 40, v: true } }, st());
+    if (out) said.push({ n, text: out.speak.text, ruleId: out.speak.ruleId });
+  }
+  ok('用户规则「每 10 个报一次」：1~9 不说，第 10 个说，20 个里只说 2 次',
+    said.length === 2 && said[0].n === 10 && said[1].n === 20
+    && said.every((s) => s.ruleId === 'user-rep-10'), JSON.stringify(said));
+  ok('第 10 个那句话是整句鼓励（「十个了，稳住」），不是干巴巴的「10」',
+    said[0].text === '十个了，稳住', JSON.stringify(said[0]));
+
+  /* ---------------- 口述「每 30 秒报时」→ 只在自己那一秒说 ---------------- */
+  const read30 = makeEngine([readRule({ every: 30, id: 'user-read-30', scope: 'session', holdOnly: false })]);
+  const readSaid = [];
+  for (const sec of [5, 10, 15, 20, 25, 30, 35, 60]) {
+    clock.t += 1000;
+    const r = read30.handle({ type: 'tick', data: { elapsedSec: sec } }, st());
+    if (r) readSaid.push(r.speak.text);
+  }
+  ok('用户规则「每 30 秒报时」：只在 30 / 60 秒说（计数类动作的 tick 也算）',
+    readSaid.join(',') === '三十秒,六十秒', JSON.stringify(readSaid));
+
+  /* ---------------- 两条规则同一条引擎：互不串台 ---------------- */
+  const both = makeEngine([
+    repRule({ every: 5, id: 'user-rep-5', scope: 'session' }),
+    readRule({ every: 10, id: 'user-read-10', scope: 'session', holdOnly: false }),
+  ]);
+  clock.t += 1000;
+  const repHit = both.handle({ type: 'rep', data: { n: 5, target: 20 } }, st());
+  clock.t += 1000;
+  const tickHit = both.handle({ type: 'tick', data: { elapsedSec: 10 } }, st());
+  ok('报数规则只听 rep、读秒规则只听 tick（两条用户规则同表也不打架）',
+    repHit && repHit.speak.ruleId === 'user-rep-5'
+    && tickHit && tickHit.speak.ruleId === 'user-read-10',
+    JSON.stringify([repHit && repHit.speak, tickHit && tickHit.speak]));
 }
 
 console.log(`\n结果：${passed} 项通过，${failures.length} 项失败`);

@@ -122,14 +122,18 @@ function blankSnapshot() {
      *   skipped = 为什么没开口（speaking / thinking / disabled / muted / paused …）
      */
     /**
-     * 规则快车道（R1，`rule:speak` / `rule:skip`）：
+     * 规则快车道（R1 / R2，`rule:speak` / `rule:skip` / `rule:add` / `rule:remove`）：
      *   speak / skip = 累计说过几句 / 被护栏挡掉几次（**调试「为什么教练不说话」必备**）
      *   lastRule / event / priority = 最近一次真的说话的规则 / 事件 / 优先级
      *   ms = 从规则命中到交给 TTS 的耗时
-     *   reason = 最近一次被挡的原因（muted / coach-off / speaking / cooldown / gap /
-     *            budget:set / budget:minute / same-tick / empty）
+     *   reason = 最近一次被挡的原因（muted / coach-off / speaking / speaking-long / stride /
+     *            cooldown / gap / budget:set / budget:minute / same-tick / volume / empty）
+     *   added / removed / lastAdd / lastRemove = 口述建 / 删过几条规则（by = user）
      */
-    rule: { speak: 0, skip: 0, lastRule: '', event: '', priority: 0, ms: 0, reason: '', skipRule: '' },
+    rule: {
+      speak: 0, skip: 0, lastRule: '', event: '', priority: 0, ms: 0, reason: '', skipRule: '',
+      added: 0, removed: 0, lastAdd: '', lastRemove: '', by: '',
+    },
   };
 }
 
@@ -371,6 +375,23 @@ export function createDiag({
           skip: state.rule.skip + 1,
           reason: String(entry.reason || ''),
           skipRule: String(entry.ruleId || ''),
+        };
+        break;
+      /* 口述建 / 删规则（R2）：`rule:add {id, by:'user'}` / `rule:remove {id, by:'user'}` */
+      case 'rule:add':
+        state.rule = {
+          ...state.rule,
+          added: state.rule.added + 1,
+          lastAdd: String(entry.id || ''),
+          by: String(entry.by || ''),
+        };
+        break;
+      case 'rule:remove':
+        state.rule = {
+          ...state.rule,
+          removed: state.rule.removed + 1,
+          lastRemove: String(entry.id || ''),
+          by: String(entry.by || ''),
         };
         break;
       /* ---------------- 会话状态机（session:*） ----------------

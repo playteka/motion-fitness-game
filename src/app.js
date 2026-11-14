@@ -56,7 +56,8 @@ import { createLlmClient, buildAgentContext } from './voice/llm.js';
 import { createEventBus } from './voice/events.js';
 import {
   createRuleEngine, builtinRules, normalizeCoachVolume, COACH_VOLUMES,
-  DEFAULT_COACH_VOLUME, MIN_GAP_MS,
+  DEFAULT_COACH_VOLUME, MIN_GAP_MS, RULE_CHANNELS, DEFAULT_RULE_BY_CHANNEL,
+  repRule, readRule, describeRule, estimateSpeechMs,
 } from './voice/rules.js';
 
 const $ = (id) => document.getElementById(id);
@@ -447,6 +448,8 @@ const voiceCommandCtx = {
   continueLastSession,
   // 语音 / 查询
   setCoachMuted, setCoachEnabled, changeLang, getStateSnapshot,
+  // R2 口述建规则（规则增 / 删 / 查；规则本体在 src/voice/rules.js，这里只登记）
+  addCoachRule, removeCoachRules, listCoachRules,
   // 教练声音性别（设置按钮 / 语音命令 / 工具共用一个入口）
   setVoiceGender,
 };
@@ -546,7 +549,7 @@ const voiceBus = createEventBus();
 const ruleEngine = createRuleEngine({ diag: coachDiag });
 for (const rule of builtinRules()) ruleEngine.add(rule);
 
-/** 规则引擎要的那份只读状态（教练在说话 / 静音 / 关掉 / 话量） */
+/** 规则引擎要的那份只读状态（教练在说话 / 静音 / 关掉 / 话量 / 还剩多少台词） */
 function ruleState() {
   const muted = !!coachMuted || !!voice.muted;
   const coachOn = !!state.settings.coachEnabled && !!voice.enabled;
@@ -556,7 +559,117 @@ function ruleState() {
     coachOn,
     volume: normalizeCoachVolume(state.settings.coachVolume),
     tone: state.memory?.prefs?.tone || '',
+    // 计数规则据此判断「这一下要不要跳过」：剩余台词 >1.5s 就不报（不积压）
+    speakLeftMs: coachSpeakLeftMs(),
   };
+}
+
+/**
+ * 「教练这一句还剩多少毫秒」（估算）。
+ *
+ * 用户原话（R2）：「教练正在说话时仍然：若剩余台词 >1.5s 就跳过这一下（不积压）」。
+ * 会话层不暴露 TTS 的播放进度（火山 / 系统 TTS 两套都不一样），所以这里用**字数 × 每字毫秒**
+ * 估一个够用的数：计数要不要等，1.5s 这个量级不需要精确到毫秒，宁可比实际略长一点。
+ *
+ * @returns {number} 剩余毫秒（没在说话 → 0）
+ */
+let coachSpeech = { text: '', at: 0 };
+function coachSpeakLeftMs() {
+  const snap = state.voice || null;
+  if (!snap || snap.state !== 'speaking') {
+    coachSpeech.text = '';
+    coachSpeech.at = 0;
+    return 0;
+  }
+  const text = String(snap.coachText || '');
+  const now = Date.now();
+  if (!text) return 0;
+  if (coachSpeech.text !== text || !coachSpeech.at) {
+    coachSpeech = { text, at: now };
+  }
+  const total = estimateSpeechMs(text);
+  const left = total - Math.max(0, now - coachSpeech.at);
+  return Math.max(0, Math.min(total, Math.round(left)));
+}
+
+/**
+ * ---------------- R2 口述建规则：规则表的增 / 删 / 查 ----------------
+ *
+ * 用户原话：「每 10 个报一次」「每 30 秒报时」→ 建 / 改规则；「别报数了」「别读秒了」→ 删规则；
+ * 「现在有什么规则」→ 逐条报出来。
+ *
+ * 三条约束（和 R1 的内置规则完全一样，不另造一套）：
+ *   ① 规则本体住在 `src/voice/rules.js`（`repRule` / `readRule`），这里只做「登记」；
+ *   ② 口述建的规则 `scope: session` —— 一次训练结束由引擎自己删掉，缺省规则由
+ *      `ensureDefaultRules()` 补回来（用户不用记住上次说过什么）；
+ *   ③ 诊断记 `rule:add {id, by:'user'}` / `rule:remove {id, by:'user'}`。
+ */
+
+/** 每个频道（报数 / 读秒）都必须有一条规则：缺了就补回缺省那条 */
+function ensureDefaultRules() {
+  const rules = ruleEngine.list();
+  const defaults = builtinRules();
+  for (const channel of RULE_CHANNELS) {
+    if (rules.some((rule) => rule.channel === channel)) continue;
+    const def = defaults.find((rule) => rule.id === DEFAULT_RULE_BY_CHANNEL[channel]);
+    if (def) ruleEngine.add(def);
+  }
+  syncRuleCount();
+  return ruleEngine.size;
+}
+
+/**
+ * 口述建规则：**先按频道替换**（报数 / 读秒各一条），再登记诊断。
+ * @param {{kind?:'rep'|'read', every?:number}} [args]
+ * @returns {{id:string,kind:string,every:number}|null}
+ */
+function addCoachRule(args = {}) {
+  const kind = args.kind === 'read' ? 'read' : 'rep';
+  const every = Math.round(Number(args.every));
+  if (!Number.isFinite(every) || every < 1) return null;
+  const n = Math.max(1, Math.min(999, every));
+  for (const rule of ruleEngine.list()) {
+    if (rule.channel === kind) ruleEngine.remove(rule.id);
+  }
+  const rule = kind === 'read'
+    ? readRule({ every: n, id: `user-read-${n}`, scope: 'session', holdOnly: false })
+    : repRule({ every: n, id: `user-rep-${n}`, scope: 'session' });
+  const added = ruleEngine.add(rule);
+  if (!added) return null;
+  try { coachDiag?.record?.('rule:add', { id: added.id, by: 'user' }); } catch { /* 诊断不影响规则 */ }
+  syncRuleCount();
+  return { id: added.id, kind, every: n };
+}
+
+/**
+ * 口述关规则：把某个频道的规则全删掉（内置那条也是规则，删了就不再报数 / 读秒）。
+ * @param {'rep'|'read'} kind
+ * @returns {{kind:string,removed:number}|null} 没有可删的 → null（ack 说「这条规则没开着」）
+ */
+function removeCoachRules(kind) {
+  const channel = RULE_CHANNELS.includes(kind) ? kind : '';
+  if (!channel) return null;
+  let removed = 0;
+  for (const rule of ruleEngine.list()) {
+    if (rule.channel !== channel) continue;
+    if (!ruleEngine.remove(rule.id)) continue;
+    removed += 1;
+    try { coachDiag?.record?.('rule:remove', { id: rule.id, by: 'user' }); } catch { /* ignore */ }
+  }
+  if (!removed) return null;
+  syncRuleCount();
+  return { kind: channel, removed };
+}
+
+/** 现在生效的规则（「现在有什么规则」逐条报出来用；只读快照） */
+function listCoachRules() { return ruleEngine.list(); }
+
+/** 设置页「话量」下面那行：**只显示生效规则条数**（完整列表留给 R4） */
+function syncRuleCount() {
+  const el = $('coachRuleCount');
+  if (!el) return ruleEngine.size;
+  el.textContent = t('ui.coachRuleCount', { count: ruleEngine.size });
+  return ruleEngine.size;
 }
 
 /**
@@ -584,6 +697,12 @@ function runRulesForEvent(event) {
 
 // 总线是唯一入口：谁发事件都走同一条判断链（session.recordEvent / emitEvent 也一样）
 voiceBus.on('*', runRulesForEvent);
+
+/**
+ * 一次训练结束 → 口述建的规则（scope: session）已经被引擎删掉，这里把**缺省规则补回来**。
+ * 顺序很重要：上面那条 `*` 订阅先跑（引擎处理 session-end），这条才补默认。
+ */
+voiceBus.on('session-end', () => { ensureDefaultRules(); });
 
 /** 发一条规则事件（不传总线白名单的类型 → 不发，返回 null） */
 function emitVoiceEvent(type, data = {}) {
@@ -7017,6 +7136,16 @@ function speakEveryOf() {
   return Math.max(1, EXERCISE_MAP[state.exerciseId]?.speakEvery || 1);
 }
 
+/**
+ * 规则快车道现在能不能**真的出声**（教练开着 / 没静音）。
+ *
+ * R2 起报数改由规则快车道负责（`rep-count`）；只有它说不出声时（教练关掉 / 静音）
+ * 才退回 `audio.sayRep()` 那条老路，避免两条路各念一遍「一」「一」。
+ */
+function ruleLaneAudible() {
+  return !!state.settings.coachEnabled && !!voice.enabled && !coachMuted && !voice.muted;
+}
+
 /** 屏幕上的激励语：跟语音同一个池子，轮着显示，不重复上一句 */
 function pickEncourageHint(seed) {
   const pool = t('speech.encourage');
@@ -7104,10 +7233,12 @@ function handleEvents(events, now = performance.now()) {
         pulseValue();
         pulseScore();
         audio.rep(det.validReps);
-        // 报数节奏：默认**每做一个都报数**（用户明确要求，用 force 打断上一句，不会被吞掉）；
-        // 快节奏动作（开合跳 speakEvery: 10）只在 10 的整数倍报一次 —— 每次时间太短，念了也听不清。
+        // 报数节奏：R2 起**由规则快车道**报数（`rep-count` 规则：每做一个报一个 + 自适应降频，
+        // 第 5 / 10 个换成整句鼓励），所以这里只在规则那条路**出不了声**时兜底
+        // （教练关掉 / 静音）—— 两条路同时念会变成「一……一」。
+        // 快节奏动作（开合跳 speakEvery: 10）走兜底时仍然只在 10 的整数倍报一次。
         const speakEvery = speakEveryOf();
-        if (det.validReps % speakEvery === 0) audio.sayRep(det.validReps);
+        if (det.validReps % speakEvery === 0 && !ruleLaneAudible()) audio.sayRep(det.validReps);
         state.repsSinceEncourage = (state.repsSinceEncourage || 0) + 1;
         state.maxRepsSinceEncourage = Math.max(state.maxRepsSinceEncourage || 0, state.repsSinceEncourage);
         // 限时计数（开合跳）：目标是**秒**，不是次数 —— 所以「做满目标次数就达成」和
@@ -7210,13 +7341,15 @@ function onGoalReached() {
  * R1 规则快车道：把一个「组内状态」翻译成事件
  *
  * 用户原话：「用户要求每 5 秒读秒，系统就订阅读秒事件，到点直接 TTS，不请求 LLM。」
+ * 用户原话（R2）：「计时的运动要每 5 秒读秒一次」「缺省情况下要帮客户计次」。
  * 这里就是那个「到点」：**每帧**把识别器 / 计时器的事实发成事件（去重后），规则引擎自己判断要不要开口。
  * 事件类型 / 数据形状都是 src/voice/events.js 里写好的那 14 个，这里不新造信号。
  *
  * 发频率（都做了去重，不会每帧刷屏）：
  *   progress   整数百分比变了才发（计数类按次数、计时类按秒）
- *   tick       **每 5 秒**一发（`elapsedSec` 是 0/5/10…）
- *   hold-tick  **只在最后 5 秒**每秒一发（`remainingSec` = 5…1；读秒规则只认 ≤5）
+ *   tick       **每秒**一发（`elapsedSec` = 已经过去的秒数；计时类另带 `hold:1` / `timed:1`
+ *              与 `remainingSec`，规则按 `everySec` 决定要不要读：缺省 5 秒，口述可以是 30 秒）
+ *   hold-tick  **只在最后 5 秒**每秒一发（`remainingSec` = 5…1；倒数规则只认 ≤5）
  *   idle       每秒一发（`sec` = 距上一次计次多少秒；规则只认 ≥8）
  *   tempo      每 10 秒一发（每分钟次数，R1 没有规则用它，先留着给 R3 的 `add_rule`）
  * ------------------------------------------------------------------ */
@@ -7252,11 +7385,21 @@ function syncRuleEvents(now = performance.now()) {
     emitVoiceEvent('progress', { pct });
   }
 
-  // 计时：每 5 秒一发 tick（不是每帧）
+  // 计时：**每秒**一发 tick（规则自己按 everySec 决定要不要开口：
+  // 缺省的「每 5 秒读秒」= everySec:5；口述的「每 30 秒报时」= everySec:30）
+  // data 里带 hold / timed 两个标记，让「计时类才读秒」的规则分得清动作类型。
   const elapsedSec = Math.floor(state.elapsedMs / 1000);
-  if (elapsedSec !== state.lastTickSec && elapsedSec % 5 === 0) {
+  if (elapsedSec !== state.lastTickSec) {
     state.lastTickSec = elapsedSec;
-    emitVoiceEvent('tick', { elapsedSec });
+    const tickData = { elapsedSec };
+    if (isHold) tickData.hold = 1;
+    else if (isTimed) tickData.timed = 1;
+    // 还剩几秒（计时类）：缺省的读秒规则用 remainingGt:5 把最后 5 秒让给逐秒倒数
+    if (isTimed || isHold) {
+      const leftMs = isHold ? (target * 1000 - (Number(det.holdMs) || 0)) : (target * 1000 - state.elapsedMs);
+      tickData.remainingSec = Math.max(0, Math.ceil(leftMs / 1000));
+    }
+    emitVoiceEvent('tick', tickData);
   }
 
   // 读秒：只在最后 5 秒每秒一发（`{n}` = 还剩几秒）
@@ -8246,6 +8389,7 @@ function refreshForLang() {
   coach.render(voice.snapshot());                                 // AI 教练的状态 / 字幕也换语言
   if (pickerWasOpen) openSetPicker();   // 「设置」选择层：标题 / 单位 / 提示 / 无障碍名换成新语言
   if (voiceHelpOpen()) renderVoiceHelp();   // 语音命令一览（表格行是按 intent 动态生成的，也要重渲染）
+  syncRuleCount();                          // 设置页「当前生效规则 N 条」跟着语言换字
   setCueLine('');
 }
 
@@ -8371,6 +8515,8 @@ function bindUI() {
       volumeSel.value = normalizeCoachVolume(state.settings.coachVolume);
       volumeSel.addEventListener('change', (e) => applyCoachVolume(e.target.value));
     }
+    // R2：话量旁边只显示「当前生效规则条数」（完整规则列表留给 R4）
+    syncRuleCount();
     // P3.4 插话打断：默认开；点一下立刻生效并持久化（关掉后教练说话不再被截断）
     const bargeBtn = $('btnBargeIn');
     if (bargeBtn) {
@@ -9135,6 +9281,11 @@ window.__mfg = {
   voiceBus, ruleEngine, emitVoiceEvent, runRulesForEvent, syncRuleEvents, ruleState,
   resetRuleCursors, applyCoachVolume,
   COACH_VOLUMES, DEFAULT_COACH_VOLUME, MIN_GAP_MS,
+  // R2 口述建规则：规则增 / 删 / 查 + 缺省规则补回 + 设置页的「生效规则条数」
+  addCoachRule, removeCoachRules, listCoachRules, ensureDefaultRules, syncRuleCount,
+  RULE_CHANNELS, DEFAULT_RULE_BY_CHANNEL,
+  // 「教练正在说话还剩多少台词」（计数规则据此决定这一下要不要跳过）
+  coachSpeakLeftMs,
   // 三层记忆（长时层在服务端 MD；中时层的「上次未完成 / 训练摘要」由这里同步）
   //   MEMORY_PATH / MEMORY_FORGET_PATH : 路由常量（和 preview-server.js 一致）
   //   getMemoryUserId / setMemoryUserId / resetMemoryUserId : userId 显示 / 修改 / 重置
